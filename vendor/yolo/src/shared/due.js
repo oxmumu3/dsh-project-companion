@@ -1,0 +1,108 @@
+import { localDateStr } from './text.js'
+
+const DATE_ONLY = /^(\d{4})-(\d{2})-(\d{2})$/u
+const LOCAL_DATETIME = /^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})(?::(\d{2})(?:\.(\d{1,3}))?)?$/u
+const OFFSET_DATETIME = /^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}(?::\d{2}(?:\.\d{1,3})?)?(?:Z|[+-]\d{2}:\d{2})$/iu
+
+                              
+                           
+                   
+                   
+ 
+
+function localTimestamp(parts                   , endOfDay         )                     {
+  const [year, month, day, hour = 0, minute = 0, second = 0, millisecond = 0] = parts
+  const date = new Date(
+    year ,
+    month  - 1,
+    day ,
+    endOfDay ? 23 : hour,
+    endOfDay ? 59 : minute,
+    endOfDay ? 59 : second,
+    endOfDay ? 999 : millisecond,
+  )
+  if (
+    date.getFullYear() !== year
+    || date.getMonth() !== month  - 1
+    || date.getDate() !== day
+    || (!endOfDay && (
+      date.getHours() !== hour
+      || date.getMinutes() !== minute
+      || date.getSeconds() !== second
+      || date.getMilliseconds() !== millisecond
+    ))
+  ) return undefined
+  return date.getTime()
+}
+
+/**
+ * Parse the persisted due_at contract into one instant and one local calendar
+ * day. Date-only values mean the end of that local day; datetimes without a
+ * zone are local wall-clock times; Z/offset datetimes preserve their instant.
+ */
+export function parseDueAt(value                           )                     {
+  if (!value) return null
+  const input = value.trim()
+  const dateOnly = DATE_ONLY.exec(input)
+  if (dateOnly) {
+    const timestamp = localTimestamp(dateOnly.slice(1).map(Number), true)
+    return timestamp === undefined ? null : { kind: 'date', timestamp, localDate: input }
+  }
+
+  const local = LOCAL_DATETIME.exec(input)
+  if (local) {
+    const parts = local.slice(1, 7).map((part) => Number(part ?? 0))
+    parts.push(Number((local[7] ?? '').padEnd(3, '0') || 0))
+    const timestamp = localTimestamp(parts, false)
+    return timestamp === undefined
+      ? null
+      : { kind: 'datetime', timestamp, localDate: localDateStr(new Date(timestamp)) }
+  }
+
+  if (!OFFSET_DATETIME.test(input)) return null
+  const calendar = DATE_ONLY.exec(input.slice(0, 10))
+  if (!calendar || localTimestamp(calendar.slice(1).map(Number), false) === undefined) return null
+  const timestamp = Date.parse(input)
+  return Number.isFinite(timestamp)
+    ? { kind: 'datetime', timestamp, localDate: localDateStr(new Date(timestamp)) }
+    : null
+}
+
+export function dueAtTimestamp(value                           )                     {
+  return parseDueAt(value)?.timestamp
+}
+
+export function dueAtLocalDate(value                           )                     {
+  return parseDueAt(value)?.localDate
+}
+
+/** Local start-of-day instant for a validated "YYYY-MM-DD" string. */
+function startOfLocalDay(localDate        )         {
+  const [year, month, day] = localDate.split('-').map(Number)
+  return new Date(year , month  - 1, day ).getTime()
+}
+
+/** True when a todo is eligible for a reminder at-or-inside the lead window.
+ * A date-only due ("周五前") becomes actionable at the START of its local day
+ * so the scheduler reminds in the morning rather than the deadline's last
+ * second; datetimes keep their exact instant. Overdue/sorting still use
+ * `dueAtTimestamp`, which keeps the end-of-day deadline for date-only values. */
+export function isDueAtReached(value                           , now = new Date(), aheadMs = 0)          {
+  const parsed = parseDueAt(value)
+  if (!parsed) return false
+  const instant = parsed.kind === 'date' ? startOfLocalDay(parsed.localDate) : parsed.timestamp
+  return instant <= now.getTime() + Math.max(0, aheadMs)
+}
+
+/** Overdue is strict: an open todo becomes overdue only after its due instant. */
+export function isTodoOverdue(value                           , status        , now = new Date())          {
+  if (status === 'done' || status === 'completed' || status === 'cancelled') return false
+  const timestamp = dueAtTimestamp(value)
+  return timestamp !== undefined && timestamp < now.getTime()
+}
+
+export function compareDueAt(a                           , b                           )         {
+  const left = dueAtTimestamp(a) ?? Number.POSITIVE_INFINITY
+  const right = dueAtTimestamp(b) ?? Number.POSITIVE_INFINITY
+  return left - right
+}

@@ -1,0 +1,80 @@
+{
+  "name": "dsh-project-companion",
+  "version": "0.4.0-preview.2",
+  "description": "WeChat project companion with source-backed briefs, reminders and correlated task replies for DeepSeek Harness",
+  "author": "牛村木木山",
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": ">=22.13",
+    "dsh": "0.2.0-rc.2 || 0.2.1-rc.2"
+  },
+  "exports": {
+    ".": "./index.js",
+    "./package.json": "./package.json",
+    "./client": "./src/client.js"
+  },
+  "files": [
+    "index.js",
+    "src/",
+    "cordis.patch.yml",
+    "README.md",
+    "LICENSE",
+    "docs/quickstart.md",
+    "docs/verification.md",
+    "docs/comparison.md",
+    "scripts/demo.mjs",
+    "test/",
+    "docs/developer-commands.md",
+    "vendor/",
+    "THIRD_PARTY_NOTICES.md",
+    "third-party-licenses/",
+    "docs/first-use.md",
+    "docs/install.md"
+  ],
+  "scripts": {
+    "test": "node --max-old-space-size=128 --test --test-concurrency=1 test/*.test.mjs",
+    "demo": "node --max-old-space-size=128 scripts/demo.mjs"
+  },
+  "dependencies": {
+    "zod": "4.6.5"
+  },
+  "devDependencies": {
+    "@deepseek-ai/cordis": "4.0.4",
+    "@deepseek-ai/dsh-system-prompt": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-storage": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-storage-json": "0.2.0-rc.2"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/dsh-tools": "0.2.0-rc.2 || 0.2.1-rc.2",
+    "@deepseek-ai/dsh-commands": "0.2.0-rc.2 || 0.2.1-rc.2",
+    "@deepseek-ai/dsh-storage-domain": "0.2.0-rc.2 || 0.2.1-rc.2",
+    "@deepseek-ai/dsh-session": "0.2.0-rc.2 || 0.2.1-rc.2",
+    "@deepseek-ai/dsh-llm": "0.2.0-rc.2 || 0.2.1-rc.2",
+    "@deepseek-ai/dsh-agent": "0.2.0-rc.2 || 0.2.1-rc.2"
+  },
+  "dsh": {
+    "manifestVersion": 1,
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-settings",
+        "@deepseek-ai/dsh-client-ui-settings-general",
+        "@deepseek-ai/dsh-client-ui-workspace",
+        "@deepseek-ai/dsh-client-ui-renderer",
+        "@deepseek-ai/dsh-client-ui-primitives"
+      ]
+    }
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/piggy00544/dsh-project-companion.git"
+  },
+  "homepage": "https://github.com/piggy00544/dsh-project-companion",
+  "bugs": {
+    "url": "https://github.com/piggy00544/dsh-project-companion/issues"
+  }
+}

@@ -1,0 +1,452 @@
+/**
+ * dsh-proactive durable domain (v2): alarm records, run records, validation, and closed error codes.
+ * Local-time resolution ports the DST-correct algorithm from @deepseek-ai/dsh-schedule
+ * (MIT): overlaps choose the earlier instant, gaps are rejected, and the zone is
+ * never imported from the process or browser.
+ *
+ * v2 model (260907-proactive-alarm-v2):
+ *   - wake_reason (heartbeat|alarm) is gone; every alarm carries its own
+ *     `respectQuietHours` switch (true = deferred inside quiet hours and gated
+ *     by the daily budget; false = user-requested, exempt from both).
+ *   - alarm `type`: "once" | "every" | "cron" | "file"; the three firing
+ *     types support a unified `jitterSeconds` random delay drawn after each
+ *     scheduled instant. "file" is the 260918/261009 schedule-file HANDLE:
+ *     it never fires itself (firesAlarm) — it watches one absolute JSON file
+ *     and materializes one child alarm per entry.
+ *   - the wake destination is decoupled from the creator: `ownerSessionId`
+ *     (tools/panel ownership) vs `target` (resume existing / fork from an
+ *     existing session / create a new session).
+ */
+export const PROACTIVE_PLUGIN = "dsh-proactive";
+export const MIN_EVERY_SECONDS = 300;
+export const MAX_PROMPT_LENGTH = 4000;
+export const MAX_NO_REPLY_REASON_LENGTH = 200;
+/** Default compaction policy for a new alarm (minimal: keep the proactive_reclaim reason in the tombstone). */
+export const DEFAULT_COMPACTION = "minimal";
+/** All valid compaction values (validation + schema enum share this source). */
+export const COMPACTION_MODES = ["off", "minimal", "aggressive"];
+/** Upper bound for the per-occurrence random delay (24h). */
+export const MAX_JITTER_SECONDS = 86400;
+/** Hard ceiling for min_idle_seconds: one day. */
+export const MAX_MIN_IDLE_SECONDS = 86400;
+/**
+ * The repo default wake-up instruction: pre-filled into the GUI create form
+ * (config.defaultPrompt, editable) so a new alarm starts from the user's
+ * standing preset instead of a blank box. Pure constant — domain.ts stays
+ * import-free so BOTH the host (config.ts) and the browser client bundle
+ * (panel form fallback) share this one source of truth.
+ */
+export const DEFAULT_WAKE_PROMPT = "这是一个 heartbeat reminder，你可以选择与用户发送消息。记得完全进入你的人设和情境。如果不希望发送消息，就调用 proactive_reclaim 安静结束。";
+/** dsh session ids are alphanumeric plus `._-`; anything else (slashes, traversals, spaces, UTF-8) is rejected. */
+export const SESSION_ID_PATTERN = /^[A-Za-z0-9._-]+$/;
+/** dsh workspace registry ids are generated uuids; the pattern only fails closed on junk shapes. */
+export const WORKSPACE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9-]{0,99}$/;
+/**
+ * Slice by Unicode code points (not UTF-16 units) so a surrogate pair is
+ * never split in half — user-facing prompt/preset text may contain emoji.
+ */
+export function sliceCodePoints(text, max) {
+    if (max <= 0)
+        return "";
+    const chars = Array.from(text);
+    return chars.length <= max ? text : chars.slice(0, max).join("");
+}
+/** Fail closed on session ids that could escape storage paths or scope lookups. */
+export function isValidSessionId(sessionId) {
+    if (sessionId === "" || sessionId.length > 200)
+        return false;
+    // "." and ".." would resolve to the sessions root itself — never a real session.
+    if (sessionId === "." || sessionId === "..")
+        return false;
+    return SESSION_ID_PATTERN.test(sessionId);
+}
+/** Fail closed on workspace ids that are not registry-uuid shaped (defense in depth for stored alarms). */
+export function isValidWorkspaceId(workspaceId) {
+    return WORKSPACE_ID_PATTERN.test(workspaceId);
+}
+/** Preset ids are alphanumeric plus `._-`, max 100 characters. */
+export function isValidPresetId(presetId) {
+    if (presetId === "" || presetId.length > 100)
+        return false;
+    return SESSION_ID_PATTERN.test(presetId);
+}
+/**
+ * Whether an alarm type ever fires a wake turn. "file" is a subscription
+ * HANDLE (261009): the scheduler must never select it as due, the panel must
+ * never offer "fire now", and overdue rendering must skip it. Every consumer
+ * asks this one predicate instead of comparing against "file" itself.
+ */
+export function firesAlarm(type) {
+    return type !== "file";
+}
+/**
+ * Effective source arm of a resume/fork target. v3 records carry an explicit
+ * sourceType; v2 records (and the legacy workspace mode) fold to their stored
+ * spelling. "new" targets have no source — undefined.
+ */
+export function targetSourceOf(target) {
+    if (target.mode === "workspace")
+        return "workspace";
+    if (target.mode === "new")
+        return undefined;
+    return target.sourceType ?? (target.workspaceId !== undefined ? "workspace" : target.presetId !== undefined ? "preset" : "session");
+}
+/**
+ * Project a stored target back onto the flat `target_*` create dialect — the
+ * inverse of alarm-factory's flattening, and the ONLY sanctioned way to feed
+ * a stored target to validateCreateArgs. File-schedule entries inherit their
+ * handle's target this way: a hand-rolled partial merge would drop
+ * `target_session_id`/`target_source` and make the entry fail validation
+ * silently (keptIds = "no change"), or -- worse -- key-merge two layers into
+ * a combination neither layer meant (the 260928 residual-key failure class).
+ */
+export function targetArgsOf(target) {
+    if (target.mode === "workspace") {
+        return { target_mode: "resume", target_source: "workspace", target_workspace_id: target.workspaceId };
+    }
+    if (target.mode === "new") {
+        return {
+            target_mode: "new",
+            ...(target.workspaceId !== undefined ? { target_workspace_id: target.workspaceId } : {}),
+            ...(target.presetId !== undefined ? { target_preset_id: target.presetId } : {}),
+            ...(target.provider !== undefined ? { target_provider: target.provider } : {}),
+            ...(target.model !== undefined ? { target_model: target.model } : {})
+        };
+    }
+    const source = targetSourceOf(target);
+    const flat = { target_mode: target.mode, target_source: source };
+    if (source === "workspace")
+        flat["target_workspace_id"] = target.workspaceId;
+    else if (source === "preset")
+        flat["target_preset_id"] = target.presetId;
+    else
+        flat["target_session_id"] = target.sessionId;
+    return flat;
+}
+/** Input failure that maps to a closed, stable public code. */
+export class ProactiveInputError extends Error {
+    code;
+    constructor(code, message) {
+        super(message);
+        this.name = "ProactiveInputError";
+        this.code = code;
+    }
+}
+const UTC_INSTANT = /^(?!0000)\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\d|3[01])T(?:[01]\d|2[0-3]):[0-5][0-9]:[0-5][0-9]\.\d{3}Z$/;
+const OFFSET_INSTANT = /^(?<year>\d{4})-(?<month>\d{2})-(?<day>\d{2})T(?<hour>\d{2}):(?<minute>\d{2}):(?<second>\d{2})(?:\.(?<fraction>\d{1,3}))?(?<zone>Z|(?<sign>[+-])(?<offsetHour>\d{2}):(?<offsetMinute>\d{2}))$/;
+const LOCAL_DATE = /^(?<year>\d{4})-(?<month>\d{2})-(?<day>\d{2})$/;
+const LOCAL_TIME = /^(?<hour>\d{2}):(?<minute>\d{2}):(?<second>\d{2})(?:\.(?<fraction>\d{1,3}))?$/;
+const IANA_ZONE = /^[A-Za-z][A-Za-z0-9_+.-]*(?:\/[A-Za-z0-9_+.-]+)+$/;
+const OFFSET_NAME = /^GMT(?:(?<sign>[+-])(?<hour>\d{2}):(?<minute>\d{2})(?::(?<second>\d{2}))?)?$/;
+const MIN_FOUR_DIGIT_YEAR_MS = Date.parse("0001-01-01T00:00:00.000Z");
+const MAX_FOUR_DIGIT_YEAR_MS = Date.parse("9999-12-31T23:59:59.999Z");
+function groupNumber(groups, key) {
+    const value = groups[key];
+    if (value === undefined)
+        throw new ProactiveInputError("invalid_trigger", "The trigger value has an invalid shape.");
+    return Number(value);
+}
+function milliseconds(value) {
+    return value === undefined ? 0 : Number(value.padEnd(3, "0"));
+}
+/** Validate one calendar tuple without consulting any process time zone. */
+function calendarEpoch(parts) {
+    if (parts.year === 0 || parts.month < 1 || parts.month > 12 || parts.day < 1 || parts.day > 31 || parts.hour > 23 || parts.minute > 59 || parts.second > 59) {
+        throw new ProactiveInputError("invalid_trigger", "The trigger value must be a real ISO calendar date and time.");
+    }
+    const epoch = Date.UTC(parts.year, parts.month - 1, parts.day, parts.hour, parts.minute, parts.second, parts.millisecond);
+    if (!Number.isFinite(epoch) || epoch < MIN_FOUR_DIGIT_YEAR_MS || epoch > MAX_FOUR_DIGIT_YEAR_MS) {
+        throw new ProactiveInputError("invalid_trigger", "The trigger value must be representable as a four-digit-year RFC 3339 UTC instant.");
+    }
+    const probe = new Date(epoch);
+    if (probe.getUTCFullYear() !== parts.year || probe.getUTCMonth() + 1 !== parts.month || probe.getUTCDate() !== parts.day) {
+        throw new ProactiveInputError("invalid_trigger", "The trigger value must be a real calendar date.");
+    }
+    return epoch;
+}
+/** Canonicalize an IANA or UTC zone name. */
+export function canonicalizeTimeZone(value) {
+    if (value.length === 0 || value.trim() !== value || (value !== "UTC" && !IANA_ZONE.test(value))) {
+        throw new ProactiveInputError("invalid_time_zone", "time_zone must be UTC or a valid IANA Area/Location name.");
+    }
+    let canonical;
+    try {
+        canonical = new Intl.DateTimeFormat("en-US", { timeZone: value }).resolvedOptions().timeZone;
+    }
+    catch {
+        throw new ProactiveInputError("invalid_time_zone", "time_zone must resolve to an IANA Area/Location name.");
+    }
+    if (canonical !== "UTC" && !IANA_ZONE.test(canonical)) {
+        throw new ProactiveInputError("invalid_time_zone", "time_zone must resolve to an IANA Area/Location name.");
+    }
+    return canonical;
+}
+/** Decode a canonical four-digit-year RFC 3339 UTC instant. */
+export function decodeInstant(value) {
+    if (typeof value !== "string" || !UTC_INSTANT.test(value))
+        throw new ProactiveInputError("invalid_trigger", "The target must be a canonical four-digit-year RFC 3339 UTC instant.");
+    const epoch = Date.parse(value);
+    if (!Number.isFinite(epoch) || new Date(epoch).toISOString() !== value)
+        throw new ProactiveInputError("invalid_trigger", "The target is not a real UTC calendar instant.");
+    return value;
+}
+/** The UTC epoch of a canonical instant string. */
+export function instantEpoch(value) {
+    return Date.parse(value);
+}
+/**
+ * A local-time projector over one epoch: exact wall-clock fields plus the zone
+ * offset that produced them. Structured so callers (quiet-hours, cron) share
+ * one DST-correct projection machinery that never consults the process zone.
+ */
+export function makeLocalFormatter(timeZone, extra) {
+    return new Intl.DateTimeFormat("en-US-u-ca-iso8601-nu-latn", {
+        timeZone,
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+        fractionalSecondDigits: 3,
+        hourCycle: "h23",
+        timeZoneName: "longOffset",
+        ...extra
+    });
+}
+/** Project one epoch into exact local fields plus the zone offset that produced them. */
+export function localProjection(formatter, epoch) {
+    const values = Object.fromEntries(formatter.formatToParts(epoch).map((part) => [part.type, part.value]));
+    const zoneName = values["timeZoneName"];
+    const offsetMatch = typeof zoneName === "string" ? OFFSET_NAME.exec(zoneName) : null;
+    const offsetGroups = offsetMatch?.groups;
+    if (offsetMatch === null || offsetGroups === undefined)
+        throw new ProactiveInputError("invalid_time_zone", "time_zone did not expose a usable UTC offset.");
+    const direction = offsetGroups["sign"] === "-" ? -1 : 1;
+    const offset = offsetGroups["sign"] === undefined ? 0 : direction * (groupNumber(offsetGroups, "hour") * 3600 + groupNumber(offsetGroups, "minute") * 60 + Number(offsetGroups["second"] ?? "0")) * 1e3;
+    return {
+        year: Number(values["year"]),
+        month: Number(values["month"]),
+        day: Number(values["day"]),
+        hour: Number(values["hour"]),
+        minute: Number(values["minute"]),
+        second: Number(values["second"]),
+        millisecond: Number(values["fractionalSecond"]),
+        offset,
+        ...(typeof values["weekday"] === "string" ? { weekday: values["weekday"] } : {})
+    };
+}
+/** Resolve local wall-clock fields in a zone: earlier instant on overlap, reject gaps. */
+export function resolveLocalInstant(parts, timeZone) {
+    const localEpoch = calendarEpoch(parts);
+    const formatter = makeLocalFormatter(timeZone);
+    const offsets = new Set();
+    for (const delta of [-1728e5, -864e5, 0, 864e5, 1728e5]) {
+        const sample = Math.min(MAX_FOUR_DIGIT_YEAR_MS, Math.max(MIN_FOUR_DIGIT_YEAR_MS, localEpoch + delta));
+        offsets.add(localProjection(formatter, sample).offset);
+    }
+    const candidates = [];
+    let outOfRange = false;
+    for (const offset of offsets) {
+        const candidate = localEpoch - offset;
+        if (candidate < MIN_FOUR_DIGIT_YEAR_MS || candidate > MAX_FOUR_DIGIT_YEAR_MS) {
+            outOfRange = true;
+            continue;
+        }
+        const projected = localProjection(formatter, candidate);
+        if (projected.year === parts.year && projected.month === parts.month && projected.day === parts.day &&
+            projected.hour === parts.hour && projected.minute === parts.minute && projected.second === parts.second &&
+            projected.millisecond === parts.millisecond) {
+            candidates.push(candidate);
+        }
+    }
+    const first = candidates.sort((left, right) => left - right)[0];
+    if (first === undefined) {
+        if (outOfRange)
+            throw new ProactiveInputError("invalid_trigger", "The scheduled time must be representable as a four-digit-year RFC 3339 UTC instant.");
+        throw new ProactiveInputError("invalid_time_zone", "The local at time does not exist in the selected time zone.");
+    }
+    return first;
+}
+/** Trim and bound a model-supplied alarm prompt. */
+export function validatePrompt(raw, maxLength = MAX_PROMPT_LENGTH) {
+    if (typeof raw !== "string")
+        throw new ProactiveInputError("invalid_prompt", "prompt must be a non-empty string.");
+    const prompt = raw.trim();
+    if (prompt.length === 0)
+        throw new ProactiveInputError("invalid_prompt", "prompt must be a non-empty string.");
+    if (prompt.length > maxLength)
+        throw new ProactiveInputError("invalid_prompt", "prompt must be at most {max} characters.".replace("{max}", String(maxLength)));
+    return prompt;
+}
+/** Resolve one at input to { epoch, timeZone }. String must carry an explicit zone. */
+export function resolveAtInput(at) {
+    if (typeof at === "string") {
+        const match = OFFSET_INSTANT.exec(at);
+        const groups = match?.groups;
+        if (match === null || groups === undefined) {
+            throw new ProactiveInputError("invalid_trigger", "The at string must be a strict RFC 3339 date-time with an explicit Z or numeric offset.");
+        }
+        const year = Number(groups["year"]);
+        const month = Number(groups["month"]);
+        const day = Number(groups["day"]);
+        const hour = Number(groups["hour"]);
+        const minute = Number(groups["minute"]);
+        const second = Number(groups["second"]);
+        const ms = milliseconds(groups["fraction"]);
+        const sign = groups["sign"];
+        const offsetMinutes = sign === undefined ? 0 : (sign === "-" ? -1 : 1) * (Number(groups["offsetHour"]) * 60 + Number(groups["offsetMinute"]));
+        if (Number(groups["offsetHour"]) > 23 || Number(groups["offsetMinute"]) > 59) {
+            throw new ProactiveInputError("invalid_trigger", "The at string must carry a valid UTC offset.");
+        }
+        // Build the instant from the local fields and the explicit offset, then
+        // round-trip it back: the local projection must reproduce the input
+        // exactly, so impossible dates (e.g. Feb 31) and offsets >= 24h are rejected.
+        const localEpoch = Date.UTC(year, month - 1, day, hour, minute, second, ms);
+        const epoch = localEpoch - offsetMinutes * 60_000;
+        if (!Number.isFinite(epoch) || epoch < MIN_FOUR_DIGIT_YEAR_MS || epoch > MAX_FOUR_DIGIT_YEAR_MS) {
+            throw new ProactiveInputError("invalid_trigger", "The at string must be a real RFC 3339 date-time.");
+        }
+        const local = new Date(epoch + offsetMinutes * 60_000);
+        if (local.getUTCFullYear() !== year || local.getUTCMonth() + 1 !== month || local.getUTCDate() !== day ||
+            local.getUTCHours() !== hour || local.getUTCMinutes() !== minute || local.getUTCSeconds() !== second ||
+            local.getUTCMilliseconds() !== ms) {
+            throw new ProactiveInputError("invalid_trigger", "The at string must be a real RFC 3339 date-time.");
+        }
+        return { epoch, timeZone: "UTC" };
+    }
+    if (typeof at === "object" && at !== null && typeof at["date"] === "string" && typeof at["time"] === "string" && typeof at["time_zone"] === "string") {
+        const dateMatch = LOCAL_DATE.exec(at["date"]);
+        const timeMatch = LOCAL_TIME.exec(at["time"]);
+        const date = dateMatch?.groups;
+        const time = timeMatch?.groups;
+        if (date === undefined || time === undefined) {
+            throw new ProactiveInputError("invalid_trigger", "Local at requires date YYYY-MM-DD and time HH:mm:ss with optional one-to-three digit milliseconds.");
+        }
+        const timeZone = canonicalizeTimeZone(at["time_zone"]);
+        const parts = {
+            year: groupNumber(date, "year"),
+            month: groupNumber(date, "month"),
+            day: groupNumber(date, "day"),
+            hour: groupNumber(time, "hour"),
+            minute: groupNumber(time, "minute"),
+            second: groupNumber(time, "second"),
+            millisecond: milliseconds(time["fraction"])
+        };
+        return { epoch: resolveLocalInstant(parts, timeZone), timeZone };
+    }
+    throw new ProactiveInputError("invalid_trigger", "at must be a strict RFC 3339 string or a local date/time object.");
+}
+/** The next occurrence of an every_seconds alarm aligned to its anchor, strictly after now. */
+export function nextEveryOccurrence(anchorEpoch, everySeconds, now) {
+    const interval = everySeconds * 1e3;
+    if (!Number.isSafeInteger(everySeconds) || everySeconds < MIN_EVERY_SECONDS || !Number.isSafeInteger(interval)) {
+        throw new ProactiveInputError("frequency_too_high", "every_seconds must be a safe integer of at least {min} seconds.".replace("{min}", String(MIN_EVERY_SECONDS)));
+    }
+    // Occurrences are strictly in the future: when now lands exactly on an
+    // occurrence, skip to the next one so the scheduler never re-fires at the
+    // same instant.
+    if (now <= anchorEpoch)
+        return anchorEpoch;
+    const k = Math.floor((now - anchorEpoch) / interval) + 1;
+    return anchorEpoch + k * interval;
+}
+/** Validate the unified jitter knob: integer seconds 0..MAX_JITTER_SECONDS. */
+export function validateJitterSeconds(raw) {
+    if (typeof raw !== "number" || !Number.isSafeInteger(raw) || raw < 0 || raw > MAX_JITTER_SECONDS) {
+        throw new ProactiveInputError("invalid_trigger", "jitter_seconds must be an integer in 0..{max}.".replace("{max}", String(MAX_JITTER_SECONDS)));
+    }
+    return raw;
+}
+/** Validate the min-idle knob: integer seconds 0..MAX_MIN_IDLE_SECONDS (0 = off). */
+export function validateMinIdleSeconds(raw) {
+    if (typeof raw !== "number" || !Number.isSafeInteger(raw) || raw < 0 || raw > MAX_MIN_IDLE_SECONDS) {
+        throw new ProactiveInputError("invalid_trigger", "min_idle_seconds must be an integer in 0..{max}.".replace("{max}", String(MAX_MIN_IDLE_SECONDS)));
+    }
+    return raw;
+}
+/** One random delay in milliseconds for jitter_seconds; 0 when the knob is absent/zero. */
+export function jitterDelay(jitterSeconds, random = Math.random) {
+    if (jitterSeconds === undefined || jitterSeconds <= 0)
+        return 0;
+    return Math.floor(random() * jitterSeconds * 1000);
+}
+/**
+ * The next occurrence of an every alarm: the anchor-aligned grid instant plus
+ * a random delay drawn now. The grid itself never drifts (delays are applied
+ * to the fire time, not to the interval), and a miss is skipped, never
+ * re-fired (strictly after now). jitterSeconds 0 degenerates to the exact grid.
+ */
+export function nextJitteredOccurrence(anchorEpoch, everySeconds, now, jitterSeconds, random = Math.random) {
+    const scheduled = nextEveryOccurrence(anchorEpoch, everySeconds, now);
+    return scheduled + jitterDelay(jitterSeconds, random);
+}
+/**
+ * The next occurrence of an every alarm with drifting semantics:
+ * Advances from the last wake instant by everySeconds plus jitterDelay.
+ * If the resulting instant is already in the past (e.g. system sleep or prolonged
+ * wake execution), re-anchors to nowEpoch so the next occurrence is strictly in the future.
+ */
+export function nextDriftingOccurrence(wakeEpoch, everySeconds, nowEpoch, jitterSeconds, random = Math.random) {
+    if (!Number.isSafeInteger(everySeconds) || everySeconds < MIN_EVERY_SECONDS) {
+        throw new ProactiveInputError("frequency_too_high", "every_seconds must be a safe integer of at least {min} seconds.".replace("{min}", String(MIN_EVERY_SECONDS)));
+    }
+    const interval = everySeconds * 1000;
+    const delay = jitterDelay(jitterSeconds, random);
+    const scheduled = wakeEpoch + interval + delay;
+    if (scheduled > nowEpoch)
+        return scheduled;
+    return nowEpoch + interval + delay;
+}
+/** Whether the alarm target time is still in the future. */
+export function requireFuture(epoch, now) {
+    if (epoch <= now)
+        throw new ProactiveInputError("not_future", "The target must be in the future.");
+}
+export function isRecord(value) {
+    return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+export function toAlarmView(alarm, now) {
+    // File handles never fire, so they are never "overdue": their nextDueAt is
+    // a derived display value (the earliest child wake).
+    const overdue = alarm.status === "scheduled" && firesAlarm(alarm.type) && instantEpoch(alarm.nextDueAt) <= now;
+    const targetSource = targetSourceOf(alarm.target);
+    return {
+        id: alarm.id,
+        sessionId: alarm.ownerSessionId,
+        type: alarm.type,
+        targetMode: alarm.target.mode,
+        ...(targetSource !== undefined ? { targetSource } : {}),
+        ...("sessionId" in alarm.target && alarm.target.sessionId !== undefined ? { targetSessionId: alarm.target.sessionId } : {}),
+        ...("workspaceId" in alarm.target && alarm.target.workspaceId !== undefined ? { targetWorkspaceId: alarm.target.workspaceId } : {}),
+        ...("presetId" in alarm.target && alarm.target.presetId !== undefined ? { targetPresetId: alarm.target.presetId } : {}),
+        ...("provider" in alarm.target && alarm.target.provider !== undefined ? { targetProvider: alarm.target.provider } : {}),
+        ...("model" in alarm.target && alarm.target.model !== undefined ? { targetModel: alarm.target.model } : {}),
+        respectQuietHours: alarm.respectQuietHours,
+        prompt: alarm.prompt,
+        nextDueAt: alarm.nextDueAt,
+        state: overdue ? "overdue" : alarm.status,
+        deliveryMode: "host",
+        compaction: alarm.compaction ?? DEFAULT_COMPACTION,
+        ...(alarm.minIdleSeconds !== undefined && alarm.minIdleSeconds > 0 ? { minIdleSeconds: alarm.minIdleSeconds } : {}),
+        ...(alarm.type === "every" && "everySeconds" in alarm.trigger
+            ? { everySeconds: alarm.trigger["everySeconds"], ...(typeof alarm.trigger["jitterSeconds"] === "number" && alarm.trigger["jitterSeconds"] > 0 ? { jitterSeconds: alarm.trigger["jitterSeconds"] } : {}) }
+            : {}),
+        ...(alarm.type === "cron" && "expr" in alarm.trigger
+            ? { cron: alarm.trigger["expr"], ...(typeof alarm.trigger["jitterSeconds"] === "number" && alarm.trigger["jitterSeconds"] > 0 ? { jitterSeconds: alarm.trigger["jitterSeconds"] } : {}) }
+            : {}),
+        ...(alarm.type === "once" && "at" in alarm.trigger ? { at: alarm.trigger["at"] } : {}),
+        ...(alarm.timeZone !== undefined ? { timeZone: alarm.timeZone } : {}),
+        ...(alarm.declared !== undefined ? { declaredFile: alarm.declared.file, declaredEntry: alarm.declared.entry } : {}),
+        ...(alarm.type === "file" && "file" in alarm.trigger ? { scheduleFile: alarm.trigger["file"] } : {})
+    };
+}
+export function internalError() {
+    return { code: "internal_error", message: "The proactive operation failed." };
+}
+export function inputError(error) {
+    return error instanceof ProactiveInputError ? { code: error.code, message: error.message } : internalError();
+}
+export function isToolError(value) {
+    return isRecord(value) && typeof value["code"] === "string";
+}

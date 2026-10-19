@@ -1,0 +1,218 @@
+/**
+ * Wake-turn observer: after a wake turn settles, derive its decision from the
+ * committed session log so the budget and the persistent run record are
+ * grounded in durable evidence, not in the driver's assumptions.
+ *
+ * Analysis is log-slice based: the driver records the event index before
+ * follow-up, then scans the appended slice for the turn boundary, tool calls,
+ * and the final assistant message. The slice is anchored to the wake framing
+ * notice (user/message with source.kind=plugin) so a pending pre-wake turn is
+ * never misattributed. A settled turn with no visible chat text is
+ * "no_reply" (deep silence); compaction is explicit opt-in — ONLY a
+ * proactive_reclaim call marks the turn compactable (reclaimable). Everything
+ * else (implicit silence, any other tool's silence, failed turns) keeps the
+ * exchange on the model surface. Visible chat text is charged one budget unit.
+ */
+import { isRecord } from "./domain.js";
+import { FRAMING_MARKER, PROACTIVE_SOURCE_KIND } from "./framing.js";
+/**
+ * The proactive wake's own silence tool: calling it reclaims the turn
+ * (collapses the wake exchange off the model surface via compaction) and
+ * records an optional reason in the run history. This is the ONLY thing that
+ * triggers compaction — the observer deliberately knows nothing about any
+ * other plugin's tools (no name matching, no coupling).
+ */
+const PROACTIVE_RECLAIM_TOOL = "proactive_reclaim";
+/** Per-field summary cap for the run history (reasoning + reply are stored truncated). */
+export const RUN_SUMMARY_MAX_LENGTH = 200;
+/** Collapse one summary field to at most RUN_SUMMARY_MAX_LENGTH characters. */
+export function truncateSummary(text) {
+    const trimmed = text.trim();
+    if (trimmed.length <= RUN_SUMMARY_MAX_LENGTH)
+        return trimmed;
+    // Code-point slicing: avoids splitting a surrogate pair (e.g. emoji) mid-way.
+    return Array.from(trimmed).slice(0, RUN_SUMMARY_MAX_LENGTH).join("") + "…";
+}
+export function extractTextBlocks(data) {
+    const blocks = Array.isArray(data["blocks"]) ? data["blocks"] : undefined;
+    if (blocks !== undefined) {
+        const texts = [];
+        for (const block of blocks) {
+            if (typeof block === "object" && block !== null && block["type"] === "text") {
+                const text = block["text"];
+                if (typeof text === "string" && text.trim().length > 0)
+                    texts.push(text);
+            }
+        }
+        return texts;
+    }
+    if (typeof data["text"] === "string" && data["text"].trim().length > 0)
+        return [data["text"]];
+    const nested = data["message"];
+    if (isRecord(nested) && Array.isArray(nested["content"])) {
+        return extractTextBlocks({ blocks: nested["content"] });
+    }
+    return [];
+}
+/** Reasoning (thinking) block texts from one assistant/message event, same shapes as text. */
+export function extractReasoningBlocks(data) {
+    const blocks = Array.isArray(data["blocks"]) ? data["blocks"] : undefined;
+    if (blocks !== undefined) {
+        const texts = [];
+        for (const block of blocks) {
+            if (typeof block === "object" && block !== null && block["type"] === "reasoning") {
+                const text = block["text"];
+                if (typeof text === "string" && text.trim().length > 0)
+                    texts.push(text);
+            }
+        }
+        return texts;
+    }
+    const nested = data["message"];
+    if (isRecord(nested) && Array.isArray(nested["content"])) {
+        return extractReasoningBlocks({ blocks: nested["content"] });
+    }
+    return [];
+}
+/** The proactive_reclaim tool's reason argument from one tool/call event's JSON arguments field, truncated. */
+function extractSilenceReason(data) {
+    const raw = data["arguments"];
+    if (typeof raw !== "string" || raw.length === 0)
+        return undefined;
+    try {
+        const parsed = JSON.parse(raw);
+        if (!isRecord(parsed))
+            return undefined;
+        const reason = parsed["reason"];
+        if (typeof reason !== "string")
+            return undefined;
+        const trimmed = reason.trim();
+        return trimmed.length > 0 ? truncateSummary(trimmed) : undefined;
+    }
+    catch {
+        return undefined;
+    }
+}
+/** turn/end reason kinds that mean the wake turn did not settle normally. */
+const FAILURE_KINDS = new Set(["error", "aborted", "max-tokens"]);
+/**
+ * True when one session event is our wake framing notice. Anchors on the
+ * plugin source AND the framing marker so compaction tombstones (same plugin,
+ * different marker) are never mistaken for a fresh framing.
+ */
+export function isFramingNotice(event) {
+    if (event.type !== "user/message")
+        return false;
+    const source = isRecord(event.data["source"]) ? event.data["source"] : undefined;
+    if (source === undefined)
+        return false;
+    // v4 producer-owned kind is the live spelling; the legacy v3 wrapper
+    // ({kind:"plugin", plugin}) is still accepted so pre-migration logs and
+    // replayed fixtures keep anchoring.
+    const ours = source["kind"] === PROACTIVE_SOURCE_KIND
+        || (source["kind"] === "plugin" && source["plugin"] === "dsh-proactive");
+    if (!ours)
+        return false;
+    const blocks = Array.isArray(event.data["content"]) ? event.data["content"] : [];
+    const first = blocks[0];
+    return isRecord(first) && first["type"] === "text" && typeof first["text"] === "string" && first["text"].startsWith(FRAMING_MARKER);
+}
+/**
+ * Analyze the event slice that starts at startIndex (inclusive) and covers the
+ * wake turn. Returns a stable decision with the budget delta applied.
+ */
+export function analyzeWakeTurn(events, startIndex) {
+    const slice = events.slice(startIndex);
+    // Anchor on our framing notice when present: the wake turn is the turn that
+    // CLAIMED the framing — its turn/start precedes the framing (the agent loop
+    // appends turn/start before draining the inbox), and the turn ends at the
+    // FIRST turn/end after the framing. Skipping ahead to a later turn/start
+    // here would judge a raced user turn instead of the wake turn (mischarging
+    // the budget or, worse, authorizing compaction of a wake reply the user
+    // already saw). Without a notice (tests, replayed slices) fall back to the
+    // first turn boundary in the slice.
+    const framingAt = slice.findIndex(isFramingNotice);
+    let effective = slice;
+    if (framingAt >= 0) {
+        effective = slice.slice(framingAt);
+    }
+    else {
+        const firstTurnStart = slice.findIndex((event) => event.type === "turn/start");
+        if (firstTurnStart >= 0)
+            effective = slice.slice(firstTurnStart);
+    }
+    const turnEndIndex = effective.findIndex((event) => event.type === "turn/end");
+    const turnSegment = turnEndIndex >= 0 ? effective.slice(0, turnEndIndex + 1) : effective;
+    let hasText = false;
+    const textParts = [];
+    const reasoningParts = [];
+    const toolNames = [];
+    let noReplyReason;
+    let proactiveSilence = false;
+    for (const event of turnSegment) {
+        if (event.type === "assistant/message") {
+            const texts = extractTextBlocks(event.data);
+            if (texts.length > 0) {
+                hasText = true;
+                textParts.push(...texts);
+            }
+            const reasoning = extractReasoningBlocks(event.data);
+            if (reasoning.length > 0)
+                reasoningParts.push(...reasoning);
+        }
+        if (event.type === "tool/call") {
+            const name = typeof event.data["name"] === "string" ? event.data["name"] : "";
+            if (name.length > 0)
+                toolNames.push(name);
+            if (name === PROACTIVE_RECLAIM_TOOL) {
+                proactiveSilence = true;
+                if (noReplyReason === undefined)
+                    noReplyReason = extractSilenceReason(event.data);
+            }
+        }
+    }
+    const turnEnded = turnEndIndex >= 0;
+    const errorEnd = turnEnded && isErrorEnd(effective[turnEndIndex]?.data);
+    let decision;
+    let note;
+    let compactable = false;
+    if (hasText) {
+        decision = "reply";
+        // Reply turns are never compacted (the user already saw the text).
+    }
+    else if (!turnEnded || errorEnd) {
+        decision = "failed";
+        // Failed/abnormal turns keep their partial exchange on the surface:
+        // erasure requires the model's explicit reclaim assertion, which a failed
+        // turn never made. Failures are rare, visible in the run history, and the
+        // partial content may help the next attempt self-correct.
+        note = errorEnd ? "wake turn ended abnormally" : "wake turn did not settle cleanly";
+    }
+    else {
+        decision = "no_reply";
+        // EXPLICIT OPT-IN ONLY: the model must call proactive_reclaim to reclaim
+        // the turn. An implicit no-text turn (the model just ended with no output,
+        // or stayed silent after work via some other tool) keeps its exchange in
+        // context — nothing is erased without the model's assertion.
+        compactable = proactiveSilence;
+    }
+    return {
+        decision,
+        budgetDelta: decision === "reply" ? 1 : 0,
+        toolNames,
+        hasText,
+        compactable,
+        ...(reasoningParts.length > 0 ? { reasoningSummary: truncateSummary(reasoningParts.join("\n")) } : {}),
+        ...(textParts.length > 0 ? { replySummary: truncateSummary(textParts.join("\n")) } : {}),
+        ...(noReplyReason !== undefined ? { noReplyReason } : {}),
+        ...(note !== undefined ? { note } : {})
+    };
+}
+function isErrorEnd(data) {
+    // Real turn/end data is { turn, reason: TurnEndReason }; failure shapes are
+    // reason.kind 'error' | 'aborted' | 'max-tokens' (dsh-session types).
+    if (data === undefined || !isRecord(data["reason"]))
+        return false;
+    const kind = data["reason"]["kind"];
+    return typeof kind === "string" && FAILURE_KINDS.has(kind);
+}

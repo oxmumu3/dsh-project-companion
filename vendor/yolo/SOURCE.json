@@ -1,0 +1,106 @@
+{
+  "repository": "https://github.com/hanshanyike/dsh-yolo",
+  "version": "0.5.0",
+  "commit": "c87d70105f975d86c5c0f98f34fbce66657a6934",
+  "license": "MIT",
+  "licenseSha256": "977a68f384b80c0347b81f897da729d1ccba162afa81c9c21a91f2345eec7c62",
+  "compilation": {
+    "tool": "node:module.stripTypeScriptTypes",
+    "node": "v22.22.0",
+    "mode": "strip",
+    "rewrite": "Relative import/export suffix .ts becomes .js; upstream runtime logic otherwise unchanged."
+  },
+  "scope": "Selected library modules only; no storage service, catalog, global observers, model extraction, reminders or UI loaded.",
+  "files": [
+    {
+      "upstreamPath": "src/storage/db.ts",
+      "upstreamSha256": "fa8ada7e959a272d90182fbcd8bca6949abc8199a53e90456cda3cce53320a9b",
+      "runtimePath": "src/storage/db.js",
+      "runtimeSha256": "71ef932eb75629c5033eb7542d12e98292208d658db35d45039ac25be82c185b"
+    },
+    {
+      "upstreamPath": "src/storage/repository.ts",
+      "upstreamSha256": "e2de7509bdb959747ef7cfb29b5e8011366d9955aa5a349e2634da4625bc5fb7",
+      "runtimePath": "src/storage/repository.js",
+      "runtimeSha256": "d7c045c52e30b35c2ac05badfce3652793dba617eef29af5e6cb6413f1732198"
+    },
+    {
+      "upstreamPath": "src/storage/schema.sql",
+      "upstreamSha256": "71da651ffc60627c553553dfb2ca75a632d8b374a23a6eb507a612ec6faf35e4",
+      "runtimePath": "src/storage/schema.sql",
+      "runtimeSha256": "71da651ffc60627c553553dfb2ca75a632d8b374a23a6eb507a612ec6faf35e4"
+    },
+    {
+      "upstreamPath": "src/storage/types.ts",
+      "upstreamSha256": "9c7978e4ea11951448e7d88aa9fb6a0e45d2d3fd1f9b465b1b6307896a1f0b4b",
+      "runtimePath": "src/storage/types.js",
+      "runtimeSha256": "19e795f9552c93e5a7091d886c1506216cd9653fc04ebaa08ab8b1753d47fdbb"
+    },
+    {
+      "upstreamPath": "src/domain/types.ts",
+      "upstreamSha256": "d19d73c8af6e127439f753b0bafc236231a4f33f887bf4c9381ccb2860bceb52",
+      "runtimePath": "src/domain/types.js",
+      "runtimeSha256": "59c99b0b2079dbc9a3ee124df388a13551fd180e79f244adbc423aa5d83412f0"
+    },
+    {
+      "upstreamPath": "src/domain/scope.ts",
+      "upstreamSha256": "99338f5b2bedb66aabd4fd439202bbb8fb79ad3f38bf8c96041a37707c2c2813",
+      "runtimePath": "src/domain/scope.js",
+      "runtimeSha256": "4e0478699003cb49cd51966677f86dcf7066d05f6867e43c1f2a37ca20a45a91"
+    },
+    {
+      "upstreamPath": "src/shared/text.ts",
+      "upstreamSha256": "847fb12a0b79a64411247b41b92e35a2cdb6429fede8129d14523f38b2db8e7e",
+      "runtimePath": "src/shared/text.js",
+      "runtimeSha256": "13b649e7c4c2f7da65bae81df16e4f1f82768f662876f91af70a218b0ddcc8c0"
+    },
+    {
+      "upstreamPath": "src/shared/due.ts",
+      "upstreamSha256": "ff8314ed51002af7f07deb2bc05595d95af88a78407de967c28d47d39e042e13",
+      "runtimePath": "src/shared/due.js",
+      "runtimeSha256": "2111cdc2ca8638da45431a779178685e20d169a90e8b4def93bb342411bc870f"
+    },
+    {
+      "upstreamPath": "src/shared/todo-identity.ts",
+      "upstreamSha256": "b5785238d7ca5179d35059835292310b0abb61ba6a6f37cae2acfdab3eaae902",
+      "runtimePath": "src/shared/todo-identity.js",
+      "runtimeSha256": "d13b301aae1f3a9ec82c79363477f336c0bcb09f6f77606e2d833ac678a1344e"
+    },
+    {
+      "upstreamPath": "src/shared/todo-similarity.ts",
+      "upstreamSha256": "42e64c5d686f136e872220489976a38c9d463336a8a7028701ef741f330a20d1",
+      "runtimePath": "src/shared/todo-similarity.js",
+      "runtimeSha256": "76f968854621b0dd2805638a65fc8d77965f79d843aa58e66420109c161e9a9b"
+    },
+    {
+      "upstreamPath": "src/shared/todo-range.ts",
+      "upstreamSha256": "ec7d5a9b85345ca015228e4450c0e8b30a4283ef95b61fc684c974ec027a4a2f",
+      "runtimePath": "src/shared/todo-range.js",
+      "runtimeSha256": "7bd6f2114baa9627381014590fbcc2cd870efb723ff9d1470ed15b756af19f7d"
+    },
+    {
+      "upstreamPath": "src/shared/dashboard.ts",
+      "upstreamSha256": "b80b562c186b1259dcb216e69e7819e2b8a49f588d06c1cebe66a4f78e678db3",
+      "runtimePath": "src/shared/dashboard.js",
+      "runtimeSha256": "945bbbf19fb6cddafdb81c4a2379a2a1751024a58c38e55d0907a424de0fe32e"
+    },
+    {
+      "upstreamPath": "src/shared/history.ts",
+      "upstreamSha256": "2e726b54635aa8f45a28755aad8cc105d47bf2e0f4efe59460223fddd74c2883",
+      "runtimePath": "src/shared/history.js",
+      "runtimeSha256": "ddcf8c580672fa2a10885f13e2f235392af70b296b46cf9dd609606346edf258"
+    },
+    {
+      "upstreamPath": "src/contracts/history.ts",
+      "upstreamSha256": "48a38032ddcb224cb592b9e80ec8efe9fd7b6b8b06c88c459e497cdc9b310f12",
+      "runtimePath": "src/contracts/history.js",
+      "runtimeSha256": "6ab264ea76b00fa04ce650c3ae35520e58e1ec0832e58221507fec2b442ab278"
+    },
+    {
+      "upstreamPath": "src/attention/index.ts",
+      "upstreamSha256": "15c917bb0e5a02e9ae356f97555ff129059a1d1849a705c2663d8bd2435c05f9",
+      "runtimePath": "src/attention/index.js",
+      "runtimeSha256": "4191b43208bc156d7c28e11c06f3943d2a6a2efbeba4af041dcf0b9a4504f337"
+    }
+  ]
+}

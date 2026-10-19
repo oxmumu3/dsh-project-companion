@@ -1,0 +1,11 @@
+node_modules/
+/node_modules
+dist/
+artifacts/
+*.tgz
+.DS_Store
+*.log
+.dsh/
+
+# Local project context and agent checkpoints
+.agent/

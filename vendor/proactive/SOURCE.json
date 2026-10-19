@@ -1,0 +1,32 @@
+{
+  "project": "dsh-proactive",
+  "version": "0.3.1",
+  "repository": "https://github.com/john-walks-slow/dsh-proactive",
+  "sourceCommit": "7a959839f6486aa521e6024a67425b33f098aa0b",
+  "distribution": "https://registry.npmjs.org/dsh-proactive/-/dsh-proactive-0.3.1.tgz",
+  "distributionSha256": "35e2bc964dd089184a9a09f7107312e1c5535a6caefa0ef5e7dccf3e94052ad7",
+  "distributionIntegrity": "sha512-nl/AXKhXm3OJKELFotcs0xDyDhHk4DYevBI0ifzBnR1qoOHd405xIPvkXcb2HuZEOGOoSpaWF2EgPFDRnpmn6A==",
+  "license": "MIT",
+  "copyright": "Copyright (c) 2026 dsh-proactive contributors",
+  "selection": "Unmodified npm-compiled host library dependency closure for ProactiveStore, ProactiveScheduler, WakeDriver and alarm validation. Excludes plugin index, global tools, panel, settings and schedule-file sync. Only imports are loaded; dynamic workspace/preset target ports are not supplied.",
+  "build": "Upstream npm compiled ESM JavaScript, verified npm sha512 integrity; no local compilation or source modifications. Distribution is pinned independently of the matching research source commit; npm registry does not publish gitHead.",
+  "runtimeExternalImports": [
+    "@deepseek-ai/dsh-agent",
+    "@deepseek-ai/dsh-llm",
+    "@deepseek-ai/dsh-session",
+    "Node builtin modules"
+  ],
+  "files": {
+    "lib/alarm-factory.js": "2df50eaa4a0913f49be60de6b40a2daeb6bce68bf7736cd9c19728fe5c21fbda",
+    "lib/compact.js": "0b99e4644a7caeb1624770d4af582639bd9518d85f85247676ac1d7eb17f473f",
+    "lib/config.js": "469fa19cd913ca943d0d4590b5ea9679ee84a3bd0fa9879ece5d036ca073a20f",
+    "lib/cron.js": "c94c18906d35b4fbd5d8a0b5d724a7e84a88e804110b1ffa8b5ef7c2003958b4",
+    "lib/domain.js": "8af7ee50c8bf528dbfe74c15ffaae50a1688fa917bc3368855467d2b8c47608a",
+    "lib/framing.js": "27d2303673ac851f213f2ad13375a5b9abb0390b7e8829eacfd6c9711c2eeb42",
+    "lib/observer.js": "15de1c6ef4e21320e6e3b6a68aafd28deef8ee1aafb3fedafd4f2ccb74117be8",
+    "lib/scheduler.js": "5806724d6b959a568ff8edf35fe040a1a3bb0be10b1d3b34c18dce7fa041f12c",
+    "lib/store.js": "e02270111660edd3024ff040110db99e9384eb39424a0f0dbc453051c6449bd8",
+    "lib/wake.js": "7a010d1db2ce8f3e68edbf42ec319e2e2fc87387bb6344f2a40a5cf7e9bc8d20",
+    "lib/workspace.js": "2c54c66a728b1aba5371a3ee81c9263808e2ad200d77f0411604b90c54a6e6fa"
+  }
+}

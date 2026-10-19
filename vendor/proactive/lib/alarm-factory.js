@@ -1,0 +1,388 @@
+/**
+ * Shared alarm factory: the single path that turns a validated create request
+ * into a stored Alarm. Both the model tools (tools.ts) and the GUI panel
+ * (panel/service.ts) drive it, so a nuance fixed once cannot drift between
+ * the two surfaces.
+ *
+ * v2 (260907-proactive-alarm-v2): one selector (at | after_seconds |
+ * every_seconds | cron) derives the alarm type once/every/cron; a unified
+ * jitter_seconds applies a random delay after every scheduled instant; the
+ * wake target is decoupled from the creator via target_mode/target_session_id.
+ *
+ * 261009: the fifth selector `schedule_file` derives the fourth alarm type,
+ * "file" — a schedule-file HANDLE that never fires itself (domain.firesAlarm)
+ * and whose child alarms are materialized by schedule-sync.ts. Path
+ * canonicalization and same-file uniqueness live in schedule-file.ts (they
+ * need the store), so the validation here only checks the path's shape.
+ */
+import { isAbsolute } from "node:path";
+import { canonicalizeTimeZone, isRecord, isValidPresetId, isValidSessionId, isValidWorkspaceId, jitterDelay, nextEveryOccurrence, requireFuture, resolveAtInput, validateJitterSeconds, validateMinIdleSeconds, validatePrompt, inputError, COMPACTION_MODES, DEFAULT_COMPACTION, MIN_EVERY_SECONDS } from "./domain.js";
+import { parseCron, nextCronOccurrence } from "./cron.js";
+/** 10 years in seconds — a safe ceiling so epoch math can never escape the Date range. */
+const MAX_DELAY_SECONDS = 10 * 365 * 86400;
+/** Upper bound for a schedule_file path (mirrors the old glob pattern cap). */
+export const MAX_SCHEDULE_FILE_LENGTH = 512;
+function allocateId(prefix) {
+    return prefix + "_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+}
+/**
+ * Closed validation of the open parameter root shared by proactive_set and the
+ * panel create action. Panels keep a payload comment on the same vocabulary so
+ * the model tools and the GUI accept exactly one dialect.
+ *
+ * `defaultTargetSessionId` is the creator session; it becomes the wake target
+ * when target_mode is resume/fork and no target_session_id was given (v1
+ * behaviour — the alarm wakes its creator).
+ */
+export function validateCreateArgs(args, defaultTargetSessionId) {
+    const allowed = new Set([
+        "prompt", "at", "after_seconds", "every_seconds", "cron", "schedule_file", "jitter_seconds",
+        "time_zone", "respect_quiet_hours", "target_mode", "target_source",
+        "target_session_id", "target_workspace_id", "target_preset_id",
+        "target_provider", "target_model", "compaction", "min_idle_seconds"
+    ]);
+    for (const key of Object.keys(args)) {
+        if (!allowed.has(key))
+            return { code: "invalid_trigger", message: "the alarm spec accepts only prompt, at, after_seconds, every_seconds, cron, schedule_file, jitter_seconds, time_zone, respect_quiet_hours, target_mode, target_source, target_session_id, target_workspace_id, target_preset_id, target_provider, target_model, compaction, min_idle_seconds." };
+    }
+    const selectors = Number(args["at"] !== undefined) + Number(args["after_seconds"] !== undefined) + Number(args["every_seconds"] !== undefined) + Number(args["cron"] !== undefined) + Number(args["schedule_file"] !== undefined);
+    if (selectors !== 1)
+        return { code: "invalid_trigger", message: "the alarm spec requires exactly one of at, after_seconds, every_seconds, cron, or schedule_file." };
+    let jitterSeconds;
+    if (args["jitter_seconds"] !== undefined) {
+        try {
+            jitterSeconds = validateJitterSeconds(args["jitter_seconds"]);
+        }
+        catch (error) {
+            return inputError(error);
+        }
+    }
+    // The prompt is the user's instruction on every alarm; there is no
+    // model-generated "heartbeat" variant anymore, so it is always required.
+    let prompt;
+    try {
+        prompt = validatePrompt(args["prompt"]);
+    }
+    catch (error) {
+        return inputError(error);
+    }
+    let minIdleSeconds;
+    if (args["min_idle_seconds"] !== undefined) {
+        try {
+            minIdleSeconds = validateMinIdleSeconds(args["min_idle_seconds"]);
+        }
+        catch (error) {
+            return inputError(error);
+        }
+    }
+    let respectQuietHours = false;
+    if (args["respect_quiet_hours"] !== undefined) {
+        if (typeof args["respect_quiet_hours"] !== "boolean")
+            return { code: "invalid_trigger", message: "respect_quiet_hours must be a boolean." };
+        respectQuietHours = args["respect_quiet_hours"];
+    }
+    let compaction = DEFAULT_COMPACTION;
+    if (args["compaction"] !== undefined) {
+        if (typeof args["compaction"] !== "string" || !COMPACTION_MODES.includes(args["compaction"])) {
+            return { code: "invalid_trigger", message: "compaction must be one of off, minimal, aggressive." };
+        }
+        compaction = args["compaction"];
+    }
+    let mode = "resume";
+    if (args["target_mode"] !== undefined) {
+        if (typeof args["target_mode"] !== "string" || !["resume", "fork", "new", "workspace"].includes(args["target_mode"])) {
+            return { code: "invalid_trigger", message: "target_mode must be one of resume, fork, new, workspace." };
+        }
+        mode = args["target_mode"];
+    }
+    let target;
+    if (mode === "new") {
+        if (args["target_session_id"] !== undefined) {
+            return { code: "invalid_trigger", message: "target_session_id must be omitted when target_mode is new." };
+        }
+        if (args["target_source"] !== undefined) {
+            return { code: "invalid_trigger", message: "target_source must be omitted when target_mode is new." };
+        }
+        let workspaceId;
+        if (args["target_workspace_id"] !== undefined) {
+            if (typeof args["target_workspace_id"] !== "string" || !isValidWorkspaceId(args["target_workspace_id"])) {
+                return { code: "invalid_trigger", message: "target_workspace_id must be a valid workspace registry id (uuid)." };
+            }
+            workspaceId = args["target_workspace_id"];
+        }
+        let presetId;
+        if (args["target_preset_id"] !== undefined) {
+            if (typeof args["target_preset_id"] !== "string" || !isValidPresetId(args["target_preset_id"])) {
+                return { code: "invalid_trigger", message: "target_preset_id must be a valid agent preset id." };
+            }
+            presetId = args["target_preset_id"];
+        }
+        let provider;
+        if (args["target_provider"] !== undefined) {
+            if (typeof args["target_provider"] !== "string" || args["target_provider"].trim() === "") {
+                return { code: "invalid_trigger", message: "target_provider must be a non-empty string." };
+            }
+            provider = args["target_provider"].trim();
+        }
+        let model;
+        if (args["target_model"] !== undefined) {
+            if (typeof args["target_model"] !== "string" || args["target_model"].trim() === "") {
+                return { code: "invalid_trigger", message: "target_model must be a non-empty string." };
+            }
+            model = args["target_model"].trim();
+        }
+        target = {
+            mode: "new",
+            ...(workspaceId !== undefined ? { workspaceId } : {}),
+            ...(presetId !== undefined ? { presetId } : {}),
+            ...(provider !== undefined ? { provider } : {}),
+            ...(model !== undefined ? { model } : {})
+        };
+    }
+    else if (mode === "workspace") {
+        // Legacy v2 spelling of target_mode "workspace": accepted verbatim but
+        // NORMALIZED to the v3 resume+workspace shape, so stored data converges
+        // on one dialect (only pre-v3 records still carry mode "workspace").
+        if (args["target_session_id"] !== undefined) {
+            return { code: "invalid_trigger", message: "target_session_id must be omitted when target_mode is workspace." };
+        }
+        if (args["target_source"] !== undefined) {
+            return { code: "invalid_trigger", message: "target_source must be omitted when target_mode is workspace (the workspace spelling already names the source)." };
+        }
+        if (args["target_preset_id"] !== undefined) {
+            return { code: "invalid_trigger", message: "target_preset_id is not valid when target_mode is workspace." };
+        }
+        if (args["target_provider"] !== undefined || args["target_model"] !== undefined) {
+            return { code: "invalid_trigger", message: "target_provider/target_model is only valid when target_mode is new." };
+        }
+        if (typeof args["target_workspace_id"] !== "string" || !isValidWorkspaceId(args["target_workspace_id"])) {
+            return { code: "invalid_trigger", message: "target_mode workspace requires a valid target_workspace_id." };
+        }
+        target = { mode: "resume", sourceType: "workspace", workspaceId: args["target_workspace_id"] };
+    }
+    else {
+        // mode is "resume" | "fork"
+        if (args["target_provider"] !== undefined || args["target_model"] !== undefined) {
+            return { code: "invalid_trigger", message: "target_provider/target_model is only valid when target_mode is new." };
+        }
+        let source;
+        if (args["target_source"] !== undefined) {
+            if (typeof args["target_source"] !== "string" || !["session", "workspace", "preset"].includes(args["target_source"])) {
+                return { code: "invalid_trigger", message: "target_source must be one of session, workspace, preset." };
+            }
+            source = args["target_source"];
+        }
+        else {
+            // Infer source from provided arguments
+            if (args["target_workspace_id"] !== undefined && args["target_preset_id"] === undefined && args["target_session_id"] === undefined) {
+                source = "workspace";
+            }
+            else if (args["target_preset_id"] !== undefined && args["target_workspace_id"] === undefined && args["target_session_id"] === undefined) {
+                source = "preset";
+            }
+            else {
+                source = "session";
+            }
+        }
+        if (source === "workspace") {
+            if (args["target_session_id"] !== undefined) {
+                return { code: "invalid_trigger", message: "target_session_id must be omitted when target_source is workspace." };
+            }
+            if (args["target_preset_id"] !== undefined) {
+                return { code: "invalid_trigger", message: "target_preset_id is not valid when target_source is workspace." };
+            }
+            if (typeof args["target_workspace_id"] !== "string" || !isValidWorkspaceId(args["target_workspace_id"])) {
+                return { code: "invalid_trigger", message: "target_source workspace requires a valid target_workspace_id." };
+            }
+            target = { mode, sourceType: "workspace", workspaceId: args["target_workspace_id"] };
+        }
+        else if (source === "preset") {
+            if (args["target_session_id"] !== undefined) {
+                return { code: "invalid_trigger", message: "target_session_id must be omitted when target_source is preset." };
+            }
+            if (args["target_workspace_id"] !== undefined) {
+                return { code: "invalid_trigger", message: "target_workspace_id is not valid when target_source is preset." };
+            }
+            if (typeof args["target_preset_id"] !== "string" || !isValidPresetId(args["target_preset_id"])) {
+                return { code: "invalid_trigger", message: "target_source preset requires a valid target_preset_id." };
+            }
+            target = { mode, sourceType: "preset", presetId: args["target_preset_id"] };
+        }
+        else {
+            // source is "session"
+            if (args["target_workspace_id"] !== undefined) {
+                return { code: "invalid_trigger", message: "target_workspace_id is only valid when target_source is workspace (or target_mode is new/workspace)." };
+            }
+            if (args["target_preset_id"] !== undefined) {
+                return { code: "invalid_trigger", message: "target_preset_id is not valid when target_source is session." };
+            }
+            const sessionId = typeof args["target_session_id"] === "string" && args["target_session_id"].length > 0 ? args["target_session_id"] : defaultTargetSessionId;
+            if (!isValidSessionId(sessionId))
+                return { code: "invalid_trigger", message: "target_session_id must be a valid dsh session id." };
+            target = { mode, sourceType: "session", sessionId };
+        }
+    }
+    const timeZone = typeof args["time_zone"] === "string" && args["time_zone"].length > 0 ? args["time_zone"] : undefined;
+    // Validate the zone up front regardless of selector: every/after must not let
+    // a bogus zone slip into a stored alarm (only cron used to catch it).
+    if (timeZone !== undefined) {
+        try {
+            canonicalizeTimeZone(timeZone);
+        }
+        catch (error) {
+            return inputError(error);
+        }
+    }
+    if (args["schedule_file"] !== undefined) {
+        const raw = args["schedule_file"];
+        if (typeof raw !== "string" || raw.length === 0 || raw.length > MAX_SCHEDULE_FILE_LENGTH) {
+            return { code: "invalid_trigger", message: "schedule_file must be a non-empty absolute path of at most " + MAX_SCHEDULE_FILE_LENGTH + " characters." };
+        }
+        if (!isAbsolute(raw) || raw.includes("\0")) {
+            return { code: "invalid_trigger", message: "schedule_file must be an absolute path (the file itself need not exist yet)." };
+        }
+        if (/[*?]/.test(raw)) {
+            return { code: "invalid_trigger", message: "schedule_file accepts exactly ONE literal file path — glob patterns (* and ?) are not supported; create one alarm per file." };
+        }
+        return { prompt, kind: "file", scheduleFile: raw, ...(jitterSeconds !== undefined ? { jitterSeconds } : {}), respectQuietHours, compaction, target, ...(minIdleSeconds !== undefined && minIdleSeconds > 0 ? { minIdleSeconds } : {}), ...(timeZone !== undefined ? { timeZone } : {}) };
+    }
+    if (args["after_seconds"] !== undefined) {
+        const value = args["after_seconds"];
+        if (typeof value !== "number" || !Number.isSafeInteger(value) || value <= 0) {
+            return { code: "invalid_trigger", message: "after_seconds must be a positive safe integer." };
+        }
+        if (value > MAX_DELAY_SECONDS) {
+            return { code: "invalid_trigger", message: "after_seconds must not exceed " + MAX_DELAY_SECONDS + "." };
+        }
+        return { prompt, kind: "after", afterSeconds: value, ...(jitterSeconds !== undefined ? { jitterSeconds } : {}), respectQuietHours, compaction, target, ...(minIdleSeconds !== undefined && minIdleSeconds > 0 ? { minIdleSeconds } : {}), ...(timeZone !== undefined ? { timeZone } : {}) };
+    }
+    if (args["every_seconds"] !== undefined) {
+        const value = args["every_seconds"];
+        if (typeof value !== "number" || !Number.isSafeInteger(value)) {
+            return { code: "invalid_trigger", message: "every_seconds must be a safe integer." };
+        }
+        if (value > MAX_DELAY_SECONDS) {
+            return { code: "invalid_trigger", message: "every_seconds must not exceed " + MAX_DELAY_SECONDS + "." };
+        }
+        try {
+            nextEveryOccurrence(0, value, 1); // validates the floor; result unused
+        }
+        catch (error) {
+            return inputError(error);
+        }
+        if (jitterSeconds !== undefined && jitterSeconds > value) {
+            return { code: "invalid_trigger", message: "jitter_seconds must not exceed every_seconds (" + value + ")." };
+        }
+        return { prompt, kind: "every", everySeconds: value, ...(jitterSeconds !== undefined ? { jitterSeconds } : {}), respectQuietHours, compaction, target, ...(minIdleSeconds !== undefined && minIdleSeconds > 0 ? { minIdleSeconds } : {}), ...(timeZone !== undefined ? { timeZone } : {}) };
+    }
+    if (args["cron"] !== undefined) {
+        if (typeof args["cron"] !== "string")
+            return { code: "invalid_trigger", message: "cron must be a five-field expression string." };
+        try {
+            parseCron(args["cron"]);
+        }
+        catch (error) {
+            return inputError(error);
+        }
+        const zone = timeZone ?? "UTC";
+        try {
+            canonicalizeTimeZone(zone);
+            const t1 = nextCronOccurrence(args["cron"], zone, 0);
+            const t2 = nextCronOccurrence(args["cron"], zone, t1);
+            if (t2 - t1 < MIN_EVERY_SECONDS * 1000) {
+                return { code: "frequency_too_high", message: "cron occurrences must be at least " + MIN_EVERY_SECONDS + " seconds apart." };
+            }
+        }
+        catch (error) {
+            return inputError(error);
+        }
+        return { prompt, kind: "cron", cron: args["cron"], ...(jitterSeconds !== undefined ? { jitterSeconds } : {}), respectQuietHours, compaction, target, ...(minIdleSeconds !== undefined && minIdleSeconds > 0 ? { minIdleSeconds } : {}), ...(timeZone !== undefined ? { timeZone } : {}) };
+    }
+    return { prompt, kind: "at", at: args["at"], ...(jitterSeconds !== undefined ? { jitterSeconds } : {}), respectQuietHours, compaction, target, ...(minIdleSeconds !== undefined && minIdleSeconds > 0 ? { minIdleSeconds } : {}), ...(timeZone !== undefined ? { timeZone } : {}) };
+}
+/**
+ * Resolve the canonical trigger + nextDueAt for a validated create request.
+ * jitter_seconds is drawn ONCE here and baked into nextDueAt, so the scheduler
+ * itself never waits: the delay is part of the plan, not of the loop.
+ */
+export function buildAlarm(ownerSessionId, spec, nowStart, random = Math.random) {
+    const stamp = new Date(nowStart).toISOString();
+    let timeZone = spec.timeZone ?? "UTC";
+    let type;
+    let trigger;
+    let epoch;
+    if (spec.kind === "file") {
+        // The handle's nextDueAt is a derived display value (the earliest child
+        // wake); schedule-sync rewrites it, and nothing ever fires on it.
+        type = "file";
+        epoch = nowStart;
+        trigger = { file: spec.scheduleFile, ...(spec.jitterSeconds !== undefined ? { jitterSeconds: spec.jitterSeconds } : {}) };
+    }
+    else if (spec.kind === "after") {
+        type = "once";
+        epoch = nowStart + spec.afterSeconds * 1000;
+        trigger = { at: new Date(epoch).toISOString() };
+    }
+    else if (spec.kind === "every") {
+        type = "every";
+        epoch = nowStart + spec.everySeconds * 1000;
+        trigger = {
+            everySeconds: spec.everySeconds,
+            anchor: stamp,
+            ...(spec.jitterSeconds !== undefined ? { jitterSeconds: spec.jitterSeconds } : {})
+        };
+    }
+    else if (spec.kind === "cron") {
+        type = "cron";
+        try {
+            epoch = nextCronOccurrence(spec.cron, timeZone, nowStart);
+        }
+        catch (error) {
+            return inputError(error);
+        }
+        trigger = {
+            expr: spec.cron,
+            ...(spec.jitterSeconds !== undefined ? { jitterSeconds: spec.jitterSeconds } : {})
+        };
+    }
+    else {
+        if (typeof spec.at !== "string" && !isRecord(spec.at)) {
+            return { code: "invalid_trigger", message: "at must be a strict RFC 3339 string or a local date/time object." };
+        }
+        try {
+            const resolved = resolveAtInput(spec.at);
+            requireFuture(resolved.epoch, nowStart);
+            type = "once";
+            epoch = resolved.epoch;
+            trigger = { at: new Date(epoch).toISOString() };
+            // A local at object carries an explicit zone; reflect it when the caller
+            // did not pass top-level time_zone (string instants are self-contained).
+            if (spec.timeZone === undefined)
+                timeZone = resolved.timeZone;
+        }
+        catch (error) {
+            return inputError(error);
+        }
+    }
+    const delayed = epoch + jitterDelay(spec.jitterSeconds, random);
+    return {
+        alarm: {
+            id: allocateId("alarm"),
+            ownerSessionId,
+            target: spec.target,
+            type,
+            trigger,
+            prompt: spec.prompt,
+            respectQuietHours: spec.respectQuietHours,
+            compaction: spec.compaction,
+            ...(spec.minIdleSeconds !== undefined && spec.minIdleSeconds > 0 ? { minIdleSeconds: spec.minIdleSeconds } : {}),
+            timeZone,
+            status: "scheduled",
+            nextDueAt: new Date(delayed).toISOString(),
+            createdAt: stamp,
+            updatedAt: stamp,
+            runCount: 0,
+            lastRunAt: null
+        }
+    };
+}
