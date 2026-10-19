@@ -32,14 +32,19 @@ function fixture(options = {}) {
   return { auth, saved, requests, config, now: (value) => { now = value; }, set: (patch) => Object.assign(config, patch) };
 }
 
-test('native Config exposes exactly five live fields and four write-only secret roles', () => {
+test('native Config keeps five live credential fields separate from normal Dot appearance', () => {
   requireModules();
   const schema = configModule.Config;
-  assert.deepEqual(Object.keys(schema.dict).sort(), Object.keys(initial()).sort());
-  for (const [key, value] of Object.entries(schema.dict)) {
+  assert.deepEqual(Object.keys(schema.dict).sort(), [...Object.keys(initial()),'dotAppearance'].sort());
+  for (const key of Object.keys(initial())) {
+    const value=schema.dict[key];
     assert.equal(value.meta.volatile, true);
     assert.equal(value.meta.role, key === 'googleClientId' ? undefined : 'secret');
   }
+  assert.equal(schema.dict.dotAppearance.meta.default,'native');
+  assert.notEqual(schema.dict.dotAppearance.meta.role,'secret');
+  assert.equal(schema.dict.dotAppearance.meta.volatile,true,'changing only appearance must not restart the running backend');
+  assert.deepEqual(configModule.readContextConfig({...initial(),dotAppearance:'dot'}),initial());
   const refs = Object.fromEntries(Object.entries(initial()).map(([key, value]) => [key, { get: () => value }]));
   assert.deepEqual(configModule.readContextConfig(refs), initial());
   assert.deepEqual(Object.keys(configModule.readContextConfig({ ...initial(), unrelated: 'ignored' })).sort(), Object.keys(initial()).sort());

@@ -2,6 +2,7 @@ import {constants} from 'node:fs';
 import {lstat,mkdir,open,realpath} from 'node:fs/promises';
 import {isAbsolute,join,resolve,sep} from 'node:path';
 import {createHash} from 'node:crypto';
+import {pathToFileURL} from 'node:url';
 import {DatabaseSync} from 'node:sqlite';
 import {safeProjectRoot} from './sources.js';
 import {openDb,getMeta,setMeta,withTransaction} from '../vendor/yolo/src/storage/db.js';
@@ -114,6 +115,88 @@ export function createProjectMemory({clock=()=>new Date(),authorizeRoot=async()=
     }catch(error){db?.close();throw error;}
     finally{await reserved?.close();}
   }
+  async function filesFingerprint(root){
+    const info=await paths(root,false);if(!info?.stat)throw new Error('Memory file changed while fingerprinting');
+    const result=[];
+    for(const suffix of ['','-wal','-shm','-journal']){
+      const path=info.path+suffix,initial=await maybeStat(path);if(!initial){result.push({suffix,missing:true});continue;}
+      fileSafety(initial);let file;
+      try{
+        file=await open(path,constants.O_RDONLY|constants.O_NOFOLLOW|constants.O_NONBLOCK);
+        const stat=await file.stat();fileSafety(stat);
+        if(!sameFile(initial,stat)||stat.size>64*1024*1024)throw new Error('Memory fingerprint unavailable');
+        const hash=createHash('sha256'),buffer=Buffer.alloc(64*1024);let position=0;
+        while(position<stat.size){const {bytesRead}=await file.read(buffer,0,Math.min(buffer.length,stat.size-position),position);if(!bytesRead)throw new Error('Memory file changed while fingerprinting');hash.update(buffer.subarray(0,bytesRead));position+=bytesRead;}
+        const after=await file.stat(),current=await maybeStat(path);
+        if(!current||!sameFile(stat,current)||!sameFile(stat,after)||stat.size!==after.size||stat.mtimeMs!==after.mtimeMs||stat.ctimeMs!==after.ctimeMs)throw new Error('Memory file changed while fingerprinting');
+        fileSafety(current);
+        result.push({suffix,dev:stat.dev,ino:stat.ino,size:stat.size,mtimeMs:stat.mtimeMs,ctimeMs:stat.ctimeMs,hash:hash.digest('hex')});
+      }finally{await file?.close();}
+    }
+    await paths(root,false);return result;
+  }
+  async function savedProjection(root,handle,now){
+    if(!handle)return projection(null,now);
+    let before,owned=false;
+    try{before=await filesFingerprint(root);owned=getMeta(handle.db,'dot_memory_owner')===OWNER&&getMeta(handle.db,'dot_memory_root')===root;}catch{}
+    const result=projection(handle,now);handle.inspection=null;
+    if(before&&owned){
+      try{
+        const after=await filesFingerprint(root);
+        // Ordinary read/remember may update SQLite's shared read marker. Data
+        // files must stay stable around the projection; save its final marker.
+        const data=rows=>JSON.stringify(rows.filter(row=>row.suffix!=='-shm'));
+        if(data(before)===data(after))handle.inspection={fingerprint:JSON.stringify(after),projection:structuredClone(result)};
+      }catch{}
+    }
+    // An unavailable inspection cache must not change read/remember behavior.
+    return result;
+  }
+  async function inspect(root){
+    const selected=await selectedRoot(root);let info=await paths(selected,false);
+    const cached=handles.get(selected);let reserved,db;
+    const noSidecars=async()=>{
+      for(const suffix of ['-wal','-shm','-journal'])if(await maybeStat(info.path+suffix))throw new Error('Active SQLite sidecar requires an existing validated handle for read-only inspection');
+    };
+    try{
+      if(!info?.stat){
+        if(cached)throw new Error('Project memory path changed while its handle was open');
+        const result=projection(null,clockDate(clock));await selectedRoot(root);return result;
+      }
+      reserved=await open(info.path,constants.O_RDONLY|constants.O_NOFOLLOW|constants.O_NONBLOCK);
+      const stat=await reserved.stat();fileSafety(stat);
+      info=await paths(selected,false);
+      if(!info?.stat||!sameFile(stat,info.stat)||cached&&!sameFile(cached.stat,info.stat))throw new Error('Memory file changed during inspection');
+      let result;
+      if(cached){
+        if(!cached.inspection)throw new Error('Safe memory inspection snapshot unavailable');
+        result=structuredClone(cached.inspection.projection);
+      }else{
+        // Plain readOnly SQLite still creates WAL/SHM files and updates read
+        // markers. Immutable reads avoid those writes, but ignore pending WAL.
+        // Refuse that cold-store case instead of presenting stale memory.
+        await noSidecars();
+        db=new DatabaseSync(`${pathToFileURL(info.path).href}?mode=ro&immutable=1`,{readOnly:true});
+        if(getMeta(db,'dot_memory_owner')!==OWNER||getMeta(db,'dot_memory_root')!==selected)throw new Error('Foreign project memory owner rejected');
+        result=projection({db,scope:computeScopeKey(selected)},clockDate(clock));
+      }
+      // Cached inspection only compares ordinary file reads. It never queries
+      // the live SQLite connection, which could write a WAL read marker.
+      await selectedRoot(root);
+      const after=await paths(selected,false);
+      if(!after?.stat||!sameFile(stat,after.stat))throw new Error('Memory path changed while inspecting');
+      if(cached){
+        if(JSON.stringify(await filesFingerprint(selected))!==cached.inspection.fingerprint)throw new Error('Memory files changed since the safe inspection snapshot');
+      }else{
+        if(stat.size!==after.stat.size||stat.mtimeMs!==after.stat.mtimeMs||stat.ctimeMs!==after.stat.ctimeMs)throw new Error('Memory file changed while inspecting');
+        await noSidecars();
+      }
+      return result;
+    }finally{
+      db?.close();
+      await reserved?.close();
+    }
+  }
   function storedEntries(handle){
     const entries=[];
     for(const row of listEvents(handle.db,handle.scope,110)){
@@ -139,7 +222,8 @@ export function createProjectMemory({clock=()=>new Date(),authorizeRoot=async()=
     return {goals,entries,changes,text:lines.join('\n')};
   }
   return {
-    read({root,sessionId}={}){return enqueue(async()=>{session(sessionId);const selected=await selectedRoot(root);return projection(await database(selected,false),clockDate(clock));});},
+    inspect({root,sessionId}={}){return enqueue(async()=>{session(sessionId);return inspect(root);});},
+    read({root,sessionId}={}){return enqueue(async()=>{session(sessionId);const selected=await selectedRoot(root);return savedProjection(selected,await database(selected,false),clockDate(clock));});},
     remember({root,sessionId,kind,text,source}={}){return enqueue(async()=>{
       session(sessionId);if(!KINDS.has(kind))throw new Error('Invalid project memory kind');
       text=boundedString(text,2000,'memory text');source=provenance(source,sessionId);
@@ -155,7 +239,7 @@ export function createProjectMemory({clock=()=>new Date(),authorizeRoot=async()=
           if(!keep)handle.db.prepare('DELETE FROM events WHERE id=? AND scope_key=?').run(row.id,handle.scope);
         }
       });
-      return projection(handle,now);
+      return savedProjection(selected,handle,now);
     });},
     close(){
       if(closing)return closing;accepting=false;

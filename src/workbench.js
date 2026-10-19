@@ -6,6 +6,8 @@ const CONNECTION_STATES=new Set(['missing','unknown','waiting-qr','scanned','awa
 const JOB_STATES=new Set(['prepared','admitted','running','not_admitted','unknown','discarded','mixed','completed','blocked','aborted','error','max-tokens','interrupted','forked','no_text','expired']);
 const DELIVERY_STATES=new Set(['pending','blocked','dispatching','queued','reported_sent','failed','uncertain','expired','cancelled','history_pruned']);
 const REMINDER_STATES=new Set(['scheduled','enqueued','expired','cancelled']);
+const MEMORY_KINDS=new Set(['goal','decision','blocker','next_step','context']);
+const emptyOverview=()=>({available:false,goals:[],blockers:[],nextSteps:[],recent:[]});
 const identity=value=>typeof value==='string'&&/^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/.test(value);
 const bound=value=>value?.state==='bound'&&identity(value.sessionId)&&/^[a-f0-9]{64}$/.test(value.bindingKey??'');
 const same=(a,b)=>bound(a)&&bound(b)&&a.sessionId===b.sessionId&&a.bindingKey===b.bindingKey;
@@ -23,7 +25,7 @@ const limitations=[
 ];
 
 /** A passive projection of existing state. It owns no store, agent or scheduler. */
-export function createWorkbench({service,taskResults,readState=async()=>null,readConnection=async()=>({state:'unknown'}),readProject=readProjectFiles,clock=()=>new Date(),hostTimeZone=()=>Intl.DateTimeFormat().resolvedOptions().timeZone,isClosed=()=>false}={}){
+export function createWorkbench({service,taskResults,memory,readState=async()=>null,readConnection=async()=>({state:'unknown'}),readProject=readProjectFiles,clock=()=>new Date(),hostTimeZone=()=>Intl.DateTimeFormat().resolvedOptions().timeZone,isClosed=()=>false}={}){
   let closed=false;
   const open=()=>{if(closed||isClosed())throw new Error('项目工作台已关闭。');};
   const connection=async()=>{open();try{const value=await readConnection();open();if(!CONNECTION_STATES.has(value?.state)||(value.state==='bound'&&!bound(value)))return{state:'unknown'};return bound(value)?{state:'bound',sessionId:value.sessionId,bindingKey:value.bindingKey}:{state:value.state};}catch(error){open();return{state:'unknown'};}};
@@ -47,9 +49,33 @@ export function createWorkbench({service,taskResults,readState=async()=>null,rea
       text=text.replace(/((?:access[_-]?token|refresh[_-]?token|api[_-]?key|client[_-]?secret|password|authorization)\s*[=:]\s*)(?:"[^"]*"|'[^']*'|[^\s,;}]+)/gi,'$1[已隐藏]');
       let result='';for(const char of text){if(result.length+char.length>max)break;result+=char;}return result;
     };
+    const overviewOf=value=>{
+      if(!Array.isArray(value?.goals)||value.goals.length>10||!Array.isArray(value?.entries)||value.entries.length>100)return emptyOverview();
+      const rows=[];const seen=new Set();
+      for(const row of [...value.goals,...value.entries]){
+        if(!identity(row?.id)||seen.has(row.id)||!MEMORY_KINDS.has(row.kind)||typeof row.text!=='string'||!row.text.trim()||!at(row.at))continue;
+        const source=row.source;
+        if(!source||!['user','assistant','file'].includes(source.kind)||typeof source.reference!=='string'||!source.reference.trim())continue;
+        const reference=source.reference;
+        if(source.kind==='file'){
+          const path=reference.split('#')[0];
+          if(!path||isAbsolute(path)||path.includes('\\')||/^[A-Za-z][A-Za-z0-9+.-]*:/u.test(path)||path.split('/').some(part=>!part||part==='.'||part==='..'))continue;
+        }else if(!reference.startsWith('session:')||!identity(reference.slice(8).split('#')[0]))continue;
+        seen.add(row.id);
+        rows.push({id:row.id,kind:row.kind,text:clean(row.text,500),at:at(row.at),source:{kind:source.kind,reference:clean(reference,500)},verified:false});
+      }
+      rows.sort((a,b)=>Date.parse(b.at)-Date.parse(a.at));
+      return{available:true,goals:rows.filter(row=>row.kind==='goal').slice(0,3),blockers:rows.filter(row=>row.kind==='blocker').slice(0,3),nextSteps:rows.filter(row=>row.kind==='next_step').slice(0,3),recent:rows.slice(0,4)};
+    };
     const projects=await Promise.all(watched.map(async project=>{
+      const root=project.root;
       let files;
-      try{files=await readProject(project.root);}catch{files=PROJECT_FILES.map(path=>({path,status:'unavailable'}));}
+      try{files=await readProject(root);}catch{files=PROJECT_FILES.map(path=>({path,status:'unavailable'}));}
+      open();
+      let overview=emptyOverview();
+      if(typeof memory?.inspect==='function'){
+        try{overview=overviewOf(await memory.inspect({root,sessionId:'workbench-view'}));}catch{open();}
+      }
       open();
       const sources=[];
       for(const name of PROJECT_FILES){
@@ -61,7 +87,7 @@ export function createWorkbench({service,taskResults,readState=async()=>null,rea
       }
       let github;try{github=validateRepository(project.github);}catch{}
       const watchedAt=at(project.watchedAt);
-      return{id:publicId(project.root),label:clean(project.label,80)||'已关注项目',sessionIds:[...new Set(list(project.sessionIds,30).filter(identity))],...(github?{github}:{}),...(watchedAt?{watchedAt}:{}),sources,
+      return{id:publicId(root),label:clean(project.label,80)||'已关注项目',sessionIds:[...new Set(list(project.sessionIds,30).filter(identity))],...(github?{github}:{}),...(watchedAt?{watchedAt}:{}),overview,sources,
         events:list(project.events,30).slice(-5).filter(event=>['user','assistant','error'].includes(event?.kind)&&at(event.at)).map(event=>({kind:event.kind,text:clean(event.text,500),at:at(event.at),truncated:event.truncated===true||(typeof event.text==='string'&&event.text.length>500)}))};
     }));
     open();

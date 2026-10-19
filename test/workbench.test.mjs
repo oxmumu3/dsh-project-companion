@@ -16,6 +16,7 @@ const now='2026-10-19T15:00:00.000Z';
 const binding={state:'bound',sessionId:'source-session',bindingKey:'a'.repeat(64)};
 const project={id:'p_one',root:'/synthetic/watched-project',label:'当前项目',sessionIds:['project-session'],github:'owner/repo',watchedAt:now,events:[{kind:'assistant',text:'助手记录，仍待核对',at:now,sessionId:'project-session',id:'event-1'}]};
 const deferred=()=>{let resolve;const promise=new Promise(done=>resolve=done);return{promise,resolve};};
+const memoryRow=(kind,index=0,extra={})=>({id:`memory-${index}`,kind,text:`已有${kind}记录 ${index}`,at:now,source:{kind:'assistant',reference:'session:recorded-session#turn7'},verified:true,sessionId:'PRIVATE MEMORY SESSION',fingerprint:'PRIVATE FINGERPRINT',...extra});
 async function api(){const value=await import('../src/workbench.js').catch(()=>({}));assert.equal(typeof value.createWorkbench,'function','read-only workbench adapter must exist');assert.equal(typeof value.registerWorkbenchRoute,'function','authenticated workbench route must exist');return value;}
 async function fixture(options={}){
   const {createWorkbench}=await api();let connection=options.connection??binding;
@@ -37,6 +38,51 @@ test('unbound workbench still reads watched projects and does not query a sessio
   assert.equal(value.version,1);assert.equal(value.generatedAt,now);assert.equal(value.hostTimeZone,'America/Mexico_City');
   assert.deepEqual(value.connection,{state:'awaiting-message'});assert.equal(value.projects.length,1);assert.equal(value.projects[0].sources[0].text,'来源正文');
   assert.deepEqual(value.jobs,[]);assert.equal(value.availability.jobs,false);assert.equal(f.calls.some(item=>Array.isArray(item)&&item[0]==='jobs'),false);
+});
+
+test('unbound overview inspects only watched project memory and retains unverified source evidence',async()=>{
+  const calls=[];const memory={inspect:async input=>{calls.push(input);return{goals:[memoryRow('goal',0)],entries:[memoryRow('blocker',1),memoryRow('next_step',2),memoryRow('decision',3)],changes:[]};},read:()=>{throw new Error('GET must not use write-capable read');},remember:()=>{throw new Error('GET must not remember');}};
+  const f=await fixture({connection:{state:'missing'},dependencies:{memory}});const value=await f.adapter.snapshot();const overview=value.projects[0].overview;
+  assert.deepEqual(calls,[{root:project.root,sessionId:'workbench-view'}]);
+  assert.equal(overview.available,true);assert.equal(overview.goals[0].kind,'goal');assert.equal(overview.blockers[0].kind,'blocker');assert.equal(overview.nextSteps[0].kind,'next_step');assert.equal(overview.recent.length,4);
+  for(const row of [...overview.goals,...overview.blockers,...overview.nextSteps,...overview.recent]){
+    assert.deepEqual(Object.keys(row).sort(),['id','kind','text','at','source','verified'].sort());assert.deepEqual(Object.keys(row.source).sort(),['kind','reference']);assert.equal(row.verified,false);
+  }
+  assert.equal(JSON.stringify(value).includes('PRIVATE MEMORY'),false);assert.equal(JSON.stringify(value).includes('PRIVATE FINGERPRINT'),false);
+  assert.equal(f.calls.some(item=>Array.isArray(item)&&item[0]==='jobs'),false);
+});
+
+test('overview bounds existing memory, cleans text and provenance, and omits malformed records',async()=>{
+  const goals=Array.from({length:10},(_,i)=>memoryRow('goal',i,{at:new Date(Date.parse(now)+i).toISOString()}));
+  const entries=['blocker','next_step','context'].flatMap((kind,j)=>Array.from({length:6},(_,i)=>memoryRow(kind,10+j*6+i)));
+  entries.unshift(memoryRow('blocker',40,{text:`${project.root} ${binding.bindingKey} api_key=private-key `+'文'.repeat(1000),source:{kind:'file',reference:'README.md#'+'A'.repeat(600)}}));
+  entries.push(memoryRow('task',90),memoryRow('context',91,{source:{kind:'tool',reference:'PRIVATE SOURCE'}}),memoryRow('context',92,{source:{kind:'file',reference:'/private/secret.md'}}),memoryRow('context',93,{source:{kind:'file',reference:'../secret.md'}}),memoryRow('context',94,{at:'invalid'}),memoryRow('context',95,{id:'/private/id'}));
+  const f=await fixture({dependencies:{memory:{inspect:async()=>({goals,entries,changes:[]})}}});const value=await f.adapter.snapshot(),overview=value.projects[0].overview;
+  assert.equal(overview.available,true);assert.equal(overview.goals.length,3);assert.equal(overview.blockers.length,3);assert.equal(overview.nextSteps.length,3);assert.equal(overview.recent.length,4);
+  assert.equal(overview.goals[0].id,'memory-9');assert.ok(overview.blockers[0].text.length<=500);assert.ok(overview.blockers[0].source.reference.length<=500);
+  for(const secret of [project.root,binding.bindingKey,'private-key','PRIVATE SOURCE','/private/secret.md','../secret.md','/private/id'])assert.equal(JSON.stringify(overview).includes(secret),false,secret);
+});
+
+test('empty confirmed memory differs from missing, malformed or failed inspection',async()=>{
+  const empty={available:false,goals:[],blockers:[],nextSteps:[],recent:[]};
+  for(const memory of [undefined,{read:()=>{throw new Error('unsafe fallback');}},{inspect:async()=>null},{inspect:async()=>({goals:'bad',entries:[]})},{inspect:async()=>{throw new Error('PRIVATE MEMORY FAILURE /secret/root');}}]){
+    const f=await fixture({dependencies:{memory}});const value=await f.adapter.snapshot();assert.deepEqual(value.projects[0].overview,empty);assert.equal(JSON.stringify(value).includes('PRIVATE MEMORY FAILURE'),false);
+  }
+  const f=await fixture({dependencies:{memory:{inspect:async()=>({goals:[],entries:[],changes:[]})}}});assert.deepEqual((await f.adapter.snapshot()).projects[0].overview,{...empty,available:true});
+});
+
+test('overview failures are isolated per project and close discards an in-flight memory result',async()=>{
+  const second={...project,root:'/synthetic/second-project',label:'第二个项目'};
+  const f=await fixture({projects:[project,second],dependencies:{memory:{inspect:async({root})=>{if(root===project.root)throw new Error('private');return{goals:[],entries:[memoryRow('context')],changes:[]};}}}});
+  const value=await f.adapter.snapshot();assert.equal(value.projects[0].overview.available,false);assert.equal(value.projects[1].overview.available,true);
+  const entered=deferred(),gate=deferred();const closing=await fixture({dependencies:{memory:{inspect:async()=>{entered.resolve();await gate.promise;return{goals:[],entries:[memoryRow('context')],changes:[]};}}}});
+  const pending=closing.adapter.snapshot();await entered.promise;closing.adapter.close();gate.resolve();await assert.rejects(pending,/关闭|停止/);
+});
+
+test('closing while files are pending prevents starting a later memory inspection',async()=>{
+  const entered=deferred(),gate=deferred();let reads=0;
+  const f=await fixture({readProject:async()=>{entered.resolve();await gate.promise;return[];},dependencies:{memory:{inspect:async()=>{reads++;return{goals:[],entries:[]};}}}});
+  const pending=f.adapter.snapshot();await entered.promise;f.adapter.close();gate.resolve();await assert.rejects(pending,/关闭|停止/);assert.equal(reads,0);
 });
 
 test('bound jobs use only the verified source session and whitelist every output field',async()=>{
@@ -150,11 +196,13 @@ test('official SDK install exposes passive watched projects with a cold source a
   ctx.provide('connection',{fetch:{register:route=>{routes.set(route.path,route);return()=>routes.delete(route.path);}}});
   await ctx.plugin({name:'synthetic-workbench-host',inject:['tools','commands','storageDomain','sessions','systemPrompt'],async apply(scope){adapter=await installCompanion(scope,{readSetup:async()=>binding,readNativeRoute:async()=>({kind:'unbound'}),readBinding:async()=>null,clock:()=>new Date(now),hostTimeZone:()=> 'America/Mexico_City',timers:{setInterval(){activity.push('timer');throw new Error('GET must not schedule');},clearInterval(){}}});}});
   const owner={sessionId:'synthetic-setup',cwd:watched};await adapter.service.act(owner,{action:'watch'});
+  await adapter.memory.remember({root:watched,sessionId:'synthetic-setup',kind:'goal',text:'已有项目记忆应优先可见',source:{kind:'user',reference:'session:synthetic-setup#turn1'}});
   const before=await adapter.service.act(owner,{action:'status'});
   assert.ok(adapter.workbench,'installation must return its passive workbench');
   const route=routes.get('/api/project_companion/workbench');assert.ok(route,'installation must register the authenticated workbench');
   const response=await route.fetch(new Request('http://localhost/api/project_companion/workbench'));assert.equal(response.status,200);const value=await response.json();
   assert.equal(value.projects.length,1);assert.equal(value.projects[0].sources.find(s=>s.name==='README.md').text,'真实安全读取的公开项目样本');assert.equal(value.connection.sessionId,'source-session');assert.deepEqual(activity,[]);
+  assert.equal(value.projects[0].overview.available,true);assert.equal(value.projects[0].overview.goals[0].text,'已有项目记忆应优先可见');assert.equal(value.projects[0].overview.goals[0].verified,false);
   assert.deepEqual(await adapter.service.act(owner,{action:'status'}),before);
   await ctx.fiber.dispose();assert.equal(routes.has('/api/project_companion/workbench'),false);await assert.rejects(adapter.workbench.snapshot(),/关闭|停止/);assert.equal((await route.fetch(new Request('http://localhost/api/project_companion/workbench'))).status,503);
 });

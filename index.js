@@ -262,7 +262,7 @@ export async function installCompanion(ctx,options={}){
     },
   });
   workbench=createWorkbench({
-    service,taskResults,readConnection:readSetup,isClosed:()=>disposed,
+    service,taskResults,memory,readConnection:readSetup,isClosed:()=>disposed,
     // Read the existing table directly: GET must not require or resume a live
     // owner, normalize recovery state, or create a second state store.
     readState:()=>table.get('profile'),

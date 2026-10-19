@@ -322,7 +322,7 @@ export function createTaskResults({store,clock = () => new Date(),send = async (
       createdAt:job.createdAt,expiresAt:job.expiresAt,finishedAt:job.finishedAt,turn:job.turn,
       delivery:job.delivery?{status:job.delivery.status,detail:deliveryNames[job.delivery.status]}:null,
       ...(id===undefined?{}:{reply:job.reply,replyTruncated:job.replyTruncated})}));
-    const text=['## 最近交办状态',...jobs.map(job=>`${job.projectLabel}：${statusNames[job.status]}。${job.delivery?` ${deliveryNames[job.delivery.status]}。`:''}${id&&job.reply?`\n${bounded(job.reply,2500)}`:''}`),...(!jobs.length?['没有找到属于当前会话的交办记录。']:[]),'执行回复仍待验收；通道报告发送不代表手机送达或已读。'].join('\n\n');
+    const text=['## 最近交办状态','交办回复由独立回传流程交给桥接；本查询不补发，也不刷新或检查桥接队列。queued 只记录交给通道时排队，不能说明当前仍有缓存或手机收到。',...jobs.map(job=>`${job.projectLabel}：${statusNames[job.status]}。${job.delivery?` ${deliveryNames[job.delivery.status]}。`:''}${id&&job.reply?`\n${bounded(job.reply,2500)}`:''}`),...(!jobs.length?['没有找到属于当前会话的交办记录。']:[]),'执行回复仍待验收；通道报告发送不代表手机送达或已读。'].join('\n\n');
     return {jobs,text:bounded(text,MOBILE_LIMIT)};
   });
   const tick = () => serial(async () => { if (closing) return; await load(); await expire(); clearInactiveClaims(); await flush(); });

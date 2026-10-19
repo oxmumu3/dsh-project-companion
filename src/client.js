@@ -9,7 +9,137 @@ window.__ModuleLoader__.load({
     const inject=['slots','uiWorkspace','configForms','layout'];
     const css=`.pc_setup{display:flex;flex-direction:column;gap:18px;padding:0 24px 24px;line-height:1.6}.pc_setup h2,.pc_setup h3,.pc_setup p{margin:0}.pc_setup h2{font-size:21px;font-weight:600}.pc_setup h3{font-size:15px;font-weight:600}.pc_setup .pc_card{border:1px solid var(--dsw-alias-border-l3,rgba(128,128,128,.25));border-radius:12px;padding:16px;display:flex;flex-direction:column;gap:10px}.pc_setup .pc_muted{font-size:12px;color:var(--dsw-alias-label-secondary,#888)}.pc_setup .pc_actions{display:flex;gap:10px;flex-wrap:wrap}.pc_setup button{border:1px solid var(--dsw-alias-border-l3,rgba(128,128,128,.4));border-radius:8px;background:transparent;color:inherit;font:inherit;font-size:13px;padding:8px 14px;cursor:pointer}.pc_setup button:disabled{opacity:.5;cursor:default}.pc_setup button.pc_primary{background:var(--dsw-alias-state-business-primary,#4d6bfe);border-color:transparent;color:white}.pc_setup button:focus-visible,.pc_setup input:focus-visible{outline:2px solid var(--dsw-alias-state-business-primary,#4d6bfe);outline-offset:3px}.pc_setup label{display:flex;gap:10px;align-items:flex-start;font-size:14px}.pc_setup input{margin-top:5px}.pc_setup .pc_brief{white-space:pre-wrap;font-size:13px;overflow-wrap:anywhere}.pc_setup .pc_error{color:var(--dsw-alias-state-error-primary,#b91c1c);font-size:13px}.pc_setup img{width:200px;height:200px;max-width:100%;align-self:center}.pc_setup_modal{width:min(620px,100%);max-height:90vh;overflow-y:auto;padding:24px 0 0}.pc_setup_modal .pc_setup{padding-top:0}@media(max-width:560px){.pc_setup{padding:0 16px 20px}.pc_setup .pc_actions button{flex:1}}`;
 
+    // Public ui-theme token pairs form one disposable layer. The font token is
+    // presented after persistent font variables, so removing this layer restores
+    // the user's own preference without writing to the ui-theme namespace.
+    const dotFont='-apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Segoe UI", sans-serif';
+    const dotAppearanceTokens={
+      '--dsw-font-family':{light:dotFont,dark:dotFont},
+      '--dsw-alias-bg-base':{light:'#f5f3ee',dark:'#17191c'},
+      '--dsw-alias-bg-layer-1':{light:'#eeece6',dark:'#202328'},
+      '--dsw-alias-bg-layer-2':{light:'#fffdf8',dark:'#272b31'},
+      '--dsw-alias-bg-layer-3':{light:'#ffffff',dark:'#30363d'},
+      '--dsw-alias-bg-module-platform':{light:'#eeece6',dark:'#202328'},
+      '--dsw-alias-label-primary':{light:'#222b35',dark:'#e7ebf0'},
+      '--dsw-alias-label-secondary':{light:'#5c6672',dark:'#aab4c1'},
+      '--dsw-alias-label-tertiary':{light:'#747d88',dark:'#83909f'},
+      '--dsw-alias-label-caption':{light:'#9098a2',dark:'#6d7887'},
+      '--dsw-alias-border-l1':{light:'rgba(44,55,68,.22)',dark:'rgba(207,219,235,.24)'},
+      '--dsw-alias-border-l2':{light:'rgba(44,55,68,.16)',dark:'rgba(207,219,235,.18)'},
+      '--dsw-alias-border-l3':{light:'rgba(44,55,68,.12)',dark:'rgba(207,219,235,.14)'},
+      '--dsw-alias-border-l4':{light:'rgba(44,55,68,.08)',dark:'rgba(207,219,235,.10)'},
+      '--dsw-alias-interactive-bg-hover':{light:'rgba(48,63,79,.06)',dark:'rgba(190,207,230,.08)'},
+      '--dsw-alias-interactive-bg-active':{light:'rgba(65,118,230,.12)',dark:'rgba(122,170,255,.16)'},
+      '--dsw-alias-state-business-primary':{light:'#4176e6',dark:'#7aaaff'},
+      '--dsw-radius-xs':{light:'4px',dark:'4px'},
+      '--dsw-radius-sm':{light:'8px',dark:'8px'},
+      '--dsw-radius-md':{light:'12px',dark:'12px'},
+      '--dsw-radius-lg':{light:'16px',dark:'16px'},
+      '--dsw-radius-xl':{light:'20px',dark:'20px'},
+      '--dsw-radius-panel':{light:'24px',dark:'24px'},
+    };
+
+    function createDotAppearance(ctx){
+      const listeners=new Set();
+      let form,theme,offForm,releaseLayer,pending;
+      let closed=false,saving=false,themeFailed=false,restorationUncertain=false,error='';
+      let saved={ready:false,writable:false,revision:undefined,mode:'native'};
+      let state=Object.freeze({mode:'native',applied:false,available:false,writable:false,busy:false,restorationUncertain:false,error:''});
+      const optional=name=>{try{return(typeof ctx.get==='function'?ctx.get(name,false):undefined)??ctx[name];}catch{return undefined;}};
+      const notify=next=>{
+        if(closed)return;
+        if(Object.keys(next).every(key=>state[key]===next[key]))return;
+        state=Object.freeze(next);
+        for(const fn of [...listeners]){try{fn();}catch{}}
+      };
+      const release=()=>{
+        if(typeof releaseLayer!=='function')return;
+        try{
+          releaseLayer();releaseLayer=undefined;
+          if(restorationUncertain)error='';
+          restorationUncertain=false;
+        }catch{restorationUncertain=true;error='原生外观恢复结果未确认，请重试恢复；若仍失败，请重新加载此页。';}
+      };
+      const supported=()=>Boolean(form&&typeof form.getSnapshot==='function'&&typeof form.subscribe==='function'&&typeof form.mutate==='function'&&typeof theme?.overrideTokens==='function');
+      const publish=()=>notify({
+        mode:releaseLayer?'dot':'native',applied:Boolean(releaseLayer),
+        available:supported()&&!themeFailed&&saved.ready,
+        writable:supported()&&!themeFailed&&saved.ready&&saved.writable,
+        busy:saving,restorationUncertain,error,
+      });
+      const sync=(clearError=false)=>{
+        if(closed)return;
+        if(clearError&&!themeFailed&&!restorationUncertain)error='';
+        try{
+          const view=form?.getSnapshot();
+          saved={ready:view?.status==='ready',writable:view?.writable===true&&view?.revision!==undefined&&view?.revision!==null,revision:view?.revision,mode:view?.value?.dotAppearance==='dot'?'dot':'native'};
+        }catch{saved={ready:false,writable:false,revision:undefined,mode:'native'};error='外观配置暂不可用，请稍后重试。';}
+        if(!supported()||!saved.ready||saved.mode==='native'){
+          release();
+          if(saved.mode==='native'){themeFailed=false;if(clearError&&!restorationUncertain)error='';}
+          if(!supported()&&!restorationUncertain)error='当前宿主暂不支持 Dot 外观设置。';
+        }else if(!releaseLayer&&!themeFailed){
+          try{
+            const dispose=theme.overrideTokens('dsh-project-companion',dotAppearanceTokens);
+            if(typeof dispose!=='function')throw new Error('missing theme disposer');
+            releaseLayer=dispose;
+          }catch{themeFailed=true;error='Dot 外观暂不可用，已保留原生外观。';}
+        }
+        publish();
+      };
+      try{theme=optional('theme');form=optional('configForms')?.get('project-companion');}catch{}
+      if(supported()){
+        try{offForm=form.subscribe(()=>sync(true));}catch{form=undefined;}
+      }
+      sync();
+      const setAppearance=mode=>{
+        if(closed||!['native','dot'].includes(mode))return Promise.resolve(false);
+        if(saving)return pending??Promise.resolve(false);
+        if(mode==='native'&&saved.mode==='native'&&releaseLayer){sync(true);return Promise.resolve(!releaseLayer);}
+        if(!state.writable||!saved.ready||saved.mode===mode)return Promise.resolve(false);
+        const revision=saved.revision;
+        saving=true;error='';publish();
+        pending=(async()=>{
+          try{
+            const accepted=await form.mutate([{op:'set',path:['dotAppearance'],value:mode}],revision);
+            if(closed)return false;
+            if(accepted!==true){error='外观设置未保存，请刷新后重试。';return false;}
+            // Acceptance alone is not a mode echo: read the official snapshot.
+            sync();return true;
+          }catch{
+            if(!closed)error='外观设置未保存，请刷新后重试。';
+            return false;
+          }finally{
+            saving=false;pending=undefined;
+            if(!closed)sync();
+          }
+        })();
+        return pending;
+      };
+      const close=()=>{
+        if(!closed){
+          closed=true;saving=false;
+          try{offForm?.();}catch{}
+          offForm=undefined;listeners.clear();
+        }
+        release();
+        state=Object.freeze({...state,mode:releaseLayer?'dot':'native',applied:Boolean(releaseLayer),available:false,writable:false,busy:false,restorationUncertain,error});
+      };
+      return{getSnapshot:()=>state,subscribe:fn=>{if(closed||typeof fn!=='function')return()=>{};listeners.add(fn);return()=>listeners.delete(fn);},setAppearance,close};
+    }
+
     function apply(ctx){
+      const appearance=createDotAppearance(ctx);
+      ctx.effect(()=>()=>appearance.close());
+      function useAppearance(){
+        const [value,setValue]=React.useState(()=>appearance.getSnapshot());
+        React.useEffect(()=>{const update=()=>setValue(appearance.getSnapshot());const stop=appearance.subscribe(update);update();return stop;},[]);
+        return value;
+      }
+      function AppearancePanel(){
+        const value=useAppearance();
+        return h('section',{className:'pc_setup','data-dot-appearance':true},h('h3',null,'界面外观'),h('p',{className:'pc_muted'},'Dot 外观使用暖纸底色、清晰字体和配对深色主题。跟随原有明暗设置，随时恢复原生外观。'),h('div',{className:'pc_actions'},...['native','dot'].map(mode=>h('button',{type:'button',key:mode,disabled:!value.writable||value.busy,'aria-pressed':value.mode===mode,onClick:()=>appearance.setAppearance(mode)},mode==='native'?'原生外观':'Dot 外观'))),value.error?h('p',{className:'pc_muted',role:'status'},value.error):null);
+      }
       ctx.effect(()=>{
         if(typeof document==='undefined')return;
         const tag=document.createElement('style');tag.dataset.pluginCss='dsh-project-companion/onboarding';tag.textContent=css;document.head.appendChild(tag);
@@ -293,14 +423,16 @@ window.__ModuleLoader__.load({
         .pc_dot_actions{display:flex;gap:8px;flex-wrap:wrap;align-items:center}.pc_dot button{border:1px solid var(--dsw-alias-border-l3,rgba(128,128,128,.25));border-radius:7px;padding:7px 12px;font:inherit;font-size:12px;line-height:1.5;background:transparent;color:inherit;cursor:pointer}.pc_dot button:hover{background:var(--dsw-alias-bg-mask,rgba(128,128,128,.06))}.pc_dot button:focus-visible,.pc_dot summary:focus-visible{outline:2px solid var(--dsw-alias-state-business-primary,#4d6bfe);outline-offset:3px}.pc_dot button:disabled{opacity:.5;cursor:default}.pc_dot button.pc_dot_primary{background:var(--dsw-alias-state-business-primary,#4d6bfe);color:#fff;border-color:transparent}
         .pc_dot_summary{display:flex;gap:36px;margin:28px 0 32px;padding:20px 0;border-top:1px solid var(--dsw-alias-border-l3,rgba(128,128,128,.2));border-bottom:1px solid var(--dsw-alias-border-l3,rgba(128,128,128,.2))}.pc_dot_metric{display:flex;gap:10px;align-items:baseline;font-size:12px;color:var(--dsw-alias-label-secondary,#888)}.pc_dot_metric strong{font-size:23px;line-height:1.2;font-weight:500;color:var(--dsw-alias-label-primary,inherit);font-variant-numeric:tabular-nums}
         .pc_dot_grid{display:grid;grid-template-columns:220px minmax(0,1fr);gap:32px}.pc_dot_projects{display:flex;flex-direction:column;gap:8px}.pc_dot_projects h3{margin-bottom:8px}.pc_dot button.pc_dot_project{text-align:left;border-color:transparent;padding:12px;width:100%;display:flex;flex-direction:column;gap:5px;overflow-wrap:anywhere}.pc_dot button.pc_dot_project[aria-pressed=true]{border-color:var(--dsw-alias-border-l3,rgba(128,128,128,.25));background:var(--dsw-alias-bg-mask,rgba(128,128,128,.045))}.pc_dot_project_title{font-size:13px;font-weight:500}.pc_dot_project small{font-size:11px;color:var(--dsw-alias-label-secondary,#888)}
-        .pc_dot_detail{min-width:0}.pc_dot_project_head{display:flex;justify-content:space-between;gap:16px;align-items:flex-start;margin-bottom:22px}.pc_dot_section{margin-top:28px;padding-top:22px;border-top:1px solid var(--dsw-alias-border-l3,rgba(128,128,128,.2))}.pc_dot_section>h3{margin-bottom:12px}.pc_dot_source{padding:12px 0;border-bottom:1px solid var(--dsw-alias-border-l3,rgba(128,128,128,.14));font-size:13px;overflow-wrap:anywhere}.pc_dot_source:last-child{border-bottom:0}.pc_dot_source_head{display:flex;justify-content:space-between;gap:16px;font-size:12px;margin-bottom:6px}.pc_dot_source pre{font:inherit;font-size:12px;white-space:pre-wrap;overflow-wrap:anywhere;margin:8px 0}.pc_dot_source summary{font-size:12px;cursor:pointer;color:var(--dsw-alias-label-secondary,#888);padding:8px 0}.pc_dot_excerpt{white-space:pre-wrap;font-size:13px}.pc_dot_row{padding:14px 0;border-bottom:1px solid var(--dsw-alias-border-l3,rgba(128,128,128,.14));display:flex;justify-content:space-between;gap:16px;font-size:13px;overflow-wrap:anywhere}.pc_dot_row:last-child{border-bottom:0}.pc_dot_row p{margin-top:5px}.pc_dot_badge{display:inline-block;font-size:11px;line-height:1.5;padding:2px 7px;border-radius:5px;background:var(--dsw-alias-bg-mask,rgba(128,128,128,.08));white-space:nowrap}.pc_dot_notice{padding:12px 0;font-size:12px;color:var(--dsw-alias-label-secondary,#888)}.pc_dot_error{color:var(--dsw-alias-state-error-primary,#b91c1c);font-size:13px;margin:16px 0}.pc_dot_empty{padding:32px 0;font-size:13px;color:var(--dsw-alias-label-secondary,#888)}.pc_dot_footer{margin-top:32px;font-size:11px;color:var(--dsw-alias-label-tertiary,#888)}
+        .pc_dot_overview_grid{display:grid;grid-template-columns:1fr 1fr;gap:24px}.pc_dot_detail{min-width:0}.pc_dot_project_head{display:flex;justify-content:space-between;gap:16px;align-items:flex-start;margin-bottom:22px}.pc_dot_section{margin-top:28px;padding-top:22px;border-top:1px solid var(--dsw-alias-border-l3,rgba(128,128,128,.2))}.pc_dot_section>h3{margin-bottom:12px}.pc_dot_source{padding:12px 0;border-bottom:1px solid var(--dsw-alias-border-l3,rgba(128,128,128,.14));font-size:13px;overflow-wrap:anywhere}.pc_dot_source:last-child{border-bottom:0}.pc_dot_source_head{display:flex;justify-content:space-between;gap:16px;font-size:12px;margin-bottom:6px}.pc_dot_source pre{font:inherit;font-size:12px;white-space:pre-wrap;overflow-wrap:anywhere;margin:8px 0}.pc_dot_source summary{font-size:12px;cursor:pointer;color:var(--dsw-alias-label-secondary,#888);padding:8px 0}.pc_dot_excerpt{white-space:pre-wrap;font-size:13px}.pc_dot_row{padding:14px 0;border-bottom:1px solid var(--dsw-alias-border-l3,rgba(128,128,128,.14));display:flex;justify-content:space-between;gap:16px;font-size:13px;overflow-wrap:anywhere}.pc_dot_row:last-child{border-bottom:0}.pc_dot_row p{margin-top:5px}.pc_dot_badge{display:inline-block;font-size:11px;line-height:1.5;padding:2px 7px;border-radius:5px;background:var(--dsw-alias-bg-mask,rgba(128,128,128,.08));white-space:nowrap}.pc_dot_notice{padding:12px 0;font-size:12px;color:var(--dsw-alias-label-secondary,#888)}.pc_dot_error{color:var(--dsw-alias-state-error-primary,#b91c1c);font-size:13px;margin:16px 0}.pc_dot_empty{padding:32px 0;font-size:13px;color:var(--dsw-alias-label-secondary,#888)}.pc_dot_footer{margin-top:32px;font-size:11px;color:var(--dsw-alias-label-tertiary,#888)}
         @media(max-width:850px){.pc_dot_inner{padding:28px 22px}.pc_dot_grid{grid-template-columns:170px minmax(0,1fr);gap:20px}.pc_dot_header{flex-direction:column;gap:16px}}
-        @media(max-width:600px){.pc_dot_inner{padding:24px 16px}.pc_dot_grid{grid-template-columns:1fr;gap:24px}.pc_dot_projects{flex-direction:row;flex-wrap:wrap}.pc_dot_projects h3{width:100%;margin:0}.pc_dot button.pc_dot_project{width:auto;flex:1;min-width:130px}.pc_dot_summary{gap:20px;justify-content:space-between;margin:22px 0}.pc_dot_metric{flex-direction:column;gap:4px}.pc_dot_project_head{flex-direction:column}.pc_dot_source_head,.pc_dot_row{flex-wrap:wrap}.pc_dot h1{font-size:25px}}
+        @media(max-width:600px){.pc_dot_inner{padding:24px 16px}.pc_dot_overview_grid{grid-template-columns:1fr;gap:0}.pc_dot_grid{grid-template-columns:1fr;gap:24px}.pc_dot_projects{flex-direction:row;flex-wrap:wrap}.pc_dot_projects h3{width:100%;margin:0}.pc_dot button.pc_dot_project{width:auto;flex:1;min-width:130px}.pc_dot_summary{gap:20px;justify-content:space-between;margin:22px 0}.pc_dot_metric{flex-direction:column;gap:4px}.pc_dot_project_head{flex-direction:column}.pc_dot_source_head,.pc_dot_row{flex-wrap:wrap}.pc_dot h1{font-size:25px}}
       `;
       function DotIcon({size=20}={}){
         return h('svg',{width:size,height:size,viewBox:'0 0 24 24',fill:'none','aria-hidden':true},h('circle',{cx:12,cy:12,r:7.25,stroke:'currentColor',strokeWidth:1.5}),h('circle',{cx:12,cy:12,r:2.75,fill:'currentColor'}),h('path',{d:'M18 6l2-2',stroke:'currentColor',strokeWidth:1.5,strokeLinecap:'round'}));
       }
-      function Workbench(){
+      function Workbench(props={}){
+        const sessions=typeof props.useSessions==='function'?props.useSessions(state=>state.byId):null;
+        const appearanceState=useAppearance();
         const [snapshot,setSnapshot]=React.useState(null),[selected,setSelected]=React.useState(null),[busy,setBusy]=React.useState(false),[error,setError]=React.useState(''),[navError,setNavError]=React.useState(''),[setup,setSetup]=React.useState(false);
         const active=React.useRef(false),flight=React.useRef(false),controllers=React.useRef(new Set());
         const date=value=>{try{if(!value||!Number.isFinite(Date.parse(value)))return'时间未知';return new Intl.DateTimeFormat('zh-CN',{timeZone:snapshot?.hostTimeZone,dateStyle:'short',timeStyle:'short',hourCycle:'h23'}).format(new Date(value));}catch{return'时间未知';}};
@@ -319,21 +451,31 @@ window.__ModuleLoader__.load({
           finally{controllers.current.delete(controller);flight.current=false;if(active.current)setBusy(false);}
         };
         React.useEffect(()=>{active.current=true;void refresh();return()=>{active.current=false;for(const controller of controllers.current)controller.abort();controllers.current.clear();};},[]);
-        const navigate=async id=>{if(!active.current||!validId(id))return;setNavError('');try{await ctx.uiWorkspace.openSession(id);}catch{if(active.current)setNavError('会话未能打开，请在原项目列表中核对。没有重新提交任务。');}};
+        const navigate=async id=>{if(!active.current||!validId(id))return;setNavError('');try{await ctx.uiWorkspace.openSession(id);ctx.layout.selectPanel(null);}catch{if(active.current)setNavError('会话未能打开，请在原项目列表中核对。没有重新提交任务。');}};
         const jobs=snapshot?.jobs??[],reminders=(snapshot?.reminders??[]).filter(item=>item.status==='scheduled'||item.status==='enqueued'&&['pending','blocked','dispatching'].includes(item.deliveryStatus));
         const waiting=jobs.filter(job=>['prepared','admitted','running'].includes(job.status)).length;
         const attention=jobs.filter(job=>['blocked','unknown','mixed','error','aborted','interrupted','expired','no_text','max-tokens','forked'].includes(job.status));
         const project=snapshot?.projects.find(item=>item.id===selected),availability=snapshot?.availability??{projects:false,plans:false,jobs:false};
         const states={prepared:'等待提交',admitted:'已提交，等待处理',running:'正在处理',completed:'已收到回复，待验收',blocked:'本轮受阻',unknown:'执行状态未知',mixed:'输入发生变化，需核对',not_admitted:'未提交',discarded:'输入已取消',error:'执行出错',aborted:'本轮已中止',interrupted:'本轮被中断',expired:'跟踪已结束',no_text:'没有文本回复','max-tokens':'输出达到上限',forked:'分支结束，需核对'};
-        const deliveries={pending:'等待回传',dispatching:'正在回传，结果未确认',queued:'通道已排队，手机送达未知',reported_sent:'通道报告已发出，手机送达未知',blocked:'回传通道受阻',uncertain:'回传结果不确定',failed:'回传失败',expired:'回传窗口已结束'};
+        const deliveries={pending:'等待回传',dispatching:'正在回传，结果未确认',queued:'交给通道时已排队，后续送达待核对',reported_sent:'通道报告已发出，手机送达未知',blocked:'回传通道受阻',uncertain:'回传结果不确定',failed:'回传失败',expired:'回传窗口已结束'};
         const sourceName=source=>source.name??source.path??'项目资料';
         const sourceTime=source=>source.updatedAt??source.modifiedAt;
         const latest=project=>[...project.sources.map(sourceTime),...project.events.map(event=>event.at)].filter(value=>typeof value==='string'&&Number.isFinite(Date.parse(value))).sort().at(-1);
         const button=(label,onClick,props={})=>h('button',{type:'button',onClick,...props},label);
         const section=(title,...children)=>h('section',{className:'pc_dot_section'},h('h3',null,title),...children);
+        const overview=project?.overview;
+        const memoryAvailable=overview?.available===true&&['goals','blockers','nextSteps','recent'].every(key=>Array.isArray(overview[key])&&overview[key].length<=4&&overview[key].every(row=>row&&typeof row.text==='string'&&row.text.length<=500&&row.source&&['user','assistant','file'].includes(row.source.kind)&&typeof row.source.reference==='string'&&row.verified===false));
+        const recentMemory=memoryAvailable?overview.recent.filter(row=>![...overview.goals,...overview.blockers,...overview.nextSteps].some(shown=>shown.id===row.id)):[];
+        const memorySource=row=>{if(row.source.kind==='file')return row.source.reference;const id=row.source.reference.startsWith('session:')?row.source.reference.slice(8).split('#')[0]:null;const title=id&&sessions?.[id]?.displayTitle;return typeof title==='string'&&title.trim()?`来源会话：${title.slice(0,120)}`:'来源：项目会话记录';};
+        const memoryRows=(rows,empty)=>rows.length?rows.map(row=>h('div',{className:'pc_dot_source',key:row.id},h('p',{className:'pc_dot_excerpt'},row.text),h('p',{className:'pc_dot_muted'},`${row.source.kind==='user'?'用户记录':row.source.kind==='assistant'?'助手记录':'文件记录'} · ${date(row.at)} · 未独立核验`),h('small',{className:'pc_dot_muted'},memorySource(row)))):[h('p',{className:'pc_dot_muted'},empty)];
+        const sessionButton=(id,index)=>{
+          const value=sessions?.[id],title=typeof value?.displayTitle==='string'&&value.displayTitle.trim()?value.displayTitle.slice(0,120):null;
+          return button(h('span',null,h('span',null,title??`会话 ${index+1}`),h('small',{style:{display:'block'},className:'pc_dot_muted'},!title?'标题尚未加载 · 状态待确认':value.running===true?'正在运行':value.running===false?'当前无运行任务':'运行状态待确认')),()=>navigate(id),{key:id});
+        };
         return h('div',{className:'pc_dot','data-dot-workbench':true},h('div',{className:'pc_dot_inner'},
           h('header',{className:'pc_dot_header'},h('div',null,h('div',{className:'pc_dot_eyebrow'},'DEEPSEEK DOT'),h('h1',null,'项目总览'),h('p',null,'关注的项目、最近的变化，以及交给我的事。')),
-            h('div',{className:'pc_dot_actions'},button(busy?'正在刷新…':'刷新',refresh,{disabled:busy}),button('管理关注与连接',()=>setSetup(true)),snapshot?.connection.state==='bound'?button('打开 Dot 会话',()=>navigate(snapshot.connection.sessionId),{className:'pc_dot_primary'}):null)),
+            h('div',{className:'pc_dot_actions'},button(busy?'正在刷新…':'刷新',refresh,{disabled:busy}),button(appearanceState.mode==='dot'?'恢复原生外观':'启用 Dot 外观',()=>appearance.setAppearance(appearanceState.mode==='dot'?'native':'dot'),{disabled:!appearanceState.writable||appearanceState.busy,title:appearanceState.error||'配对明暗主题，可随时恢复'}),button('管理关注与连接',()=>setSetup(true)),snapshot?.connection.state==='bound'?button('打开 Dot 会话',()=>navigate(snapshot.connection.sessionId),{className:'pc_dot_primary'}):null)),
+          appearanceState.error?h('p',{className:'pc_dot_notice',role:'status'},appearanceState.error):null,
           error?h('p',{className:'pc_dot_error',role:'alert'},error):null,navError?h('p',{className:'pc_dot_error',role:'alert'},navError):null,
           snapshot?h('div',null,
             h('div',{className:'pc_dot_summary'},...[[availability.projects?snapshot.projects.length:'—','关注项目'],[availability.jobs?waiting:'—','近期交办处理中'],[availability.plans?snapshot.counts?.activeReminders??reminders.length:'—','待提醒']].map(([number,label])=>h('div',{className:'pc_dot_metric',key:label},h('strong',null,number),h('span',null,label)))),
@@ -341,10 +483,14 @@ window.__ModuleLoader__.load({
             snapshot.connection.state!=='bound'?h('p',{className:'pc_dot_notice'},'微信尚未确认连接。可在“管理关注与连接”中设置；已有项目资料仍可查看。'):null,
             h('div',{className:'pc_dot_grid'},h('nav',{className:'pc_dot_projects','aria-label':'关注的项目'},h('h3',null,'正在关注'),!availability.projects?h('p',{className:'pc_dot_empty'},'关注列表暂不可用，请刷新核对。'):snapshot.projects.length?snapshot.projects.map(item=>button(h('span',null,h('span',{className:'pc_dot_project_title'},item.label),h('small',{style:{display:'block'}},latest(item)?`资料更新 ${date(latest(item))}`:'尚无近期资料')),()=>setSelected(item.id),{key:item.id,className:'pc_dot_project','aria-pressed':item.id===selected})):h('p',{className:'pc_dot_empty'},'还没有关注项目。在“管理关注与连接”中选择要持续关注的项目。')),
               h('div',{className:'pc_dot_detail'},project?h('article',{'data-dot-project':project.id},h('header',{className:'pc_dot_project_head'},h('div',null,h('h2',null,project.label),h('p',{className:'pc_dot_muted'},'以下为项目资料与已观察到的对话记录。')),
-                h('div',{className:'pc_dot_actions'},project.sessionIds.length===1?button('打开项目会话',()=>navigate(project.sessionIds[0])):project.sessionIds.length>1?h('div',null,h('p',{className:'pc_dot_muted'},'选择会话'),h('div',{className:'pc_dot_actions'},project.sessionIds.map((id,index)=>button(`会话 ${index+1}`,()=>navigate(id),{key:id,title:id})))):h('span',{className:'pc_dot_muted'},'暂无可打开的项目会话'))),
+                h('div',{className:'pc_dot_actions'},project.sessionIds.length===1?button('打开项目会话',()=>navigate(project.sessionIds[0])):project.sessionIds.length>1?h('div',null,h('p',{className:'pc_dot_muted'},'选择会话'),h('div',{className:'pc_dot_actions'},project.sessionIds.map(sessionButton))):h('span',{className:'pc_dot_muted'},'暂无可打开的项目会话'))),
+                memoryAvailable?h('div',{'data-dot-overview':true},section('项目目标',...memoryRows(overview.goals,'尚未记录项目目标。可以在 Dot 会话里告诉我你想达成什么。')),
+                  h('div',{className:'pc_dot_overview_grid'},section('已记录的阻塞',...memoryRows(overview.blockers,'尚未记录阻塞；这不代表当前没有阻塞。')),section('已记录的下一步',...memoryRows(overview.nextSteps,'尚未记录下一步。'))),
+                  recentMemory.length?section('最近沉淀',...memoryRows(recentMemory,'')):null):section('项目记忆',h('p',{className:'pc_dot_muted'},'项目记忆暂不可用。原始资料仍可展开查看，刷新不会创建或修改记忆。')),
+                h('details',{className:'pc_dot_section'},h('summary',null,'原始资料与对话'),
                 section('项目资料',project.sources.length?project.sources.map(source=>h('div',{className:'pc_dot_source',key:sourceName(source)},h('div',{className:'pc_dot_source_head'},h('span',null,sourceName(source)),h('span',{className:'pc_dot_muted'},source.status==='ok'?date(sourceTime(source)):source.status==='missing'?'尚未提供':'暂不可读取')),
                   source.status==='ok'?h('div',null,h('p',{className:'pc_dot_excerpt'},typeof source.text==='string'?source.text.slice(0,360):''),typeof source.text==='string'&&source.text.length>360?h('details',null,h('summary',null,'查看已读取文本'),h('pre',null,source.text)):null,source.truncated?h('p',{className:'pc_dot_muted'},'来源内容较长，已截取；此处未展示完整文件。'):null):null)):h('p',{className:'pc_dot_muted'},'暂无可读取的固定项目资料。')),
-                section('最近对话',project.events.length?project.events.slice(-4).reverse().map((event,index)=>h('div',{className:'pc_dot_source',key:`${event.at}-${index}`},h('div',{className:'pc_dot_source_head'},h('span',null,event.kind==='user'?'用户交代':event.kind==='assistant'?'助手回复':'运行记录'),h('span',{className:'pc_dot_muted'},date(event.at))),h('p',{className:'pc_dot_excerpt'},event.text),event.truncated?h('p',{className:'pc_dot_muted'},'本条记录已截取。'):null)):h('p',{className:'pc_dot_muted'},'启用后还没有观察到这个项目的新对话。'))):h('div',{className:'pc_dot_empty'},'选择关注项目后，可在这里查看有来源的动态。'),
+                section('最近对话',project.events.length?project.events.slice(-4).reverse().map((event,index)=>h('div',{className:'pc_dot_source',key:`${event.at}-${index}`},h('div',{className:'pc_dot_source_head'},h('span',null,event.kind==='user'?'用户交代':event.kind==='assistant'?'助手回复':'运行记录'),h('span',{className:'pc_dot_muted'},date(event.at))),h('p',{className:'pc_dot_excerpt'},event.text),event.truncated?h('p',{className:'pc_dot_muted'},'本条记录已截取。'):null)):h('p',{className:'pc_dot_muted'},'启用后还没有观察到这个项目的新对话。')))):h('div',{className:'pc_dot_empty'},'选择关注项目后，可在这里查看有来源的动态。'),
                 attention.length?section('需要留意',attention.map(job=>h('div',{className:'pc_dot_row',key:job.id},h('div',null,h('strong',null,job.projectLabel),h('p',{className:'pc_dot_muted'},job.task)),h('span',{className:'pc_dot_badge'},states[job.status]??'状态待核对')))):null,
                 section('最近交办',!availability.jobs?h('p',{className:'pc_dot_muted'},'当前 Dot 会话的交办状态尚未确认，请在连接恢复后刷新核对。'):jobs.length?jobs.slice().reverse().map(job=>h('div',{className:'pc_dot_row',key:job.id},h('div',null,h('strong',null,job.projectLabel),h('p',null,job.task),h('p',{className:'pc_dot_muted'},date(job.finishedAt??job.createdAt),job.delivery?` · ${deliveries[job.delivery.status]??'回传状态未知'}`:'')),h('span',{className:'pc_dot_badge'},states[job.status]??'状态待核对'))):h('p',{className:'pc_dot_muted'},'暂无当前 Dot 会话的交办记录。可以打开 Dot 会话，或在微信里直接交代事情。'),jobs.length>=10?h('p',{className:'pc_dot_muted'},'仅显示最近 10 条交办。'):null),
                 section('提醒与日报',!availability.plans?h('p',{className:'pc_dot_muted'},'提醒与日报状态尚未确认，请刷新核对；此处不能据此判断计划已关闭。'):h('div',null,reminders.length?reminders.map(item=>h('div',{className:'pc_dot_row',key:item.id},h('span',null,item.title),h('span',{className:'pc_dot_muted'},date(item.dueAt),item.status==='enqueued'?' · 已到触发时间，送达待确认':''))):h('p',{className:'pc_dot_muted'},'暂无待触发的明确提醒。'),snapshot.counts?.activeReminders>reminders.length?h('p',{className:'pc_dot_muted'},`仅显示 ${reminders.length} 条活动提醒，其余请在 Dot 会话中查询。`):null,h('p',{className:'pc_dot_muted',style:{marginTop:10}},snapshot.daily?.enabled?`项目日报：每天 ${snapshot.daily.time}（${snapshot.daily.timeZone}）`:'项目日报未开启。需要时直接告诉 Dot 时间。'))))),
@@ -357,13 +503,13 @@ window.__ModuleLoader__.load({
         ctx.effect(()=>ctx.slots.inject('main',()=>ctx.slots.register({name:'main',key:dotPanel},Workbench)));
         ctx.effect(()=>ctx.slots.inject('sidebar.panellist',()=>ctx.slots.register({name:'sidebar.panellist',id:dotPanel,order:5,label:'DeepSeek Dot'},DotIcon)));
       }
-      const Section=props=>h('div',null,Surface(props,false),h(ContextPanel));
+      const Section=props=>h('div',null,Surface(props,false),h(AppearancePanel),h(ContextPanel));
       const Onboarding=props=>Surface(props,true);
       ctx.effect(()=>ctx.slots.inject('settings.section',()=>ctx.slots.register({name:'settings.section',id:'project-companion',order:39,label:'DeepSeek Dot'},Section)));
       ctx.effect(()=>ctx.slots.inject('settings.onboarding',()=>ctx.slots.register({name:'settings.onboarding',id:'project-companion-dot',order:50},Onboarding)));
       const forms=typeof ctx.get==='function'?ctx.get('configForms',false):ctx.configForms;
       if(forms)ctx.effect(()=>ctx.slots.inject('plugins.row.config',()=>ctx.slots.register({name:'plugins.row.config',key:'dsh-project-companion#project-companion'},props=>props.view==='summary'?'DeepSeek Dot 的个人资料来源与原生凭据配置':h('div',{className:'pc_setup'},h('h3',null,'连接凭据'),h(CredentialForm)))));
     }
-    return{inject,apply};
+    return{inject,apply,createDotAppearance};
   },
 });

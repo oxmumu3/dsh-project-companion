@@ -1,6 +1,6 @@
 {
   "name": "dsh-project-companion",
-  "version": "0.7.0-preview.1",
+  "version": "0.8.0-preview.2",
   "description": "Native Dot workbench, WeChat project companion and read-only personal context for DeepSeek Harness",
   "author": "牛村木木山",
   "license": "MIT",
@@ -35,7 +35,8 @@
     "docs/news.md",
     "docs/news-feed-provenance.md",
     "docs/context-sources.md",
-    "docs/roadmap.md"
+    "docs/roadmap.md",
+    "docs/wechat-queue-2026-10-19.md"
   ],
   "scripts": {
     "test": "node --max-old-space-size=128 --test --test-concurrency=1 test/*.test.mjs",
@@ -74,7 +75,8 @@
         "@deepseek-ai/dsh-client-ui-renderer",
         "@deepseek-ai/dsh-client-ui-primitives",
         "@deepseek-ai/dsh-client-ui-layout",
-        "@deepseek-ai/dsh-client-ui-sidebar"
+        "@deepseek-ai/dsh-client-ui-sidebar",
+        "@deepseek-ai/dsh-client-ui-theme"
       ]
     }
   },

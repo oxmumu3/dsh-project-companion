@@ -11,7 +11,7 @@ const sample=()=>({version:1,generatedAt:'2026-10-19T17:00:00.000Z',hostTimeZone
   jobs:[{id:'j1',projectLabel:'公开项目 A',task:'只读检查说明',status:'completed',createdAt:'2026-10-19T16:00:00.000Z',finishedAt:'2026-10-19T16:01:00.000Z',delivery:{status:'reported_sent'}}],
   reminders:[{id:'r1',title:'核对演示',dueAt:'2026-10-20T17:00:00.000Z',status:'scheduled'}],limitations:[]});
 
-async function harness({layout=true}={}){
+async function harness({layout=true,sessions,appearance=false}={}){
   const source=await readFile(new URL('../src/client.js',import.meta.url),'utf8');
   const registrations=[],cleanups=[],requests=[],opened=[],panels=[];
   let descriptor,cursor=0,values=[],pending=[];
@@ -25,12 +25,14 @@ async function harness({layout=true}={}){
   const module=descriptor.factory(id=>id==='react'?react:id==='@deepseek-ai/dsh-client-ui-primitives'?{Modal:'modal'}:(()=>{throw new Error(`unexpected module ${id}`);})());
   const ctx={effect:fn=>cleanups.push(fn()),slots:{inject:(_name,fn)=>fn(),register:(spec,component)=>{const item={spec,component,disposed:false};registrations.push(item);return()=>{item.disposed=true;};}},
     uiWorkspace:{openSession:id=>{opened.push(id);if(context.navError)throw new Error('synthetic navigation failure');}},...(layout?{layout:{selectPanel:id=>panels.push(id)}}:{})};
+  const themeLayers=[];let formState={status:'ready',writable:true,revision:1,value:{dotAppearance:'native'}},formListeners=new Set();
+  if(appearance){ctx.configForms={get:()=>({getSnapshot:()=>formState,subscribe:fn=>{formListeners.add(fn);return()=>formListeners.delete(fn);},mutate:async(ops,revision)=>{assert.equal(revision,formState.revision);assert.equal(ops[0].path[0],'dotAppearance');formState={...formState,revision:revision+1,value:{dotAppearance:ops[0].value}};formListeners.forEach(fn=>fn());return true;}})};ctx.theme={overrideTokens:()=>{const layer={active:true};themeLayers.push(layer);return()=>{layer.active=false;};}};}
   module.apply(ctx);
   const panel=()=>registrations.find(row=>row.spec.name==='main'&&row.spec.key==='project-companion-dot');
-  const render=()=>{cursor=0;assert.ok(panel(),'native Dot main panel must be registered');return panel().component({});};
+  const render=()=>{cursor=0;assert.ok(panel(),'native Dot main panel must be registered');return panel().component(sessions?{useSessions:selector=>selector({byId:sessions})}:{});};
   const flush=async()=>{const run=pending;pending=[];run.forEach(fn=>fn());await new Promise(resolve=>setImmediate(resolve));};
   const unmount=()=>{values.forEach(value=>value?.cleanup?.());values=[];pending=[];};
-  return{module,source,ctx,context,registrations,requests,opened,panels,render,flush,unmount,dispose:()=>{unmount();cleanups.forEach(stop=>stop?.());}};
+  return{module,source,ctx,context,registrations,requests,opened,panels,themeLayers,render,flush,unmount,dispose:()=>{unmount();cleanups.forEach(stop=>stop?.());}};
 }
 function nodes(tree,predicate){const result=[];const visit=value=>{if(!value||typeof value!=='object')return;if(predicate(value))result.push(value);for(const child of value.children??[])visit(child);};visit(tree);return result;}
 function text(tree){if(typeof tree==='string'||typeof tree==='number')return String(tree);return(tree?.children??[]).map(text).join(' ');}
@@ -61,9 +63,44 @@ test('project switching and navigation are explicit; multiple sessions are not p
   const h=await harness();h.render();await h.flush();let view=h.render();
   await button(view,'打开 Dot 会话').props.onClick();assert.deepEqual(h.opened,['dot-source']);
   await button(view,'打开项目会话').props.onClick();assert.deepEqual(h.opened,['dot-source','session-a']);
+  assert.deepEqual(h.panels,[null,null],'same-session navigation must explicitly leave the custom main panel');
   button(view,'公开项目 B').props.onClick();view=h.render();assert.match(text(view),/选择会话/);
   assert.equal(h.opened.length,2);await button(view,'会话 2').props.onClick();assert.deepEqual(h.opened,['dot-source','session-a','session-b2']);
   assert.equal(h.requests.length,1);h.dispose();
+});
+
+test('puts recorded goals, blockers and next steps before collapsed evidence without inventing completion',async()=>{
+  const h=await harness();
+  const row=(id,kind,value,source='user')=>({id,kind,text:value,at:'2026-10-19T17:00:00Z',source:{kind:source,reference:'session:session-a'},verified:false});
+  h.context.snapshot.projects[0].overview={available:true,goals:[row('g','goal','交付首版项目助理')],blockers:[row('b','blocker','手机闭环尚待核对','assistant')],nextSteps:[row('n','next_step','检查真实送达')],recent:[row('g','goal','交付首版项目助理')]};
+  h.render();await h.flush();const view=h.render(),value=text(view);
+  assert.match(value,/项目目标.*交付首版项目助理/);assert.match(value,/已记录的阻塞.*手机闭环尚待核对/);assert.match(value,/已记录的下一步.*检查真实送达/);
+  assert.ok(value.indexOf('项目目标')<value.indexOf('README.md'));
+  assert.equal(value.split('交付首版项目助理').length-1,1,'a recent goal already shown above should not repeat');
+  const details=nodes(view,n=>n.type==='details'&&text(n).includes('原始资料与对话'))[0];
+  assert.ok(details);assert.notEqual(details.props.open,true);assert.match(text(details),/README.md/);
+  assert.match(value,/助手记录.*未独立核验/);assert.equal(h.requests.length,1);h.dispose();
+  assert.doesNotMatch(value,/session:session-a/,'provenance should use a human-readable label, not internal session ids');
+});
+
+test('missing or empty structured memory stays explicit without inventing goals or next steps',async()=>{
+  for(const overview of [undefined,{available:true,goals:[],blockers:[],nextSteps:[],recent:[]},{available:true,goals:[null],blockers:[],nextSteps:[],recent:[]}]){
+    const h=await harness();h.context.snapshot.projects[0].overview=overview;h.render();await h.flush();const value=text(h.render());
+    assert.match(value,/尚未记录|项目记忆暂不可用/);assert.doesNotMatch(value,/建议先完成|已经完成/);h.dispose();
+  }
+});
+
+test('desktop appearance controls apply and restore only after explicit clicks, with no task request',async()=>{
+  const h=await harness({appearance:true});h.render();await h.flush();let view=h.render();
+  assert.equal(h.themeLayers.length,0);const enable=button(view,'启用 Dot 外观');assert.ok(enable);assert.equal(enable.props.disabled,false);
+  await enable.props.onClick();view=h.render();assert.equal(h.themeLayers.filter(x=>x.active).length,1);assert.ok(button(view,'恢复原生外观'));
+  await button(view,'恢复原生外观').props.onClick();assert.equal(h.themeLayers.filter(x=>x.active).length,0);assert.equal(h.requests.length,1);assert.equal(h.opened.length,0);h.dispose();
+});
+
+test('known native session titles aid explicit choice and missing cache stays unconfirmed',async()=>{
+  const h=await harness({sessions:{'session-b1':{displayTitle:'制定公开发布计划',running:false}}});h.render();await h.flush();button(h.render(),'公开项目 B').props.onClick();const view=h.render();
+  assert.ok(button(view,'制定公开发布计划'));assert.match(text(view),/当前无运行任务/);assert.match(text(view),/会话 2.*标题尚未加载/);
+  assert.equal(h.opened.length,0);await button(view,'制定公开发布计划').props.onClick();assert.deepEqual(h.opened,['session-b1']);assert.deepEqual(h.panels,[null]);h.dispose();
 });
 
 test('unbound empty snapshot remains usable and never invents a connection or dispatch',async()=>{
