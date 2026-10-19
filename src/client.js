@@ -268,10 +268,11 @@ window.__ModuleLoader__.load({
         const statusText=row=>!snapshot?'状态未确认':!row.configured?'待账号授权':!row.enabled?'已配置，当前对话尚未启用':row.lastReadAt?'当前对话已启用':'当前对话已启用；本次启动暂无读取记录';
         return h('div',{className:'pc_setup','data-context-panel':true},
           h('h2',null,'个人资料来源'),
+          h('p',{className:'pc_muted'},'这些连接是可选项。本地项目助理和公开 AI 资讯无需连接这些账号，可以先直接使用。'),
           h('p',null,'按需连接你自己的邮箱、日历、文档、任务和笔记。开启某个来源只验证读取接口；只有你明确查询时才读取资料，不会自动扫描、写入项目记忆或建立推送计划。'),
           h('section',{className:'pc_card'},h('h3',null,'在原生插件配置中填写凭据'),
-            h('p',{className:'pc_muted'},'在下方原生配置表单填写并保存。也可打开插件页 → DeepSeek Dot → 配置。令牌只在原生密钥字段输入，请勿在聊天里发送。flomo 使用 MCP 访问令牌（不是写入笔记的 Webhook）；滴答清单使用账号 API 口令。'),
-            h('p',{className:'pc_muted'},'Google 需要你自己的 Desktop OAuth Client ID 和 Client Secret。在插件配置填写后，点击下方按钮生成只读授权链接，再由你打开 Google 授权页。'),
+            h('p',{className:'pc_muted'},'在下方原生配置表单填写并保存。也可打开插件页 → DeepSeek Dot → 配置。令牌只在原生密钥字段输入，请勿在聊天里发送。flomo 需要 MAX 会员及 MCP 访问令牌（不是写入笔记的 Webhook）；滴答清单使用账号 API 口令。'),
+            h('p',{className:'pc_muted'},'Google 需要官方 MCP Developer Preview 资格、已启用对应服务的 Cloud 项目，以及你自己的 Desktop OAuth Client ID 和 Client Secret。保存配置后，点击下方按钮生成只读授权链接，再由你打开 Google 授权页。'),
             h(CredentialForm,{sources:snapshot?.sources,googleAuth:google,onSaved:refresh}),
             h('p',{role:'status'},!google?'Google 状态未确认':google.refreshConfigured?'Google 账号凭据已保存；各资料来源仍需分别启用。':google.authInProgress?'Google 授权正在等待确认，完成后请刷新状态。':google.clientConfigured?'Google Desktop 应用已配置，尚未完成账号授权。':'请先在插件配置填写 Google Desktop 应用信息。'),
             h('div',{className:'pc_actions'},h('button',{type:'button',disabled:busy||!google?.clientConfigured,onClick:()=>mutate('google_authorize')},'连接 Google 账号'),h('button',{type:'button',disabled:busy,onClick:refresh},'刷新资料来源状态')),

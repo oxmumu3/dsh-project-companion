@@ -39,4 +39,4 @@
 
 微信连续主动消息有 10 条交互窗口；正常发一条微信消息后恢复，不需记额外管理命令。通道发出与手机收到分别核对，请在手机上确认显示。
 
-首版云端来源只有明确关联的公开 GitHub release；邮箱、日历、Slack、Notion、云端 iCloud 和 iMessage 未接入。新用户开箱、长期运行与休眠重连仍待验证。源码回归、真实模型与手机收件分别列在[验证记录](verification.md)，开发排障另见[开发命令](developer-commands.md)。
+个人资料连接是可选项，不影响先使用本地项目助理与公开 AI 资讯。0.6 已加入 Gmail、Google 日历、Drive、Docs、Sheets、Slides、滴答和 flomo 的按需只读入口，需本人配置账号并逐项启用；真实账号读取仍待验收。Google 需要官方 MCP 预览资格与自己的 Cloud 客户端，flomo 需要 MAX，完整步骤见[连接说明](context-sources.md)。Slack、Notion、云端 iCloud 和 iMessage 尚未接入。新用户开箱、长期运行与休眠重连仍待验证。源码回归、真实模型与手机收件分别列在[验证记录](verification.md)，开发排障另见[开发命令](developer-commands.md)。

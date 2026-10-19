@@ -66,4 +66,4 @@
 
 它用于日报里的最新 release 动态，不授予私有仓库、邮箱或日历权限。云端读取失败会显示失败状态，不用旧结果冒充新查询。
 
-Gmail、Google Workspace、Slack、Notion、iCloud 云端接入作为后续可选授权层，优先复用已有连接器；本版无需为这些服务另外登录。
+个人资料连接可选：0.6 已加入 Gmail、Google Workspace 六类来源、滴答和 flomo 的原生配置与按需只读入口，需本人授权，见[连接说明](context-sources.md)。核心项目助理和公开资讯无需登录这些账号。Slack、Notion、iCloud 云端尚未接入。
