@@ -32,3 +32,10 @@ DSH Project Companion / DeepSeek专属Dot is a community project by 牛村木木
 ## Distribution
 
 Retain these notices and the full corresponding licenses when redistributing these vendored files. If shipping the separate WeChat plugin as part of an installer, retain that plugin's own copyright and license as well. Improvements may be contributed upstream without implying that upstream authors endorse this project.
+
+
+## Public RSS source facts — AI Daily Digest provenance
+
+- `assets/news-feeds.json` records 92 public feed/homepage URL facts matching `vigorX777/ai-daily-digest` at commit `1f484a3f2f101cb0f1a94a35b1a1befe0f672b82` and the user's prior source pool. See `docs/news-feed-provenance.md` for exact source links and verification.
+- Upstream has no LICENSE file at that snapshot. We do not claim its code is MIT and do not redistribute its parser, ranking, summary, configuration or provider pipeline. Our bounded transport/parser/model/service implementation is independent.
+- Publisher articles and RSS content remain their respective authors' material. They are fetched at runtime for bounded summaries and links, never bundled as an article archive. This project's MIT license does not license third-party articles or imply endorsement.

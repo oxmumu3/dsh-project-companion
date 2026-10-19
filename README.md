@@ -2,11 +2,11 @@
 
 长在微信里的 DeepSeek 项目助理：记住正在推进的本地项目，整理有来源的进展，按你的要求跟进，再把交办和执行回复串起来。
 
-作者：牛村木木山。社区开源项目，非 DeepSeek 或 OpenAI 官方产品。当前版本为 **`0.4.0-preview.2`**，适合先用一个项目试跑。已验证与待验证的部分见[验证记录](docs/verification.md)。
+作者：牛村木木山。社区开源项目，非 DeepSeek 或 OpenAI 官方产品。当前版本为 **`0.5.0-preview.1`**，适合先用一个项目试跑。已验证与待验证的部分见[验证记录](docs/verification.md)。
 
 ## 安装
 
-[下载 macOS 安装包](https://github.com/piggy00544/dsh-project-companion/releases/download/v0.4.0-preview.2/dsh-dot-0.4.0-preview.2-macos.zip) · [本版本文件](https://github.com/piggy00544/dsh-project-companion/releases/tag/v0.4.0-preview.2)
+[下载 macOS 安装包](https://github.com/piggy00544/dsh-project-companion/releases/download/v0.5.0-preview.1/dsh-dot-0.5.0-preview.1-macos.zip) · [本版本文件](https://github.com/piggy00544/dsh-project-companion/releases/tag/v0.5.0-preview.1)
 
 1. 解压并保留整个目录。已有 Harness 时，先保存工作并正常退出，再双击 `Install.command`。
 2. 没有 Harness 时，按同一入口前往官方 Releases 安装应用，完成后回到入口按回车继续。模型登录与配置由你本人完成。
@@ -16,7 +16,7 @@
 
 安装包固定使用 `dsh-wechat@0.11.0`，已有同版本及配对原样保留；遇到其他桥接版本会停止。安装仍可能联网下载依赖。未签名、公证，不提供绕过 macOS 安全检查的步骤。支持的宿主是官方 **DSH `0.2.0-rc.2` 或 `0.2.1-rc.2`**；Windows 整合安装尚未验证。
 
-已有 Harness 也可以下载 [companion tgz](https://github.com/piggy00544/dsh-project-companion/releases/download/v0.4.0-preview.2/dsh-project-companion-0.4.0-preview.2.tgz)，通过官方插件页面添加；微信能力需要另行安装并启用 `dsh-wechat@0.11.0`。完整步骤见[安装说明](docs/install.md)与[首次使用](docs/first-use.md)。
+已有 Harness 也可以下载 [companion tgz](https://github.com/piggy00544/dsh-project-companion/releases/download/v0.5.0-preview.1/dsh-project-companion-0.5.0-preview.1.tgz)，通过官方插件页面添加；微信能力需要另行安装并启用 `dsh-wechat@0.11.0`。完整步骤见[安装说明](docs/install.md)与[首次使用](docs/first-use.md)。
 
 ## 能做什么
 
@@ -25,6 +25,7 @@
 - **明确交办**：你说清楚要做什么后，把任务交给对应项目的可用会话，区分「已接收」与「执行回复」，并回到原微信对话。
 - **提醒与日报**：按明确时间设置一次提醒或固定日报，可以暂停、取消。
 - **只读跟进**：先试一次，或明确设置频率，让它核对项目变化、阻塞与下一步；没有值得告知的新情况时可静默结束。
+- **AI 资讯日报**：从 92 个技术博客 RSS 中筛选 AI 与 Builder 相关内容，最多 3 篇重点＋7 篇速览，保留原文链接和读取范围；支持预览、明确时间开启与取消。详见[资讯日报](docs/news.md)。
 - **公开仓库动态**：可选关联公开 GitHub 仓库，读取最新 release。
 
 安装和首次引导都不会默认创建提醒、日报或周期跟进。首份简报及主动检查只允许读取选定项目的记忆和资料，不改文件、不派工。普通会话中，只有你明确交代执行时才派工。
@@ -42,6 +43,9 @@
 - 「每两小时看看这个项目，有值得关注的事再告诉我。」
 - 「取消每日汇报，其他提醒保留。」
 - 「取消这个项目的主动跟进。」
+- 「先预览一期 AI 资讯日报，不发微信。」
+- 「每天早上八点半给我发 AI 资讯，3 篇重点加 7 篇速览。」
+- 「取消 AI 资讯日报，项目提醒保留。」
 
 模型负责理解表达并选择项目；项目重名或存在多段工作会话时会澄清。无需记内部编号或复制目录路径。更多示例见[快速开始](docs/quickstart.md)。
 
@@ -62,6 +66,8 @@
 - 周期跟进频率为 30–1440 分钟，采用电脑时区的 23:00–08:00 免打扰。一次性检查为 30–300 秒、默认 60 秒；这次明确请求可在免打扰时段执行。
 - Gmail、Google Workspace、Slack、Notion、云端 iCloud 和 iMessage 尚未接入。本机 iCloud Drive 项目属于本地读取，不代表电脑关机后仍能访问 Apple 云端。
 
+AI 资讯抓取只访问固定公开来源，候选标题、摘要及选中文章有界正文交给你配置的 Harness 模型；使用现有账户额度，通常每期两次模型调用。全文获取失败会标为 RSS 摘要依据，不把摘要当作事实已核实。默认不启用推送。
+
 既有关注、提醒和交办账本保留在本地 DSH profile；项目记忆与跟进数据位于选定项目的 `.dsh/dot-memory/`、`.dsh/dot-followup/` 和 `.dsh/dot-checks/`。共享项目目录时请排除这些运行数据。工具输入输出也可能进入宿主会话日志，模型使用方式受宿主配置影响。源码、测试和演示只含合成数据。
 
 ## 开发与许可
@@ -70,4 +76,4 @@ MIT。默认开发环境为 Node.js 22.13+；测试方法、双 SDK 回归与真
 
 ## 后续迭代
 
-规划接入「3篇重点详读＋7篇简短摘要」的AI资讯日报；尚未包含在当前预览版，见[路线图](docs/roadmap.md)。
+资讯日报已接入当前预览版；持续优化摘要质量与真实使用验证，见[路线图](docs/roadmap.md)。

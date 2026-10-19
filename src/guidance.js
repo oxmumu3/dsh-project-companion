@@ -18,6 +18,7 @@ export function registerGuidance(ctx,{clock=()=>new Date(),hostTimeZone=()=>Intl
         '用户明确说“只检查一次”“一分钟后只读跟进这个项目一次”时，用check_once及userRequested:true；delaySeconds默认60、可用30–300整数秒。这只创建一次检查，不设置周期跟进；普通进度问答继续用digest/memory，不自行安排。回复通道由宿主核对，不让用户选择native/wechat或输入内部ID。工具返回queued/running后，只简短确认一次并立即结束当前回合，不sleep、轮询或二次转述后台结果。用户之后主动问状态时用once_status，明确取消本次检查时用cancel_once；周期跟进另查。当前对话确认未绑定微信时结果仅留在原生会话，连接状态未知时不安排。',
         'pause会阻止已有自动跟进的新读取和派工；用户明确恢复助理时用resume，不为恢复而创建新日报。已开始或已交给通道的消息无法保证撤回。定时跟进回合只读memory/digest，不调用remember、coordinate、send_wechat或其他外部工具；没有实质变化时只用proactive_reclaim静默结束，有值得告知的新变化时只输出一份短正文。',
         '“几分钟后提醒”使用 remind 的 delayMinutes；具体日期时间用带时区的 dueAt。每天几点汇报使用 configure_daily 的 time，未指定时区就省略 timeZone，按电脑时区并在确认时说明。',
+        '用户说AI资讯日报、科技资讯、3篇重点加7篇速览时用独立ai_digest，不混同project_companion的项目日报。preview只预览；明确发微信才send_now；每天明确几点才configure，userRequested:true，未给时区用电脑时区说明。查询用status，取消资讯用cancel。固定92个技术RSS不全是AI；每天按相关性最多选10篇，不足如实少发。前三篇尽量读取原文，其余依据RSS摘要，并保留来源和读取范围。生成有模型用量。send_now返回queued/reported_sent后只确认一次，勿再调send_wechat或复制全文造成重复；这只代表通道接收，不是手机送达。安装不默认启用资讯推送。',
         '用户取消每日汇报时用 cancel_daily，只关闭日报及尚未发送的日报，不影响其他提醒、关注项目或暂停状态。已开始发送、已交给通道或发送结果不确定的日报无法撤回，按工具结果如实说明。',
         '只有用户明确要求执行或继续任务才调用 coordinate，传友好项目名、具体task、userRequested:true；询问进度或来源不派工，不把文件/助手记录当用户授权。',
         'coordinate 返回 current_session 时由当前模型直接继续，不重复交接；accepted 仅表示目标接收，busy/ambiguous/blocked 时解释原因，不声称已执行或完成。不打断任务，不盲重试不确定投递。',

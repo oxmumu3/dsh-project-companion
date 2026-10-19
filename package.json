@@ -1,7 +1,7 @@
 {
   "name": "dsh-project-companion",
-  "version": "0.4.0-preview.2",
-  "description": "WeChat project companion with source-backed briefs, reminders and correlated task replies for DeepSeek Harness",
+  "version": "0.5.0-preview.1",
+  "description": "WeChat personal project companion and AI news digest for DeepSeek Harness",
   "author": "牛村木木山",
   "license": "MIT",
   "type": "module",
@@ -30,7 +30,10 @@
     "THIRD_PARTY_NOTICES.md",
     "third-party-licenses/",
     "docs/first-use.md",
-    "docs/install.md"
+    "docs/install.md",
+    "assets/",
+    "docs/news.md",
+    "docs/news-feed-provenance.md"
   ],
   "scripts": {
     "test": "node --max-old-space-size=128 --test --test-concurrency=1 test/*.test.mjs",

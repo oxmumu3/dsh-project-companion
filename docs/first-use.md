@@ -1,8 +1,8 @@
 # 第一次使用 DeepSeek Dot
 
-这是牛村木木山制作的社区项目助理，使用官方 DeepSeek Harness 和社区微信桥接，非官方产品。当前版本 `0.4.0-preview.2`。
+这是牛村木木山制作的社区项目助理，使用官方 DeepSeek Harness 和社区微信桥接，非官方产品。当前版本 `0.5.0-preview.1`。
 
-1. [下载安装包](https://github.com/piggy00544/dsh-project-companion/releases/download/v0.4.0-preview.2/dsh-dot-0.4.0-preview.2-macos.zip)，解压完整目录，双击 `Install.command`。已有 Harness 时先保存工作并正常退出；没有时按入口指引安装官方应用，再回车继续。模型登录与配置由你本人完成。
+1. [下载安装包](https://github.com/piggy00544/dsh-project-companion/releases/download/v0.5.0-preview.1/dsh-dot-0.5.0-preview.1-macos.zip)，解压完整目录，双击 `Install.command`。已有 Harness 时先保存工作并正常退出；没有时按入口指引安装官方应用，再回车继续。模型登录与配置由你本人完成。
 2. 打开 Harness，在设置里找到「DeepSeek Dot」。全新或空白会话按宿主规则显示首次引导；已有工作对话不会被抢走。
 3. 已连接微信直接继续。首次连接时扫码确认，再从微信发一句「你好」。扫码登录和建立会话是两步，页面会显示当前状态；此页不会重置已有连接。
 4. 选择最多五个关注项目，点「保存关注并预览简报」。已有关注保留，之后可在会话里取消。列表来自 Harness 已知项目，不扫描整台电脑或读取全部历史。

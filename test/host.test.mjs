@@ -41,7 +41,7 @@ async function openHost(t, options={}){
   const session=ctx.sessions.create(SessionId('synthetic-owner'),{meta:{cwd:workspace}});
   const owner={id:session.id,session,ctx,status:'idle',followup:message=>accepted.push(message)};live.set(owner.id,owner);
   const disableWeChat=ctx.tools.register(defineTool({name:'send_wechat',description:'Synthetic queue only; no real network',parameters:{text:{type:'string',required:true}},output:{schema:{type:'object',additionalProperties:true},render:(_args,value)=>[{type:'text',text:JSON.stringify(value)}]},execute:(_args,execution)=>{sent.push(execution);return options.sendResponse?.(execution)??{ok:true,message:'queued synthetic message; not real WeChat'};}}));
-  const lifecycle=await ctx.plugin({name:'synthetic-companion-mount',inject:['tools','commands','storageDomain','sessions','systemPrompt'],async apply(scope){adapter=await installCompanion(scope,{clock:()=>now,hostTimeZone:()=>options.hostTimeZone??'America/Mexico_City',...(options.readBinding?{readBinding:options.readBinding}:{}),...(options.readSetup?{readSetup:options.readSetup}:{}),...(options.readNativeRoute?{readNativeRoute:options.readNativeRoute}:{}),timers:{setInterval:fn=>{timer=fn;timerStarts++;return {unref(){}};},clearInterval:()=>{timer=undefined;timerStops++;}}});}});
+  const lifecycle=await ctx.plugin({name:'synthetic-companion-mount',inject:['tools','commands','storageDomain','sessions','systemPrompt'],async apply(scope){adapter=await installCompanion(scope,{clock:()=>now,hostTimeZone:()=>options.hostTimeZone??'America/Mexico_City',...(options.readBinding?{readBinding:options.readBinding}:{}),...(options.readSetup?{readSetup:options.readSetup}:{}),...(options.readNativeRoute?{readNativeRoute:options.readNativeRoute}:{}),...(options.news?{news:options.news}:{}),timers:{setInterval:fn=>{timer=fn;timerStarts++;return {unref(){}};},clearInterval:()=>{timer=undefined;timerStops++;}}});}});
   let count=0;const signal=()=>new AbortController().signal;
   const nativeTool=async(args,agent=owner,callId=`synthetic-call-${++count}`)=>{const r=await ctx.tools.execute({callId,name:'project_companion',arguments:args,agent,signal:signal()});assert.equal(r.isError,false,JSON.stringify(r));return r;};
   const tool=async(...args)=>(await nativeTool(...args)).value;
@@ -669,4 +669,65 @@ test('an explicit onboarding action resumes only the existing bound source after
   assert.deepEqual(resumed,[h.owner.id]);assert.equal(h.accepted.length,0);
   assert.equal((await post({action:'complete'})).welcome.status,'accepted');assert.equal(h.accepted.length,1);
   await post({action:'complete'});assert.equal(h.accepted.length,1);assert.deepEqual(resumed,[h.owner.id]);assert.equal(h.sent.length,0);
+});
+
+
+function newsFixtures(){
+  let feeds=0,models=0;
+  const articles=Array.from({length:10},(_,i)=>({id:`news-${i}`,title:`AI Builder ${i}`,url:`https://example.org/ai/${i}`,publishedAt:'2026-10-18T14:00:00Z',sourceName:'Synthetic public source',sourceUrl:'https://example.org',excerpt:`AI tool source ${i}`}));
+  return {fetchCandidates:async()=>{feeds++;return{articles,stats:{totalFeeds:1,succeededFeeds:1,failedFeeds:0,totalArticles:10,eligibleArticles:10},warnings:[]};},readArticle:async article=>({article,content:`AI Builder publicly documented body ${article.id}`,coverage:'article',truncated:false}),model:{selectArticles:async()=>{models++;return articles.map(a=>a.id);},summarizeArticles:async({articles:items})=>({items:items.map(a=>({id:a.id,title:a.title,summary:'来自公开资料的简短中文摘要。',why:'可以用于 Builder 实践。'}))}),close(){}},counts:()=>({feeds,models})};
+}
+async function newsTool(h,args,callId='synthetic-news-call'){
+  const r=await h.ctx.tools.execute({callId,name:'ai_digest',arguments:args,agent:h.owner,signal:new AbortController().signal});
+  assert.equal(r.isError,false,JSON.stringify(r));return r.value;
+}
+test('AI digest host tool defaults off; native preview uses injected pipeline without any WeChat send',async t=>{
+  const news=newsFixtures();const h=await openHost(t,{news});
+  assert.ok(h.ctx.tools.schemas(h.owner).some(x=>x.name==='ai_digest'));
+  const before=await newsTool(h,{action:'status'});assert.equal(before.schedule,null);assert.deepEqual(news.counts(),{feeds:0,models:0});
+  const preview=await newsTool(h,{action:'preview'},'synthetic-news-preview');
+  assert.match(preview.text,/重点|详读/);assert.match(preview.text,/速览/);assert.equal(h.sent.length,0);assert.equal(h.timers().active,false);
+  assert.equal((await newsTool(h,{action:'status'})).schedule,null);
+});
+test('AI digest host manual send stays on exact bound owner and repeated tool call does not resend',async t=>{
+  const news=newsFixtures();const h=await openHost(t,{news,readSetup:async()=>({state:'bound',sessionId:'synthetic-owner',bindingKey:'a'.repeat(64)})});
+  const sent=await newsTool(h,{action:'send_now',userRequested:true},'synthetic-news-single');
+  assert.ok(['queued','reported_sent'].includes(sent.status),JSON.stringify(sent));assert.equal(h.sent.length,1);
+  await newsTool(h,{action:'send_now',userRequested:true},'synthetic-news-single');assert.equal(h.sent.length,1);
+  assert.equal(h.sent[0].agent.id,h.owner.id);
+});
+test('AI digest schedule shares native minute timer and can cancel without touching project plans',async t=>{
+  const news=newsFixtures();const h=await openHost(t,{news,readSetup:async()=>({state:'bound',sessionId:'synthetic-owner',bindingKey:'a'.repeat(64)})});
+  await h.tool({action:'watch'});await h.tool({action:'remind',delayMinutes:10,title:'保留原提醒'});
+  const plan=await newsTool(h,{action:'configure',time:'15:01',timeZone:'UTC',userRequested:true},'synthetic-news-plan');
+  assert.equal(plan.schedule.time,'15:01');h.time('2026-10-18T15:01:00Z');await h.tick();assert.equal(h.sent.length,1);
+  await newsTool(h,{action:'cancel',userRequested:true},'synthetic-news-cancel');
+  assert.equal((await newsTool(h,{action:'status'})).schedule,null);
+  assert.equal((await h.tool({action:'status'})).counts.activeReminders,1);
+});
+
+test('AI digest host pause aborts a pending preview without sending or removing other reminders',async t=>{
+  const news=newsFixtures();let started;const entered=new Promise(r=>started=r);
+  news.model.selectArticles=async({signal})=>{started();return new Promise((_resolve,reject)=>signal.addEventListener('abort',()=>reject(new Error('synthetic cancelled')),{once:true}));};
+  const h=await openHost(t,{news});await h.tool({action:'remind',delayMinutes:10,title:'保留'});
+  const work=newsTool(h,{action:'preview'},'synthetic-news-paused');await entered;
+  await h.tool({action:'pause'});assert.equal((await work).status,'blocked');assert.equal(h.sent.length,0);
+  assert.equal((await h.tool({action:'status'})).counts.activeReminders,1);
+});
+test('AI digest host refuses a different source session before source fetch or model use',async t=>{
+  const news=newsFixtures();const h=await openHost(t,{news,readSetup:async()=>({state:'bound',sessionId:'some-other-session',bindingKey:'b'.repeat(64)})});
+  const result=await newsTool(h,{action:'send_now',userRequested:true},'synthetic-news-wrong-route');
+  assert.equal(result.status,'blocked');assert.equal(h.sent.length,0);assert.deepEqual(news.counts(),{feeds:0,models:0});
+});
+test('AI digest host lifecycle disposal aborts generation and drains before its domain closes',async t=>{
+  const news=newsFixtures();let started;const entered=new Promise(r=>started=r);
+  news.model.selectArticles=async({signal})=>{started();return new Promise((_resolve,reject)=>signal.addEventListener('abort',()=>reject(new Error('synthetic disposed')),{once:true}));};
+  const h=await openHost(t,{news});const work=newsTool(h,{action:'preview'},'synthetic-news-dispose');await entered;
+  await h.lifecycle.dispose();assert.equal((await work).status,'blocked');assert.equal(h.sent.length,0);assert.equal(h.timers().active,false);
+});
+test('failed news cleanup does not leave task-result service running on plugin unload',async t=>{
+  const news=newsFixtures();const h=await openHost(t,{news});let taskClosed=false;
+  const original=h.adapter.taskResults.close;h.adapter.taskResults.close=async()=>{taskClosed=true;return original();};
+  h.adapter.news.close=async()=>{throw new Error('synthetic news store became unavailable');};
+  await h.lifecycle.dispose();assert.equal(taskClosed,true);assert.equal(h.timers().active,false);
 });

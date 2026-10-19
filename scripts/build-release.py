@@ -78,7 +78,7 @@ def package_audit(path, expected_name, expected_version):
     mit(files['package/LICENSE'], f'{expected_name}/LICENSE')
     vendor_files = 0
     if expected_name == 'dsh-project-companion':
-        for required in ['src/welcome-guard.js', 'src/installation.js', 'src/onboarding.js', 'src/client.js', 'THIRD_PARTY_NOTICES.md']:
+        for required in ['src/welcome-guard.js', 'src/installation.js', 'src/onboarding.js', 'src/client.js', 'src/news-service.js', 'src/news-model.js', 'src/news-feeds.js', 'assets/news-feeds.json', 'docs/news.md', 'THIRD_PARTY_NOTICES.md']:
             if f'package/{required}' not in files:
                 raise ValueError(f'Missing candidate component: {required}')
         for name in ['pan17-dsh-wechat', 'dsh-yolo', 'dsh-proactive']:
@@ -104,7 +104,7 @@ def runtime_fingerprints(files):
     return {
         name.removeprefix('package/'): digest(data)
         for name, data in sorted(files.items())
-        if name in {'package/index.js', 'package/cordis.patch.yml'} or name.startswith(('package/src/', 'package/vendor/'))
+        if name in {'package/index.js', 'package/cordis.patch.yml'} or name.startswith(('package/src/', 'package/vendor/', 'package/assets/'))
     }
 
 
