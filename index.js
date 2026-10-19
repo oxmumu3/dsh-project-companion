@@ -21,6 +21,7 @@ import {createGoogleAuth} from './src/context-google-auth.js';
 import {createContextTransport} from './src/context-transport.js';
 import {createPersonalContext,contextRowSchema,CONTEXT_SOURCES,contextErrorText} from './src/context-service.js';
 import {createContextRoute,registerContextRoute} from './src/context-route.js';
+import {createWorkbench,registerWorkbenchRoute} from './src/workbench.js';
 export {Config};
 
 export const name='project-companion';
@@ -83,7 +84,7 @@ export async function installCompanion(ctx,options={}){
   let disposed=false;
   const coordinates=new Set();
   let lastRuntimeError='';
-  let memory,followup,onboarding,welcomeGuard,contextRoute;
+  let memory,followup,onboarding,welcomeGuard,contextRoute,workbench;
   const lifecycle=new AbortController();
   const timers=options.timers??globalThis;
   const readBinding=options.readBinding??(sessionId=>readWechatBinding(ctx,sessionId,{...(options.fetch?{fetch:options.fetch}:{})}));
@@ -201,6 +202,7 @@ export async function installCompanion(ctx,options={}){
   ctx.effect(()=>async()=>{
     disposed=true;
     lifecycle.abort();
+    workbench?.close();
     const newsClosing=news.close();newsModel.close?.();
     const contextClosing=context.close();contextRoute?.close();
     const contextTransportClosing=contextTransport.close();const googleAuthClosing=googleAuth.close();
@@ -259,6 +261,14 @@ export async function installCompanion(ctx,options={}){
       if(disposed||value?.error||String(value?.agent?.id)!==sessionId)throw new Error('原 Dot 微信会话暂不能恢复。');
     },
   });
+  workbench=createWorkbench({
+    service,taskResults,readConnection:readSetup,isClosed:()=>disposed,
+    // Read the existing table directly: GET must not require or resume a live
+    // owner, normalize recovery state, or create a second state store.
+    readState:()=>table.get('profile'),
+    ...(options.clock?{clock:options.clock}:{}),...(options.hostTimeZone?{hostTimeZone:options.hostTimeZone}:{}),
+  });
+  if(typeof ctx.inject==='function')ctx.inject(['connection'],scope=>{if(!disposed)registerWorkbenchRoute(scope,workbench);});
   if(typeof ctx.inject==='function')ctx.inject(['connection'],scope=>{if(!disposed)registerContextRoute(scope,contextRoute);});
   if(typeof ctx.inject==='function')ctx.inject(['connection'],scope=>{if(!disposed)registerOnboardingRoute(scope,onboarding);});
 
@@ -507,7 +517,7 @@ export async function installCompanion(ctx,options={}){
   for(const project of await service.watchedProjects()){
     try{await followup.resume({root:project.root});}catch(error){noteError(error);}
   }
-  return{service,taskResults,memory,followup,onboarding,news,context};
+  return{service,taskResults,memory,followup,onboarding,news,context,workbench};
 }
 
 export async function apply(ctx,config){await installCompanion(ctx,{context:{config}});}
