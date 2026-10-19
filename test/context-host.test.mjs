@@ -1,0 +1,137 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {mkdtemp,rm,realpath} from 'node:fs/promises';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
+import {Context} from '@deepseek-ai/cordis';
+import SystemPrompt from '@deepseek-ai/dsh-system-prompt';
+import ToolRuntime from '@deepseek-ai/dsh-tools';
+import CommandRuntime from '@deepseek-ai/dsh-commands';
+import Storage from '@deepseek-ai/dsh-storage';
+import * as JsonStorage from '@deepseek-ai/dsh-storage-json';
+import * as StorageDomain from '@deepseek-ai/dsh-storage-domain';
+import SessionStore,{SessionId} from '@deepseek-ai/dsh-session';
+
+async function fixture(t,options={}){
+  const {installCompanion}=await import('../index.js');
+  const root=await realpath(await mkdtemp(join(tmpdir(),'dot-context-host-')));
+  const ctx=new Context();
+  for(const [plugin,config] of [[SystemPrompt,{}],[ToolRuntime,{mode:'native'}],[CommandRuntime,undefined],[Storage,undefined],[JsonStorage,{root:join(root,'storage')}],[StorageDomain,{backend:'json'}],[SessionStore,undefined]])await ctx.plugin(plugin,config);
+  const agents=new Map(),routes=new Map(),calls=[],closed=[];
+  ctx.provide('agents',{get:id=>agents.get(id),list:()=>[...agents.values()]});
+  ctx.provide('workingDirectory',{get:session=>session.header.cwd});
+  ctx.provide('workspaceRegistry',{list:()=>[]});
+  ctx.provide('connection',{fetch:{register:route=>{routes.set(route.path,route);return()=>routes.delete(route.path);}}});
+  let connection={state:'bound',sessionId:'context-owner',bindingKey:'a'.repeat(64)};
+  const session=ctx.sessions.create(SessionId('context-owner'),{meta:{cwd:root}});
+  const agent={id:session.id,session,ctx,status:'idle'};agents.set(agent.id,agent);
+  let adapter;
+  const config={didaToken:'synthetic-private-token',flomoToken:'',googleClientId:'',googleClientSecret:'',googleRefreshToken:''};
+  const transport={catalog:async(source,{signal})=>{calls.push({type:'catalog',source});return options.catalog?.(source,{signal})??{tools:[{name:'list_projects',inputSchema:{type:'object',properties:{limit:{type:'integer'},offset:{type:'integer'}}}}],fetchedAt:'2026-10-19T12:00:00Z'};},call:async(source,name,args,{signal})=>{calls.push({type:'call',source,name,args});return options.call?.(source,name,args,{signal})??{value:{structuredContent:{projects:[{id:'p1',name:'当前事项'}]}},fetchedAt:'2026-10-19T12:00:00Z'};},close:async()=>closed.push('transport')};
+  const googleAuth={status:()=>({clientConfigured:false,refreshConfigured:false,authInProgress:false}),start:async()=>{calls.push({type:'google_authorize'});return{url:'https://accounts.google.com/o/oauth2/v2/auth?state=synthetic',expiresAt:'2026-10-19T12:05:00Z'};},getToken:async()=>{throw new Error('must not access Google');},close:async()=>closed.push('googleAuth')};
+  const plugin=await ctx.plugin({name:'synthetic-context-host',inject:['tools','commands','storageDomain','sessions','systemPrompt'],async apply(scope){adapter=await installCompanion(scope,{clock:()=>new Date('2026-10-19T12:00:00Z'),readSetup:async()=>connection,readNativeRoute:options.readNativeRoute??(async()=>({kind:'unbound'})),readBinding:async()=>null,context:{readConfig:()=>({...config}),transport,googleAuth},timers:{setInterval(){throw new Error('context must not start timers');},clearInterval(){}}});}});
+  let number=0;
+  const tool=async args=>{const response=await ctx.tools.execute({callId:'context-test-'+(++number),name:'personal_context',arguments:args,agent,signal:new AbortController().signal});assert.equal(response.isError,false,JSON.stringify(response));return response.value;};
+  const project=async args=>{const response=await ctx.tools.execute({callId:'context-project-'+(++number),name:'project_companion',arguments:args,agent,signal:new AbortController().signal});assert.equal(response.isError,false,JSON.stringify(response));return response.value;};
+  const route=()=>routes.get('/api/project_companion/context');
+  const get=async()=>{const response=await route().fetch(new Request('http://localhost/api/project_companion/context'));return{status:response.status,value:await response.json()};};
+  const post=async body=>{const response=await route().fetch(new Request('http://localhost/api/project_companion/context',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)}));return{status:response.status,value:await response.json()};};
+  const close=()=>ctx.fiber.dispose();
+  t.after(async()=>{await close();await rm(root,{recursive:true,force:true});});
+  return{ctx,agent,agents,routes,calls,closed,adapter,plugin,config,tool,project,get,post,route,close,setConnection:value=>connection=value};
+}
+
+test('installs a passive native context tool and authenticated route without reading sources',async t=>{
+  const h=await fixture(t);
+  assert.ok(h.ctx.tools.schemas(h.agent).some(tool=>tool.name==='personal_context'));
+  assert.ok(h.route());
+  const snapshot=await h.get();
+  assert.equal(snapshot.status,200);assert.equal(snapshot.value.sources.length,8);assert.equal(snapshot.value.googleAuth.refreshConfigured,false);
+  assert.equal(snapshot.value.sources.find(row=>row.id==='dida').configured,true);
+  assert.equal(h.calls.length,0);
+  assert.equal(JSON.stringify(snapshot).includes('synthetic-private-token'),false);
+  assert.ok(h.adapter.context);
+});
+
+test('context tool requires explicit user intent and reads only an enabled exact source',async t=>{
+  const h=await fixture(t);
+  assert.equal((await h.tool({action:'query',source:'dida',operation:'projects'})).status,'blocked');
+  assert.equal(h.calls.length,0);
+  const connected=await h.tool({action:'connect',source:'dida',userRequested:true});
+  assert.equal(connected.sources.find(row=>row.id==='dida').enabled,true);
+  await h.tool({action:'query',source:'dida',operation:'projects',userRequested:true});
+  assert.deepEqual(h.calls.map(row=>row.type),['catalog','catalog','call']);
+  assert.equal(h.calls.at(-1).name,'list_projects');
+  const before=h.calls.length;
+  assert.equal((await h.tool({action:'query',source:'flomo',operation:'search',query:'AI',userRequested:true})).status,'blocked');
+  assert.equal(h.calls.length,before);
+});
+
+test('authenticated context route rejects extra fields, secret text, wrong media type and oversized requests',async t=>{
+  const h=await fixture(t);
+  for(const input of [{action:'connect',source:'dida',token:'do-not-store'},{action:'google_authorize',source:'gmail'},{action:'query',source:'dida'},{action:'connect',source:'unknown'}])assert.equal((await h.post(input)).status,400);
+  const bad=await h.route().fetch(new Request('http://localhost/api/project_companion/context',{method:'POST',body:'{}'}));assert.equal(bad.status,415);
+  const huge=await h.route().fetch(new Request('http://localhost/api/project_companion/context',{method:'POST',headers:{'content-type':'application/json'},body:' '.repeat(5000)}));assert.equal(huge.status,413);
+  assert.equal(h.calls.length,0);
+});
+
+test('native route resumes only its original bound session on an explicit POST, never on GET',async t=>{
+  const h=await fixture(t);h.agents.delete(h.agent.id);
+  const resumed=[];h.ctx.provide('sessionController',{resolveAgent:async id=>{resumed.push(id);h.agents.set(h.agent.id,h.agent);return{agent:h.agent};}});
+  assert.equal((await h.get()).status,200);assert.deepEqual(resumed,[]);
+  assert.equal((await h.post({action:'connect',source:'dida'})).status,200);
+  assert.deepEqual(resumed,[h.agent.id]);assert.deepEqual(h.calls.map(row=>row.type),['catalog']);
+});
+
+test('changed binding during native owner resume prevents source discovery and authorization',async t=>{
+  const h=await fixture(t);h.agents.delete(h.agent.id);
+  h.ctx.provide('sessionController',{resolveAgent:async()=>{h.agents.set(h.agent.id,h.agent);h.setConnection({state:'bound',sessionId:'different-owner',bindingKey:'b'.repeat(64)});return{agent:h.agent};}});
+  assert.equal((await h.post({action:'connect',source:'dida'})).status,400);assert.equal(h.calls.length,0);
+});
+
+test('only native explicit google_authorize returns a browser link',async t=>{
+  const h=await fixture(t);
+  const result=await h.post({action:'google_authorize'});
+  assert.equal(result.status,200);assert.match(result.value.url,/^https:\/\/accounts\.google\.com\//);
+  assert.deepEqual(h.calls.map(row=>row.type),['google_authorize']);
+});
+
+test('global pause stops new context reads and existing connections survive resume',async t=>{
+  const h=await fixture(t);await h.tool({action:'connect',source:'dida',userRequested:true});
+  await h.project({action:'pause'});
+  assert.equal((await h.tool({action:'query',source:'dida',operation:'projects',userRequested:true})).status,'blocked');
+  assert.equal(h.calls.length,1);
+  await h.project({action:'resume'});
+  assert.notEqual((await h.tool({action:'query',source:'dida',operation:'projects',userRequested:true})).status,'blocked');
+});
+
+test('unknown binding fails closed while a positively unbound native session can connect',async t=>{
+  const h=await fixture(t);h.setConnection({state:'unknown'});
+  // The fixture readNativeRoute positively verifies this is a native, unbound session.
+  assert.equal((await h.tool({action:'connect',source:'dida',userRequested:true})).sources.find(row=>row.id==='dida').enabled,true);
+  const unknown=await fixture(t,{readNativeRoute:async()=>({kind:'unknown'})});unknown.setConnection({state:'unknown'});
+  assert.equal((await unknown.tool({action:'connect',source:'dida',userRequested:true})).status,'blocked');
+  assert.equal(unknown.calls.length,0);
+});
+
+test('plugin disposal aborts context work and closes only its own native route and services',async t=>{
+  let entered;
+  const ready=new Promise(resolve=>entered=resolve);
+  let wait=false;
+  const h=await fixture(t,{catalog:async(source,{signal})=>{if(!wait)return{tools:[{name:'list_projects',inputSchema:{type:'object'}}]};entered();return new Promise((resolve,reject)=>signal.addEventListener('abort',()=>reject(new Error('private source failure')),{once:true}));}});
+  await h.tool({action:'connect',source:'dida',userRequested:true});wait=true;
+  const pending=h.tool({action:'query',source:'dida',operation:'projects',userRequested:true});await ready;
+  await h.close();assert.equal((await pending).status,'blocked');
+  assert.ok(h.closed.includes('transport'));assert.ok(h.closed.includes('googleAuth'));
+  assert.equal(h.routes.has('/api/project_companion/context'),false);
+});
+
+test('context cleanup rejection is observed immediately while unrelated project cleanup drains',async t=>{
+  const h=await fixture(t);
+  const original=h.adapter.context.close;
+  h.adapter.context.close=()=>{void original();return Promise.reject(new Error('synthetic failed context store cleanup'));};
+  const closeMemory=h.adapter.memory.close;
+  h.adapter.memory.close=async()=>{await new Promise(resolve=>setImmediate(resolve));return closeMemory();};
+  await h.close();
+  assert.ok(h.closed.includes('transport'));assert.ok(h.closed.includes('googleAuth'));
+});

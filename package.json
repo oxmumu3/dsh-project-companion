@@ -1,7 +1,7 @@
 {
   "name": "dsh-project-companion",
-  "version": "0.5.0-preview.1",
-  "description": "WeChat personal project companion and AI news digest for DeepSeek Harness",
+  "version": "0.6.0-preview.1",
+  "description": "WeChat project companion, AI news and read-only personal context for DeepSeek Harness",
   "author": "牛村木木山",
   "license": "MIT",
   "type": "module",
@@ -33,7 +33,9 @@
     "docs/install.md",
     "assets/",
     "docs/news.md",
-    "docs/news-feed-provenance.md"
+    "docs/news-feed-provenance.md",
+    "docs/context-sources.md",
+    "docs/roadmap.md"
   ],
   "scripts": {
     "test": "node --max-old-space-size=128 --test --test-concurrency=1 test/*.test.mjs",
@@ -46,7 +48,8 @@
     "@deepseek-ai/cordis": "4.0.4",
     "@deepseek-ai/dsh-system-prompt": "0.2.0-rc.2",
     "@deepseek-ai/dsh-storage": "0.2.0-rc.2",
-    "@deepseek-ai/dsh-storage-json": "0.2.0-rc.2"
+    "@deepseek-ai/dsh-storage-json": "0.2.0-rc.2",
+    "@deepseek-ai/schemastery": "3.18.4"
   },
   "peerDependencies": {
     "@deepseek-ai/dsh-tools": "0.2.0-rc.2 || 0.2.1-rc.2",
@@ -54,7 +57,8 @@
     "@deepseek-ai/dsh-storage-domain": "0.2.0-rc.2 || 0.2.1-rc.2",
     "@deepseek-ai/dsh-session": "0.2.0-rc.2 || 0.2.1-rc.2",
     "@deepseek-ai/dsh-llm": "0.2.0-rc.2 || 0.2.1-rc.2",
-    "@deepseek-ai/dsh-agent": "0.2.0-rc.2 || 0.2.1-rc.2"
+    "@deepseek-ai/dsh-agent": "0.2.0-rc.2 || 0.2.1-rc.2",
+    "@deepseek-ai/schemastery": "3.18.4 || 3.18.5"
   },
   "dsh": {
     "manifestVersion": 1,

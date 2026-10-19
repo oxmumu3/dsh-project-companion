@@ -2,11 +2,11 @@
 
 长在微信里的 DeepSeek 项目助理：记住正在推进的本地项目，整理有来源的进展，按你的要求跟进，再把交办和执行回复串起来。
 
-作者：牛村木木山。社区开源项目，非 DeepSeek 或 OpenAI 官方产品。当前版本为 **`0.5.0-preview.1`**，适合先用一个项目试跑。已验证与待验证的部分见[验证记录](docs/verification.md)。
+作者：牛村木木山。社区开源项目，非 DeepSeek 或 OpenAI 官方产品。当前版本为 **`0.6.0-preview.1`**，适合先用一个项目试跑。已验证与待验证的部分见[验证记录](docs/verification.md)。
 
 ## 安装
 
-[下载 macOS 安装包](https://github.com/piggy00544/dsh-project-companion/releases/download/v0.5.0-preview.1/dsh-dot-0.5.0-preview.1-macos.zip) · [本版本文件](https://github.com/piggy00544/dsh-project-companion/releases/tag/v0.5.0-preview.1)
+[下载 macOS 安装包](https://github.com/piggy00544/dsh-project-companion/releases/download/v0.6.0-preview.1/dsh-dot-0.6.0-preview.1-macos.zip) · [本版本文件](https://github.com/piggy00544/dsh-project-companion/releases/tag/v0.6.0-preview.1)
 
 1. 解压并保留整个目录。已有 Harness 时，先保存工作并正常退出，再双击 `Install.command`。
 2. 没有 Harness 时，按同一入口前往官方 Releases 安装应用，完成后回到入口按回车继续。模型登录与配置由你本人完成。
@@ -16,7 +16,7 @@
 
 安装包固定使用 `dsh-wechat@0.11.0`，已有同版本及配对原样保留；遇到其他桥接版本会停止。安装仍可能联网下载依赖。未签名、公证，不提供绕过 macOS 安全检查的步骤。支持的宿主是官方 **DSH `0.2.0-rc.2` 或 `0.2.1-rc.2`**；Windows 整合安装尚未验证。
 
-已有 Harness 也可以下载 [companion tgz](https://github.com/piggy00544/dsh-project-companion/releases/download/v0.5.0-preview.1/dsh-project-companion-0.5.0-preview.1.tgz)，通过官方插件页面添加；微信能力需要另行安装并启用 `dsh-wechat@0.11.0`。完整步骤见[安装说明](docs/install.md)与[首次使用](docs/first-use.md)。
+已有 Harness 也可以下载 [companion tgz](https://github.com/piggy00544/dsh-project-companion/releases/download/v0.6.0-preview.1/dsh-project-companion-0.6.0-preview.1.tgz)，通过官方插件页面添加；微信能力需要另行安装并启用 `dsh-wechat@0.11.0`。完整步骤见[安装说明](docs/install.md)与[首次使用](docs/first-use.md)。
 
 ## 能做什么
 
@@ -26,6 +26,7 @@
 - **提醒与日报**：按明确时间设置一次提醒或固定日报，可以暂停、取消。
 - **只读跟进**：先试一次，或明确设置频率，让它核对项目变化、阻塞与下一步；没有值得告知的新情况时可静默结束。
 - **AI 资讯日报**：从 92 个技术博客 RSS 中筛选 AI 与 Builder 相关内容，最多 3 篇重点＋7 篇速览，保留原文链接和读取范围；支持预览、明确时间开启与取消。详见[资讯日报](docs/news.md)。
+- **连接个人资料**：在原生设置中配置自己的账号，逐项启用 Gmail、Google 日历、Drive、Docs、Sheets、Slides、滴答与 flomo，按明确范围查询、读取或汇总，保留来源、时间和截断提示。当前为连接预览，真实账号仍需本人授权与验收。详见[连接说明](docs/context-sources.md)。
 - **公开仓库动态**：可选关联公开 GitHub 仓库，读取最新 release。
 
 安装和首次引导都不会默认创建提醒、日报或周期跟进。首份简报及主动检查只允许读取选定项目的记忆和资料，不改文件、不派工。普通会话中，只有你明确交代执行时才派工。
@@ -46,6 +47,12 @@
 - 「先预览一期 AI 资讯日报，不发微信。」
 - 「每天早上八点半给我发 AI 资讯，3 篇重点加 7 篇速览。」
 - 「取消 AI 资讯日报，项目提醒保留。」
+- 「查看我连接了哪些资料来源。」
+- 「在当前对话启用 flomo，搜一下我关于插件生态的笔记。」
+- 「看看未来 24 小时的 Google 日历安排。」
+- 「列出滴答的项目，再查看我选的项目未完成任务。」
+- 「搜索 Drive 中标题包含插件生态的文件。」
+- 「读取这份 Google Sheets 的 A1:F30，保留来源，不改表。」
 
 模型负责理解表达并选择项目；项目重名或存在多段工作会话时会澄清。无需记内部编号或复制目录路径。更多示例见[快速开始](docs/quickstart.md)。
 
@@ -64,7 +71,8 @@
 - 已排队或投递不确定的结果不自动重发；取消不能撤回已开始的回合或已交给通道的消息。通道报告发送不等于手机收到或已读。
 - 固定日报与按变化主动跟进是两种独立计划，同时开启可能分别汇报；只需要一种时请取消另一种。
 - 周期跟进频率为 30–1440 分钟，采用电脑时区的 23:00–08:00 免打扰。一次性检查为 30–300 秒、默认 60 秒；这次明确请求可在免打扰时段执行。
-- Gmail、Google Workspace、Slack、Notion、云端 iCloud 和 iMessage 尚未接入。本机 iCloud Drive 项目属于本地读取，不代表电脑关机后仍能访问 Apple 云端。
+- Google、滴答和 flomo 仅通过固定官方 MCP 提供只读入口，默认关闭、不扫描账号。Google 官方 MCP 仍为 Developer Preview，需要自己的 Cloud Desktop OAuth client 与预览资格；flomo 需要 MAX 个人令牌。完成配置、验证接口和实际读到私人资料是不同状态。
+- Slack、Notion、云端 iCloud 和 iMessage 尚未接入。本机 iCloud Drive 项目属于本地读取，不代表电脑关机后仍能访问 Apple 云端。
 
 AI 资讯抓取只访问固定公开来源，候选标题、摘要及选中文章有界正文交给你配置的 Harness 模型；使用现有账户额度，通常每期两次模型调用。全文获取失败会标为 RSS 摘要依据，不把摘要当作事实已核实。默认不启用推送。
 
@@ -76,4 +84,4 @@ MIT。默认开发环境为 Node.js 22.13+；测试方法、双 SDK 回归与真
 
 ## 后续迭代
 
-资讯日报已接入当前预览版；持续优化摘要质量与真实使用验证，见[路线图](docs/roadmap.md)。
+资讯日报与个人资料连接已接入当前预览版；持续优化真实使用与授权体验，见[路线图](docs/roadmap.md)。

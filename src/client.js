@@ -3,10 +3,10 @@ window.__ModuleLoader__.load({
   id:'dsh-project-companion',
   factory:require=>{
     const React=require('react');
-    const {Modal}=require('@deepseek-ai/dsh-client-ui-primitives');
+    const {Modal,SettingsForm,SettingsSecretField,SettingsValueField}=require('@deepseek-ai/dsh-client-ui-primitives');
     const h=React.createElement;
     const endpoint='/api/project_companion/onboarding';
-    const inject=['slots','uiWorkspace'];
+    const inject=['slots','uiWorkspace','configForms'];
     const css=`.pc_setup{display:flex;flex-direction:column;gap:18px;padding:0 24px 24px;line-height:1.6}.pc_setup h2,.pc_setup h3,.pc_setup p{margin:0}.pc_setup h2{font-size:21px;font-weight:600}.pc_setup h3{font-size:15px;font-weight:600}.pc_setup .pc_card{border:1px solid var(--dsw-alias-border-l3,rgba(128,128,128,.25));border-radius:12px;padding:16px;display:flex;flex-direction:column;gap:10px}.pc_setup .pc_muted{font-size:12px;color:var(--dsw-alias-label-secondary,#888)}.pc_setup .pc_actions{display:flex;gap:10px;flex-wrap:wrap}.pc_setup button{border:1px solid var(--dsw-alias-border-l3,rgba(128,128,128,.4));border-radius:8px;background:transparent;color:inherit;font:inherit;font-size:13px;padding:8px 14px;cursor:pointer}.pc_setup button:disabled{opacity:.5;cursor:default}.pc_setup button.pc_primary{background:var(--dsw-alias-state-business-primary,#4d6bfe);border-color:transparent;color:white}.pc_setup button:focus-visible,.pc_setup input:focus-visible{outline:2px solid var(--dsw-alias-state-business-primary,#4d6bfe);outline-offset:3px}.pc_setup label{display:flex;gap:10px;align-items:flex-start;font-size:14px}.pc_setup input{margin-top:5px}.pc_setup .pc_brief{white-space:pre-wrap;font-size:13px;overflow-wrap:anywhere}.pc_setup .pc_error{color:var(--dsw-alias-state-error-primary,#b91c1c);font-size:13px}.pc_setup img{width:200px;height:200px;max-width:100%;align-self:center}.pc_setup_modal{width:min(620px,100%);max-height:90vh;overflow-y:auto;padding:24px 0 0}.pc_setup_modal .pc_setup{padding-top:0}@media(max-width:560px){.pc_setup{padding:0 16px 20px}.pc_setup .pc_actions button{flex:1}}`;
 
     function apply(ctx){
@@ -145,10 +145,148 @@ window.__ModuleLoader__.load({
           h('div',{className:'pc_actions'},h('button',{type:'button',className:'pc_primary',disabled:busy||!bound||(!welcomeAccepted&&(!saved||mutationUncertain.current.selection||mutationUncertain.current.welcome)),onClick:()=>mutate({action:'complete'})},busy?'正在处理…':welcomeAccepted?'打开 Dot 会话（首份简报已提交）':'开始使用并生成首份简报'),onboarding?h('button',{type:'button',disabled:busy,onClick:()=>props.complete?.()},'稍后设置'):null));
         return onboarding&&snapshot?h(Modal,{open:true,title:'DeepSeek Dot',headless:true,className:'pc_setup_modal',onClose:()=>props.complete?.()},body):body;
       }
-      const Section=props=>Surface(props,false);
+      function CredentialForm(props={}){
+        const formRef=React.useRef(null);
+        if(formRef.current===null){try{const forms=typeof ctx.get==='function'?ctx.get('configForms',false):ctx.configForms;formRef.current=forms?.get('project-companion')??false;}catch{formRef.current=false;}}
+        const form=formRef.current;
+        const [view,setView]=React.useState(()=>form?form.getSnapshot():{status:'unavailable',writable:false});
+        const [drafts,setDrafts]=React.useState({});
+        const [saving,setSaving]=React.useState(false);
+        const [failed,setFailed]=React.useState(false);
+        const active=React.useRef(false),current=React.useRef(view),changes=React.useRef({}),baseline=React.useRef(undefined),inFlight=React.useRef(false);
+        current.current=view;
+        React.useEffect(()=>{
+          active.current=true;
+          const sync=()=>{if(active.current&&form){current.current=form.getSnapshot();setView(current.current);}};
+          const stop=form?form.subscribe(sync):null;sync();
+          return()=>{active.current=false;changes.current={};baseline.current=undefined;stop?.();};
+        },[]);
+        const fields=[['flomoToken','flomo MCP Token',true],['didaToken','滴答清单 API 口令',true],['googleClientId','Google Desktop Client ID',false],['googleClientSecret','Google Desktop Client Secret',true],['googleRefreshToken','Google Refresh Token',true]];
+        const stage=(field,value)=>{
+          if(!active.current||inFlight.current||current.current.status!=='ready'||!current.current.writable)return;
+          if(!Object.keys(changes.current).length)baseline.current=current.current.revision;
+          const next={...changes.current,[field]:value};
+          if(value===''&&field!=='googleClientId')delete next[field];
+          changes.current=next;setDrafts(next);setFailed(false);
+          if(!Object.keys(next).length)baseline.current=undefined;
+        };
+        const discard=()=>{changes.current={};baseline.current=undefined;if(active.current){setDrafts({});setFailed(false);}};
+        const invalid=Object.values(drafts).some(value=>value!==null&&(typeof value!=='string'||value.length>16384));
+        const save=async()=>{
+          if(!active.current||inFlight.current||!form||current.current.status!=='ready'||!current.current.writable||invalid)return;
+          const ops=Object.entries(changes.current).map(([field,value])=>value===null||value===''?{op:'unset',path:[field]}:{op:'set',path:[field],value});
+          if(!ops.length)return;
+          inFlight.current=true;setSaving(true);setFailed(false);
+          try{
+            const accepted=await form.mutate(ops,baseline.current);
+            if(active.current){if(accepted===true){discard();current.current=form.getSnapshot();setView(current.current);void props.onSaved?.();}else setFailed(true);}
+          }catch{if(active.current)setFailed(true);}
+          finally{inFlight.current=false;if(active.current)setSaving(false);}
+        };
+        if(typeof SettingsForm!=='function'&&typeof SettingsForm!=='string')return h('p',{className:'pc_error',role:'status'},'当前宿主的原生凭据表单不可用，请更新 Harness。');
+        const blocked=view.status!=='ready'||!view.writable||saving;
+        const configured=field=>field==='flomoToken'?props.sources?.some(row=>row.id==='flomo'&&row.configured):field==='didaToken'?props.sources?.some(row=>row.id==='dida'&&row.configured):field==='googleRefreshToken'?props.googleAuth?.refreshConfigured:props.googleAuth?.clientConfigured;
+        return h(SettingsForm,{labels:{unavailable:'原生配置尚未就绪，请稍后重新打开此页；不会改用聊天接收密钥。',readOnly:'当前宿主配置只读，无法保存凭据。',saveFailed:'未确认保存成功，未自动重试。请核对原生配置后重试。',save:'保存连接凭据',saving:'正在保存…'},state:{available:view.status==='ready',writable:view.writable===true,dirty:Object.keys(drafts).length>0,invalid,saving,failed},onSave:save,onDiscard:discard},
+          fields.map(([field,label,secret])=>{
+            const staged=Object.hasOwn(drafts,field);
+            const value=staged?drafts[field]??'':secret?'':typeof view.value?.[field]==='string'?view.value[field]:'';
+            return h('div',{key:field},secret?h(SettingsSecretField,{id:`pc-credential-${field}`,label,hint:field==='googleRefreshToken'?'通常由 Google 授权自动保存；空白保留已有值，不会回显令牌。':'仅输入新值以替换；留空保留已有凭据，不会回显旧值。',text:value,disabled:blocked,onEdit:text=>stage(field,text),configured:configured(field)===true,stateLabel:staged&&drafts[field]===null?'保存后清除':configured(field)?'已配置，不回显':'尚未确认配置'}):h(SettingsValueField,{id:`pc-credential-${field}`,label,hint:'使用你自己创建的 Desktop OAuth 应用，Google 密钥不要发进聊天。',text:value,overridden:Object.hasOwn(view.user??{},field)||staged,invalid:false,overriddenLabel:'自定义值',resetLabel:'清除',invalidLabel:'请检查输入',disabled:blocked,onEdit:text=>stage(field,text),onReset:()=>stage(field,null)}),
+              secret?h('button',{type:'button',disabled:blocked,onClick:()=>stage(field,null)},`清除 ${label}`):null);
+          }));
+      }
+      function ContextPanel(){
+        const contextEndpoint='/api/project_companion/context';
+        const sourceNames={gmail:'Gmail',calendar:'Google 日历',drive:'Google Drive',docs:'Google Docs',sheets:'Google Sheets',slides:'Google Slides',dida:'滴答清单',flomo:'flomo'};
+        const sourceIds=Object.keys(sourceNames);
+        const [snapshot,setSnapshot]=React.useState(null);
+        const [busy,setBusy]=React.useState(false);
+        const [error,setError]=React.useState('');
+        const [authorization,setAuthorization]=React.useState(null);
+        const active=React.useRef(false);
+        const inFlight=React.useRef(false);
+        const latest=React.useRef(null);
+        const controllers=React.useRef(new Set());
+        const invalidate=()=>{
+          latest.current=null;
+          if(active.current){setSnapshot(null);setAuthorization(null);}
+        };
+        const accept=value=>{
+          if(!value||!Array.isArray(value.sources)||value.sources.length!==sourceIds.length||!value.googleAuth||typeof value.googleAuth!=='object'||Array.isArray(value.googleAuth)||!['clientConfigured','refreshConfigured','authInProgress'].every(key=>typeof value.googleAuth[key]==='boolean'))throw new Error('invalid context status');
+          const rows=sourceIds.map(id=>{
+            const matches=value.sources.filter(row=>row?.id===id);
+            if(matches.length!==1)throw new Error('invalid context source');
+            const row=matches[0];
+            if(typeof row.configured!=='boolean'||typeof row.enabled!=='boolean')throw new Error('invalid context access');
+            return{id,name:sourceNames[id],configured:row.configured,enabled:row.enabled,status:row.status??row.state,lastReadAt:typeof row.lastReadAt==='string'&&row.lastReadAt.length<=80&&Number.isFinite(Date.parse(row.lastReadAt))?row.lastReadAt:null};
+          });
+          const state={sources:rows,googleAuth:{clientConfigured:value.googleAuth.clientConfigured===true,refreshConfigured:value.googleAuth.refreshConfigured===true,authInProgress:value.googleAuth.authInProgress===true}};
+          if(active.current){latest.current=state;setSnapshot(state);if(state.googleAuth.refreshConfigured||!state.googleAuth.clientConfigured||!state.googleAuth.authInProgress)setAuthorization(null);}
+          return state;
+        };
+        const request=async body=>{
+          const controller=new AbortController();controllers.current.add(controller);
+          try{
+            const response=await fetch(contextEndpoint,{method:body?'POST':'GET',credentials:'same-origin',redirect:'error',cache:'no-store',signal:AbortSignal.any([controller.signal,AbortSignal.timeout(25000)]),...(body?{headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}:{})});
+            if(!response.ok)throw new Error('context operation failed');
+            return await response.json();
+          }finally{controllers.current.delete(controller);}
+        };
+        const refresh=async()=>{
+          if(!active.current||inFlight.current)return;
+          inFlight.current=true;setBusy(true);setError('');
+          try{const value=await request();if(active.current)accept(value);}
+          catch{if(active.current){invalidate();setError('资料来源状态暂不可用，请刷新状态后重试。');}}
+          finally{inFlight.current=false;if(active.current)setBusy(false);}
+        };
+        React.useEffect(()=>{
+          active.current=true;void refresh();
+          return()=>{active.current=false;for(const controller of controllers.current)controller.abort();controllers.current.clear();};
+        },[]);
+        const mutate=async(action,source)=>{
+          if(!active.current||inFlight.current||!latest.current)return;
+          if(action==='google_authorize'){
+            if(!latest.current.googleAuth.clientConfigured)return;
+          }else{
+            const row=latest.current.sources.find(item=>item.id===source);
+            if(!row||(action==='connect'&&(!row.configured||row.enabled))||(action==='disconnect'&&!row.enabled))return;
+          }
+          inFlight.current=true;setBusy(true);setError('');
+          if(action==='google_authorize')setAuthorization(null);
+          try{
+            const value=await request({action,...(source?{source}:{})});
+            if(!active.current)return;
+            if(action==='google_authorize'){
+              const url=new URL(value?.url);
+              if(url.origin!=='https://accounts.google.com'||url.pathname!=='/o/oauth2/v2/auth'||url.username||url.password||url.hash||typeof value.expiresAt!=='string'||!Number.isFinite(Date.parse(value.expiresAt)))throw new Error('invalid authorization link');
+              setAuthorization({url:url.toString(),expiresAt:value.expiresAt});
+            }else accept(value);
+          }catch{if(active.current){invalidate();setError('操作结果暂不确定，请刷新状态核对；不会自动重试。');}}
+          finally{inFlight.current=false;if(active.current)setBusy(false);}
+        };
+        const rows=snapshot?.sources??sourceIds.map(id=>({id,name:sourceNames[id],configured:false,enabled:false,lastReadAt:null}));
+        const google=snapshot?.googleAuth;
+        const statusText=row=>!snapshot?'状态未确认':!row.configured?'待账号授权':!row.enabled?'已配置，当前对话尚未启用':row.lastReadAt?'当前对话已启用':'当前对话已启用；本次启动暂无读取记录';
+        return h('div',{className:'pc_setup','data-context-panel':true},
+          h('h2',null,'个人资料来源'),
+          h('p',null,'按需连接你自己的邮箱、日历、文档、任务和笔记。开启某个来源只验证读取接口；只有你明确查询时才读取资料，不会自动扫描、写入项目记忆或建立推送计划。'),
+          h('section',{className:'pc_card'},h('h3',null,'在原生插件配置中填写凭据'),
+            h('p',{className:'pc_muted'},'在下方原生配置表单填写并保存。也可打开插件页 → DeepSeek Dot → 配置。令牌只在原生密钥字段输入，请勿在聊天里发送。flomo 使用 MCP 访问令牌（不是写入笔记的 Webhook）；滴答清单使用账号 API 口令。'),
+            h('p',{className:'pc_muted'},'Google 需要你自己的 Desktop OAuth Client ID 和 Client Secret。在插件配置填写后，点击下方按钮生成只读授权链接，再由你打开 Google 授权页。'),
+            h(CredentialForm,{sources:snapshot?.sources,googleAuth:google,onSaved:refresh}),
+            h('p',{role:'status'},!google?'Google 状态未确认':google.refreshConfigured?'Google 账号凭据已保存；各资料来源仍需分别启用。':google.authInProgress?'Google 授权正在等待确认，完成后请刷新状态。':google.clientConfigured?'Google Desktop 应用已配置，尚未完成账号授权。':'请先在插件配置填写 Google Desktop 应用信息。'),
+            h('div',{className:'pc_actions'},h('button',{type:'button',disabled:busy||!google?.clientConfigured,onClick:()=>mutate('google_authorize')},'连接 Google 账号'),h('button',{type:'button',disabled:busy,onClick:refresh},'刷新资料来源状态')),
+            authorization?h('p',null,h('a',{href:authorization.url,target:'_blank',rel:'noopener noreferrer'},'打开 Google 只读授权页'),h('span',{className:'pc_muted'},` · 链接有效至 ${authorization.expiresAt}；不会自动打开。`)):null),
+          rows.map(row=>h('section',{className:'pc_card',key:row.id,'data-context-source':row.id},h('h3',null,row.name),h('p',{role:'status'},statusText(row)),row.enabled&&row.lastReadAt?h('p',{className:'pc_muted'},`上次读取：${row.lastReadAt}。此时间不代表资料已全部读取或持续监控。`):null,
+            h('div',{className:'pc_actions'},h('button',{type:'button',disabled:busy||!snapshot||(!row.enabled&&!row.configured),onClick:()=>mutate(row.enabled?'disconnect':'connect',row.id)},row.enabled?'停止此来源':'启用只读来源')))),
+          error?h('p',{className:'pc_error',role:'alert'},error):null,
+          h('p',{className:'pc_muted'},'停止某个来源后，Dot 不再通过当前对话读取它；服务商账号的授权可在其账号设置中另行撤销。资料来源的外部内容只作为资料，不作为新的操作指令。'));
+      }
+      const Section=props=>h('div',null,Surface(props,false),h(ContextPanel));
       const Onboarding=props=>Surface(props,true);
       ctx.effect(()=>ctx.slots.inject('settings.section',()=>ctx.slots.register({name:'settings.section',id:'project-companion',order:39,label:'DeepSeek Dot'},Section)));
       ctx.effect(()=>ctx.slots.inject('settings.onboarding',()=>ctx.slots.register({name:'settings.onboarding',id:'project-companion-dot',order:50},Onboarding)));
+      const forms=typeof ctx.get==='function'?ctx.get('configForms',false):ctx.configForms;
+      if(forms)ctx.effect(()=>ctx.slots.inject('plugins.row.config',()=>ctx.slots.register({name:'plugins.row.config',key:'dsh-project-companion#project-companion'},props=>props.view==='summary'?'DeepSeek Dot 的个人资料来源与原生凭据配置':h('div',{className:'pc_setup'},h('h3',null,'连接凭据'),h(CredentialForm)))));
     }
     return{inject,apply};
   },

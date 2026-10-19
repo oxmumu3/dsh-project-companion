@@ -1,10 +1,10 @@
 # 安装 DeepSeek Dot
 
-当前版本为 `0.5.0-preview.1`，社区项目，非官方产品。统一安装包包含固定的微信桥接 `dsh-wechat@0.11.0` 和项目助理，通过官方 Desktop CLI 安装；不修改官方 App、不导入作者账户，也不复制微信配对凭据。
+当前版本为 `0.6.0-preview.1`，社区项目，非官方产品。统一安装包包含固定的微信桥接 `dsh-wechat@0.11.0` 和项目助理，通过官方 Desktop CLI 安装；不修改官方 App、不导入作者账户，也不复制微信配对凭据。
 
 ## macOS 双击安装
 
-[下载安装包](https://github.com/piggy00544/dsh-project-companion/releases/download/v0.5.0-preview.1/dsh-dot-0.5.0-preview.1-macos.zip) · [查看版本文件](https://github.com/piggy00544/dsh-project-companion/releases/tag/v0.5.0-preview.1)
+[下载安装包](https://github.com/piggy00544/dsh-project-companion/releases/download/v0.6.0-preview.1/dsh-dot-0.6.0-preview.1-macos.zip) · [查看版本文件](https://github.com/piggy00544/dsh-project-companion/releases/tag/v0.6.0-preview.1)
 
 1. 解压并保留整个目录，不要只移出 `Install.command`。
 2. 已有官方 Harness：保存工作并正常退出 App，再双击 `Install.command`。安装器不会结束运行中的任务。
@@ -17,7 +17,7 @@
 
 ## 已有 Harness：官方插件页面添加
 
-下载 [dsh-project-companion-0.5.0-preview.1.tgz](https://github.com/piggy00544/dsh-project-companion/releases/download/v0.5.0-preview.1/dsh-project-companion-0.5.0-preview.1.tgz)，在官方插件管理页面添加并启用。微信能力需另行安装并启用 `dsh-wechat@0.11.0`，可以使用统一安装包内的桥接 tgz。不要额外启用 YOLO 或 proactive 整包来满足本项目依赖。
+下载 [dsh-project-companion-0.6.0-preview.1.tgz](https://github.com/piggy00544/dsh-project-companion/releases/download/v0.6.0-preview.1/dsh-project-companion-0.6.0-preview.1.tgz)，在官方插件管理页面添加并启用。微信能力需另行安装并启用 `dsh-wechat@0.11.0`，可以使用统一安装包内的桥接 tgz。不要额外启用 YOLO 或 proactive 整包来满足本项目依赖。
 
 ## 安装器会保留什么
 
