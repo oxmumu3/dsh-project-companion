@@ -15,6 +15,7 @@ const validBinding=value=>value&&hash(value.userHash)&&(value.botHash===undefine
 const sameBinding=(a,b)=>validBinding(a)&&validBinding(b)&&a.userHash===b.userHash&&(a.botHash??null)===(b.botHash??null);
 const clone=value=>structuredClone(value);
 const absent=error=>error?.code==='ENOENT';
+const explicitTime=value=>typeof value==='string'&&value.length<=40&&/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?(?:Z|[+-]\d{2}:\d{2})$/.test(value)&&Number.isFinite(Date.parse(value));
 
 /** A watched-project-only composition of the unchanged upstream host library. */
 export function createProjectFollowup(options={}){
@@ -30,6 +31,21 @@ export function createProjectFollowup(options={}){
   const log=()=>{}; // Upstream audit stays in this project's files, never host/private logs.
   const authorizes=async root=>typeof options.authorizeRoot==='function'&&await options.authorizeRoot(root)===true;
   const canRun=async entry=>!closed&&entry.enabled&&await authorizes(entry.root)&&(!options.canRun||await options.canRun({root:entry.root,sessionId:entry.meta.sessionId})===true);
+  const guarded=args=>args.authorizeMutation!==undefined||args.expectedBinding!==undefined;
+  async function authorizeMutation(args,entry){
+    if(!guarded(args))return;
+    requireOpen();const expected=args.expectedBinding===undefined?null:clone(args.expectedBinding);
+    const confirm=async()=>{
+      if(!expected)return;
+      if(expected.sessionId!==args.sessionId||!hash(expected.bindingKey)||typeof options.readConnection!=='function')throw new Error('Expected original UI binding is unavailable');
+      const current=await options.readConnection();requireOpen();
+      if(current?.state!=='bound'||current.sessionId!==expected.sessionId||current.bindingKey!==expected.bindingKey)throw new Error('Original UI binding changed before project follow-up mutation');
+    };
+    await confirm();
+    if(entry&&!await routeAllowed(entry))throw new Error('Original project follow-up binding changed before mutation');
+    if(args.authorizeMutation!==undefined&&(typeof args.authorizeMutation!=='function'||await args.authorizeMutation()!==true))throw new Error('Project follow-up mutation is no longer authorized');
+    requireOpen();await confirm();requireOpen();
+  }
 
   async function directory(path,{create=false}={}){
     let row;try{row=await lstat(path);}catch(error){if(!absent(error))throw error;if(!create)return false;await mkdir(path,{mode:0o700});row=await lstat(path);}
@@ -125,7 +141,7 @@ export function createProjectFollowup(options={}){
     if(ones.has(key)){const entry=ones.get(key);owned(entry);return entry;}
     if(!path.exists)return null;
     let meta;try{const text=await readFile(join(path.dir,'scope.json'),'utf8');if(text.length>8192)throw new Error('One-off metadata exceeds bound');meta=JSON.parse(text);}catch(error){if(absent(error)){try{await lstat(join(path.dir,'alarms.json'));throw new Error('One-off store has no ownership metadata');}catch(e){if(absent(e))return null;throw e;}}throw error;}
-    if(!meta||meta.version!==1||meta.kind!=='once'||meta.root!==root||meta.sessionId!==sessionId||!['native','wechat'].includes(meta.delivery)||typeof meta.alarmId!=='string'||!meta.alarmId.startsWith('alarm_')||!Number.isSafeInteger(meta.delaySeconds)||meta.delaySeconds<30||meta.delaySeconds>300||typeof meta.projectLabel!=='string'||meta.projectLabel.length>80||typeof meta.enabled!=='boolean'||!['queued','completed','failed','cancelled','blocked'].includes(meta.status)||typeof meta.dueAt!=='string'||!Number.isFinite(Date.parse(meta.dueAt))||new Date(meta.dueAt).toISOString()!==meta.dueAt||(meta.delivery==='wechat'?!validBinding(meta.binding):meta.binding!==null))throw new Error('Invalid one-off scoped ownership metadata');
+    if(!meta||meta.version!==1||meta.kind!=='once'||meta.root!==root||meta.sessionId!==sessionId||!['native','wechat'].includes(meta.delivery)||typeof meta.alarmId!=='string'||!meta.alarmId.startsWith('alarm_')||!(meta.delaySeconds===null||Number.isSafeInteger(meta.delaySeconds)&&meta.delaySeconds>=30&&meta.delaySeconds<=300)||typeof meta.projectLabel!=='string'||meta.projectLabel.length>80||typeof meta.enabled!=='boolean'||!['queued','completed','failed','cancelled','blocked'].includes(meta.status)||typeof meta.dueAt!=='string'||!Number.isFinite(Date.parse(meta.dueAt))||new Date(meta.dueAt).toISOString()!==meta.dueAt||(meta.delivery==='wechat'?!validBinding(meta.binding):meta.binding!==null))throw new Error('Invalid one-off scoped ownership metadata');
     if(meta.lastReviewedAt!==null&&(typeof meta.lastReviewedAt!=='string'||!Number.isFinite(Date.parse(meta.lastReviewedAt))||new Date(meta.lastReviewedAt).toISOString()!==meta.lastReviewedAt))throw new Error('Invalid one-off source-review watermark');
     const loaded=await ProactiveStore.load(path.dir);if(loaded.corrupt)throw new Error('Corrupt scoped one-off store');
     const entry={once:true,root,dir:path.dir,meta,enabled:meta.enabled,store:loaded.store,scheduler:null,driver:null};owned(entry);ones.set(key,entry);return entry;
@@ -185,10 +201,11 @@ export function createProjectFollowup(options={}){
       if(typeof args.reason==='string'&&args.reason.length>200)return{code:'invalid_trigger',message:'Reason exceeds 200 characters'};
       execution.concludeTurn();return{accepted:true,silent:true};},
   }));
-  async function start(entry,expectedVersion){
+  async function start(entry,expectedVersion,mutationArgs){
     if(entry.scheduler||!entry.enabled)return;
     if(!disposeGuard||!disposePolicy)throw new Error('Host read-only tool guards unavailable; follow-up cannot start');
     if(!await routeAllowed(entry)){if(entry.once)await blockOnce(entry,'One-off native route or original WeChat binding changed or is unavailable');else entry.blocked='Original WeChat binding changed or is unavailable';return;}
+    if(mutationArgs)await authorizeMutation(mutationArgs,entry);
     if(!entry.enabled||closed||expectedVersion!==undefined&&intent(intentKey(entry))!==expectedVersion)return;
     const config={...clone(DEFAULT_CONFIG),quietHours:{...DEFAULT_CONFIG.quietHours,timeZone:canonicalizeTimeZone(typeof options.hostTimeZone==='function'?options.hostTimeZone():options.hostTimeZone??Intl.DateTimeFormat().resolvedOptions().timeZone)},dataDir:entry.dir,bootOverduePolicy:'drop'};
     const agents=entry.once&&entry.meta.delivery==='native'?{
@@ -235,38 +252,45 @@ export function createProjectFollowup(options={}){
   const adapter={
     checkOnce(args){
       const requestKey=onceKey(args.root,args.sessionId),live=ones.get(requestKey);
-      const version=intent(requestKey)+(live?.enabled&&live.scheduler?0:1);intents.set(requestKey,version);
+      const before=intent(requestKey),version=before+(live?.enabled&&live.scheduler?0:1);if(!guarded(args))intents.set(requestKey,version);
       return queued(async()=>{
-        requireSession(args.sessionId);const delaySeconds=args.delaySeconds??60;
-        if(!Number.isSafeInteger(delaySeconds)||delaySeconds<30||delaySeconds>300)throw new Error('One-off delay must be 30–300 whole seconds');
+        requireSession(args.sessionId);const absolute=args.dueAt!==undefined,delaySeconds=absolute?null:args.delaySeconds??60;
+        if(absolute){
+          if(args.delaySeconds!==undefined)throw new Error('One-off check requires either dueAt or delaySeconds, not both');
+          if(!explicitTime(args.dueAt)||Date.parse(args.dueAt)<=now()||Date.parse(args.dueAt)>now()+7*86400000)throw new Error('One-off absolute time must be an explicit ISO future date within seven (7) days');
+        }else if(!Number.isSafeInteger(delaySeconds)||delaySeconds<30||delaySeconds>300)throw new Error('One-off delay must be 30–300 whole seconds');
         if(!['native','wechat'].includes(args.delivery))throw new Error('Explicit one-off delivery is required');
         const label=args.projectLabel??'项目';if(typeof label!=='string'||!label.trim()||label.length>80||/[\r\n\0]/.test(label))throw new Error('Invalid project label');
         await safe(args.root,{sessionId:args.sessionId});
-        const binding=args.delivery==='wechat'?await options.readBinding?.(args.sessionId):null;
+        const binding=args.delivery==='wechat'?clone(await options.readBinding?.(args.sessionId)):null;
         const probe={once:true,root:args.root,meta:{sessionId:args.sessionId,delivery:args.delivery,binding}};
         if(!await routeAllowed(probe))throw new Error('One-off native route must be explicitly unbound and live in this project, or use its exact WeChat binding');
         if(!await authorizes(args.root)||options.canRun&&await options.canRun({root:args.root,sessionId:args.sessionId})!==true)throw new Error('One-off project is paused or unauthorized');
         const previous=await loadOnce(args.root,args.sessionId);
+        await authorizeMutation(args,probe);
+        if(guarded(args)){if(intent(requestKey)!==before)return{status:'cancelled',enabled:false,running:false};intents.set(requestKey,version);}
         if(intent(requestKey)!==version)return{status:'cancelled',enabled:false,running:false};
         if(previous?.enabled&&previous.scheduler&&['queued','running'].includes(view(previous).status)){
           if(previous.meta.delivery!==args.delivery)throw new Error('Existing one-off check uses a different delivery route');return view(previous);
         }
         const key=requestKey;
-        const spec=validateCreateArgs({prompt:'用户明确安排的一次项目只读检查',after_seconds:delaySeconds,time_zone:typeof options.hostTimeZone==='function'?options.hostTimeZone():options.hostTimeZone??Intl.DateTimeFormat().resolvedOptions().timeZone,respect_quiet_hours:false,target_mode:'resume',target_source:'session',target_session_id:args.sessionId,compaction:'off'},args.sessionId);
+        const spec=validateCreateArgs({prompt:'用户明确安排的一次项目只读检查',...(absolute?{at:new Date(args.dueAt).toISOString()}:{after_seconds:delaySeconds}),time_zone:typeof options.hostTimeZone==='function'?options.hostTimeZone():options.hostTimeZone??Intl.DateTimeFormat().resolvedOptions().timeZone,respect_quiet_hours:false,target_mode:'resume',target_source:'session',target_session_id:args.sessionId,compaction:'off'},args.sessionId);
         if(spec.code)throw new Error(spec.message);const built=buildAlarm(args.sessionId,spec,now());if(built.code)throw new Error(built.message);
         const {dir}=await safe(args.root,{create:true,sessionId:args.sessionId});
+        await authorizeMutation(args,probe);
         if(previous){retire(previous);previous.store.removeAlarm(previous.meta.alarmId);}
         const entry={once:true,root:args.root,dir,store:previous?.store??new ProactiveStore(dir),enabled:true,scheduler:null,driver:null,nativeAgent:probe.nativeAgent,
           meta:{version:1,kind:'once',root:args.root,sessionId:args.sessionId,alarmId:built.alarm.id,delaySeconds,dueAt:built.alarm.trigger.at,projectLabel:label,delivery:args.delivery,binding:clone(binding),enabled:true,status:'queued',lastReviewedAt:previous?.meta.lastReviewedAt??null}};
         built.alarm.prompt=prompt(entry,built.alarm);entry.store.addAlarm(built.alarm);ones.set(key,entry);await entry.store.persist();await persistMeta(entry);
-        if(intent(key)!==version){retire(entry);entry.meta.status='cancelled';entry.meta.enabled=false;entry.store.removeAlarm(entry.meta.alarmId);await entry.store.persist();await persistMeta(entry);}else await start(entry,version);
+        if(intent(key)!==version){retire(entry);entry.meta.status='cancelled';entry.meta.enabled=false;entry.store.removeAlarm(entry.meta.alarmId);await entry.store.persist();await persistMeta(entry);}else await start(entry,version,args);
         return view(entry);
       });
     },
     onceStatus:args=>queued(async()=>view(await loadOnce(args.root,args.sessionId))),
     cancelOnce(args){
-      const key=onceKey(args.root,args.sessionId),live=ones.get(key);intents.set(key,intent(key)+1);if(live){live.enabled=false;live.scheduler?.stop();}
-      return queued(async()=>{const entry=await loadOnce(args.root,args.sessionId);if(!entry)return{status:'cancelled',enabled:false,running:false};
+      const key=onceKey(args.root,args.sessionId),live=ones.get(key);if(!guarded(args)){intents.set(key,intent(key)+1);if(live){live.enabled=false;live.scheduler?.stop();}}
+      return queued(async()=>{const entry=await loadOnce(args.root,args.sessionId);await authorizeMutation(args,entry);if(!entry)return{status:'cancelled',enabled:false,running:false};
+        if(guarded(args))intents.set(key,intent(key)+1);
         retire(entry);entry.store.removeAlarm(entry.meta.alarmId);entry.meta.enabled=false;entry.meta.status='cancelled';await entry.store.persist();await persistMeta(entry);return view(entry);});
     },
     cancelOnceForProject({root}){
@@ -274,28 +298,35 @@ export function createProjectFollowup(options={}){
       return queued(async()=>{let cancelled=0;for(const entry of ones.values())if(entry.root===root){retire(entry);entry.store.removeAlarm(entry.meta.alarmId);entry.meta.enabled=false;entry.meta.status='cancelled';await entry.store.persist();await persistMeta(entry);cancelled++;}return{cancelled};});
     },
     configure(args){
-      const current=scopes.get(args.root);const version=intent(args.root)+1;if(!current||current.meta.sessionId===args.sessionId)intents.set(args.root,version);
+      const current=scopes.get(args.root),before=intent(args.root),version=before+1;if(!guarded(args)&&(!current||current.meta.sessionId===args.sessionId))intents.set(args.root,version);
       return queued(async()=>{
         requireSession(args.sessionId);if(!Number.isSafeInteger(args.everyMinutes)||args.everyMinutes<30||args.everyMinutes>1440)throw new Error('Follow-up cadence must be 30–1440 whole minutes');
         const label=args.projectLabel??'项目';if(typeof label!=='string'||!label.trim()||label.length>80||/[\r\n\0]/.test(label))throw new Error('Invalid project label');
         let entry=await load(args.root);checkOwner(entry,args.sessionId);
-        const binding=await options.readBinding?.(args.sessionId);if(!validBinding(binding))throw new Error('Original WeChat binding is unavailable');
-        if(entry?.enabled&&entry.meta.everyMinutes===args.everyMinutes&&entry.meta.projectLabel===label&&sameBinding(binding,entry.meta.binding)){if(intent(args.root)===version)await start(entry);return view(entry);}
+        const binding=clone(await options.readBinding?.(args.sessionId));if(!validBinding(binding))throw new Error('Original WeChat binding is unavailable');
+        const probe={root:args.root,enabled:true,meta:{sessionId:args.sessionId,binding}};
+        if(!await canRun(probe))throw new Error('Follow-up project is paused or unauthorized');
+        if(!await routeAllowed(probe))throw new Error('Original WeChat binding changed before follow-up configuration');
+        await authorizeMutation(args,probe);
+        if(guarded(args)){if(intent(args.root)!==before)return{enabled:false,running:false};intents.set(args.root,version);}
+        if(entry?.enabled&&entry.meta.everyMinutes===args.everyMinutes&&entry.meta.projectLabel===label&&sameBinding(binding,entry.meta.binding)){if(intent(args.root)===version)await start(entry,version,args);return view(entry);}
         const {dir}=await safe(args.root,{create:true});
         const spec=validateCreateArgs({prompt:'项目只读跟进',every_seconds:args.everyMinutes*60,time_zone:typeof options.hostTimeZone==='function'?options.hostTimeZone():options.hostTimeZone??Intl.DateTimeFormat().resolvedOptions().timeZone,respect_quiet_hours:true,target_mode:'resume',target_source:'session',target_session_id:args.sessionId,compaction:'off'},args.sessionId);
         if(spec.code)throw new Error(spec.message);const built=buildAlarm(args.sessionId,spec,now());if(built.code)throw new Error(built.message);
+        await authorizeMutation(args,probe);
         if(entry){const previous=entry;retire(previous);previous.store.removeAlarm(previous.meta.alarmId);entry={root:args.root,dir,store:previous.store,meta:previous.meta,scheduler:null,driver:null};}
         else entry={root:args.root,dir,store:new ProactiveStore(dir),scheduler:null,driver:null};
         entry.meta={version:1,root:args.root,sessionId:args.sessionId,alarmId:built.alarm.id,everyMinutes:args.everyMinutes,projectLabel:label,binding:clone(binding),enabled:true,lastReviewedAt:entry.meta?.lastReviewedAt??null};entry.enabled=true;built.alarm.prompt=prompt(entry,built.alarm);entry.store.addAlarm(built.alarm);
         await entry.store.persist();await persistMeta(entry);scopes.set(args.root,entry);
-        if(intent(args.root)===version)await start(entry);return view(entry);
+        if(intent(args.root)===version)await start(entry,version,args);return view(entry);
       });
     },
     cancel(args){
-      const live=scopes.get(args.root);if(!live||live.meta.sessionId===args.sessionId)intents.set(args.root,intent(args.root)+1);
-      if(live?.meta.sessionId===args.sessionId){live.enabled=false;live.scheduler?.stop();}
+      const live=scopes.get(args.root);if(!guarded(args)){if(!live||live.meta.sessionId===args.sessionId)intents.set(args.root,intent(args.root)+1);
+      if(live?.meta.sessionId===args.sessionId){live.enabled=false;live.scheduler?.stop();}}
       return queued(async()=>{
-        requireSession(args.sessionId);const entry=await load(args.root);checkOwner(entry,args.sessionId);if(!entry)return view(null);
+        requireSession(args.sessionId);const entry=await load(args.root);checkOwner(entry,args.sessionId);await authorizeMutation(args,entry);if(!entry)return view(null);
+        if(guarded(args))intents.set(args.root,intent(args.root)+1);
         retire(entry);entry.store.removeAlarm(entry.meta.alarmId);entry.meta.enabled=false;
         await entry.store.persist();await persistMeta(entry);entry.scheduler=null;return view(entry);
       });

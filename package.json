@@ -1,7 +1,7 @@
 {
   "name": "dsh-project-companion",
-  "version": "0.8.0-preview.2",
-  "description": "Native Dot workbench, WeChat project companion and read-only personal context for DeepSeek Harness",
+  "version": "0.9.0-preview.2",
+  "description": "DSH Dot: WeChat personal agent, project memory and proactive follow-up for DeepSeek Harness",
   "author": "牛村木木山",
   "license": "MIT",
   "type": "module",
@@ -76,7 +76,9 @@
         "@deepseek-ai/dsh-client-ui-primitives",
         "@deepseek-ai/dsh-client-ui-layout",
         "@deepseek-ai/dsh-client-ui-sidebar",
-        "@deepseek-ai/dsh-client-ui-theme"
+        "@deepseek-ai/dsh-client-ui-theme",
+        "@deepseek-ai/dsh-api-session-controller",
+        "@deepseek-ai/dsh-client-ui-conversation"
       ]
     }
   },

@@ -12,6 +12,7 @@ import {ProactiveScheduler} from '../vendor/proactive/lib/scheduler.js';
 
 async function api(){const m=await import('../src/project-followup.js').catch(()=>({}));assert.equal(typeof m.createProjectFollowup,'function','scoped real proactive adapter must exist');return m;}
 const binding={userHash:'a'.repeat(64),botHash:'b'.repeat(64)};
+const deferred=()=>{let resolve;const promise=new Promise(done=>resolve=done);return{promise,resolve};};
 async function harness(t,options={}){
   const {createProjectFollowup}=await api();
   const temp=await realpath(await mkdtemp(join(tmpdir(),'dot-followup-')));
@@ -42,7 +43,7 @@ async function harness(t,options={}){
   ctx.provide('agents',registry);ctx.provide('agentDefaultModel',{currentSelection:()=>({provider:'synthetic',model:'synthetic'})});
   ctx.provide('agentPresets',{mount:async(_scope,id)=>mounts.push(id)});
   for(const name of ['project_companion','send_wechat','bash'])ctx.tools.register(defineTool({name,description:'Synthetic capability only, no external effects',parameters:{action:{type:'string'},project:{type:'string'}},output:{schema:{type:'object',additionalProperties:true},render:()=>[]},execute:args=>{tools.push({name,args});return options.toolResult?.(name,args)??{ok:true};}}));
-  const optionsForAdapter={ctx,clock:()=>now,hostTimeZone:()=> 'America/Mexico_City',authorizeRoot:async r=>allow&&authorizedRoots.has(r),canRun:async()=>allowedRun,readBinding:async sessionId=>options.readBinding?options.readBinding(sessionId):currentBinding,readNativeRoute:async sessionId=>options.readNativeRoute?options.readNativeRoute(sessionId):(currentBinding===null?{kind:'unbound'}:{kind:'bound',binding:currentBinding}),createScheduler:deps=>{const scheduler=new ProactiveScheduler(deps);schedulers.push(scheduler);return scheduler;}};
+  const optionsForAdapter={ctx,clock:()=>now,hostTimeZone:()=> 'America/Mexico_City',authorizeRoot:async r=>allow&&authorizedRoots.has(r),canRun:async()=>allowedRun,readBinding:async sessionId=>options.readBinding?options.readBinding(sessionId):currentBinding,readConnection:async()=>options.readConnection?options.readConnection():{state:'bound',sessionId:owner.id,bindingKey:'d'.repeat(64)},readNativeRoute:async sessionId=>options.readNativeRoute?options.readNativeRoute(sessionId):(currentBinding===null?{kind:'unbound'}:{kind:'bound',binding:currentBinding}),createScheduler:deps=>{const scheduler=new ProactiveScheduler(deps);schedulers.push(scheduler);return scheduler;}};
   let adapter=createProjectFollowup(optionsForAdapter);
   const args={root,sessionId:owner.id,everyMinutes:30,projectLabel:'测试项目'};
   const drain=async()=>{for(const s of schedulers)await s.driveChain;};
@@ -71,6 +72,49 @@ test('invalid cadence and an unbound source cannot create a schedule',async t=>{
   const h=await harness(t);
   for(const everyMinutes of [0,29,1441,30.5,NaN])await assert.rejects(h.adapter.configure({...h.args,everyMinutes}),/cadence|分钟|30|1440/i);
   h.setBinding(null);await assert.rejects(h.adapter.configure(h.args),/binding|微信/i);assert.equal(h.schedulers.length,0);
+});
+
+test('recurring configuration rechecks pairing before any scoped store or timer is created',async t=>{
+  let reads=0;const mutable={...binding};
+  const h=await harness(t,{readBinding:async()=>{if(++reads>1)mutable.userHash='c'.repeat(64);return mutable;}});
+  await assert.rejects(h.adapter.configure(h.args),/binding|route|paused|unauthorized/i);await assert.rejects(access(join(h.root,'.dsh')));assert.equal(h.schedulers.length,0);
+});
+
+test('an already paused project cannot configure a new recurring alarm',async t=>{
+  const h=await harness(t);h.pause();await assert.rejects(h.adapter.configure(h.args),/paused|unauthorized/i);await assert.rejects(access(join(h.root,'.dsh')));assert.equal(h.schedulers.length,0);
+});
+
+for(const method of ['configure','checkOnce'])test(method+' final UI authorization rejects without creating a scoped store or timer',async t=>{
+  const h=await harness(t);const args={...h.args,delivery:'wechat',delaySeconds:60,authorizeMutation:async()=>false};
+  await assert.rejects(h.adapter[method](args),/authoriz/i);await assert.rejects(access(join(h.root,'.dsh')));assert.equal(h.schedulers.length,0);
+});
+
+for(const method of ['configure','checkOnce'])test(method+' cannot recapture a replacement pairing instead of its expected UI binding',async t=>{
+  const h=await harness(t,{readConnection:async()=>({state:'bound',sessionId:'session-original',bindingKey:'e'.repeat(64)})});
+  await assert.rejects(h.adapter[method]({...h.args,delivery:'wechat',delaySeconds:60,authorizeMutation:async()=>true,expectedBinding:{sessionId:h.owner.id,bindingKey:'d'.repeat(64)}}),/binding|authoriz/i);
+  await assert.rejects(access(join(h.root,'.dsh')));assert.equal(h.schedulers.length,0);
+});
+
+for(const [create,cancel] of [['configure','cancel'],['checkOnce','cancelOnce']])test(cancel+' does not stop a live timer or cancel its alarm before final UI authorization',async t=>{
+  const h=await harness(t);const args={...h.args,delivery:'wechat',delaySeconds:60};await h.adapter[create](args);await h.drain();
+  const before=await readFile(join(h.schedulers[0].deps.store.dataDir??h.schedulers[0].deps.config.dataDir,'alarms.json'),'utf8');
+  await assert.rejects(h.adapter[cancel]({...args,authorizeMutation:async()=>false}),/authoriz/i);assert.equal(h.schedulers[0].stopped,false);
+  const status=await h.adapter[create==='configure'?'status':'onceStatus'](args);assert.equal(status.enabled,true);
+  const after=await readFile(join(h.schedulers[0].deps.config.dataDir,'alarms.json'),'utf8');assert.equal(after,before);
+});
+
+for(const method of ['configure','checkOnce','cancel','cancelOnce'])test(method+' rejects pairing revocation while its final mutation authorization awaits',async t=>{
+  let setup={state:'bound',sessionId:'session-original',bindingKey:'d'.repeat(64)};
+  const h=await harness(t,{readConnection:async()=>setup}),args={...h.args,delivery:'wechat',delaySeconds:60};
+  const cancellation=method.startsWith('cancel');let before;
+  if(cancellation){await h.adapter[method==='cancel'?'configure':'checkOnce'](args);await h.drain();before=await readFile(join(h.schedulers[0].deps.config.dataDir,'alarms.json'),'utf8');}
+  const entered=deferred(),gate=deferred();
+  const pending=h.adapter[method]({...args,expectedBinding:{sessionId:h.owner.id,bindingKey:'d'.repeat(64)},authorizeMutation:async()=>{entered.resolve();return gate.promise;}});
+  await entered.promise;if(cancellation)assert.equal(h.schedulers[0].stopped,false);
+  setup={...setup,bindingKey:'e'.repeat(64)};h.setBinding({...binding,userHash:'c'.repeat(64)});gate.resolve(true);
+  await assert.rejects(pending,/binding|authoriz/i);
+  if(cancellation){assert.equal(h.schedulers[0].stopped,false);assert.equal(await readFile(join(h.schedulers[0].deps.config.dataDir,'alarms.json'),'utf8'),before);}
+  else{assert.equal(h.schedulers.length,0);await assert.rejects(access(join(h.root,'.dsh')));}
 });
 
 test('unwatched and symlink roots or data directories fail closed',async t=>{
@@ -282,6 +326,28 @@ test('once validates delay and delivery and refuses an already bound native sess
   await assert.rejects(h.adapter.checkOnce(args),/binding|native|微信/i);
   h.setBinding(null);for(const delaySeconds of [0,29,301,30.5,NaN])await assert.rejects(h.adapter.checkOnce({...args,delaySeconds}),/delay|30|300/i);
   await assert.rejects(h.adapter.checkOnce({...args,delivery:'other'}),/delivery/i);await assert.rejects(access(join(h.root,'.dsh')));
+});
+
+test('one-off absolute future time uses the community once alarm unchanged and cancels exactly that alarm',async t=>{
+  const h=await harness(t);h.setBinding(null);const args={...onceArgs(h),delaySeconds:undefined,dueAt:'2026-10-20T16:00:00.000Z'};
+  const first=await h.adapter.checkOnce(args);await h.drain();assert.equal(first.nextDueAt,args.dueAt);
+  const stored=JSON.parse(await readFile(join(onceDirectory(h),'alarms.json'),'utf8'));assert.equal(stored.alarms.length,1);assert.equal(stored.alarms[0].type,'once');assert.equal(stored.alarms[0].trigger.at,args.dueAt);
+  h.advance(24*60);await h.tick();assert.equal(h.messages.length,0);
+  assert.equal((await h.adapter.cancelOnce(args)).status,'cancelled');h.advance(24*60);await h.tick();assert.equal(h.messages.length,0);
+  await h.reopen();assert.equal((await h.adapter.onceStatus(args)).status,'cancelled');
+});
+
+test('absolute one-off dates reject ambiguous, past, over-seven-day and conflicting delay inputs without stores',async t=>{
+  const h=await harness(t);h.setBinding(null);const args={...onceArgs(h),delaySeconds:undefined};
+  for(const dueAt of ['not-a-date','2026-10-19T16:00','2026-10-18T16:00:00Z','2026-10-17T16:00:00Z','2026-10-25T16:00:01Z'])await assert.rejects(h.adapter.checkOnce({...args,dueAt}),/time|date|future|7|seven|ISO/i);
+  await assert.rejects(h.adapter.checkOnce({...args,delaySeconds:60,dueAt:'2026-10-19T16:00:00Z'}),/delay|one|time|either/i);await assert.rejects(access(join(h.root,'.dsh')));assert.equal(h.schedulers.length,0);
+});
+
+test('one-off cancellation is exact to project and original owner while preserving another owned plan',async t=>{
+  const h=await harness(t);const first=await h.adapter.checkOnce({...onceArgs(h),delivery:'wechat'});await h.drain();
+  const second=join(h.temp,'second-watched');await mkdir(second);h.authorize(second);const other=await h.adapter.checkOnce({...onceArgs(h),root:second,delivery:'wechat'});await h.drain();
+  await h.adapter.cancelOnce({...onceArgs(h),sessionId:'other-owner'});assert.equal((await h.adapter.onceStatus(onceArgs(h))).alarmId,first.alarmId);assert.equal((await h.adapter.onceStatus(onceArgs(h))).enabled,true);
+  await h.adapter.cancelOnce(onceArgs(h));assert.equal((await h.adapter.onceStatus({...onceArgs(h),root:second})).alarmId,other.alarmId);assert.equal((await h.adapter.onceStatus({...onceArgs(h),root:second})).enabled,true);
 });
 
 test('native once fails closed when its route is unknown even if old binding API returns null',async t=>{

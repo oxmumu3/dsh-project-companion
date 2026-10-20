@@ -15,14 +15,20 @@ const LABELS={goal:'目标',decision:'决策',blocker:'阻塞',next_step:'下一
 const ROLES={user:'用户来源',assistant:'助手记录',file:'文件来源'};
 const LIMITS={goals:10,entries:100};
 const MAX_HANDLES=5;
+const RECEIPT_TEXT_LIMIT=280;
 const fingerprint=value=>createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const sameFile=(a,b)=>a?.dev===b?.dev&&a?.ino===b?.ino;
+const publicEntry=({fingerprint:_key,...entry})=>entry;
 
 function boundedString(value,max,label){
   if(typeof value!=='string'||!value.trim()||Array.from(value).length>max||/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/u.test(value))throw new Error(`Invalid ${label}`);
   return value;
 }
 function session(value){return boundedString(value,200,'sessionId');}
+function explicitEdit(userRequested,id){
+  if(userRequested!==true)throw new Error('Project memory edits require an explicit user request');
+  return boundedString(id,200,'memory id');
+}
 function provenance(value,sessionId){
   if(!value||typeof value!=='object'||Array.isArray(value)||Object.keys(value).some(key=>!['kind','reference'].includes(key))||!['user','assistant','file'].includes(value.kind))throw new Error('Source must retain its user, assistant or file role');
   const reference=boundedString(value.reference,500,'source reference');
@@ -197,18 +203,66 @@ export function createProjectMemory({clock=()=>new Date(),authorizeRoot=async()=
       await reserved?.close();
     }
   }
+  function storedEntry(row){
+    try{
+      if(!row||row.kind!=='note')return null;
+      const data=JSON.parse(row.detail??'');
+      if(data?.owner!==OWNER||!KINDS.has(data.kind))return null;
+      const text=boundedString(data.text,2000,'memory text'),sessionId=session(row.session_id),source=provenance(data.source,sessionId);
+      const entry={id:boundedString(row.id,200,'memory id'),kind:data.kind,text,source,role:source.kind,sessionId,at:new Date(row.occurred_at).toISOString(),verified:false,fingerprint:data.fingerprint};
+      if(data.origin){
+        const originSession=session(data.origin.sessionId),originSource=provenance(data.origin.source,originSession);
+        if(typeof data.origin.at!=='string'||new Date(data.origin.at).toISOString()!==data.origin.at)return null;
+        entry.origin={source:originSource,sessionId:originSession,at:data.origin.at};
+      }
+      return entry;
+    }catch{return null;}
+  }
   function storedEntries(handle){
-    const entries=[];
-    for(const row of listEvents(handle.db,handle.scope,110)){
-      let data;try{data=JSON.parse(row.detail??'');}catch{continue;}
-      if(data.owner!==OWNER||!KINDS.has(data.kind))continue;
-      entries.push({id:row.id,kind:data.kind,text:data.text,source:data.source,role:data.source.kind,sessionId:row.session_id,at:new Date(row.occurred_at).toISOString(),verified:false,fingerprint:data.fingerprint});
-    }
-    return entries;
+    return listEvents(handle.db,handle.scope,110).map(storedEntry).filter(Boolean);
+  }
+  function receipt(action,status,entry){
+    if(action==='forget')return {action,status,id:entry.id,kind:entry.kind};
+    const chars=Array.from(entry.text);
+    return {action,status,id:entry.id,kind:entry.kind,text:chars.slice(0,RECEIPT_TEXT_LIMIT).join(''),truncated:chars.length>RECEIPT_TEXT_LIMIT,source:entry.source,at:entry.at,verified:false};
+  }
+  function removeEntry(handle,id){
+    handle.db.prepare('DELETE FROM events WHERE id=? AND scope_key=?').run(id,handle.scope);
+    handle.db.prepare("DELETE FROM yolo_fts WHERE row_type='event' AND row_id=?").run(id);
+  }
+  async function editEntry({root,sessionId,id,text,userRequested,authorizeMutation},action){
+    session(sessionId);id=explicitEdit(userRequested,id);
+    if(action==='revise')text=boundedString(text,2000,'memory text');
+    // Validate/select with the side-effect-free path before obtaining a writer.
+    // A foreign, changed or missing store cannot be migrated just to edit an ID.
+    const view=await inspect(root),original=[...view.goals,...view.entries].find(entry=>entry.id===id);
+    if(!original)throw new Error('Project memory record not found in the selected project');
+    const selected=await selectedRoot(root),handle=await database(selected,false),now=clockDate(clock);
+    if(!handle)throw new Error('Project memory record not found in the selected project');
+    await selectedRoot(root);
+    let changed;
+    // UI binding may change during any preceding filesystem/root await. The
+    // optional caller guard is the final async boundary before an atomic edit.
+    if(authorizeMutation!==undefined&&(typeof authorizeMutation!=='function'||await authorizeMutation()!==true))throw new Error('Project memory mutation is no longer authorized');
+    withTransaction(handle.db,()=>{
+      if(getMeta(handle.db,'dot_memory_owner')!==OWNER||getMeta(handle.db,'dot_memory_root')!==selected)throw new Error('Foreign project memory owner rejected');
+      const current=storedEntry(handle.db.prepare('SELECT * FROM events WHERE id=? AND scope_key=?').get(id,handle.scope));
+      if(!current)throw new Error('Owned project memory record not found in the selected project');
+      if(fingerprint(publicEntry(current))!==fingerprint(original))throw new Error('Project memory record changed; read it again before editing');
+      if(action==='forget'){removeEntry(handle,id);changed=current;return;}
+      const source={kind:'user',reference:`session:${sessionId}`};
+      const origin=current.origin??{source:current.source,sessionId:current.sessionId,at:current.at};
+      const key=fingerprint([current.kind,text,source]),summary=`${LABELS[current.kind]}：${text}`;
+      const detail=JSON.stringify({owner:OWNER,kind:current.kind,text,source,origin,fingerprint:key});
+      handle.db.prepare('UPDATE events SET summary=?,detail=?,session_id=?,source=?,occurred_at=? WHERE id=? AND scope_key=?').run(summary,detail,sessionId,'manual',now.getTime(),id,handle.scope);
+      handle.db.prepare("DELETE FROM yolo_fts WHERE row_type='event' AND row_id=?").run(id);
+      handle.db.prepare('INSERT INTO yolo_fts(row_type,row_id,title,body) VALUES(?,?,?,?)').run('event',id,summary,detail);
+      changed={...current,text,source,role:'user',sessionId,at:now.toISOString(),origin,fingerprint:key};
+    });
+    return {...await savedProjection(selected,handle,now),receipt:receipt(action,action==='forget'?'forgotten':'revised',changed)};
   }
   function projection(handle,now){
     const all=handle?storedEntries(handle):[];
-    const publicEntry=({fingerprint:_key,...entry})=>entry;
     const goals=all.filter(entry=>entry.kind==='goal').slice(0,LIMITS.goals).map(publicEntry);
     const entries=all.filter(entry=>entry.kind!=='goal').slice(0,LIMITS.entries).map(publicEntry);
     const zone=typeof hostTimeZone==='function'?hostTimeZone():hostTimeZone;
@@ -218,7 +272,10 @@ export function createProjectMemory({clock=()=>new Date(),authorizeRoot=async()=
     const lines=['项目记忆（仅来源记录，未独立验收；下一步仅为建议，不是任务状态或执行授权）'];
     if(!all.length)lines.push('尚无已保存的项目记忆。');
     // Keep the model-facing prose bounded; structured rows retain all capped records.
-    for(const entry of [...goals,...entries].slice(0,30))lines.push(`- ${LABELS[entry.kind]}：${entry.text.slice(0,500)}\n  ${ROLES[entry.role]} · ${entry.at} · ${entry.source.reference}`);
+    for(const entry of [...goals,...entries].slice(0,30)){
+      const origin=entry.origin?`；原始来源：${ROLES[entry.origin.source.kind]} · ${entry.origin.at} · ${entry.origin.source.reference}`:'';
+      lines.push(`- ${LABELS[entry.kind]}：${entry.text.slice(0,500)}\n  ${entry.origin?'用户纠正':ROLES[entry.role]} · ${entry.at} · ${entry.source.reference}${origin}`);
+    }
     return {goals,entries,changes,text:lines.join('\n')};
   }
   return {
@@ -229,18 +286,23 @@ export function createProjectMemory({clock=()=>new Date(),authorizeRoot=async()=
       text=boundedString(text,2000,'memory text');source=provenance(source,sessionId);
       const selected=await selectedRoot(root);const handle=await database(selected,true);const now=clockDate(clock);
       const key=fingerprint([kind,text,source]);
+      let saved,status='saved';
       withTransaction(handle.db,()=>{
-        if(storedEntries(handle).some(entry=>entry.fingerprint===key))return;
-        addEvent(handle.db,{kind:'note',summary:`${LABELS[kind]}：${text}`,detail:JSON.stringify({owner:OWNER,kind,text,source,fingerprint:key}),session_id:sessionId,source:source.kind==='user'?'manual':'tool',occurred_at:now.getTime(),scope_key:handle.scope});
+        saved=storedEntries(handle).find(entry=>entry.fingerprint===key);
+        if(saved){status='deduped';return;}
+        saved=storedEntry(addEvent(handle.db,{kind:'note',summary:`${LABELS[kind]}：${text}`,detail:JSON.stringify({owner:OWNER,kind,text,source,fingerprint:key}),session_id:sessionId,source:source.kind==='user'?'manual':'tool',occurred_at:now.getTime(),scope_key:handle.scope}));
         // These are context notes, never upstream todos or formal task updates.
         const rows=listEvents(handle.db,handle.scope,111);let goals=0;let notes=0;
         for(const row of rows){
-          const data=JSON.parse(row.detail);const keep=data.kind==='goal'?++goals<=LIMITS.goals:++notes<=LIMITS.entries;
-          if(!keep)handle.db.prepare('DELETE FROM events WHERE id=? AND scope_key=?').run(row.id,handle.scope);
+          const entry=storedEntry(row);if(!entry)continue;
+          const keep=entry.kind==='goal'?++goals<=LIMITS.goals:++notes<=LIMITS.entries;
+          if(!keep)removeEntry(handle,row.id);
         }
       });
-      return savedProjection(selected,handle,now);
+      return {...await savedProjection(selected,handle,now),receipt:receipt('remember',status,saved)};
     });},
+    revise(input={}){return enqueue(()=>editEntry(input,'revise'));},
+    forget(input={}){return enqueue(()=>editEntry(input,'forget'));},
     close(){
       if(closing)return closing;accepting=false;
       closing=tail.then(()=>{for(const handle of handles.values())handle.db.close();handles.clear();});

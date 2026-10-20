@@ -1,6 +1,7 @@
 import {createHash} from 'node:crypto';
 import {isAbsolute,resolve,basename} from 'node:path';
 import {createUserMessage} from '@deepseek-ai/dsh-llm';
+import {normalizeWelcomeOutcome} from './onboarding-outcome.js';
 
 const hash=value=>createHash('sha256').update(value).digest('hex');
 const publicId=root=>`setup_${hash(root).slice(0,24)}`;
@@ -8,9 +9,12 @@ const fresh=()=>({id:'profile',version:1,completed:false,welcomeStatus:'none',se
 const validConnection=value=>value?.state==='bound'&&typeof value.sessionId==='string'&&value.sessionId.length>0&&value.sessionId.length<=200&&/^[a-f0-9]{64}$/.test(value.bindingKey??'');
 const same=(a,b)=>validConnection(a)&&validConnection(b)&&a.sessionId===b.sessionId&&a.bindingKey===b.bindingKey;
 const states=new Set(['missing','unknown','waiting-qr','scanned','awaiting-message','bound','failed']);
+const publicConnectionOf=c=>({state:c.state,...(validConnection(c)?{sessionId:c.sessionId}:{}),
+  ...(c.state==='waiting-qr'&&c.qrAvailable===true?{qrAvailable:true,...(/^[a-f0-9]{16}$/.test(c.qrRevision??'')?{qrRevision:c.qrRevision}:{})}:{})});
+const invalidatedSnapshot=c=>({version:1,completed:false,connection:publicConnectionOf(c),projects:[]});
 
 /** Own profile only. It never logs in, rebinds WeChat, creates schedules or scans history. */
-export function createOnboarding({store,service,readConnection,discoverProjects,resolveOwner,activateOwner,admitWelcome}){
+export function createOnboarding({store,service,readConnection,discoverProjects,resolveOwner,activateOwner,admitWelcome,readWelcome,clock=()=>new Date()}){
   let row,queue=Promise.resolve(),closed=false,preview=null;
   const serial=work=>{const pending=queue.then(work);queue=pending.catch(()=>{});return pending;};
   async function load(){
@@ -22,10 +26,21 @@ export function createOnboarding({store,service,readConnection,discoverProjects,
     if(row.welcomeStatus==='dispatching')row={...row,welcomeStatus:'unknown',completed:false};
   }
   async function connection(){
-    const value=await readConnection();
-    if(!value||!states.has(value.state))return{state:'unknown'};
-    if(value.state==='bound'&&!validConnection(value))return{state:'unknown'};
-    return value;
+    const carrier=await readConnection();
+    const state=carrier?.state;
+    if(!states.has(state))return Object.freeze({state:'unknown'});
+    // Carrier objects can be reused and mutated by the connection provider.
+    // Keep primitive values owned by this read so awaits cannot change which
+    // original binding every later authorization comparison is checking.
+    const value={state};
+    if(state==='bound'){
+      value.sessionId=carrier.sessionId;value.bindingKey=carrier.bindingKey;
+      if(!validConnection(value))return Object.freeze({state:'unknown'});
+    }else if(state==='waiting-qr'&&carrier.qrAvailable===true){
+      value.qrAvailable=true;
+      if(/^[a-f0-9]{16}$/.test(carrier.qrRevision??''))value.qrRevision=carrier.qrRevision;
+    }
+    return Object.freeze(value);
   }
   function ownerFor(c){
     if(!validConnection(c))throw new Error('请先完成微信连接，并发送首条消息建立会话。');
@@ -55,18 +70,35 @@ export function createOnboarding({store,service,readConnection,discoverProjects,
     }
     return[...rows.values()];
   }
+  async function welcomeOutcome(){
+    if(typeof readWelcome!=='function'||typeof row.messageId!=='string'||!row.messageId)return{status:'unknown'};
+    let timer;
+    try{
+      const result=await Promise.race([
+        Promise.resolve().then(()=>readWelcome({sessionId:row.sessionId,messageId:row.messageId})),
+        new Promise(resolve=>{timer=setTimeout(()=>resolve(null),250);}),
+      ]);
+      return normalizeWelcomeOutcome(result);
+    }catch{return{status:'unknown'};}finally{clearTimeout(timer);}
+  }
   async function snapshotInternal(c){
     await load();c??=await connection();
     const matching=same(c,{state:'bound',sessionId:row.sessionId,bindingKey:row.bindingKey});
-    const publicConnection={state:c.state};
-    if(validConnection(c))publicConnection.sessionId=c.sessionId;
-    if(c.state==='waiting-qr'&&c.qrAvailable===true){
-      publicConnection.qrAvailable=true;
-      if(/^[a-f0-9]{16}$/.test(c.qrRevision??''))publicConnection.qrRevision=c.qrRevision;
-    }
     const projects=validConnection(c)?(await projectRows()).map(({id,label,watched})=>({id,label,watched})):[];
-    return{version:1,completed:matching&&row.completed,connection:publicConnection,projects,
-      ...(matching&&row.welcomeStatus!=='none'?{welcome:{status:row.welcomeStatus==='dispatching'?'unknown':row.welcomeStatus}}:{}),
+    if(validConnection(c)){
+      const afterProjects=await connection();if(closed)throw new Error('项目助理正在关闭。');
+      if(!same(c,afterProjects))return invalidatedSnapshot(afterProjects);
+    }
+    let welcome;
+    if(matching&&row.welcomeStatus!=='none'){
+      const outcome=await welcomeOutcome();
+      const after=await connection();if(closed)throw new Error('项目助理正在关闭。');
+      if(!same(c,after))return invalidatedSnapshot(after);
+      welcome={status:row.welcomeStatus==='dispatching'?'unknown':row.welcomeStatus,outcome,
+        receipt:typeof row.userReceivedAt==='string'?{status:'user_confirmed',receivedAt:row.userReceivedAt}:{status:'unconfirmed'}};
+    }
+    return{version:1,completed:matching&&row.completed,connection:publicConnectionOf(c),projects,
+      ...(welcome?{welcome}:{}),
       ...(preview&&same(c,preview.connection)?{firstBrief:preview.text}:{})};
   }
   async function checkConnection(expected){
@@ -78,11 +110,23 @@ export function createOnboarding({store,service,readConnection,discoverProjects,
     snapshot:()=>serial(()=>snapshotInternal()),
     action:input=>serial(async()=>{
       await load();
-      if(!input||typeof input!=='object'||Array.isArray(input)||!['select_projects','complete'].includes(input.action))throw new Error('不支持的首次引导操作。');
+      if(!input||typeof input!=='object'||Array.isArray(input)||!['select_projects','complete','confirm_received'].includes(input.action))throw new Error('不支持的首次引导操作。');
       const allowed=input.action==='select_projects'?['action','projectIds']:['action'];
       if(Object.keys(input).some(key=>!allowed.includes(key)))throw new Error('首次引导参数不正确。');
       const c=await connection();
       if(!validConnection(c))throw new Error('请先完成微信连接，并发送首条消息建立会话。');
+      if(input.action==='confirm_received'){
+        if(!same(c,{state:'bound',sessionId:row.sessionId,bindingKey:row.bindingKey})||row.welcomeStatus==='none'||typeof row.messageId!=='string'||!row.messageId)throw new Error('没有可确认的原始项目简报，请刷新状态。');
+        await checkConnection(c);
+        if(!row.userReceivedAt){
+          const date=clock();if(!(date instanceof Date)||!Number.isFinite(date.getTime()))throw new Error('当前时间不可用，尚未记录确认。');
+          const confirmed={...row,userReceivedAt:date.toISOString()};
+          await store.put('profile',structuredClone(confirmed));
+          row=confirmed;
+          await checkConnection(c);
+        }
+        return snapshotInternal(c);
+      }
       if(input.action==='select_projects'){
         if(!Array.isArray(input.projectIds)||!input.projectIds.length||input.projectIds.length>5||input.projectIds.some(id=>typeof id!=='string'||!/^setup_[a-f0-9]{24}$/.test(id))||new Set(input.projectIds).size!==input.projectIds.length)throw new Error('请选择最多五个项目。');
         const rows=await projectRows();

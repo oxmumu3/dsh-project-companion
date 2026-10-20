@@ -9,6 +9,16 @@ function guidance(){
   return section.text({scope:{id:'synthetic-source'}});
 }
 
+test('memory guidance offers natural correction and forgetting with exact internal selection and an honest receipt',()=>{
+  const prompt=guidance();
+  const memory=prompt.split('\n').find(line=>line.includes('correct_memory'));
+  assert.ok(memory,'natural-language memory editing must be discoverable');
+  for(const term of ['forget_memory','userRequested:true','memory','memoryId'])assert.ok(memory.includes(term),term);
+  assert.match(memory,/同一项目|当前项目/);assert.match(memory,/准确|精确/);assert.match(memory,/歧义/);
+  assert.match(memory,/不要求用户.*ID/);assert.match(memory,/原始来源/);assert.match(memory,/用户纠正/);
+  assert.match(memory,/回执/);assert.match(memory,/不.*验收|不.*已验证/);
+});
+
 test('cache receipt recovery is transport-only and cannot become another result query or task',()=>{
   const prompt=guidance();
   const recovery=prompt.split('\n').find(line=>line.includes('传输恢复意图'));
