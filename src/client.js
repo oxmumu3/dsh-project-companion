@@ -343,7 +343,7 @@ window.__ModuleLoader__.load({
             const value=staged?drafts[field]??'':secret?'':typeof view.value?.[field]==='string'?view.value[field]:'';
             return h('div',{key:field},secret?h(SettingsSecretField,{id:`pc-credential-${field}`,label,hint:field==='googleRefreshToken'?'通常由 Google 授权自动保存；空白保留已有值，不会回显令牌。':'仅输入新值以替换；留空保留已有凭据，不会回显旧值。',text:value,disabled:blocked,onEdit:text=>stage(field,text),configured:configured(field)===true,stateLabel:staged&&drafts[field]===null?'保存后清除':configured(field)?'已配置，不回显':'尚未确认配置'}):h(SettingsValueField,{id:`pc-credential-${field}`,label,hint:'使用你自己创建的 Desktop OAuth 应用，Google 密钥不要发进聊天。',text:value,overridden:Object.hasOwn(view.user??{},field)||staged,invalid:false,overriddenLabel:'自定义值',resetLabel:'清除',invalidLabel:'请检查输入',disabled:blocked,onEdit:text=>stage(field,text),onReset:()=>stage(field,null)}),
               secret?h('button',{type:'button',disabled:blocked,onClick:()=>stage(field,null)},`清除 ${label}`):null);
-          }));
+          }),h('div',null,h('p',{className:'pc_muted'},'Google 日历授权记录由本人登录后自动保存，不在此显示或手填。清除后须重新授权并启用来源。'),h('button',{type:'button',disabled:blocked,onClick:()=>stage('googleCalendarOAuthCredentials',null)},drafts.googleCalendarOAuthCredentials===null?'保存后清除 Google 日历授权':'清除 Google 日历授权')));
       }
       function ContextPanel(){
         const contextEndpoint='/api/project_companion/context';
@@ -371,7 +371,7 @@ window.__ModuleLoader__.load({
             return{id,name:sourceNames[id],configured:row.configured,enabled:row.enabled,status:row.status??row.state,lastReadAt:typeof row.lastReadAt==='string'&&row.lastReadAt.length<=80&&Number.isFinite(Date.parse(row.lastReadAt))?row.lastReadAt:null};
           });
           const state={sources:rows,googleAuth:{clientConfigured:value.googleAuth.clientConfigured===true,refreshConfigured:value.googleAuth.refreshConfigured===true,authInProgress:value.googleAuth.authInProgress===true}};
-          for(const field of ['flomoAuth','didaAuth']){const a=value[field];state[field]=a&&['clientConfigured','refreshConfigured','authInProgress'].every(k=>typeof a[k]==='boolean')?{clientConfigured:a.clientConfigured,refreshConfigured:a.refreshConfigured,authInProgress:a.authInProgress}:null;}
+          for(const field of ['flomoAuth','didaAuth','googleCalendarAuth']){const a=value[field];state[field]=a&&['clientConfigured','refreshConfigured','authInProgress'].every(k=>typeof a[k]==='boolean')?{clientConfigured:a.clientConfigured,refreshConfigured:a.refreshConfigured,authInProgress:a.authInProgress}:null;}
           if(active.current){latest.current=state;setSnapshot(state);setAuthorization(current=>{if(!current)return null;const status=state[current.source+'Auth'];return !status||status.refreshConfigured||!status.authInProgress?null:current;});}
           return state;
         };
@@ -396,9 +396,9 @@ window.__ModuleLoader__.load({
         },[]);
         const mutate=async(action,source)=>{
           if(!active.current||inFlight.current||!latest.current)return;
-          const authSource={google_authorize:'google',flomo_authorize:'flomo',dida_authorize:'dida'}[action];
+          const authSource={google_authorize:'google',google_calendar_authorize:'googleCalendar',flomo_authorize:'flomo',dida_authorize:'dida'}[action];
           if(authSource){
-            if(authSource==='google'?!latest.current.googleAuth.clientConfigured:!latest.current[authSource+'Auth'])return;
+            if((authSource==='google'||authSource==='googleCalendar')?!latest.current[authSource+'Auth']?.clientConfigured:!latest.current[authSource+'Auth'])return;
           }else{
             const row=latest.current.sources.find(item=>item.id===source);
             if(!row||(action==='connect'&&(!row.configured||row.enabled))||(action==='disconnect'&&!row.enabled))return;
@@ -409,7 +409,7 @@ window.__ModuleLoader__.load({
             const value=await request({action,...(source?{source}:{})});
             if(!active.current)return;
             if(authSource){
-              const url=new URL(value?.url),target={google:['https://accounts.google.com','/o/oauth2/v2/auth'],flomo:['https://flomoapp.com','/integration/grant'],dida:['https://dida365.com','/oauth/authorize']}[authSource];
+              const url=new URL(value?.url),target={google:['https://accounts.google.com','/o/oauth2/v2/auth'],googleCalendar:['https://accounts.google.com','/o/oauth2/v2/auth'],flomo:['https://flomoapp.com','/integration/grant'],dida:['https://dida365.com','/oauth/authorize']}[authSource];
               if(url.origin!==target[0]||url.pathname!==target[1]||url.username||url.password||url.hash||typeof value.expiresAt!=='string'||!Number.isFinite(Date.parse(value.expiresAt)))throw new Error('invalid authorization link');
               setAuthorization({source:authSource,url:url.toString(),expiresAt:value.expiresAt});
             }else accept(value);
@@ -422,16 +422,17 @@ window.__ModuleLoader__.load({
         return h('div',{className:'pc_setup','data-context-panel':true},
           h('h2',null,'个人资料来源'),
           h('p',{className:'pc_muted'},'这些连接是可选项。本地项目助理和公开 AI 资讯无需连接这些账号，可以先直接使用。'),
-          h('p',null,'按需连接你自己的邮箱、日历、文档、任务和笔记。开启某个来源只验证读取接口；只有你明确查询时才读取资料，不会自动扫描、写入项目记忆或建立推送计划。'),
+          h('p',null,'按需连接你自己的邮箱、日历、文档、任务和笔记。启用来源不代表已经读取或验证私人资料；只有你明确查询时才读取资料，不会自动扫描、写入项目记忆或建立推送计划。'),
           h('section',{className:'pc_card'},h('h3',null,'登录连接你的账户'),
             h('p',{className:'pc_muted'},'flomo 和滴答清单可直接前往官方页面登录授权，无需自己查找或粘贴 Token。登录完成后刷新状态，再选择要启用的只读来源。'),
             h('div',{className:'pc_actions'},...['flomo','dida'].map(source=>h('button',{type:'button',key:source,disabled:busy||!snapshot?.[source+'Auth'],onClick:()=>mutate(source+'_authorize')},'登录 '+sourceNames[source]+' 授权')),
               h('button',{type:'button',disabled:busy,onClick:refresh},'刷新资料来源状态')),
             ...['flomo','dida'].map(source=>h('p',{key:source,className:'pc_muted'},sourceNames[source]+'：'+(snapshot?.[source+'Auth']?.refreshConfigured?'登录凭据已保存，可启用只读来源。':snapshot?.[source+'Auth']?.authInProgress?'正在等待你完成官方授权。':'尚未完成登录授权。'))),
-            authorization?h('p',null,h('a',{href:authorization.url,target:'_blank',rel:'noopener noreferrer'},'打开 '+(authorization.source==='google'?'Google 只读':sourceNames[authorization.source])+'授权页'),h('span',{className:'pc_muted'},` · 链接有效至 ${authorization.expiresAt}；请本人完成登录，之后刷新状态。`)):null),
+            authorization?h('p',null,h('a',{href:authorization.url,target:'_blank',rel:'noopener noreferrer'},'打开 '+(authorization.source==='google'?'Google 高级只读':authorization.source==='googleCalendar'?'Google 日历':sourceNames[authorization.source])+'授权页'),h('span',{className:'pc_muted'},` · 链接有效至 ${authorization.expiresAt}；请本人完成登录，之后刷新状态。`)):null),
+          h('section',{className:'pc_card','data-google-calendar-connect':true},h('h3',null,'Google 日历 · 普通连接'),h('p',{className:'pc_muted'},'首版仅连接主日历，按需读取未来 24 小时、最多 7 天和 10 条安排。仅请求日历事件只读权限，登录不会自动查询或开启推送。'),h('button',{type:'button',disabled:busy||!snapshot?.googleCalendarAuth?.clientConfigured,onClick:()=>mutate('google_calendar_authorize')},'登录 Google 日历'),h('p',{role:'status'},!snapshot?.googleCalendarAuth?'Google 日历连接状态待确认。':!snapshot.googleCalendarAuth.clientConfigured?'Google 日历连接准备中：产品方尚未配置 Google 应用，当前不能生成可用登录链接。':snapshot.googleCalendarAuth.refreshConfigured?'Google 日历授权已保存，可启用来源；登录过程没有读取日历。':snapshot.googleCalendarAuth.authInProgress?'正在等待你完成 Google 日历授权。':'尚未完成 Google 日历授权。')) ,
           h('details',{className:'pc_card','data-context-advanced':true},h('summary',null,'高级连接设置 · Google 与兼容凭据'),
             h('h3',null,'Google Workspace（开发者预览）'),
-            h('p',{className:'pc_muted'},'Google 当前仍要求官方 MCP Developer Preview 资格、已启用对应服务的 Cloud 项目及 Desktop Client ID / Client Secret。这里保留开发者连接方式。'),
+            h('p',{className:'pc_muted'},'Google 当前仍要求官方 MCP Developer Preview 资格、已启用对应服务的 Cloud 项目及 Desktop Client ID / Client Secret。这里保留 Gmail、Drive、Docs、Sheets、Slides 的开发者连接方式；Google 日历使用上方独立授权和 REST，不回退到这里。'),
             h('p',{className:'pc_muted'},'下方原生插件配置只供高级兼容：旧 flomo MCP Token、滴答 API 口令仍可使用；令牌请勿发进聊天。官方 OAuth 登录不需要手填这些字段。'),
             h(CredentialForm,{sources:snapshot?.sources,googleAuth:google,onSaved:refresh}),
             h('p',{role:'status'},!google?'Google 状态未确认':google.refreshConfigured?'Google 账号凭据已保存；各资料来源仍需分别启用。':google.authInProgress?'Google 授权正在等待确认，完成后请刷新状态。':google.clientConfigured?'Google Desktop 应用已配置，尚未完成账号授权。':'请先在插件配置填写 Google Desktop 应用信息。'),

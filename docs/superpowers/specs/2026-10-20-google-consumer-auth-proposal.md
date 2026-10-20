@@ -1,6 +1,6 @@
 # Google 普通用户授权与只读 REST 接入提案
 
-状态：**内部提案，尚未实现、未注册产品方 Google 应用，不能作为已可用功能发布。**
+状态：**内部设计快照。Calendar 子集已在 `feat/google-consumer-calendar` 实现并做合成验证；其余分期仍是提案，产品方 Google 应用尚未注册，不能作为普通用户已可登录功能发布。**
 
 日期：2026-10-20（America/Mexico_City）。工作树：`dsh-dot-experience`。本文件只设计下一步 Google 接入，不改当前微信修复、包审计和安装优先级；没有登录 Google、复制既有客户端配置、读取私人资料或建立云服务。
 

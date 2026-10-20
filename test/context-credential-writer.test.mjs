@@ -22,3 +22,7 @@ test('authorization revocation, changed token, closure or missing revision preve
 test('credential rotation during the owner authorization check cannot overwrite newer state',async()=>{
  const h=setup();h.options.authorizeMutation=async()=>{h.change({flomoOAuthCredentials:'rotated'});return true;};await assert.rejects(h.writer('flomo','stale',h.options));assert.equal(h.read().flomoOAuthCredentials,'rotated');assert.equal(h.mutations.length,0);
 });
+test('Calendar credentials use their own secret and exact native CAS without legacy token fallback',async()=>{
+ const h=setup();await h.writer('googleCalendar','calendar-record',{expectedValue:'',authorizeMutation:async()=>true});assert.equal(h.read().googleCalendarOAuthCredentials,'calendar-record');assert.equal(h.read().flomoOAuthCredentials,'old');assert.deepEqual(h.mutations[0].ops,[{op:'set',path:['googleCalendarOAuthCredentials'],value:'calendar-record'}]);
+});
+test('Calendar CAS rejects a user clear or replacement while native mutation is pending',async()=>{for(const value of ['','replaced']){const h=setup();h.change({googleCalendarOAuthCredentials:'calendar-old'});let release;h.block(new Promise(r=>release=r));const write=h.writer('googleCalendar','calendar-late',{expectedValue:'calendar-old',authorizeMutation:async()=>true});while(!h.mutations.length)await new Promise(r=>setImmediate(r));h.change({googleCalendarOAuthCredentials:value});release();await assert.rejects(write);assert.equal(h.read().googleCalendarOAuthCredentials,value);}});

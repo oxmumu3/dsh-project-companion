@@ -234,3 +234,12 @@ test('account authorization refuses unexpected hosts and never accepts tokens fr
   }finally{c.dispose();}
  }
 });
+
+test('Calendar ordinary entry truthfully stays in preparation without a product publisher',async()=>{
+ const c=await load();c.context.snapshot.googleCalendarAuth={clientConfigured:false,refreshConfigured:false,authInProgress:false};try{c.render();await c.flush();const view=c.render();assert.match(text(view),/Google 日历连接准备中/);const button=nodes(view,n=>n.type==='button'&&text(n).includes('登录 Google 日历'))[0];assert.equal(button.props.disabled,true);await button.props.onClick();assert.equal(c.requests.length,1);assert.equal(c.opened.length,0);}finally{c.dispose();}
+});
+test('Calendar login uses its own action and first-party link, without legacy credentials or an automatic read',async()=>{
+ const c=await load();c.context.snapshot.googleCalendarAuth={clientConfigured:true,refreshConfigured:false,authInProgress:false};try{c.render();await c.flush();let view=c.render();const button=nodes(view,n=>n.type==='button'&&text(n).includes('登录 Google 日历'))[0];assert.equal(button.props.disabled,false);c.context.onFetch=()=>Response.json({url:'https://accounts.google.com/o/oauth2/v2/auth?state=calendar',expiresAt:'2030-01-01T01:05:00Z'});await button.props.onClick();view=c.render();assert.deepEqual(JSON.parse(c.requests.at(-1).options.body),{action:'google_calendar_authorize'});assert.match(text(view),/主日历/);assert.match(text(view),/登录不会自动查询/);assert.equal(c.requests.length,2);assert.equal(c.opened.length,0);assert.equal(nodes(view,n=>n.type==='a')[0].props.href,'https://accounts.google.com/o/oauth2/v2/auth?state=calendar');}finally{c.dispose();}
+});
+
+test('Calendar record can only be cleared via an explicit revision-CAS native form save',async()=>{const c=await load({native:true});try{c.render();await c.flush();const panel=c.render();let view=c.renderCredentials(panel);await c.flush();assert.equal(nodes(view,n=>n.type==='native-secret'&&n.props.id.endsWith('googleCalendarOAuthCredentials')).length,0);await nodes(view,n=>n.type==='button'&&text(n).includes('清除 Google 日历授权'))[0].props.onClick();assert.equal(c.configRequests.length,0);view=c.renderCredentials(panel);await nodes(view,n=>n.type==='native-form')[0].props.onSave();assert.deepEqual(c.configRequests,[{ops:[{op:'unset',path:['googleCalendarOAuthCredentials']}],revision:7}]);}finally{c.dispose();}});
