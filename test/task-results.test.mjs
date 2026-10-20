@@ -36,6 +36,34 @@ const reply = (service, text, extra = {}) => service.observe({sessionId:'target-
 const end = (service, reason = {kind:'completed'}, extra = {}) => service.observe({sessionId:'target-session',type:'turn/end',turn:12,reason,...extra});
 const jobStatus = async (f, id) => (await f.service.status('origin-session', {id})).jobs[0];
 
+const trustedScope = (overrides = {}) => ({originSessionId:'origin-session',projectRoot:'/synthetic/public-project',returnBinding:binding,...overrides});
+test('trusted continuation returns only an exact completed target scoped to origin, project and original binding', async()=>{
+  const f=await fixture();const id=await running(f);await reply(f.service,'SYNTHETIC result body never exposed by target selection');await end(f.service);
+  assert.equal(typeof f.service.trustedLastTarget,'function');
+  const writes=f.writes.length,sends=f.sends.length;
+  assert.deepEqual(await f.service.trustedLastTarget(trustedScope()),{targetSessionId:'target-session'});
+  for(const scope of [trustedScope({originSessionId:'another-origin'}),trustedScope({projectRoot:'/synthetic/other-project'}),trustedScope({returnBinding:null}),trustedScope({returnBinding:{...binding,botHash:'c'.repeat(64)}})])assert.equal(await f.service.trustedLastTarget(scope),null);
+  assert.equal(f.writes.length,writes);assert.equal(f.sends.length,sends);assert.equal((await jobStatus(f,id)).status,'completed');
+});
+test('latest incomplete or ambiguous records prevent stale successful target fallback',async()=>{
+  const f=await fixture();await running(f);await reply(f.service,'SYNTHETIC completed');await end(f.service);
+  assert.equal(typeof f.service.trustedLastTarget,'function');
+  f.time('2026-10-18T15:01:00.000Z');await f.service.prepare(input({originToolCallId:'newer-unconfirmed',targetMessageId:'newer-message',targetSessionId:'other-target'}));
+  assert.equal(await f.service.trustedLastTarget(trustedScope()),null);
+  const complete=await fixture();await running(complete);await reply(complete.service,'SYNTHETIC completed');await end(complete.service);
+  const rows=complete.persisted();rows.jobs.push({...structuredClone(rows.jobs[0]),id:'second-same-time',originToolCallId:'other-call',targetMessageId:'other-message',targetSessionId:'other-target'});
+  const restarted=await fixture({saved:rows});assert.equal(await restarted.service.trustedLastTarget(trustedScope()),null);
+});
+test('trusted continuation survives restart without requiring delivery or phone acceptance',async()=>{
+  const f=await fixture({send:async()=>({status:'queued'})});await running(f);await reply(f.service,'SYNTHETIC finished');await end(f.service);
+  const saved=f.persisted();const restored=await fixture({saved});
+  assert.equal(typeof restored.service.trustedLastTarget,'function');
+  assert.deepEqual(await restored.service.trustedLastTarget(trustedScope()),{targetSessionId:'target-session'});assert.equal(restored.sends.length,0);
+  for(const change of [{reason:'unknown'},{turn:null},{status:'unknown'},{returnBinding:null}]){
+    const invalid=structuredClone(saved);Object.assign(invalid.jobs[0],change);const untrusted=await fixture({saved:invalid});assert.equal(await untrusted.service.trustedLastTarget(trustedScope()),null);
+  }
+});
+
 // Admission is deliberately persisted before the host performs followup().
 test('prepare durably records the exact target input and duplicate call id never creates a second admission', async () => {
   const f = await fixture();

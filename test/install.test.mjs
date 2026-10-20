@@ -190,3 +190,15 @@ test('explicit reviewed bridge upgrade preserves pairing and does not reset exis
 test('a reviewed bridge fork cannot silently downgrade to the original bridge',async t=>{
  const f=await fixture(t,{installed:{'dsh-wechat':'0.11.1-dot.1'}});await assert.rejects(ready()({...f,install:true}),e=>e.code==='BRIDGE_VERSION_CONFLICT');assert.equal(f.calls.some(c=>c.args.includes('add')),false);
 });
+
+test('second audited maintenance bridge upgrades original or first maintenance without resetting pairing',async t=>{
+ for(const prior of ['0.11.0','0.11.1-dot.1']){
+  const f=await fixture(t,{installed:{'dsh-wechat':prior},bridgeVersion:'0.11.1-dot.2'});
+  const result=await ready()({...f,install:true});assert.equal(result.status,'installed');assert.equal(result.steps[0].action,'upgrade');assert.equal(result.steps[0].version,'0.11.1-dot.2');
+ }
+});
+test('second maintenance bridge cannot downgrade or accept an unknown intervening fork',async t=>{
+ for(const [prior,next] of [['0.11.1-dot.2','0.11.1-dot.1'],['0.11.1-other.1','0.11.1-dot.2']]){
+  const f=await fixture(t,{installed:{'dsh-wechat':prior},bridgeVersion:next});await assert.rejects(ready()({...f,install:true}),e=>e.code==='BRIDGE_VERSION_CONFLICT');assert.equal(f.calls.some(c=>c.args.includes('add')),false);
+ }
+});

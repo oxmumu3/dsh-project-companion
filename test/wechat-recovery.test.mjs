@@ -1,6 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { Context } from '@deepseek-ai/cordis';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 
 const recoveryText = '继续收取刚才缓存的回复就好，不要重新执行任务，也不要新增提醒';
 const message = (text = recoveryText, id = 'wechat-message-1', source = { kind: 'user' }) => ({ id, source, role: 'user', content: [{ type: 'text', text }] });
@@ -67,7 +71,7 @@ test('GUI or a generic pre-step event cannot activate the bridge-only gate', asy
 
 test('unknown, absent and malformed flush receipts cannot consume a user request', async t => {
   const h = await harness(t);
-  for (const data of [undefined, {}, receipt({ attempted: false }), receipt({ sent: -1 }), receipt({ remaining: NaN }), receipt({ dropped: '0' })]) {
+  for (const data of [undefined, {}, receipt({ attempted: false }), receipt({ attempted: false, sent: 0, remaining: 1 }), receipt({ attempted: false, sent: 0, dropped: 1 }), receipt({ attempted: 'false' }), receipt({ sent: -1 }), receipt({ remaining: NaN }), receipt({ dropped: '0' })]) {
     assert.equal(h.ctx.bail('wechat/inbound-admit', { agent: h.agent, message: message(), receipt: data }), undefined);
   }
 });
@@ -103,10 +107,16 @@ test('a real request immediately before or after recovery stays in the existing 
   assert.equal(h.forwarded[0], first); assert.equal(h.forwarded[1], next);
 });
 
-test('no transfer attempt retains the normal agent reply for an empty-cache request', async t => {
+test('an actual empty-cache receipt consumes pure recovery and requests one fixed bridge acknowledgement', async t => {
   const h = await harness(t), input = message();
-  assert.equal(h.receive(input, receipt({ attempted: false, sent: 0, remaining: 0 })), undefined);
-  assert.deepEqual(h.forwarded, [input]);
+  assert.deepEqual(h.receive(input, receipt({ attempted: false, sent: 0, remaining: 0 })), { kind: 'transport-only', acknowledgement: 'empty-queue' });
+  assert.deepEqual(h.forwarded, []);
+  const mixed = message(`${recoveryText}，另外给我看README结果`, 'mixed-empty');
+  assert.equal(h.receive(mixed, receipt({ attempted: false, sent: 0, remaining: 0 })), undefined);
+  assert.deepEqual(h.forwarded, [mixed]);
+  const withFile = { ...message(recoveryText, 'file-empty'), content: [...input.content, { type: 'file', path: '/synthetic/attached.txt' }] };
+  assert.equal(h.receive(withFile, receipt({ attempted: false, sent: 0, remaining: 0 })), undefined);
+  assert.deepEqual(h.forwarded, [mixed, withFile]);
 });
 
 test('close and automatic plugin fiber unload remove their admission hook', async t => {
@@ -120,4 +130,51 @@ test('close and automatic plugin fiber unload remove their admission hook', asyn
   await lifecycle.dispose();
   assert.equal(ctx.bail('wechat/inbound-admit', { agent, message: message(), receipt: receipt() }), undefined);
   await ctx.fiber.dispose();
+});
+
+test('built bridge original inbound produces the actual empty/nonempty receipts consumed by Dot', { skip: !process.env.DSH_WECHAT_BRIDGE_ROOT }, async () => {
+  const root = process.env.DSH_WECHAT_BRIDGE_ROOT;
+  const { WeChatDSHBridge } = await import(pathToFileURL(join(root, 'dist/bridge/bridge.js')).href);
+  const { defaultConfig } = await import(pathToFileURL(join(root, 'dist/config.js')).href);
+  const { createWechatRecoveryGuard } = await api();
+  const directory = await mkdtemp(join(tmpdir(), 'dot-recovery-real-seam-'));
+  const ctx = new Context(), forwarded = [], wires = [], observed = [];
+  const agent = { id: 'synthetic-session', status: 'running', options: {}, followup: input => forwarded.push(input), steer: input => forwarded.push(input) };
+  ctx.provide('agents', { get: id => id === agent.id ? agent : undefined, list: () => [agent] });
+  const guard = createWechatRecoveryGuard({ ctx });
+  ctx.on('wechat/inbound-admit', payload => { observed.push(structuredClone(payload.receipt)); }, { prepend: true });
+  const bridge = new WeChatDSHBridge(ctx, { ...defaultConfig(), storageDir: directory });
+  bridge.token = { baseUrl: 'https://synthetic.invalid', token: 'synthetic-token' };
+  bridge.state.ensureUser('synthetic-peer', '/synthetic');
+  bridge.state.update('synthetic-peer', { sessionId: agent.id });
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input, options) => {
+    const url = new URL(String(input));
+    assert.equal(url.hostname, 'synthetic.invalid', 'the integration seam cannot access real network endpoints');
+    assert.equal(url.pathname, '/ilink/bot/sendmessage');
+    wires.push(JSON.parse(options.body).msg.item_list[0].text_item.text);
+    return Response.json({ ret: 0, errcode: 0 });
+  };
+  const inbound = (text, id) => ({ message_type: 1, message_id: id, from_user_id: 'synthetic-peer', item_list: [{ type: 1, text_item: { text } }] });
+  try {
+    await bridge.handleMessage(inbound(recoveryText, 1));
+    assert.deepEqual(observed[0], { attempted: false, sent: 0, remaining: 0, dropped: 0 });
+    assert.deepEqual(wires, ['当前没有待补发的消息；未重新执行任务或新增提醒。']);
+    assert.equal(forwarded.length, 0);
+    await bridge.handleMessage(inbound(recoveryText, 1));
+    assert.equal(wires.length, 1, 'a replay cannot emit another acknowledgement');
+    bridge.outboundCache = [{ kind: 'text', text: 'synthetic-first' }, { kind: 'text', text: 'synthetic-second' }];
+    await bridge.handleMessage(inbound(recoveryText, 2));
+    assert.deepEqual(observed[1], { attempted: true, sent: 2, remaining: 0, dropped: 0 });
+    assert.deepEqual(wires.slice(1), ['synthetic-first', 'synthetic-second', '✅ 全部 2 条缓存消息已发送。']);
+    assert.equal(forwarded.length, 0);
+    const mixed = `${recoveryText}，另外告诉我README具体结果`;
+    await bridge.handleMessage(inbound(mixed, 3));
+    assert.equal(forwarded.length, 1); assert.equal(forwarded[0].content[0].text, mixed);
+    assert.equal(wires.length, 4);
+    assert.equal(agent.status, 'running', 'recovery never cancels the current task');
+  } finally {
+    await bridge.stop(); guard.close(); await ctx.fiber.dispose(); globalThis.fetch = originalFetch;
+    await rm(directory, { recursive: true, force: true });
+  }
 });

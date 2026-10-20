@@ -3,7 +3,7 @@
 
 Maintainers need Python 3 and npm. Use one exact reviewed original or Dot
 maintenance bridge archive, then run:
-  python3 scripts/build-release.py --bridge /path/to/dsh-wechat-0.11.1-dot.1.tgz
+  python3 scripts/build-release.py --bridge /path/to/dsh-wechat-0.11.1-dot.2.tgz
 See bridge-maintenance/ for the pinned source delta and rebuild instructions.
 
 Users download the release ZIP, extract the whole directory and launch
@@ -32,6 +32,12 @@ REVIEWED_BRIDGES = {
         'sourceCommit': '1f28de0f5a9d338db884ff5b84e90e9572eaf1cc',
         'deltaSha256': '6e34feef2dc29cb82fdfef0305c27ae4bf604962cd7ca43e616a53d8aedc2c64',
         'sha256': 'b40031cd0928c9df76a864d6ff15bc3fe7356b6298ad2758b6272f127f965878',
+    },
+    'dsh-wechat-0.11.1-dot.2.tgz': {
+        'name': 'dsh-wechat', 'version': '0.11.1-dot.2', 'sourceKind': 'dot_maintained_fork',
+        'sourceCommit': '19c3f40c85bcdd49525a09d07007978e61521f83',
+        'deltaSha256': 'bbb6a1ab70a5b11bce72308a705813538ec15c53f462b009c2128d04d0775dee',
+        'sha256': 'b0f811e7f3d4746fe27d12460f7f188d4ad8d0b5f6be44f442636ce6db3538f7',
     },
 }
 PROHIBITED = {'.dsh', '.git', '.agent', 'node_modules', '__MACOSX', '.DS_Store', 'credentials', 'tokens', 'secrets'}
@@ -136,7 +142,7 @@ def runtime_fingerprints(files):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     source_root = Path(__file__).resolve().parent.parent
-    parser.add_argument('--bridge', type=Path, required=True, help='One exact reviewed original 0.11.0 or Dot maintenance 0.11.1-dot.1 archive')
+    parser.add_argument('--bridge', type=Path, required=True, help='One exact reviewed original 0.11.0 or Dot maintenance 0.11.1-dot.1/0.11.1-dot.2 archive')
     parser.add_argument('--output', type=Path, default=source_root / 'dist', help='Artifact directory; defaults to this source checkout/dist')
     parser.add_argument('--runtime-reference', type=Path, help='Optional previously tested companion tgz; require identical index/src/vendor/bundle runtime bytes')
     args = parser.parse_args()

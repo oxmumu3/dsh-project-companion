@@ -142,7 +142,7 @@ export function createService(options = {}) {
     return zone;
   };
   const currentTime = () => ({now:clock().toISOString(),hostTimeZone:computerTimeZone()});
-  let state;
+  let state;let coordinationReady=false;
   // Cancellation intent must be visible while a serialized tick awaits I/O.
   // Configurations keep their request-time version so queued ordering survives.
   let dailyCancellationVersion=0,dailyConfigurationVersion=0;
@@ -158,6 +158,7 @@ export function createService(options = {}) {
     let changed = false;
     for (const item of state.outbox) if (item.status === 'dispatching') { item.status = 'uncertain'; item.detail = 'Host stopped during sending; no automatic retry'; changed = true; }
     if (changed) await save();
+    coordinationReady=true;
   };
   const ready = () => serial(load);
   const candidates = async owner => {
@@ -411,7 +412,13 @@ export function createService(options = {}) {
   });
   const needsTimer = () => !!state && !state.paused && (state.daily?.enabled || state.reminders.some(r => r.status === 'scheduled') || state.outbox.some(r => ['pending', 'blocked'].includes(r.status)));
   const coordinationTarget = projectId => serial(async()=>{await load();return structuredClone(projectMatch(state.projects,projectId,{optional:true}));});
+  // Final inbox admission cannot yield: read only this service's initialized current state.
+  const canCoordinate = scope => {
+    if(!coordinationReady||!Array.isArray(state?.projects)||typeof scope?.projectId!=='string'||!scope.projectId||typeof scope.projectRoot!=='string'||!isAbsolute(scope.projectRoot)||resolve(scope.projectRoot)!==scope.projectRoot||typeof scope.sessionId!=='string'||!scope.sessionId)return false;
+    const project=state.projects.find(candidate=>candidate?.id===scope.projectId&&candidate.root===scope.projectRoot);
+    return !!project&&Array.isArray(project.sessionIds)&&project.sessionIds.includes(scope.sessionId);
+  };
   const watchedProjects = () => serial(async()=>{await load();return structuredClone(state.projects);});
   const isPaused = () => serial(async()=>{await load();return state.paused;});
-  return { ready, act, record, tick, needsTimer, coordinationTarget, watchedProjects, isPaused };
+  return { ready, act, record, tick, needsTimer, coordinationTarget, canCoordinate, watchedProjects, isPaused };
 }

@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { isAbsolute } from 'node:path';
+import { isAbsolute, resolve } from 'node:path';
 import { z } from 'zod';
 
 const SIX_HOURS = 6 * 60 * 60 * 1000;
@@ -325,6 +325,24 @@ export function createTaskResults({store,clock = () => new Date(),send = async (
     const text=['## 最近交办状态','交办回复由独立回传流程交给桥接；本查询不补发，也不刷新或检查桥接队列。queued 只记录交给通道时排队，不能说明当前仍有缓存或手机收到。',...jobs.map(job=>`${job.projectLabel}：${statusNames[job.status]}。${job.delivery?` ${deliveryNames[job.delivery.status]}。`:''}${id&&job.reply?`\n${bounded(job.reply,2500)}`:''}`),...(!jobs.length?['没有找到属于当前会话的交办记录。']:[]),'执行回复仍待验收；通道报告发送不代表手机送达或已读。'].join('\n\n');
     return {jobs,text:bounded(text,MOBILE_LIMIT)};
   });
+  // Routing evidence is separate from delivery or acceptance. Never expose the
+  // task/reply here, and never fall back past a newer uncertain admission.
+  const trustedLastTarget = scope => serial(async()=>{
+    if(closing)return null;
+    await load();
+    if(!identity.safeParse(scope?.originSessionId).success||typeof scope?.projectRoot!=='string'||!isAbsolute(scope.projectRoot))return null;
+    const current=bindingSchema.safeParse(scope.returnBinding);
+    if(!current.success)return null;
+    const root=resolve(scope.projectRoot);
+    const owned=state.jobs.filter(job=>job.originSessionId===scope.originSessionId&&isAbsolute(job.projectRoot)&&resolve(job.projectRoot)===root);
+    if(!owned.length)return null;
+    const latest=Math.max(...owned.map(job=>Date.parse(job.createdAt)));
+    const recent=owned.filter(job=>Date.parse(job.createdAt)===latest);
+    const trusted=job=>job.status==='completed'&&job.reason==='completed'&&Number.isInteger(job.turn)&&job.turn>=0&&job.targetSessionId!==scope.originSessionId&&job.finishedAt!==null&&Date.parse(job.finishedAt)>=latest&&Date.parse(job.finishedAt)<=now().getTime()&&job.returnBinding?.userHash===current.data.userHash&&(job.returnBinding?.botHash??null)===(current.data.botHash??null);
+    if(!recent.every(trusted))return null;
+    const targets=[...new Set(recent.map(job=>job.targetSessionId))];
+    return targets.length===1?{targetSessionId:targets[0]}:null;
+  });
   const tick = () => serial(async () => { if (closing) return; await load(); await expire(); clearInactiveClaims(); await flush(); });
   const needsTimer = () => !closing && Boolean(state?.jobs.some(active));
   const close = () => {
@@ -332,5 +350,5 @@ export function createTaskResults({store,clock = () => new Date(),send = async (
     closePromise ??= serial(async()=>{await load();directClaims.clear();});
     return closePromise;
   };
-  return {ready,prepare,admitted,notAdmitted,claimed,discarded,observe,status,tick,needsTimer,close};
+  return {ready,prepare,admitted,notAdmitted,claimed,discarded,observe,status,trustedLastTarget,tick,needsTimer,close};
 }

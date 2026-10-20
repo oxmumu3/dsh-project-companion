@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "name": "dsh-wechat",
-  "version": "0.11.1-dot.1",
+  "version": "0.11.1-dot.2",
   "maintainer": "DSH Dot / 牛村木木山",
   "upstream": {
     "repository": "https://github.com/pan17/dsh-wechat",
@@ -10,16 +10,16 @@
     "originalNpmVersion": "0.11.0",
     "originalNpmArchiveSha256": "993e1e1afce3c0dcd2610bf9e84ffbfd6d08768f5c4b4fa30eeec50dc2e97d3f"
   },
-  "sourceCommit": "1f28de0f5a9d338db884ff5b84e90e9572eaf1cc",
+  "sourceCommit": "19c3f40c85bcdd49525a09d07007978e61521f83",
   "delta": {
-    "file": "dsh-wechat-0.11.1-dot.1.patch",
-    "sha256": "6e34feef2dc29cb82fdfef0305c27ae4bf604962cd7ca43e616a53d8aedc2c64",
+    "file": "dsh-wechat-0.11.1-dot.2.patch",
+    "sha256": "bbb6a1ab70a5b11bce72308a705813538ec15c53f462b009c2128d04d0775dee",
     "format": "git diff --binary upstream sourceCommit..sourceCommit"
   },
   "archive": {
-    "file": "dsh-wechat-0.11.1-dot.1.tgz",
-    "sha256": "b40031cd0928c9df76a864d6ff15bc3fe7356b6298ad2758b6272f127f965878",
-    "bytes": 1317789
+    "file": "dsh-wechat-0.11.1-dot.2.tgz",
+    "sha256": "b0f811e7f3d4746fe27d12460f7f188d4ad8d0b5f6be44f442636ce6db3538f7",
+    "bytes": 1318555
   },
   "license": {
     "type": "MIT",
@@ -31,32 +31,32 @@
     "node": "22.22.0",
     "npm": "10.9.4",
     "typescript": "5.9.3",
-    "packageLockSha256": "d2f9e2bd625f17ff9410f8b2f3c7ecc6600e3cc45a7a217e88a489d323679163"
+    "packageLockSha256": "b020f4ad98b676a3a3f91c9ed29f7cd89adb4b903785333dba479487e79aef93"
   },
   "changedFiles": [
     {
       "file": "NOTICE.md",
-      "sha256": "d4b64c5a3cde169b44e130cf72c4a9c5591b97c6a439e372606132c7b966ca10"
+      "sha256": "a0ee45e53d5a39471cee58899cb25d14f58cf2aa3cd88eaaee733c43b0f07f25"
     },
     {
       "file": "README.md",
-      "sha256": "4aa578ad77517e36c0e405cf51c7de404a59ec76da74c4bf510d93be64660198"
+      "sha256": "c8d58ea79f174729e0b28e8dd253fdd6041c00aad5167603e6d2e07b170f82e8"
     },
     {
       "file": "SOURCE.json",
-      "sha256": "2b0c77b0ba69aab01732c9ffa830090479a131d20f42c3e31cb84ad92adcf3d7"
+      "sha256": "f1431c123df65ae1b53f75474acb2cdd68cb1114a3b152c2dfe65769a443f02e"
     },
     {
       "file": "package-lock.json",
-      "sha256": "d2f9e2bd625f17ff9410f8b2f3c7ecc6600e3cc45a7a217e88a489d323679163"
+      "sha256": "b020f4ad98b676a3a3f91c9ed29f7cd89adb4b903785333dba479487e79aef93"
     },
     {
       "file": "package.json",
-      "sha256": "6a6344c0fd7632d350cb56748b60902bd900b795265a0d3fea723accd622d96c"
+      "sha256": "7d49fe0aae67061b88feb5145a69e2f61465b63cad95fca8e4bdabafe551666b"
     },
     {
       "file": "src/bridge/bridge.ts",
-      "sha256": "18dd3d2571d4bb7cca6cf0f6e5a978e2ecb1f5a045db81e2f7a6c5f5b5aea7ed"
+      "sha256": "aacfd87a39e5a8834d38f1d021f33ad62d3124de69a98253346b037a12b25321"
     },
     {
       "file": "src/dsh/sessions.ts",
@@ -88,24 +88,32 @@
     },
     {
       "file": "tests/dot-delivery.test.ts",
-      "sha256": "7ce7e4629bc95a08941f7c42df79951441c6a52d9301e48421c106a816714086"
+      "sha256": "73c9bb4cf0c08b07ddeb719f652b94027f6e9d1aa38036719aa2b66d19bfe9e4"
     }
   ],
   "verification": {
     "bridgeTests": {
       "files": 50,
-      "passed": 755,
+      "passed": 763,
       "failed": 0
     },
     "build": "npm run build: passed",
     "scope": "Automated source/build and stubbed transport tests; no phone delivery claim",
     "buildCacheExcluded": "dist/.tsbuildinfo excluded from npm package; runtime files retained",
+    "builtBridgeDotSeam": {
+      "passed": true,
+      "emptyQueueReceiptFromActualProcessMessage": true,
+      "emptyAcknowledgementCount": 1,
+      "pureRecoveryAgentEnqueues": 0,
+      "nonemptyFlushStatusNotDuplicated": true,
+      "realNetworkRequests": 0
+    },
     "offlinePatchRebuild": {
       "appliedToPinnedUpstream": true,
       "changedFileHashesVerified": 14,
       "buildPassed": true,
       "archiveByteIdentical": true,
-      "sha256": "b40031cd0928c9df76a864d6ff15bc3fe7356b6298ad2758b6272f127f965878",
+      "sha256": "b0f811e7f3d4746fe27d12460f7f188d4ad8d0b5f6be44f442636ce6db3538f7",
       "dependencyInstall": false,
       "dependencySource": "Existing build dependencies from the locked fork checkout"
     }

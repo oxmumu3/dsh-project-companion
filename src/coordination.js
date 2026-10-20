@@ -15,6 +15,7 @@ export function effectiveCwd(ctx,subject){
 const clean=error=>String(error?.message??error).replace(/[\u0000-\u001f\u007f]/g,' ').slice(0,200);
 const blocked=text=>({status:'blocked',accepted:false,text});
 const lifecycleNotice='本次恢复或新建会话由项目助理插件拥有；卸载插件会停止该会话。';
+const sameBinding=(left,right)=>typeof left?.userHash==='string'&&/^[a-f0-9]{64}$/.test(left.userHash)&&left.userHash===right?.userHash&&(left.botHash??null)===(right?.botHash??null);
 
 function sessionView(ctx,target){
   let values;
@@ -59,8 +60,19 @@ export function createCoordinator({ctx,service,owner,liveAgents,taskResults,read
   });
   const signalFor=signal=>AbortSignal.any([lifecycle.signal,...(lifecycleSignal?[lifecycleSignal]:[]),...(signal?[signal]:[])]);
   const withinProject=(agent,project)=>project.sessionIds.includes(String(agent.id))&&effectiveCwd(ctx,agent)===project.root&&agent.session?.header?.origin!=='subagent';
-  async function submit(target,project,task,signal,{cold=false,agent,callId}={}){
+  async function trustedRoute(project,agent,trusted,signal){
+    if(!trusted)return true;
     signal.throwIfAborted();
+    if(owner(agent).sessionId!==trusted.originSessionId)return false;
+    const current=await service.coordinationTarget(project.id);
+    if(!current||current.root!==project.root||!current.sessionIds.includes(trusted.sessionId))return false;
+    let binding;try{binding=await readBinding(trusted.originSessionId);}catch{return false;}
+    signal.throwIfAborted();
+    return sameBinding(binding,trusted.binding);
+  }
+  async function submit(target,project,task,signal,{cold=false,agent,callId,trusted,retainHandle=()=>{}}={}){
+    signal.throwIfAborted();
+    if(!await trustedRoute(project,agent,trusted,signal))return blocked('上次交办的项目会话或原微信绑定已变化，尚未提交；请重新选定目标会话。');
     if(target.status!=='idle')return{status:'busy',accepted:false,text:`「${project.label}」正在处理其他任务。尚未提交，不会打断；等它空闲后再继续。`};
     if(typeof target.followup!=='function')return blocked(`「${project.label}」的会话暂时不能接收任务，请先在电脑上检查该会话。`);
     const message=createUserMessage({content:[{type:'text',text:task}],source:{kind:'user'}});
@@ -70,21 +82,28 @@ export function createCoordinator({ctx,service,owner,liveAgents,taskResults,read
       let returnBinding=null;
       try{returnBinding=await readBinding(owner(agent).sessionId);}catch{}
       signal.throwIfAborted();
+      if(trusted&&!sameBinding(returnBinding,trusted.binding))return blocked('原微信绑定已经变化，尚未提交任务。');
       const prepared=await taskResults.prepare({originSessionId:owner(agent).sessionId,originToolCallId:callId,targetSessionId:String(target.id),targetMessageId:String(message.id),projectRoot:project.root,projectLabel:project.label,task,returnBinding});
       job=prepared.job;
-      if(prepared.duplicate)return{status:'duplicate',accepted:false,text:'这次交办已经记录，不会重复提交；可以查询最近交办状态。'};
-      // Binding checks and durable writes both yield; revalidate immediately before admission.
-      if(signal.aborted||effectiveCwd(ctx,target)!==project.root||target.session?.header?.origin==='subagent'||ctx.get('agents')?.get?.(String(target.id))!==target){
-        await taskResults.notAdmitted(job.id,{uncertain:false});
-        return blocked('目标会话或插件状态已变化，尚未提交任务。');
-      }
-      if(target.status!=='idle'){
-        await taskResults.notAdmitted(job.id,{uncertain:false});
-        return{status:'busy',accepted:false,text:`「${project.label}」正在处理其他任务。尚未提交，不会打断；等它空闲后再继续。`};
-      }
+      // A duplicate may refer to an earlier admission; do not stop that restored work.
+      if(prepared.duplicate){retainHandle();return{status:'duplicate',accepted:false,text:'这次交办已经记录，不会重复提交；可以查询最近交办状态。'};}
+      let routeUnchanged=false;
+      try{routeUnchanged=await trustedRoute(project,agent,trusted,signal);}catch{}
+      if(!routeUnchanged){await taskResults.notAdmitted(job.id,{uncertain:false});return blocked('原微信绑定或项目目标已变化，尚未提交任务。');}
+    }
+    // Durable preparation and route checks yield; the final target gate is synchronous.
+    let projectAllowed=false;
+    try{projectAllowed=service.canCoordinate?.({projectId:project.id,projectRoot:project.root,sessionId:String(target.id)})===true;}catch{}
+    if(!projectAllowed||signal.aborted||effectiveCwd(ctx,target)!==project.root||target.session?.header?.origin==='subagent'||ctx.get('agents')?.get?.(String(target.id))!==target){
+      if(job)await taskResults.notAdmitted(job.id,{uncertain:false});
+      return blocked('目标会话或插件状态已变化，尚未提交任务。');
+    }
+    if(target.status!=='idle'){
+      if(job)await taskResults.notAdmitted(job.id,{uncertain:false});
+      return{status:'busy',accepted:false,text:`「${project.label}」正在处理其他任务。尚未提交，不会打断；等它空闲后再继续。`};
     }
     // No await between the final status check and official synchronous inbox admission.
-    try{target.followup(message);}catch{
+    try{retainHandle();target.followup(message);}catch{
       if(job)await taskResults.notAdmitted(job.id,{uncertain:true});
       return blocked('目标会话的接收结果不确定，已停止自动重试；可以查询最近交办状态。');
     }
@@ -110,7 +129,24 @@ export function createCoordinator({ctx,service,owner,liveAgents,taskResults,read
       if(String(matches[0].target.id)===String(agent.id))return currentSession(project,task);
       return submit(matches[0].target,project,task,signal,{agent,...meta});
     }
-    const idle=live.filter(target=>target.status==='idle');
+    let trusted=null;
+    if(project.sessionIds.length>1&&typeof taskResults?.trustedLastTarget==='function'){
+      const originSessionId=owner(agent).sessionId;
+      let binding,prior;
+      try{binding=await readBinding(originSessionId);prior=await taskResults.trustedLastTarget({originSessionId,projectRoot:project.root,returnBinding:binding});}catch{}
+      signal.throwIfAborted();
+      if(prior){
+        if(typeof prior.targetSessionId!=='string'||!project.sessionIds.includes(prior.targetSessionId))return blocked('上次交办的目标已不属于这个项目，尚未提交；请重新选定目标会话。');
+        trusted={sessionId:prior.targetSessionId,originSessionId,binding};
+        if(!await trustedRoute(project,agent,trusted,signal))return blocked('原微信绑定或项目目标已变化，尚未提交；请重新选定目标会话。');
+        const target=ctx.get('agents')?.get?.(trusted.sessionId);
+        if(target){
+          if(!withinProject(target,project))return blocked('上次交办的目标目录或会话身份已变化，尚未提交任务。');
+          return submit(target,project,task,signal,{agent,...meta,trusted});
+        }
+      }
+    }
+    const idle=trusted?[]:live.filter(target=>target.status==='idle');
     if(idle.length>1){
       const views=idle.map(target=>sessionView(ctx,target));
       const used=views.filter(view=>view.blank===false);
@@ -118,22 +154,32 @@ export function createCoordinator({ctx,service,owner,liveAgents,taskResults,read
       return ambiguous(project,views);
     }
     if(idle.length===1)return submit(idle[0],project,task,signal,{agent,...meta});
-    if(live.length)return{status:'busy',accepted:false,text:`「${project.label}」正在处理其他任务。尚未提交，不会打断；等它空闲后再继续。`};
+    if(!trusted&&live.length)return{status:'busy',accepted:false,text:`「${project.label}」正在处理其他任务。尚未提交，不会打断；等它空闲后再继续。`};
     // A matching live id in another directory must never be replaced or resumed over.
-    if(project.sessionIds.some(id=>ctx.get('agents')?.get?.(id)))return blocked(`「${project.label}」的已知会话当前位于另一个目录或属于子任务，尚未提交；请先核对目标会话。`);
-    const ids=[...new Set(project.sessionIds)];
+    if((trusted?[trusted.sessionId]:project.sessionIds).some(id=>ctx.get('agents')?.get?.(id)))return blocked(`「${project.label}」的已知会话当前位于另一个目录或属于子任务，尚未提交；请先核对目标会话。`);
+    const ids=trusted?[trusted.sessionId]:[...new Set(project.sessionIds)];
     if(ids.length>1)return{status:'ambiguous',accepted:false,text:`「${project.label}」有多个历史会话，暂时无法唯一确定要恢复哪一个。请先选定对应会话，我再继续。`};
     const agents=ctx.get('agents');const presets=ctx.get('agentPresets');
     if(typeof presets?.mount!=='function'||typeof agents?.[ids.length?'resume':'create']!=='function'||(ids.length&&!ctx.get('sessionPersistence')))return blocked(`「${project.label}」尚未载入，宿主缺少安全恢复所需的原生会话配置。请先在电脑上打开这个项目；尚未提交任务。`);
     await safeProjectRoot(project.root);signal.throwIfAborted();
-    let handle;
+    let handle;let retained=false;
+    const release=async()=>{if(handle){handles.delete(handle);await handle.dispose().catch(()=>{});}};
     try{
+      if(!await trustedRoute(project,agent,trusted,signal))throw new Error('原微信绑定或项目目标已变化');
+      const setup=async(agentCtx,restored)=>{
+        signal.throwIfAborted();
+        if((ids.length&&String(restored?.id)!==ids[0])||effectiveCwd(ctx,restored)!==project.root||restored?.session?.header?.origin==='subagent')throw new Error('恢复的会话身份或目录与目标项目不一致');
+        if(!await trustedRoute(project,agent,trusted,signal))throw new Error('原微信绑定或项目目标已变化');
+        await setupAgent(agentCtx,restored);
+      };
       handle=ids.length
-        ?await agents.resume({resumeSessionId:ids[0],setup:setupAgent,signal})
-        :await agents.create({sessionId:`session-${randomUUID()}`,meta:{cwd:project.root,...(presets.defaultId?{agentPreset:presets.defaultId}:{})},setup:setupAgent,signal});
+        ?await agents.resume({resumeSessionId:ids[0],setup,signal})
+        :await agents.create({sessionId:`session-${randomUUID()}`,meta:{cwd:project.root,...(presets.defaultId?{agentPreset:presets.defaultId}:{})},setup,signal});
       handles.add(handle);signal.throwIfAborted();
       if(!handle?.agent||String(handle.agent.id)!==String(ids[0]??handle.agent.id)||effectiveCwd(ctx,handle.agent)!==project.root||handle.agent.session?.header?.origin==='subagent')throw new Error('恢复后的会话目录或身份与目标项目不一致');
-      await service.act(owner(agent),{action:'watch',project:project.root});
+      if(!await trustedRoute(project,agent,trusted,signal))throw new Error('原微信绑定或项目目标已变化，未提交任务');
+      // A trusted restore is already a member; re-watching could undo a concurrent unwatch.
+      if(!trusted)await service.act(owner(agent),{action:'watch',project:project.root});
       const workspace=await ctx.get('workspaceRegistry')?.resolveByPath?.(project.root);
       // Workspace accounting belongs to the original project; changing the effective
       // directory must not reassign the persisted session to a different workspace.
@@ -142,9 +188,13 @@ export function createCoordinator({ctx,service,owner,liveAgents,taskResults,read
       signal.throwIfAborted();
       // Revalidate after asynchronous mounting/accounting and before task admission.
       if(effectiveCwd(ctx,handle.agent)!==project.root)throw new Error('会话目录已经变化，未提交任务');
-      return submit(handle.agent,project,task,signal,{cold:true,agent,...meta});
+      if(!await trustedRoute(project,agent,trusted,signal))throw new Error('原微信绑定或项目目标已变化，未提交任务');
+      const result=await submit(handle.agent,project,task,signal,{cold:true,agent,...meta,trusted,retainHandle:()=>{retained=true;}});
+      if(!retained)await release();
+      return result;
     }catch(error){
-      if(handle){handles.delete(handle);await handle.dispose().catch(()=>{});}
+      if(retained)return blocked('目标会话的接收结果不确定，已保留会话并停止自动重试；可以查询最近交办状态。');
+      await release();
       return blocked(`「${project.label}」暂时无法恢复或创建可用会话：${clean(error)}。尚未提交任务，也没有创建替代会话。`);
     }
   }

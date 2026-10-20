@@ -10,7 +10,7 @@ import {spawn} from 'node:child_process';
 export const OFFICIAL_HARNESS_URL='https://github.com/deepseek-ai/deepseek-harness/releases';
 const RUNTIMES=['0.2.0-rc.2','0.2.1-rc.2'];
 const NAMES=['dsh-wechat','dsh-project-companion'];
-const BRIDGE_VERSIONS=new Set(['0.11.0','0.11.1-dot.1']);
+const BRIDGE_VERSIONS=new Set(['0.11.0','0.11.1-dot.1','0.11.1-dot.2']);
 const MAX_PACKAGE=20*1024*1024;
 const MAX_TAR=64*1024*1024;
 function failure(code,message,extra={}){return Object.assign(new Error(message),{code,...extra});}
@@ -136,7 +136,7 @@ export async function runInstallation({bundleDir,appPath='/Applications/DeepSeek
     const existing=await installedPackage(profile,p.name);let action='install';
     if(existing){
       if(existing.version===p.version)action='preserve';
-      else if(p.name==='dsh-wechat'){if(existing.version==='0.11.0'&&p.version==='0.11.1-dot.1')action='upgrade';else throw failure('BRIDGE_VERSION_CONFLICT','现有微信桥接与已验证升级路径不同；不会降级或重置配对。');}
+      else if(p.name==='dsh-wechat'){if((existing.version==='0.11.0'&&['0.11.1-dot.1','0.11.1-dot.2'].includes(p.version))||(existing.version==='0.11.1-dot.1'&&p.version==='0.11.1-dot.2'))action='upgrade';else throw failure('BRIDGE_VERSION_CONFLICT','现有微信桥接与已验证升级路径不同；不会降级或重置配对。');}
       else if(compareVersions(existing.version,p.version)>0)throw failure('COMPANION_DOWNGRADE','已装 companion 版本更高；拒绝降级。');
       else action='upgrade';
     }

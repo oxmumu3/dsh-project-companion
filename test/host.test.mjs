@@ -94,6 +94,166 @@ function projectSnapshots(h,values){
   return calls;
 }
 
+const priorBinding={userHash:'d'.repeat(64),botHash:'e'.repeat(64)};
+async function completedTarget(h,root,targetSessionId,{binding=priorBinding,callId='synthetic-prior-call'}={}){
+  const tracker=h.adapter.taskResults;
+  const prepared=await tracker.prepare({originSessionId:String(h.owner.id),originToolCallId:callId,targetSessionId,targetMessageId:`${callId}-message`,projectRoot:root,projectLabel:'SYNTHETIC continuation project',task:'SYNTHETIC prior explicit task',returnBinding:binding});
+  await tracker.admitted(prepared.job.id);await tracker.claimed({sessionId:targetSessionId,messageId:prepared.job.targetMessageId,turn:5,sourceKind:'user'});
+  await tracker.observe({sessionId:targetSessionId,type:'assistant',turn:5,text:'SYNTHETIC prior completed response'});await tracker.observe({sessionId:targetSessionId,type:'turn/end',turn:5,reason:{kind:'completed'}});
+}
+
+test('multiple cold project histories resume only the original binding owned last completed target',async t=>{
+  const h=await openHost(t,{readBinding:async()=>priorBinding});const root=await otherProject(h,'cold trusted continuation');
+  const chosen=addLive(h,'synthetic-trusted-cold',root),other=addLive(h,'synthetic-unselected-cold',root);
+  await h.tool({action:'watch',project:root});await completedTarget(h,root,String(chosen.id));h.live.delete(chosen.id);h.live.delete(other.id);
+  const factory=syntheticFactory(h,{root});const result=await h.tool({action:'coordinate',project:root,task:'SYNTHETIC continue the established work',userRequested:true});
+  assert.equal(result.status,'accepted');assert.equal(factory.calls.length,1);assert.equal(factory.calls[0].options.resumeSessionId,chosen.id);assert.equal(h.accepted.length,1);assert.match(result.lifecycle,/插件|卸载/);
+});
+
+test('trusted continuation does not bypass an occupied target for another idle project session',async t=>{
+  const h=await openHost(t,{readBinding:async()=>priorBinding});const root=await otherProject(h,'busy trusted continuation');
+  const selected=addLive(h,'synthetic-trusted-busy',root),other=addLive(h,'synthetic-other-idle',root);
+  await h.tool({action:'watch',project:root});await completedTarget(h,root,String(selected.id));selected.status='running';
+  const result=await h.tool({action:'coordinate',project:root,task:'SYNTHETIC continue without interrupting',userRequested:true});
+  assert.equal(result.status,'busy');assert.equal(h.accepted.length,0);assert.equal(other.status,'idle');
+});
+
+test('explicit live session choice overrides a proven previous target',async t=>{
+  const h=await openHost(t,{readBinding:async()=>priorBinding});const root=await otherProject(h,'explicit trusted override');
+  const prior=addLive(h,'synthetic-prior-selected',root),explicit=addLive(h,'synthetic-explicit-selected',root);
+  await h.tool({action:'watch',project:root});await completedTarget(h,root,String(prior.id));
+  const result=await h.tool({action:'coordinate',project:root,session:String(explicit.id),task:'SYNTHETIC explicit user choice',userRequested:true});
+  assert.equal(result.sessionId,explicit.id);assert.equal(prior.status,'idle');assert.equal(explicit.status,'running');
+});
+
+test('changed original binding invalidates a proven cold target before resume',async t=>{
+  let binding=priorBinding;const h=await openHost(t,{readBinding:async()=>binding});const root=await otherProject(h,'trusted lookup race');
+  const prior=addLive(h,'synthetic-lookup-prior',root),other=addLive(h,'synthetic-lookup-other',root);
+  await h.tool({action:'watch',project:root});await completedTarget(h,root,String(prior.id));h.live.delete(prior.id);h.live.delete(other.id);const factory=syntheticFactory(h,{root});
+  const lookup=h.adapter.taskResults.trustedLastTarget;
+  h.adapter.taskResults.trustedLastTarget=async scope=>{const result=await lookup(scope);binding={...priorBinding,botHash:'f'.repeat(64)};return result;};
+  const result=await h.tool({action:'coordinate',project:root,task:'SYNTHETIC do not recover after rebinding',userRequested:true});
+  assert.equal(result.status,'blocked');assert.equal(factory.calls.length,0);assert.equal(h.accepted.length,0);
+});
+
+test('binding changes during cold preset mounting dispose the unsubmitted owned target',async t=>{
+  let binding=priorBinding;const h=await openHost(t,{readBinding:async()=>binding});const root=await otherProject(h,'trusted mounting race');
+  const prior=addLive(h,'synthetic-mount-prior',root),other=addLive(h,'synthetic-mount-other',root);
+  await h.tool({action:'watch',project:root});await completedTarget(h,root,String(prior.id));h.live.delete(prior.id);h.live.delete(other.id);const factory=syntheticFactory(h,{root});
+  h.ctx.get('agentPresets').mount=async()=>{binding={...priorBinding,userHash:'f'.repeat(64)};};
+  const result=await h.tool({action:'coordinate',project:root,task:'SYNTHETIC do not submit after mounting race',userRequested:true});
+  assert.equal(result.status,'blocked');assert.equal(factory.calls.length,1);assert.equal(h.accepted.length,0);assert.equal(h.live.has(prior.id),false);
+  assert.equal((await h.adapter.taskResults.status(String(h.owner.id))).jobs.length,1,'no new admission prepared after source binding changed');
+});
+
+test('binding changes while persisting trusted admission stop final followup and dispose a cold owned target',async t=>{
+  let binding=priorBinding;const h=await openHost(t,{readBinding:async()=>binding});const root=await otherProject(h,'trusted preparation race');
+  const prior=addLive(h,'synthetic-prepare-prior',root),other=addLive(h,'synthetic-prepare-other',root);
+  await h.tool({action:'watch',project:root});await completedTarget(h,root,String(prior.id));h.live.delete(prior.id);h.live.delete(other.id);syntheticFactory(h,{root});
+  const prepare=h.adapter.taskResults.prepare;
+  h.adapter.taskResults.prepare=async value=>{const result=await prepare(value);binding={...priorBinding,botHash:'f'.repeat(64)};return result;};
+  const result=await h.tool({action:'coordinate',project:root,task:'SYNTHETIC final admission binding gate',userRequested:true});
+  assert.equal(result.status,'blocked');assert.equal(h.accepted.length,0);assert.equal(h.live.has(prior.id),false);
+  assert.equal((await h.adapter.taskResults.status(String(h.owner.id))).jobs.at(-1).status,'not_admitted');
+});
+
+test('unwatch while persisting a trusted admission prevents followup without restoring the subscription',async t=>{
+  const h=await openHost(t,{readBinding:async()=>priorBinding});const root=await otherProject(h,'trusted unwatch preparation race');
+  const prior=addLive(h,'synthetic-unwatch-prior',root);addLive(h,'synthetic-unwatch-other',root);
+  await h.tool({action:'watch',project:root});await completedTarget(h,root,String(prior.id));
+  const prepare=h.adapter.taskResults.prepare;
+  h.adapter.taskResults.prepare=async value=>{const result=await prepare(value);await h.tool({action:'unwatch',project:root});return result;};
+  const result=await h.tool({action:'coordinate',project:root,task:'SYNTHETIC stop after unwatch during durable preparation',userRequested:true});
+  assert.equal(result.status,'blocked');assert.equal(h.accepted.length,0);assert.equal(prior.status,'idle');
+  assert.equal((await h.tool({action:'status'})).projects.length,0);
+  assert.equal((await h.adapter.taskResults.status(String(h.owner.id))).jobs.at(-1).status,'not_admitted');
+});
+
+test('membership revoked while persisting a trusted admission prevents final followup',async t=>{
+  const h=await openHost(t,{readBinding:async()=>priorBinding});const root=await otherProject(h,'trusted revoked membership race');
+  const prior=addLive(h,'synthetic-revoked-prior',root);addLive(h,'synthetic-revoked-other',root);
+  await h.tool({action:'watch',project:root});await completedTarget(h,root,String(prior.id));
+  let revoked=false;const lookup=h.adapter.service.coordinationTarget;const prepare=h.adapter.taskResults.prepare;
+  h.adapter.service.coordinationTarget=async reference=>{const result=await lookup(reference);return revoked&&result?{...result,sessionIds:result.sessionIds.filter(id=>id!==String(prior.id))}:result;};
+  h.adapter.taskResults.prepare=async value=>{const result=await prepare(value);revoked=true;return result;};
+  const result=await h.tool({action:'coordinate',project:root,task:'SYNTHETIC stop after target membership revocation',userRequested:true});
+  assert.equal(result.status,'blocked');assert.equal(h.accepted.length,0);assert.equal(prior.status,'idle');
+  assert.equal((await h.adapter.taskResults.status(String(h.owner.id))).jobs.at(-1).status,'not_admitted');
+});
+
+for(const cold of [false,true])test(`unwatch during the final binding read blocks ${cold?'cold':'live'} admission using current service state`,async t=>{
+  let armed=false,revoked=false,revoke=async()=>{};
+  const h=await openHost(t,{readBinding:async()=>{if(armed&&!revoked){revoked=true;await revoke();}return priorBinding;}});
+  const root=await otherProject(h,`final binding unwatch ${cold?'cold':'live'}`);
+  const prior=addLive(h,`synthetic-late-prior-${cold}`,root),other=addLive(h,`synthetic-late-other-${cold}`,root);
+  await h.tool({action:'watch',project:root});await completedTarget(h,root,String(prior.id));
+  if(cold){h.live.delete(prior.id);h.live.delete(other.id);syntheticFactory(h,{root});}
+  revoke=()=>h.tool({action:'unwatch',project:root});
+  const prepare=h.adapter.taskResults.prepare;h.adapter.taskResults.prepare=async value=>{const result=await prepare(value);armed=true;return result;};
+  const result=await h.tool({action:'coordinate',project:root,task:'SYNTHETIC stop despite an earlier valid project snapshot',userRequested:true});
+  assert.equal(revoked,true);assert.equal(result.status,'blocked');assert.equal(h.accepted.length,0);
+  assert.equal((await h.tool({action:'status'})).projects.length,0);
+  assert.equal((await h.adapter.taskResults.status(String(h.owner.id))).jobs.at(-1).status,'not_admitted');
+  if(cold)assert.equal(h.live.has(prior.id),false);
+});
+
+test('a trusted cold restore never re-watches a project removed while validating its restored binding',async t=>{
+  let revoke=async()=>{},afterResumeReads=0,removed=false,restoring=false;
+  const h=await openHost(t,{readBinding:async()=>{
+    if(restoring&&h.live.has('synthetic-cold-no-rewatch')&&++afterResumeReads===1){removed=true;await revoke();}
+    return priorBinding;
+  }});
+  const root=await otherProject(h,'trusted restore no rewatch');const prior=addLive(h,'synthetic-cold-no-rewatch',root),other=addLive(h,'synthetic-cold-no-rewatch-other',root);
+  await h.tool({action:'watch',project:root});await completedTarget(h,root,String(prior.id));h.live.delete(prior.id);h.live.delete(other.id);syntheticFactory(h,{root});
+  // Arm only after the seed session has become a cold, plugin-owned restore.
+  restoring=true;revoke=()=>h.tool({action:'unwatch',project:root});
+  const result=await h.tool({action:'coordinate',project:root,task:'SYNTHETIC preserve explicit unwatch during restoration',userRequested:true});
+  assert.equal(removed,true);assert.equal(result.status,'blocked');assert.equal(h.accepted.length,0);assert.equal(h.live.has(prior.id),false);
+  assert.equal((await h.tool({action:'status'})).projects.length,0,'an unwatch must not be undone by recovery accounting');
+});
+
+test('admission fails closed without the service synchronous coordination gate',async t=>{
+  const h=await openHost(t);const root=await otherProject(h,'missing final service gate');addLive(h,'synthetic-missing-gate',root);
+  h.adapter.service.canCoordinate=undefined;
+  const result=await h.tool({action:'coordinate',project:root,task:'SYNTHETIC require a synchronous current membership check',userRequested:true});
+  assert.equal(result.status,'blocked');assert.equal(h.accepted.length,0);
+  assert.equal((await h.adapter.taskResults.status(String(h.owner.id))).jobs.at(-1).status,'not_admitted');
+});
+
+test('a cold target whose trusted route disappears at submit is released before admission',async t=>{
+  const h=await openHost(t,{readBinding:async()=>priorBinding});const root=await otherProject(h,'cold submit route rejection');
+  const prior=addLive(h,'synthetic-submit-prior',root),other=addLive(h,'synthetic-submit-other',root);
+  await h.tool({action:'watch',project:root});await completedTarget(h,root,String(prior.id));h.live.delete(prior.id);h.live.delete(other.id);syntheticFactory(h,{root});
+  let restoredReads=0;const lookup=h.adapter.service.coordinationTarget;
+  h.adapter.service.coordinationTarget=async reference=>{
+    // The first two post-resume gates pass; revoke at submit's own initial gate.
+    if(h.live.has(prior.id)&&++restoredReads===3)await h.tool({action:'unwatch',project:root});
+    return lookup(reference);
+  };
+  const result=await h.tool({action:'coordinate',project:root,task:'SYNTHETIC release a definitely unsubmitted restore',userRequested:true});
+  assert.equal(result.status,'blocked');assert.ok(restoredReads>=3);assert.equal(h.accepted.length,0);assert.equal(h.live.has(prior.id),false);
+  assert.equal((await h.adapter.taskResults.status(String(h.owner.id))).jobs.length,1);
+});
+
+test('an uncertain cold inbox admission is retained even when recording uncertainty fails',async t=>{
+  const h=await openHost(t);const root=await otherProject(h,'cold uncertain admission ownership');const prior=addLive(h,'synthetic-uncertain-cold',root);
+  await h.tool({action:'watch',project:root});h.live.delete(prior.id);syntheticFactory(h,{root});
+  const resume=h.registry.resume;
+  h.registry.resume=async options=>{const handle=await resume(options);handle.agent.followup=message=>{h.accepted.push(message);handle.agent.status='running';throw new Error('SYNTHETIC inbox acknowledgement unavailable');};return handle;};
+  h.adapter.taskResults.notAdmitted=async()=>{throw new Error('SYNTHETIC uncertainty persistence unavailable');};
+  const result=await h.tool({action:'coordinate',project:root,task:'SYNTHETIC do not dispose potentially accepted work',userRequested:true});
+  assert.equal(result.accepted,false);assert.equal(h.accepted.length,1);assert.equal(h.live.has(prior.id),true);assert.equal(h.live.get(prior.id).status,'running');
+  assert.match(result.text,/不确定|确认/);assert.doesNotMatch(result.text,/尚未提交任务/);
+});
+
+test('completed ledger target outside current project membership is not restored or replaced',async t=>{
+  const h=await openHost(t,{readBinding:async()=>priorBinding});const root=await otherProject(h,'trusted membership boundary');
+  const a=addLive(h,'synthetic-member-a',root),b=addLive(h,'synthetic-member-b',root);
+  await h.tool({action:'watch',project:root});await completedTarget(h,root,'synthetic-former-member');h.live.delete(a.id);h.live.delete(b.id);const factory=syntheticFactory(h,{root});
+  const result=await h.tool({action:'coordinate',project:root,task:'SYNTHETIC do not select foreign history',userRequested:true});
+  assert.equal(result.status,'blocked');assert.equal(factory.calls.length,0);assert.equal(h.accepted.length,0);
+});
+
 test('natural-language guidance refreshes host time and obeys tool scope and plugin disposal',async t=>{
   const h=await openHost(t,{hostTimeZone:'Asia/Shanghai'});
   const prompt=async agent=>(await h.ctx.systemPrompt.assemble({scope:agent,agent})).sections.filter(x=>x.name==='project-companion:guidance').map(x=>x.text).join('');

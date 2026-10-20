@@ -19,7 +19,7 @@ export function isWechatRecoveryOnlyMessage(message) {
 }
 
 /**
- * The bridge asks this synchronous bail hook only after its own auto-flush,
+ * The bridge asks this synchronous bail hook after observing its own queue,
  * with the original frozen message and exact live agent. A session binding,
  * a queued ledger row or text at the generic agent seam is insufficient.
  *
@@ -37,7 +37,12 @@ export function createWechatRecoveryGuard({ ctx } = {}) {
   };
   disposers.push(ctx.on('wechat/inbound-admit', payload => {
     const { agent, message, receipt } = payload ?? {};
-    if (closed || !live(agent) || !identity(message?.id) || receipt?.attempted !== true || !['sent', 'remaining', 'dropped'].every(key => count(receipt[key])) || !isWechatRecoveryOnlyMessage(message)) return;
+    if (closed || !live(agent) || !identity(message?.id) || !['sent', 'remaining', 'dropped'].every(key => count(receipt?.[key])) || !isWechatRecoveryOnlyMessage(message)) return;
+    if (receipt.attempted === false) {
+      if (['sent', 'remaining', 'dropped'].some(key => receipt[key] !== 0)) return;
+      return { kind: 'transport-only', acknowledgement: 'empty-queue' };
+    }
+    if (receipt.attempted !== true) return;
     return { kind: 'transport-only' };
   }, { prepend: true }));
   function close() {

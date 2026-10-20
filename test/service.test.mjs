@@ -26,6 +26,29 @@ async function fixture(overrides = {}) {
   return { service, owner, roots, sends, time: value => { now = new Date(value); }, persisted: () => persisted };
 }
 
+test('synchronous coordination gate is inert until ready and validates exact watched identity and membership',async()=>{
+  const {createService}=await api();let reads=0,writes=0;const loaded=Promise.withResolvers();
+  const project={id:'synthetic-gate-project',root:'/synthetic/gate',label:'SYNTHETIC gate',sessionIds:['synthetic-gate-target'],events:[],github:null,watchedAt:'2026-10-18T15:00:00Z'};
+  const service=createService({store:{get:async()=>{reads++;return loaded.promise;},put:async()=>{writes++;}}});
+  const scope={projectId:project.id,projectRoot:project.root,sessionId:project.sessionIds[0]};
+  assert.equal(typeof service.canCoordinate,'function');
+  assert.equal(service.canCoordinate(scope),false);assert.equal(reads,0);assert.equal(writes,0);
+  const ready=service.ready();await Promise.resolve();assert.equal(service.canCoordinate(scope),false);
+  loaded.resolve({id:'profile',version:1,projects:[project],daily:null,paused:false,reminders:[],outbox:[]});await ready;
+  assert.equal(service.canCoordinate(scope),true);
+  for(const invalid of [null,{}, {...scope,projectId:project.label},{...scope,projectRoot:'/synthetic/other'},{...scope,sessionId:'synthetic-nonmember'}])assert.equal(service.canCoordinate(invalid),false);
+  assert.equal(reads,1);assert.equal(writes,0,'the sync gate must not read storage or mutate state');
+  await service.act({sessionId:'synthetic-owner',cwd:project.root},{action:'unwatch',project:project.id});
+  assert.equal(service.canCoordinate(scope),false);
+});
+
+test('synchronous coordination gate stays closed after corrupt state fails readiness',async()=>{
+  const {createService}=await api();let writes=0;
+  const service=createService({store:{get:async()=>({version:99,projects:[{id:'synthetic-corrupt',root:'/synthetic/corrupt',sessionIds:['synthetic-target']}],outbox:[],reminders:[]}),put:async()=>{writes++;}}});
+  assert.equal(typeof service.canCoordinate,'function');await assert.rejects(service.ready(),/corrupt|Unsupported/);
+  assert.equal(service.canCoordinate({projectId:'synthetic-corrupt',projectRoot:'/synthetic/corrupt',sessionId:'synthetic-target'}),false);assert.equal(writes,0);
+});
+
 test('watch accepts only discovered/current roots and caps watched projects at five', async () => {
   const f = await fixture();
   await assert.rejects(f.service.act(f.owner, {action: 'watch', project: '/not-host-known'}), /known|未知/);
