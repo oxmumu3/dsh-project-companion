@@ -103,8 +103,8 @@ Google 刷新授权要求 `access_type=offline`，已同意的用户重新取得
 
 `src/context-transport.js` 是独立编写的有界 MCP 薄传输层，`src/google-calendar-rest.js` 是独立的固定 Calendar REST 适配器，无新增依赖，没有复制社区连接器代码。
 
-- 固定来源与 HTTPS 端点，只发送协议规定的 POST；不接受聊天提供的 URL、认证 header 或 HTTP method。
-- 每个来源串行处理，首次执行 `initialize → notifications/initialized`；会话 ID 仅留在传输对象私有内存，关闭时清空。
+- MCP部分使用固定来源与HTTPS端点，只发送协议规定的POST；Calendar REST仅使用上文固定GET；不接受聊天提供的 URL、认证 header 或 HTTP method。
+- MCP每个来源串行处理，首次执行 `initialize → notifications/initialized`；会话 ID 仅留在传输对象私有内存，关闭时清空。
 - 每次 HTTP 重新从秘密配置适配层取得 Token；凭据变化重置会话，流程中变化即拒绝，不自动重试。
 - 固定 MCP `2025-03-26` 协议，严格核对 JSON-RPC request ID；接受 JSON 或 SSE，响应累计上限 1 MiB，工具目录最多 3 页、每页 200 项。
 - 完整操作含等待、授权读取与响应解码的总预算 20 秒，支持取消及插件关闭。不会建立订阅或新的常驻进程。
