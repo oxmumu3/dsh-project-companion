@@ -237,3 +237,31 @@ test('rejects synthetic tool declarations and unknown stream blocks instead of a
     await assert.rejects(f.model.selectArticles({ articles: [article('a')] }), { code: 'MODEL_INCOMPLETE' });
   }
 });
+
+test('explicit preview focus reaches both native model stages as separate bounded data', async () => {
+  const focus = ['DeepSeek 插件', '创作者生态'];
+  const f = fixture(['{"ids":["a"]}', '{"items":[{"id":"a","summary":"据原文说明插件开发方法。","why":"与 DeepSeek 插件关注点相关：包含接口复用实践。"}]}']);
+  assert.deepEqual(await f.model.selectArticles({ articles: [article('a')], topics: focus }), ['a']);
+  await f.model.summarizeArticles({ articles: [article('a', { content: 'Public plugin engineering evidence.', coverage: 'article', truncated: false })], topics: focus });
+  for (const call of f.calls) {
+    assert.deepEqual(JSON.parse(call.request.messages[0].content[0].text).readerFocus, { topics: focus });
+    assert.deepEqual(call.request.tools, []);
+    assert.match(call.request.system, /关注点/);
+    assert.match(call.request.system, /不.*(?:编造|捏造)|不得.*(?:编造|捏造)/);
+  }
+});
+
+test('invalid focus is rejected independently before either model stage calls a provider', async () => {
+  for (const topics of ['AI', ['x'.repeat(81)], ['AI\n产品'], Array.from({ length: 9 }, (_, i) => `t${i}`)]) {
+    const f = fixture();
+    await assert.rejects(f.model.selectArticles({ articles: [article('a')], topics }), { code: 'MODEL_INVALID_INPUT' });
+    await assert.rejects(f.model.summarizeArticles({ articles: [article('a', { content: 'x', coverage: 'article', truncated: false })], topics }), { code: 'MODEL_INVALID_INPUT' });
+    assert.equal(f.calls.length, 0);
+  }
+});
+
+test('generic model input does not include an absent reader focus', async () => {
+  const f = fixture(['{"ids":["a"]}']);
+  await f.model.selectArticles({ articles: [article('a')] });
+  assert.equal('readerFocus' in JSON.parse(f.calls[0].request.messages[0].content[0].text), false);
+});

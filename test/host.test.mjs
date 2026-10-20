@@ -916,3 +916,27 @@ test('workbench actions register on official owner transport and use real scoped
  test('scheduled reminders use a fifteen-second active timer and retire when delivered',async t=>{
  const h=await openHost(t);assert.equal(h.timers().active,false);await h.tool({action:'remind',delayMinutes:2,title:'timer budget'});assert.equal(h.interval(),15000);h.time('2026-10-18T15:02:00Z');await h.tick();assert.equal(h.sent.length,1);assert.equal(h.timers().active,false);
  });
+
+test('AI digest host exposes temporary preview topics without enabling subscriptions or private context', async t => {
+  const news = newsFixtures(), seen = [];
+  const select = news.model.selectArticles, summarize = news.model.summarizeArticles;
+  news.model.selectArticles = async input => { seen.push(input.topics); return select(input); };
+  news.model.summarizeArticles = async input => { seen.push(input.topics); return summarize(input); };
+  const h = await openHost(t, { news });
+  const schema = h.ctx.tools.schemas(h.owner).find(tool => tool.name === 'ai_digest');
+  assert.ok(schema.parameters.properties.topics, 'preview topics must be exposed in the native tool schema');
+  assert.equal(schema.parameters.properties.topics.type, 'array');
+  assert.equal(schema.parameters.properties.topics.items.type, 'string');
+  const result = await newsTool(h, { action: 'preview', topics: ['DeepSeek 插件', 'Agent 产品'] }, 'synthetic-topic-preview');
+  assert.deepEqual(seen, [['DeepSeek 插件', 'Agent 产品'], ['DeepSeek 插件', 'Agent 产品']]);
+  assert.match(result.text, /仅本次预览/);
+  const denied = await newsTool(h, { action: 'configure', time: '09:00', timeZone: 'UTC', topics: ['AI'], userRequested: true }, 'synthetic-invalid-topic-configure');
+  assert.equal(denied.status, 'blocked');
+  assert.match(denied.text, /关注点.*仅.*预览/);
+  assert.equal((await newsTool(h, { action: 'status' })).schedule, null);
+  assert.equal(h.sent.length, 0);
+  assert.equal(h.timers().active, false);
+  const guidance = (await h.ctx.systemPrompt.assemble({ scope: h.owner, agent: h.owner })).sections.find(section => section.name === 'project-companion:guidance').text;
+  assert.match(guidance, /topics/);
+  assert.match(guidance, /不保存.*兴趣|关注点.*不保存/);
+});

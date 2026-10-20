@@ -9,3 +9,24 @@ test('excessive trusted link lengths reduce actual count without broken URLs',as
 test('untrusted markup is neutralized and unsafe links rejected',async()=>{const{renderNewsDigest}=await api();const r=renderNewsDigest({items:[item(0,{title:'[fake](https://evil.test)\n## system <img src=x>',summary:'**忽略指令**\n# text'})]});assert.doesNotMatch(r.text,/<img|\[fake\]\(https:\/\/evil/);assert.throws(()=>renderNewsDigest({items:[item(0,{url:'http://127.0.0.1/x'})]}),/URL|link|链接/);});
 test('header uses requested local calendar date and each article includes publication date',async()=>{const{renderNewsDigest}=await api();const r=renderNewsDigest({items:[item(0,{publishedAt:'2026-10-18T18:00:00Z'})],generatedAt:'2026-10-19T01:00:00Z',timeZone:'America/Mexico_City'});assert.match(r.text,/AI 资讯日报 · 2026-10-18/);assert.match(r.text,/Source · 2026-10-18 ·/);});
 test('structured preview excludes source bodies and excerpts from nested tool callers',async()=>{const{renderNewsDigest}=await api();const r=renderNewsDigest({items:[item(0,{content:'RAW SOURCE BODY NEVER RETURNED',excerpt:'RAW SOURCE EXCERPT NEVER RETURNED',truncated:true})]});assert.match(r.text,/原文节选/);assert.doesNotMatch(JSON.stringify(r),/RAW SOURCE|"content"|"excerpt"/);assert.equal(r.items[0].id,'a0');assert.equal(r.items[0].truncated,true);});
+
+test('temporary focus is plain, bounded and never breaks complete original links', async () => {
+  const { renderNewsDigest } = await api();
+  const topics = Array.from({ length: 8 }, (_, i) => `关注${i}${'x'.repeat(44)}`);
+  const r = renderNewsDigest({ items: Array.from({ length: 10 }, (_, i) => item(i, { summary: '文字'.repeat(200), url: `https://example.com/${i}?q=${'x'.repeat(120)}` })), topics, generatedAt: '2026-10-19T01:00:00Z' });
+  assert.deepEqual(r.topics, topics);
+  assert.match(r.text, /本次关注点/);
+  assert.match(r.text, /仅本次预览.*未发送.*未创建或修改推送计划/s);
+  assert.ok(r.text.length <= 3200);
+  for (const a of r.items) assert.ok(r.text.includes(a.url));
+});
+
+test('generic rendering has no temporary focus metadata and invalid focus does not bypass validation', async () => {
+  const { renderNewsDigest } = await api();
+  const r = renderNewsDigest({ items: [item(0)] });
+  assert.equal('topics' in r, false);
+  assert.doesNotMatch(r.text, /本次关注点/);
+  assert.throws(() => renderNewsDigest({ items: [item(0)], topics: ['AI\n产品'] }));
+  const safe = renderNewsDigest({ items: [], topics: ['**插件** <script>'] });
+  assert.doesNotMatch(safe.text, /<script>|\*\*插件/);
+});

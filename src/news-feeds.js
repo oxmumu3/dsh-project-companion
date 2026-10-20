@@ -397,6 +397,10 @@ export async function fetchNewsCandidates({ feeds = NEWS_FEEDS, hours = 24, now 
   const timestamp = new Date(now).getTime();
   if (!Array.isArray(feeds) || feeds.length > NEWS_FEEDS.length || feeds.some(x => !knownFeed(x)) || new Set(feeds.map(x => x.xmlUrl)).size !== feeds.length) throw new Error('Only known news feed sources are allowed');
   if (!Number.isFinite(hours) || hours <= 0 || hours > 168 || !Number.isFinite(timestamp)) throw new Error('Invalid news time window');
+  // The bounded scan must not always starve the same tail of the fixed list.
+  // Rotate only priority, once per UTC day; source facts and safety stay fixed.
+  const offset = feeds.length ? ((Math.floor(timestamp / 86400000) % feeds.length) + feeds.length) % feeds.length : 0;
+  const scanFeeds = [...feeds.slice(offset), ...feeds.slice(0, offset)];
   const results = Array.from({ length: feeds.length }, () => ({ rows: [], failed: true, skipped: true }));
   const warnings = [];
   const deadline = new AbortController();
@@ -409,7 +413,7 @@ export async function fetchNewsCandidates({ feeds = NEWS_FEEDS, hours = 24, now 
         checkAbort(signal);
         if (deadline.signal.aborted) break;
         const index = next++;
-        const feed = knownFeed(feeds[index]);
+        const feed = knownFeed(scanFeeds[index]);
         try {
           const body = await readURL(feed.xmlUrl, feed, { fetch, lookup, signal: runSignal });
           if (body.type && !/(?:xml|rss|atom|text\/plain)/.test(body.type)) throw new Error('Unsupported news feed content type');

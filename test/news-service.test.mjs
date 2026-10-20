@@ -38,3 +38,81 @@ test('new daily subscription never catches up a due instant before user authoriz
 test('previously authorized daily plan catches up within six hours after restart',async()=>{const f=await fixture();f.time('2026-10-19T14:00:00Z');await f.service.act(owner,mutate('configure',{time:'09:00',timeZone:'America/Mexico_City'}));const reboot=await fixture({persisted:f.persisted()});reboot.time('2026-10-19T16:00:00Z');await reboot.service.tick();assert.equal(reboot.sends.length,1);});
 test('fetch budget skips are disclosed as not scanned rather than all attempted failures',async()=>{const f=await fixture({hooks:{fetchCandidates:async()=>({articles:[article(0)],stats:{totalFeeds:92,succeededFeeds:64,failedFeeds:28,skippedFeeds:20}})}});const r=await f.service.act(owner,{action:'preview'});assert.equal(r.stats.skippedFeeds,20);assert.match(r.text,/64\/92 个获取成功/);assert.match(r.text,/28 个.*未获取|未获取.*28 个/);assert.match(r.text,/其中\s*20\s*个未及扫描（45秒上限）/);assert.doesNotMatch(r.text,/来源失败|28 个失败/);});
 test('status text exposes last dispatch outcome without requiring execution-local structured value',async()=>{const f=await fixture();const before=await f.service.act(owner,{action:'status'});assert.match(before.text,/尚无发送任务/);await f.service.act(owner,mutate('send_now'));const after=await f.service.act(owner,{action:'status'});assert.match(after.text,/通道报告已发出/);assert.match(after.text,/手机送达.*未知/);});
+
+test('explicit topics personalize only this preview and reach both model stages without persistence', async () => {
+  const seen = [];
+  const f = await fixture({ hooks: {
+    selectArticles: async ({ articles, topics }) => { seen.push(topics); return articles.slice(0, 3).map(a => a.id); },
+    summarizeArticles: async ({ articles, topics }) => { seen.push(topics); return { items: articles.map(a => ({ id: a.id, summary: '来源提供的插件实践。', why: '与 DeepSeek 插件关注点相关。' })) }; },
+  } });
+  const topics = [' DeepSeek 插件 ', '创作者生态'];
+  const r = await f.service.act(owner, { action: 'preview', topics });
+  assert.deepEqual(seen, [['DeepSeek 插件', '创作者生态'], ['DeepSeek 插件', '创作者生态']]);
+  assert.deepEqual(r.topics, ['DeepSeek 插件', '创作者生态']);
+  assert.deepEqual(topics, [' DeepSeek 插件 ', '创作者生态']);
+  assert.match(r.text, /本次关注点.*DeepSeek 插件/);
+  assert.match(r.text, /仅本次预览.*未发送.*未创建或修改推送计划/s);
+  assert.equal(f.writes(), 0);
+  assert.equal(f.sends.length, 0);
+  assert.equal(f.service.needsTimer(), false);
+});
+
+test('temporary topics leave an existing daily subscription byte-for-byte unchanged', async () => {
+  const f = await fixture();
+  await f.service.act(owner, mutate('configure', { time: '10:00', timeZone: 'America/Mexico_City' }));
+  const before = structuredClone(f.persisted()), writes = f.writes();
+  await f.service.act(owner, { action: 'preview', topics: ['Agent 产品'] });
+  assert.deepEqual(f.persisted(), before);
+  assert.equal(f.writes(), writes);
+  assert.equal(f.sends.length, 0);
+  assert.doesNotMatch(JSON.stringify(f.persisted()), /Agent 产品|topics|readerFocus/);
+});
+
+test('topics on every non-preview action reject without cancelling work or mutating schedules', async () => {
+  const f = await fixture();
+  await f.service.act(owner, mutate('configure', { time: '10:00', timeZone: 'America/Mexico_City' }));
+  const before = structuredClone(f.persisted()), writes = f.writes();
+  for (const action of ['status', 'configure', 'cancel', 'send_now']) {
+    await assert.rejects(f.service.act(owner, mutate(action, { topics: ['AI'], time: '09:00', timeZone: 'America/Mexico_City' })));
+    await assert.rejects(f.service.act(owner, mutate(action, { topics: undefined, time: '09:00', timeZone: 'America/Mexico_City' })));
+  }
+  assert.deepEqual(f.persisted(), before);
+  assert.equal(f.writes(), writes);
+  assert.equal(f.fetches(), 0);
+  assert.equal(f.sends.length, 0);
+});
+
+test('invalid preview topics reject before source fetch or storage IO', async () => {
+  for (const topics of ['AI', ['x'.repeat(81)], ['AI\n产品'], ['AI', 'AI'], [], null]) {
+    const f = await fixture();
+    await assert.rejects(f.service.act(owner, { action: 'preview', topics }), { code: 'NEWS_INVALID_TOPICS' });
+    assert.equal(f.fetches(), 0);
+    assert.equal(f.writes(), 0);
+    assert.equal(f.sends.length, 0);
+  }
+});
+
+test('topic preview with no selected articles still identifies one-off focus and no-send state', async () => {
+  const f = await fixture({ hooks: { selectArticles: async () => [] } });
+  const r = await f.service.act(owner, { action: 'preview', topics: ['DeepSeek 插件'] });
+  assert.equal(r.items.length, 0);
+  assert.match(r.text, /DeepSeek 插件/);
+  assert.match(r.text, /仅本次预览.*未发送.*未创建或修改推送计划/s);
+});
+
+test('mutating the submitted preview action cannot bypass admission or change a daily plan', async () => {
+  for (const action of ['cancel', 'configure', 'send_now']) {
+    const f = await fixture();
+    await f.service.act(owner, mutate('configure', { time: '10:00', timeZone: 'America/Mexico_City' }));
+    const before = structuredClone(f.persisted()), writes = f.writes();
+    const input = { action: 'preview', topics: ['AI'], requestId: 'preview-input' };
+    const resultPromise = f.service.act(owner, input);
+    Object.assign(input, { action, userRequested: true, requestId: 'changed-input', time: '09:00', timeZone: 'UTC' });
+    const result = await resultPromise;
+    assert.equal(result.status, 'preview');
+    assert.deepEqual(result.topics, ['AI']);
+    assert.deepEqual(f.persisted(), before);
+    assert.equal(f.writes(), writes);
+    assert.equal(f.sends.length, 0);
+  }
+});

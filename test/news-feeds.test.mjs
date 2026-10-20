@@ -147,7 +147,8 @@ test('read article abort is not silently converted into RSS success', async () =
 test('source deadline keeps successful feeds without waiting for every remaining request', async t => {
   t.mock.timers.enable({ apis: ['setTimeout'] });
   let finished = false, fetchCalls = 0;
-  const resultPromise = fetchNewsCandidates({ feeds: NEWS_FEEDS.slice(0, 8), now, lookup, fetch: async url => { fetchCalls++; return url === first().xmlUrl ? xml(rss(item())) : new Promise(() => {}); } }).then(value => { finished = true; return value; });
+  // Complete the first attempted source, independent of daily scan priority.
+  const resultPromise = fetchNewsCandidates({ feeds: NEWS_FEEDS.slice(0, 8), now, lookup, fetch: async url => { fetchCalls++; return fetchCalls === 1 ? xml(rss(item('Useful AI system', new URL('/test/', url).href))) : new Promise(() => {}); } }).then(value => { finished = true; return value; });
   await new Promise(resolve => setImmediate(resolve));
   t.mock.timers.tick(45000);
   await new Promise(resolve => setImmediate(resolve));
@@ -253,4 +254,34 @@ test('malformed repeated markup has a bounded synchronous CPU cost', () => {
   const child = spawnSync(process.execPath, ['--input-type=module', '-e', script], { encoding: 'utf8', timeout: 2500 });
   assert.equal(child.status, 0, `${child.error?.message || ''}\n${child.stderr}`);
   assert.equal(JSON.parse(child.stdout.trim()).length, 7);
+});
+
+test('bounded source scan rotates its start by stable UTC day without duplicating or mutating feeds', async () => {
+  const feeds = NEWS_FEEDS.slice(0, 8), original = structuredClone(feeds);
+  async function scan(instant) {
+    const calls = [];
+    const result = await fetchNewsCandidates({ feeds, now: new Date(instant), lookup, fetch: async url => { calls.push(url); return xml(rss('')); } });
+    assert.equal(result.stats.totalFeeds, feeds.length);
+    assert.equal(result.stats.succeededFeeds, feeds.length);
+    assert.equal(result.stats.failedFeeds, 0);
+    assert.equal(result.stats.skippedFeeds, 0);
+    assert.equal(calls.length, feeds.length);
+    assert.equal(new Set(calls).size, feeds.length);
+    const offset = Math.floor(new Date(instant).getTime() / 86400000) % feeds.length;
+    assert.deepEqual(calls, [...feeds.slice(offset), ...feeds.slice(0, offset)].map(feed => feed.xmlUrl));
+    return calls;
+  }
+  const morning = await scan('2026-10-19T00:01:00Z');
+  assert.deepEqual(await scan('2026-10-19T23:59:00Z'), morning);
+  const tomorrow = await scan('2026-10-20T00:01:00Z');
+  assert.deepEqual(tomorrow, [...morning.slice(1), morning[0]]);
+  assert.deepEqual(feeds, original);
+  assert.deepEqual(NEWS_FEEDS.slice(0, 8), original);
+});
+
+test('empty source subsets keep zero coverage without invoking transport', async () => {
+  const result = await fetchNewsCandidates({ feeds: [], now, lookup, fetch: async () => assert.fail('no source may fetch') });
+  assert.equal(result.stats.totalFeeds, 0);
+  assert.equal(result.stats.succeededFeeds, 0);
+  assert.deepEqual(result.articles, []);
 });
