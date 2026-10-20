@@ -31,7 +31,7 @@ async function openHost(t, options={}){
   const workspace=join(root,'synthetic-project');await mkdir(workspace,{recursive:true});
   await writeFile(join(workspace,'README.md'),'SYNTHETIC host project source');
   const ctx=new Context();let adapter;const live=new Map();const sent=[];const accepted=[];
-  let now=new Date('2026-10-18T15:00:00Z');let timer;let timerStarts=0;let timerStops=0;
+  let now=new Date('2026-10-18T15:00:00Z');let timer;let timerStarts=0;let timerStops=0;let intervalMs;
   await ctx.plugin(SystemPrompt,{});await ctx.plugin(ToolRuntime,{mode:options.mode??'native'});await ctx.plugin(CommandRuntime);
   await ctx.plugin(Storage);await ctx.plugin(JsonStorage,{root:join(root,'storage')});await ctx.plugin(StorageDomain,{backend:'json'});await ctx.plugin(SessionStore);
   const registry={get:id=>live.get(id),list:()=>[...live.values()]};ctx.provide('agents',registry);
@@ -41,14 +41,14 @@ async function openHost(t, options={}){
   const session=ctx.sessions.create(SessionId('synthetic-owner'),{meta:{cwd:workspace}});
   const owner={id:session.id,session,ctx,status:'idle',followup:message=>accepted.push(message)};live.set(owner.id,owner);
   const disableWeChat=ctx.tools.register(defineTool({name:'send_wechat',description:'Synthetic queue only; no real network',parameters:{text:{type:'string',required:true}},output:{schema:{type:'object',additionalProperties:true},render:(_args,value)=>[{type:'text',text:JSON.stringify(value)}]},execute:(_args,execution)=>{sent.push(execution);return options.sendResponse?.(execution)??{ok:true,message:'queued synthetic message; not real WeChat'};}}));
-  const lifecycle=await ctx.plugin({name:'synthetic-companion-mount',inject:['tools','commands','storageDomain','sessions','systemPrompt'],async apply(scope){adapter=await installCompanion(scope,{clock:()=>now,hostTimeZone:()=>options.hostTimeZone??'America/Mexico_City',...(options.readBinding?{readBinding:options.readBinding}:{}),...(options.readSetup?{readSetup:options.readSetup}:{}),...(options.readNativeRoute?{readNativeRoute:options.readNativeRoute}:{}),...(options.news?{news:options.news}:{}),timers:{setInterval:fn=>{timer=fn;timerStarts++;return {unref(){}};},clearInterval:()=>{timer=undefined;timerStops++;}}});}});
+  const lifecycle=await ctx.plugin({name:'synthetic-companion-mount',inject:['tools','commands','storageDomain','sessions','systemPrompt'],async apply(scope){adapter=await installCompanion(scope,{clock:()=>now,hostTimeZone:()=>options.hostTimeZone??'America/Mexico_City',...(options.readBinding?{readBinding:options.readBinding}:{}),...(options.readSetup?{readSetup:options.readSetup}:{}),...(options.readNativeRoute?{readNativeRoute:options.readNativeRoute}:{}),...(options.news?{news:options.news}:{}),timers:{setInterval:(fn,ms)=>{intervalMs=ms;timer=fn;timerStarts++;return {unref(){}};},clearInterval:()=>{timer=undefined;timerStops++;}}});}});
   let count=0;const signal=()=>new AbortController().signal;
   const nativeTool=async(args,agent=owner,callId=`synthetic-call-${++count}`)=>{const r=await ctx.tools.execute({callId,name:'project_companion',arguments:args,agent,signal:signal()});assert.equal(r.isError,false,JSON.stringify(r));return r;};
   const tool=async(...args)=>(await nativeTool(...args)).value;
   const command=async(raw,agent=owner)=>{const r=await ctx.commands.execute(agent,`/companion ${raw}`,[],signal());assert.ok(r);return r.result;};
   const close=()=>ctx.fiber.dispose();
   if(!options.keep)t.after(async()=>{await close();await rm(root,{recursive:true,force:true});});
-  return {root,ctx,owner,live,registry,known,directories,disableWeChat,sent,accepted,tool,nativeTool,command,adapter,close,lifecycle,time:v=>{now=new Date(v);},tick:async()=>{assert.ok(timer,'timer must be armed');await timer();},timers:()=>({starts:timerStarts,stops:timerStops,active:!!timer})};
+  return {root,ctx,owner,live,registry,known,directories,disableWeChat,sent,accepted,tool,nativeTool,command,adapter,close,lifecycle,time:v=>{now=new Date(v);},tick:async()=>{assert.ok(timer,'timer must be armed');await timer();},interval:()=>intervalMs,timers:()=>({starts:timerStarts,stops:timerStops,active:!!timer})};
 }
 
 function addLive(h,id,cwd,{status='idle',origin}={}){
@@ -752,3 +752,7 @@ test('workbench actions register on official owner transport and use real scoped
   const status=await post({action:'followup_status',projectId});assert.equal(status.status,200);const value=await status.json();assert.equal(value.followup.enabled,false);assert.equal(value.once.enabled,false);
   assert.equal(h.sent.length,0);assert.equal(h.accepted.length,0);assert.equal(h.timers().active,false);
 });
+
+ test('scheduled reminders use a fifteen-second active timer and retire when delivered',async t=>{
+ const h=await openHost(t);assert.equal(h.timers().active,false);await h.tool({action:'remind',delayMinutes:2,title:'timer budget'});assert.equal(h.interval(),15000);h.time('2026-10-18T15:02:00Z');await h.tick();assert.equal(h.sent.length,1);assert.equal(h.timers().active,false);
+ });

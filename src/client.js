@@ -371,7 +371,8 @@ window.__ModuleLoader__.load({
             return{id,name:sourceNames[id],configured:row.configured,enabled:row.enabled,status:row.status??row.state,lastReadAt:typeof row.lastReadAt==='string'&&row.lastReadAt.length<=80&&Number.isFinite(Date.parse(row.lastReadAt))?row.lastReadAt:null};
           });
           const state={sources:rows,googleAuth:{clientConfigured:value.googleAuth.clientConfigured===true,refreshConfigured:value.googleAuth.refreshConfigured===true,authInProgress:value.googleAuth.authInProgress===true}};
-          if(active.current){latest.current=state;setSnapshot(state);if(state.googleAuth.refreshConfigured||!state.googleAuth.clientConfigured||!state.googleAuth.authInProgress)setAuthorization(null);}
+          for(const field of ['flomoAuth','didaAuth']){const a=value[field];state[field]=a&&['clientConfigured','refreshConfigured','authInProgress'].every(k=>typeof a[k]==='boolean')?{clientConfigured:a.clientConfigured,refreshConfigured:a.refreshConfigured,authInProgress:a.authInProgress}:null;}
+          if(active.current){latest.current=state;setSnapshot(state);setAuthorization(current=>{if(!current)return null;const status=state[current.source+'Auth'];return !status||status.refreshConfigured||!status.authInProgress?null:current;});}
           return state;
         };
         const request=async body=>{
@@ -395,21 +396,22 @@ window.__ModuleLoader__.load({
         },[]);
         const mutate=async(action,source)=>{
           if(!active.current||inFlight.current||!latest.current)return;
-          if(action==='google_authorize'){
-            if(!latest.current.googleAuth.clientConfigured)return;
+          const authSource={google_authorize:'google',flomo_authorize:'flomo',dida_authorize:'dida'}[action];
+          if(authSource){
+            if(authSource==='google'?!latest.current.googleAuth.clientConfigured:!latest.current[authSource+'Auth'])return;
           }else{
             const row=latest.current.sources.find(item=>item.id===source);
             if(!row||(action==='connect'&&(!row.configured||row.enabled))||(action==='disconnect'&&!row.enabled))return;
           }
           inFlight.current=true;setBusy(true);setError('');
-          if(action==='google_authorize')setAuthorization(null);
+          if(authSource)setAuthorization(null);
           try{
             const value=await request({action,...(source?{source}:{})});
             if(!active.current)return;
-            if(action==='google_authorize'){
-              const url=new URL(value?.url);
-              if(url.origin!=='https://accounts.google.com'||url.pathname!=='/o/oauth2/v2/auth'||url.username||url.password||url.hash||typeof value.expiresAt!=='string'||!Number.isFinite(Date.parse(value.expiresAt)))throw new Error('invalid authorization link');
-              setAuthorization({url:url.toString(),expiresAt:value.expiresAt});
+            if(authSource){
+              const url=new URL(value?.url),target={google:['https://accounts.google.com','/o/oauth2/v2/auth'],flomo:['https://flomoapp.com','/integration/grant'],dida:['https://dida365.com','/oauth/authorize']}[authSource];
+              if(url.origin!==target[0]||url.pathname!==target[1]||url.username||url.password||url.hash||typeof value.expiresAt!=='string'||!Number.isFinite(Date.parse(value.expiresAt)))throw new Error('invalid authorization link');
+              setAuthorization({source:authSource,url:url.toString(),expiresAt:value.expiresAt});
             }else accept(value);
           }catch{if(active.current){invalidate();setError('操作结果暂不确定，请刷新状态核对；不会自动重试。');}}
           finally{inFlight.current=false;if(active.current)setBusy(false);}
@@ -421,13 +423,19 @@ window.__ModuleLoader__.load({
           h('h2',null,'个人资料来源'),
           h('p',{className:'pc_muted'},'这些连接是可选项。本地项目助理和公开 AI 资讯无需连接这些账号，可以先直接使用。'),
           h('p',null,'按需连接你自己的邮箱、日历、文档、任务和笔记。开启某个来源只验证读取接口；只有你明确查询时才读取资料，不会自动扫描、写入项目记忆或建立推送计划。'),
-          h('section',{className:'pc_card'},h('h3',null,'在原生插件配置中填写凭据'),
-            h('p',{className:'pc_muted'},'在下方原生配置表单填写并保存。也可打开插件页 → DeepSeek Dot → 配置。令牌只在原生密钥字段输入，请勿在聊天里发送。flomo 需要 MAX 会员及 MCP 访问令牌（不是写入笔记的 Webhook）；滴答清单使用账号 API 口令。'),
-            h('p',{className:'pc_muted'},'Google 需要官方 MCP Developer Preview 资格、已启用对应服务的 Cloud 项目，以及你自己的 Desktop OAuth Client ID 和 Client Secret。保存配置后，点击下方按钮生成只读授权链接，再由你打开 Google 授权页。'),
+          h('section',{className:'pc_card'},h('h3',null,'登录连接你的账户'),
+            h('p',{className:'pc_muted'},'flomo 和滴答清单可直接前往官方页面登录授权，无需自己查找或粘贴 Token。登录完成后刷新状态，再选择要启用的只读来源。'),
+            h('div',{className:'pc_actions'},...['flomo','dida'].map(source=>h('button',{type:'button',key:source,disabled:busy||!snapshot?.[source+'Auth'],onClick:()=>mutate(source+'_authorize')},'登录 '+sourceNames[source]+' 授权')),
+              h('button',{type:'button',disabled:busy,onClick:refresh},'刷新资料来源状态')),
+            ...['flomo','dida'].map(source=>h('p',{key:source,className:'pc_muted'},sourceNames[source]+'：'+(snapshot?.[source+'Auth']?.refreshConfigured?'登录凭据已保存，可启用只读来源。':snapshot?.[source+'Auth']?.authInProgress?'正在等待你完成官方授权。':'尚未完成登录授权。'))),
+            authorization?h('p',null,h('a',{href:authorization.url,target:'_blank',rel:'noopener noreferrer'},'打开 '+(authorization.source==='google'?'Google 只读':sourceNames[authorization.source])+'授权页'),h('span',{className:'pc_muted'},` · 链接有效至 ${authorization.expiresAt}；请本人完成登录，之后刷新状态。`)):null),
+          h('details',{className:'pc_card','data-context-advanced':true},h('summary',null,'高级连接设置 · Google 与兼容凭据'),
+            h('h3',null,'Google Workspace（开发者预览）'),
+            h('p',{className:'pc_muted'},'Google 当前仍要求官方 MCP Developer Preview 资格、已启用对应服务的 Cloud 项目及 Desktop Client ID / Client Secret。这里保留开发者连接方式。'),
+            h('p',{className:'pc_muted'},'下方原生插件配置只供高级兼容：旧 flomo MCP Token、滴答 API 口令仍可使用；令牌请勿发进聊天。官方 OAuth 登录不需要手填这些字段。'),
             h(CredentialForm,{sources:snapshot?.sources,googleAuth:google,onSaved:refresh}),
             h('p',{role:'status'},!google?'Google 状态未确认':google.refreshConfigured?'Google 账号凭据已保存；各资料来源仍需分别启用。':google.authInProgress?'Google 授权正在等待确认，完成后请刷新状态。':google.clientConfigured?'Google Desktop 应用已配置，尚未完成账号授权。':'请先在插件配置填写 Google Desktop 应用信息。'),
-            h('div',{className:'pc_actions'},h('button',{type:'button',disabled:busy||!google?.clientConfigured,onClick:()=>mutate('google_authorize')},'连接 Google 账号'),h('button',{type:'button',disabled:busy,onClick:refresh},'刷新资料来源状态')),
-            authorization?h('p',null,h('a',{href:authorization.url,target:'_blank',rel:'noopener noreferrer'},'打开 Google 只读授权页'),h('span',{className:'pc_muted'},` · 链接有效至 ${authorization.expiresAt}；不会自动打开。`)):null),
+            h('div',{className:'pc_actions'},h('button',{type:'button',disabled:busy||!google?.clientConfigured,onClick:()=>mutate('google_authorize')},'连接 Google 账号'))),
           rows.map(row=>h('section',{className:'pc_card',key:row.id,'data-context-source':row.id},h('h3',null,row.name),h('p',{role:'status'},statusText(row)),row.enabled&&row.lastReadAt?h('p',{className:'pc_muted'},`上次读取：${row.lastReadAt}。此时间不代表资料已全部读取或持续监控。`):null,
             h('div',{className:'pc_actions'},h('button',{type:'button',disabled:busy||!snapshot||(!row.enabled&&!row.configured),onClick:()=>mutate(row.enabled?'disconnect':'connect',row.id)},row.enabled?'停止此来源':'启用只读来源')))),
           error?h('p',{className:'pc_error',role:'alert'},error):null,

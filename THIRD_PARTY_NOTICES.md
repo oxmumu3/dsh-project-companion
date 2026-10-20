@@ -5,9 +5,11 @@ DSH Project Companion / DeepSeek专属Dot is a community project by 牛村木木
 ## pan17/dsh-wechat — separate runtime plugin
 
 - Upstream: https://github.com/pan17/dsh-wechat
-- Verified release: 0.11.0; research source commit: `8f163ed028ad96f33cfe5591e8201567d27ddf28`.
+- Original npm release: 0.11.0, independently pinned by SHA256 `993e1e1afce3c0dcd2610bf9e84ffbfd6d08768f5c4b4fa30eeec50dc2e97d3f`.
+- DSH Dot maintenance release: 0.11.1-dot.1, based on upstream source tag v0.11.0 at `218537511681be7557589f5ae0eab84f80267dc8`; locally reviewed source commit `1f28de0f5a9d338db884ff5b84e90e9572eaf1cc`. This is a local maintained fork, not an upstream publication or endorsement.
 - Copyright (c) 2026 dsh-wechat contributors. MIT; full text: `third-party-licenses/pan17-dsh-wechat.txt`.
-- Reuse: separately installed WeChat login, message transport, approvals and session integration. Companion invokes its registered `send_wechat` tool and public local binding status. Its source is not bundled in this package. We do not claim authorship of this transport.
+- Reuse: separately installed WeChat login, message transport, approvals and session integration. Companion invokes its registered `send_wechat` tool, public local binding status and the maintenance version's synchronous transport-recovery admission hook. We do not claim original authorship of this transport.
+- Maintenance by DSH Dot / 牛村木木山: conservative known-unsent queue retry, preserved message budgets, timeout/receipt correctness, redacted diagnostics and pre-enqueue transport-only recovery. Original LICENSE bytes and contributor copyright remain unchanged. The source delta, exact archive/source hashes, tests and rebuild instructions are shipped in `bridge-maintenance/`; the complete bridge runtime is a separate pinned package in the installer kit. Phone delivery is not inferred from a send wrapper or local tests.
 
 ## hanshanyike/dsh-yolo — selected library modules
 

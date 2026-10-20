@@ -23,7 +23,7 @@ function tar(files){
   }
   return gzipSync(Buffer.concat([...chunks,Buffer.alloc(1024)]));
 }
-async function fixture(t,{installed={},enabled=true}={}){
+async function fixture(t,{installed={},enabled=true,bridgeVersion='0.11.0'}={}){
   const root=await realpath(await mkdtemp(join(tmpdir(),'dot-install-test-')));
   t.after(()=>rm(root,{recursive:true,force:true}));
   const bundleDir=join(root,'bundle'),appPath=join(root,'DeepSeek Harness.app'),homeDir=join(root,'home');
@@ -31,7 +31,7 @@ async function fixture(t,{installed={},enabled=true}={}){
   const executable=join(appPath,'Contents','MacOS','DeepSeek Harness');await writeFile(executable,'fixture');await chmod(executable,0o755);
   const profile=join(homeDir,'.dsh','profiles','desktop');await mkdir(profile,{recursive:true});
   const manifest={schemaVersion:1,runtimeVersions:['0.2.0-rc.2','0.2.1-rc.2'],packages:[]};
-  for(const [name,version] of [['dsh-wechat','0.11.0'],['dsh-project-companion','0.3.2-preview.1']]){
+  for(const [name,version] of [['dsh-wechat',bridgeVersion],['dsh-project-companion','0.3.2-preview.1']]){
     const files={'package/package.json':JSON.stringify({name,version,license:'MIT',dsh:{bundle:{patch:'./cordis.patch.yml'}}}),'package/LICENSE':license};
     if(name==='dsh-project-companion'){
       files['package/THIRD_PARTY_NOTICES.md']='fixture';
@@ -179,4 +179,14 @@ test('same-version module with direct dependency but no bundle remains disabled'
 test('registered dependency and bundle with missing modules block automatic repair',async t=>{
   const f=await fixture(t,{installed:{'dsh-wechat':'0.11.0'}});await rm(join(f.profile,'node_modules','dsh-wechat'),{recursive:true});
   await assert.rejects(ready()({...f,install:true}),e=>e.code==='INCONSISTENT_INSTALL');assert.equal(f.calls.some(c=>c.args.includes('add')),false);
+});
+
+test('explicit reviewed bridge upgrade preserves pairing and does not reset existing enablement',async t=>{
+ const f=await fixture(t,{installed:{'dsh-wechat':'0.11.0','dsh-project-companion':'0.3.1-preview.1'},enabled:false,bridgeVersion:'0.11.1-dot.1'});
+ const privateDir=join(f.homeDir,'.dsh-wechat');await mkdir(privateDir);const state=join(privateDir,'state.json');await writeFile(state,'synthetic existing pairing');
+ const before=await readFile(state,'utf8');const result=await ready()({...f,install:true});assert.equal(result.status,'installed');assert.equal(result.steps[0].action,'upgrade');assert.equal(result.steps[0].version,'0.11.1-dot.1');assert.equal(await readFile(state,'utf8'),before);assert.ok(result.needsEnable.includes('dsh-wechat'));assert.equal(result.steps[0].enabled,false);
+});
+
+test('a reviewed bridge fork cannot silently downgrade to the original bridge',async t=>{
+ const f=await fixture(t,{installed:{'dsh-wechat':'0.11.1-dot.1'}});await assert.rejects(ready()({...f,install:true}),e=>e.code==='BRIDGE_VERSION_CONFLICT');assert.equal(f.calls.some(c=>c.args.includes('add')),false);
 });

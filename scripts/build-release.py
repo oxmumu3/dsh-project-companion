@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Build and audit portable release artifacts; never install or publish them.
 
-Maintainers need Python 3 and npm. Obtain the original bridge with
-`npm pack dsh-wechat@0.11.0 --ignore-scripts`, then run:
-  python3 scripts/build-release.py --bridge /path/to/dsh-wechat-0.11.0.tgz
+Maintainers need Python 3 and npm. Use one exact reviewed original or Dot
+maintenance bridge archive, then run:
+  python3 scripts/build-release.py --bridge /path/to/dsh-wechat-0.11.1-dot.1.tgz
+See bridge-maintenance/ for the pinned source delta and rebuild instructions.
 
 Users download the release ZIP, extract the whole directory and launch
 Install.command. They do not run this developer build tool.
@@ -21,13 +22,31 @@ import tempfile
 import zipfile
 
 RUNTIMES = ['0.2.0-rc.2', '0.2.1-rc.2']
-BRIDGE_SHA256 = '993e1e1afce3c0dcd2610bf9e84ffbfd6d08768f5c4b4fa30eeec50dc2e97d3f'
+REVIEWED_BRIDGES = {
+    'dsh-wechat-0.11.0.tgz': {
+        'name': 'dsh-wechat', 'version': '0.11.0', 'sourceKind': 'original_npm',
+        'sha256': '993e1e1afce3c0dcd2610bf9e84ffbfd6d08768f5c4b4fa30eeec50dc2e97d3f',
+    },
+    'dsh-wechat-0.11.1-dot.1.tgz': {
+        'name': 'dsh-wechat', 'version': '0.11.1-dot.1', 'sourceKind': 'dot_maintained_fork',
+        'sourceCommit': '1f28de0f5a9d338db884ff5b84e90e9572eaf1cc',
+        'deltaSha256': '6e34feef2dc29cb82fdfef0305c27ae4bf604962cd7ca43e616a53d8aedc2c64',
+        'sha256': 'b40031cd0928c9df76a864d6ff15bc3fe7356b6298ad2758b6272f127f965878',
+    },
+}
 PROHIBITED = {'.dsh', '.git', '.agent', 'node_modules', '__MACOSX', '.DS_Store', 'credentials', 'tokens', 'secrets'}
 MIT_PARTS = ['MIT License', 'Copyright', 'Permission is hereby granted', 'The above copyright notice and this permission notice', '"AS IS"', 'IN NO EVENT SHALL']
 
 
 def digest(data):
     return hashlib.sha256(data).hexdigest()
+
+
+def reviewed_bridge(archive_name, archive_sha256):
+    spec = REVIEWED_BRIDGES.get(archive_name)
+    if spec is None or archive_sha256 != spec['sha256']:
+        raise ValueError('Bridge must match an exact reviewed filename and SHA256; arbitrary bridge archives are not supported')
+    return dict(spec)
 
 
 def json_bytes(value):
@@ -78,11 +97,17 @@ def package_audit(path, expected_name, expected_version):
     mit(files['package/LICENSE'], f'{expected_name}/LICENSE')
     vendor_files = 0
     if expected_name == 'dsh-project-companion':
-        for required in ['src/welcome-guard.js', 'src/installation.js', 'src/onboarding.js', 'src/client.js', 'src/news-service.js', 'src/news-model.js', 'src/news-feeds.js', 'src/context-config.js', 'src/context-google-auth.js', 'src/context-transport.js', 'src/context-contracts.js', 'src/context-service.js', 'src/context-route.js', 'docs/context-sources.md', 'assets/news-feeds.json', 'docs/news.md', 'THIRD_PARTY_NOTICES.md']:
+        for required in ['src/welcome-guard.js', 'src/wechat-recovery.js', 'src/installation.js', 'src/onboarding.js', 'src/client.js', 'src/news-service.js', 'src/news-model.js', 'src/news-feeds.js', 'src/context-config.js', 'src/context-google-auth.js', 'src/context-account-auth.js', 'src/context-transport.js', 'src/context-contracts.js', 'src/context-service.js', 'src/context-route.js', 'docs/context-sources.md', 'assets/news-feeds.json', 'docs/news.md', 'THIRD_PARTY_NOTICES.md', 'bridge-maintenance/README.md', 'bridge-maintenance/PROVENANCE.json']:
             if f'package/{required}' not in files:
                 raise ValueError(f'Missing candidate component: {required}')
         for name in ['pan17-dsh-wechat', 'dsh-yolo', 'dsh-proactive']:
             mit(files[f'package/third-party-licenses/{name}.txt'], name)
+        maintenance = json.loads(files['package/bridge-maintenance/PROVENANCE.json'])
+        maintained = reviewed_bridge(maintenance['archive']['file'], maintenance['archive']['sha256'])
+        patch_name = maintenance['delta']['file']
+        safe_name(patch_name)
+        if maintained['sourceKind'] != 'dot_maintained_fork' or maintained['sourceCommit'] != maintenance.get('sourceCommit') or maintained['deltaSha256'] != maintenance['delta']['sha256'] or digest(files[f'package/bridge-maintenance/{patch_name}']) != maintained['deltaSha256'] or digest(files['package/third-party-licenses/pan17-dsh-wechat.txt']) != maintenance['license']['sha256']:
+            raise ValueError('Bridge maintenance source, delta or original license integrity mismatch')
         for vendor in ['yolo', 'proactive']:
             mit(files[f'package/vendor/{vendor}/LICENSE'], f'{vendor}/LICENSE')
             manifest = json.loads(files[f'package/vendor/{vendor}/SOURCE.json'])
@@ -111,7 +136,7 @@ def runtime_fingerprints(files):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     source_root = Path(__file__).resolve().parent.parent
-    parser.add_argument('--bridge', type=Path, required=True, help='Previously verified/downloaded dsh-wechat-0.11.0.tgz')
+    parser.add_argument('--bridge', type=Path, required=True, help='One exact reviewed original 0.11.0 or Dot maintenance 0.11.1-dot.1 archive')
     parser.add_argument('--output', type=Path, default=source_root / 'dist', help='Artifact directory; defaults to this source checkout/dist')
     parser.add_argument('--runtime-reference', type=Path, help='Optional previously tested companion tgz; require identical index/src/vendor/bundle runtime bytes')
     args = parser.parse_args()
@@ -121,8 +146,7 @@ def main():
     if metadata.get('name') != 'dsh-project-companion' or not isinstance(version, str) or not re.fullmatch(r'(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?', version):
         raise ValueError('Source package must declare dsh-project-companion and one exact supported SemVer')
     kit = f'dsh-dot-{version}-macos'
-    if bridge.name != 'dsh-wechat-0.11.0.tgz' or digest(bridge.read_bytes()) != BRIDGE_SHA256:
-        raise ValueError('Bridge must be the exact original dsh-wechat 0.11.0 npm archive with the pinned SHA256')
+    bridge_spec = reviewed_bridge(bridge.name, digest(bridge.read_bytes()))
     output.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix='dsh-dot-kit-pack-') as pack_dir:
         command = ['npm', 'pack', '--json', '--ignore-scripts', '--pack-destination', pack_dir]
@@ -130,7 +154,7 @@ def main():
         if len(packed) != 1 or Path(packed[0]['filename']).name != packed[0]['filename']:
             raise ValueError('Unexpected npm pack response')
         companion = Path(pack_dir) / packed[0]['filename']
-        bridge_audit, bridge_files = package_audit(bridge, 'dsh-wechat', '0.11.0')
+        bridge_audit, bridge_files = package_audit(bridge, bridge_spec['name'], bridge_spec['version'])
         companion_audit, companion_files = package_audit(companion, 'dsh-project-companion', version)
         runtime = runtime_fingerprints(companion_files)
         runtime_reference = None
@@ -146,6 +170,7 @@ def main():
                 target.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copyfile(repo / relative, target)
             shutil.copytree(repo / 'third-party-licenses', stage / 'third-party-licenses')
+            shutil.copytree(repo / 'bridge-maintenance', stage / 'bridge-maintenance')
             # This copy lives at the kit root rather than inside docs/.
             # Keep source-doc links unchanged and rebase only its copied links.
             install_doc = (repo / 'docs/install.md').read_text(encoding='utf-8')
@@ -174,6 +199,7 @@ def main():
             audit = {
                 'schemaVersion': 1, 'releaseVersion': version, 'distribution': 'github_release',
                 'packages': packages, 'filesBeforeAuditAndChecksums': kit_files,
+                'bridgeProvenance': bridge_spec,
                 'runtimeFiles': runtime,
                 'audit': {'fullMitAndCredits': True, 'filenamesAndPackageSchema': True, 'pinnedVendorIntegrity': True, 'personalConfigsOrStateIncluded': False, 'nodeModulesIncluded': False, 'linksIncluded': False},
                 'limits': ['External dependency closure is not bundled; installation may access the network.', 'No app installation, plugin installation, account import, host shutdown or WeChat send was performed by this build.', 'Current documentation is a build snapshot; rebuild after verification/docs updates.'],

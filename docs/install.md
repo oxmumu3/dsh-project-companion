@@ -2,6 +2,8 @@
 
 当前版本为 `0.6.0-preview.1`，社区项目，非官方产品。统一安装包包含固定的微信桥接 `dsh-wechat@0.11.0` 和项目助理，通过官方 Desktop CLI 安装；不修改官方 App、不导入作者账户，也不复制微信配对凭据。
 
+源码候选为 `0.10.0-preview.1`：候选统一包带保留上游MIT许可的 `dsh-wechat@0.11.1-dot.1` 维护版。它只允许从已审计0.11.0升级或保留同版本，绑定不迁出原目录；下方公开下载仍是旧版，未自动更新。候选的来源差异和固定归档校验见 `bridge-maintenance/`。
+
 ## macOS 双击安装
 
 [下载安装包](https://github.com/piggy00544/dsh-project-companion/releases/download/v0.6.0-preview.1/dsh-dot-0.6.0-preview.1-macos.zip) · [查看版本文件](https://github.com/piggy00544/dsh-project-companion/releases/tag/v0.6.0-preview.1)

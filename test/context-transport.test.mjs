@@ -26,6 +26,19 @@ test('exports the context transport feature', async () => {
   assert.equal(typeof implementation?.createContextTransport, 'function');
 });
 
+test('account owners supply flomo and Dida OAuth without falling back after authorization failure', async () => {
+  const { createContextTransport } = await load();
+  const remote = server(({ body }) => rpc(body.id, { tools: [] }));
+  const calls = [];
+  const transport = createContextTransport({ fetch: remote.fetch, flomoAuth: { getToken: async ({ signal }) => { assert.equal(signal.aborted, false); calls.push('flomo'); return 'account-token'; } }, didaAuth: { getToken: async () => { calls.push('dida'); throw new Error('private-token'); } }, tokenForSource: async () => { calls.push('fallback'); return 'legacy-token'; } });
+  try {
+    await transport.catalog('flomo');
+    assert.equal(remote.requests[0].headers.Authorization, 'Bearer account-token');
+    await assert.rejects(transport.catalog('dida'), code('CONTEXT_AUTH_REQUIRED'));
+    assert.equal(calls.includes('fallback'), false);
+  } finally { await transport.close(); }
+});
+
 test('negotiates once, privately sends sessions, refreshes credentials per request and projects catalog', async () => {
   const { createContextTransport, CONTEXT_ENDPOINTS } = await load();
   let tokens = 0;

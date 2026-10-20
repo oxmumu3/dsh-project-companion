@@ -29,7 +29,7 @@ async function fixture(t,options={}){
   const config={didaToken:'synthetic-private-token',flomoToken:'',googleClientId:'',googleClientSecret:'',googleRefreshToken:''};
   const transport={catalog:async(source,{signal})=>{calls.push({type:'catalog',source});return options.catalog?.(source,{signal})??{tools:[{name:'list_projects',inputSchema:{type:'object',properties:{limit:{type:'integer'},offset:{type:'integer'}}}}],fetchedAt:'2026-10-19T12:00:00Z'};},call:async(source,name,args,{signal})=>{calls.push({type:'call',source,name,args});return options.call?.(source,name,args,{signal})??{value:{structuredContent:{projects:[{id:'p1',name:'当前事项'}]}},fetchedAt:'2026-10-19T12:00:00Z'};},close:async()=>closed.push('transport')};
   const googleAuth={status:()=>({clientConfigured:false,refreshConfigured:false,authInProgress:false}),start:async()=>{calls.push({type:'google_authorize'});return{url:'https://accounts.google.com/o/oauth2/v2/auth?state=synthetic',expiresAt:'2026-10-19T12:05:00Z'};},getToken:async()=>{throw new Error('must not access Google');},close:async()=>closed.push('googleAuth')};
-  const plugin=await ctx.plugin({name:'synthetic-context-host',inject:['tools','commands','storageDomain','sessions','systemPrompt'],async apply(scope){adapter=await installCompanion(scope,{clock:()=>new Date('2026-10-19T12:00:00Z'),readSetup:async()=>connection,readNativeRoute:options.readNativeRoute??(async()=>({kind:'unbound'})),readBinding:async()=>null,context:{readConfig:()=>({...config}),transport,googleAuth},timers:{setInterval(){throw new Error('context must not start timers');},clearInterval(){}}});}});
+  const plugin=await ctx.plugin({name:'synthetic-context-host',inject:['tools','commands','storageDomain','sessions','systemPrompt'],async apply(scope){adapter=await installCompanion(scope,{clock:()=>new Date('2026-10-19T12:00:00Z'),readSetup:async()=>connection,readNativeRoute:options.readNativeRoute??(async()=>({kind:'unbound'})),readBinding:async()=>null,context:{readConfig:()=>({...config}),transport,googleAuth,...(options.flomoAuth?{flomoAuth:options.flomoAuth}:{}),...(options.didaAuth?{didaAuth:options.didaAuth}:{})},timers:{setInterval(){throw new Error('context must not start timers');},clearInterval(){}}});}});
   let number=0;
   const tool=async args=>{const response=await ctx.tools.execute({callId:'context-test-'+(++number),name:'personal_context',arguments:args,agent,signal:new AbortController().signal});assert.equal(response.isError,false,JSON.stringify(response));return response.value;};
   const project=async args=>{const response=await ctx.tools.execute({callId:'context-project-'+(++number),name:'project_companion',arguments:args,agent,signal:new AbortController().signal});assert.equal(response.isError,false,JSON.stringify(response));return response.value;};
@@ -134,4 +134,12 @@ test('context cleanup rejection is observed immediately while unrelated project 
   h.adapter.memory.close=async()=>{await new Promise(resolve=>setImmediate(resolve));return closeMemory();};
   await h.close();
   assert.ok(h.closed.includes('transport'));assert.ok(h.closed.includes('googleAuth'));
+});
+
+
+test('native account authorizations return sanitized first-party links only on explicit owner POST',async t=>{
+ const starts=[];const make=source=>({status:()=>({clientConfigured:true,refreshConfigured:false,authInProgress:false}),start:async()=>{starts.push(source);return{url:source==='flomo'?'https://flomoapp.com/integration/grant?state=fixture':'https://dida365.com/oauth/authorize?state=fixture',expiresAt:'2026-10-19T12:05:00Z'};},getToken:async()=>{throw new Error('no private read');},close:async()=>{}});
+ const h=await fixture(t,{flomoAuth:make('flomo'),didaAuth:make('dida')});const before=await h.get();assert.equal(before.value.flomoAuth.refreshConfigured,false);assert.equal(before.value.didaAuth.clientConfigured,true);assert.deepEqual(starts,[]);
+ for(const source of ['flomo','dida']){const result=await h.post({action:source+'_authorize'});assert.equal(result.status,200);assert.ok(result.value.url.startsWith('https://'));assert.equal((await h.post({action:source+'_authorize',token:'untrusted'})).status,400);}
+ assert.deepEqual(starts,['flomo','dida']);assert.equal(h.calls.length,0);
 });

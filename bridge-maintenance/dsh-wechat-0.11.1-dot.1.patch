@@ -1,0 +1,948 @@
+diff --git a/NOTICE.md b/NOTICE.md
+new file mode 100644
+index 0000000..b244633
+--- /dev/null
++++ b/NOTICE.md
+@@ -0,0 +1,9 @@
++# DSH Dot local maintenance fork
++
++This is a locally maintained adaptation of pan17/dsh-wechat 0.11.0, not an official upstream release. The original MIT license and contributor copyright remain unchanged in LICENSE.
++
++Upstream: https://github.com/pan17/dsh-wechat
++Base tag: v0.11.0, commit 218537511681be7557589f5ae0eab84f80267dc8.
++Original npm archive SHA256: 993e1e1afce3c0dcd2610bf9e84ffbfd6d08768f5c4b4fa30eeec50dc2e97d3f.
++
++Maintenance for DSH Dot by 牛村木木山: conservative known-unsent queue retry, timeout and receipt correctness, queue budget preservation, redacted diagnostics and transport-only recovery admission. These changes do not imply upstream endorsement or guarantee phone delivery.
+diff --git a/README.md b/README.md
+index 7e29a79..235ae22 100644
+--- a/README.md
++++ b/README.md
+@@ -1,3 +1,5 @@
++> DSH Dot 本地维护版 `0.11.1-dot.1`，基于 pan17/dsh-wechat `v0.11.0`。原作者版权和 MIT 许可证完整保留，见 [NOTICE](NOTICE.md)。此版本修正已知未发送失败的有界队列重试、超时回执、消息预算及纯收件恢复入站；不是上游官方发布。
++
+ # dsh-wechat
+ 
+ [![npm](https://img.shields.io/npm/v/dsh-wechat?style=flat-square&logo=npm)](https://www.npmjs.com/package/dsh-wechat)
+diff --git a/SOURCE.json b/SOURCE.json
+new file mode 100644
+index 0000000..f2a6f5a
+--- /dev/null
++++ b/SOURCE.json
+@@ -0,0 +1,9 @@
++{
++  "upstream": "https://github.com/pan17/dsh-wechat",
++  "baseTag": "v0.11.0",
++  "baseCommit": "218537511681be7557589f5ae0eab84f80267dc8",
++  "originalNpmVersion": "0.11.0",
++  "originalNpmSha256": "993e1e1afce3c0dcd2610bf9e84ffbfd6d08768f5c4b4fa30eeec50dc2e97d3f",
++  "localVersion": "0.11.1-dot.1",
++  "originalLicensePreserved": true
++}
+diff --git a/package-lock.json b/package-lock.json
+index d01afe3..a3eb3fa 100644
+--- a/package-lock.json
++++ b/package-lock.json
+@@ -1,12 +1,12 @@
+ {
+   "name": "dsh-wechat",
+-  "version": "0.11.0",
++  "version": "0.11.1-dot.1",
+   "lockfileVersion": 3,
+   "requires": true,
+   "packages": {
+     "": {
+       "name": "dsh-wechat",
+-      "version": "0.11.0",
++      "version": "0.11.1-dot.1",
+       "license": "MIT",
+       "devDependencies": {
+         "@types/node": "^22.0.0",
+diff --git a/package.json b/package.json
+index 787b564..4ac71b7 100644
+--- a/package.json
++++ b/package.json
+@@ -1,15 +1,18 @@
+ {
+   "name": "dsh-wechat",
+-  "version": "0.11.0",
+-  "description": "Bridge WeChat (iLink bot) to DeepSeek Harness (DSH)",
++  "version": "0.11.1-dot.1",
++  "description": "DSH Dot maintained WeChat bridge, based on pan17/dsh-wechat",
+   "type": "module",
+   "files": [
+     "dist/",
++    "!dist/.tsbuildinfo",
+     "resources/",
+     "cordis.patch.yml",
+     "README.md",
+     "LICENSE",
+-    "package.json"
++    "package.json",
++    "NOTICE.md",
++    "SOURCE.json"
+   ],
+   "main": "./dist/index.js",
+   "types": "./dist/index.d.ts",
+diff --git a/src/bridge/bridge.ts b/src/bridge/bridge.ts
+index f9ae7ab..285d901 100644
+--- a/src/bridge/bridge.ts
++++ b/src/bridge/bridge.ts
+@@ -49,6 +49,7 @@ import {
+ import type { WeChatDSHConfig } from "../config.js";
+ import { EDITABLE_KEYS, type ConfigStore, type EditableConfig } from "../config-store.js";
+ import { maskSecrets } from "../utils/redact.js";
++import { isDefinitelyUnsentNetworkError } from "../utils/network.js";
+ import {
+   detectUnknownSlashCommand,
+   formatHelp,
+@@ -288,6 +289,8 @@ export interface NativeCommandsSurface {
+ }
+ 
+ type CachedMessage = OutboundMessage;
++type FlushReceipt = { attempted: boolean; sent: number; remaining: number; dropped: number };
++const OUTBOUND_RETRY_DELAYS = [1000, 5000, 15000] as const;
+ 
+ /**
+  * The LAST `count` code points of `text`, plus whether anything was cut.
+@@ -439,12 +442,14 @@ export class WeChatDSHBridge {
+   private outboundCache: CachedMessage[] = [];
+   private wechatMsgCount = 0;
+   private cacheNoticeSent = false;
++  private outboundRetryTimer?: ReturnType<typeof setTimeout>;
++  private outboundRetryHead?: CachedMessage;
++  private outboundRetryAttempt = 0;
++  private outboundRetryAt: string | null = null;
++  private lastOutboundError: Record<string, unknown> | null = null;
++  private lastOutboundSentAt: string | null = null;
+   /** Sliding-window limiter for agent-initiated `send_wechat` pushes. */
+   private readonly pushRate = new PushRateWindow();
+-  /** Reentrancy guard for the cap-pressure force-send in `parkOutbound`. */
+-  private capFlushActive = false;
+-  /** Force-sends performed at the cap (log throttle only). */
+-  private capFlushes = 0;
+   /** Serializes all outbound budget/queue mutations across assistant and tool sends. */
+   private outboundSerial: Promise<void> = Promise.resolve();
+   /** Per-agent model overrides set by `/model switch` / `/reasoning` (applied via agent/request). */
+@@ -765,6 +770,11 @@ export class WeChatDSHBridge {
+       ...this.loginState,
+       monitorRunning: this.monitorRunning,
+       userCount: this.state.all().length,
++      outbound: {
++        messageCount: this.wechatMsgCount, queueCount: this.outboundCache.length,
++        retry: { scheduled: !!this.outboundRetryTimer, attempt: this.outboundRetryAttempt, limit: OUTBOUND_RETRY_DELAYS.length, nextAt: this.outboundRetryAt },
++        lastError: this.lastOutboundError, lastSentAt: this.lastOutboundSentAt,
++      },
+       users: this.state.all().map((u) => ({
+         userId: u.userId,
+         sessionId: u.sessionId,
+@@ -1000,6 +1010,7 @@ export class WeChatDSHBridge {
+    * registered for the plugin lifetime and survive QR re-login.
+    */
+   async stop(): Promise<void> {
++    this.clearOutboundRetry();
+     this.stopIlink("plugin-stop");
+     this.stopInteraction();
+     this.processes.clear();
+@@ -1123,6 +1134,8 @@ export class WeChatDSHBridge {
+    * the next inbound ping.
+    */
+   private discardQueuedOutbound(reason: string): void {
++    this.clearOutboundRetry();
++    this.outboundRetryHead = undefined;
+     this.outboundGeneration++;
+     this.processes.clear();
+     this.assistantStreams.clear();
+@@ -1436,8 +1449,9 @@ export class WeChatDSHBridge {
+     // `/next`, which owns the flush below so its result reply is not
+     // duplicated by the auto path.
+     const isNext = parseNextCommand(text);
++    let flushReceipt: FlushReceipt = { attempted: false, sent: 0, remaining: this.outboundCache.length, dropped: 0 };
+     if (!isNext && this.outboundCache.length > 0) {
+-      await this.flushPending(userId);
++      flushReceipt = await this.flushPending(userId);
+     }
+ 
+     this.log(`Message from ${userId}: ${this.previewMessage(msg)}`);
+@@ -1584,7 +1598,7 @@ export class WeChatDSHBridge {
+       }
+     }
+ 
+-    await this.forwardToAgent(user, msg);
++    await this.forwardToAgent(user, msg, flushReceipt);
+   }
+ 
+   private persistSessionBinding(user: UserState): void {
+@@ -1592,7 +1606,7 @@ export class WeChatDSHBridge {
+     this.trackWatchedSession(user.userId, user.sessionId);
+   }
+ 
+-  private async forwardToAgent(user: UserState, msg: WeixinMessage): Promise<void> {
++  private async forwardToAgent(user: UserState, msg: WeixinMessage, receipt: FlushReceipt): Promise<void> {
+     const previousSessionId = user.sessionId;
+     const { agent, replacedSessionId } = await this.agents.ensure(user, { replaceOnResumeFailure: true });
+     if (this.interactionStopped) return;
+@@ -1624,7 +1638,14 @@ export class WeChatDSHBridge {
+     // window already closed degrades to the next waking queue turn inside
+     // AgentLoop, so neither mode can lose the message.
+     const mode = agent.status === "running" ? this.ops.busyEnter() : "queue";
+-    this.agents.followup(agent, blocks, mode, (id) => this.markWechatMessage(id));
++    this.agents.followup(agent, blocks, mode, (id, message) => {
++      // The exact host message id is minted immediately before followup/steer.
++      // Consumers receive only transport counts, never cached message bodies.
++      const decision = this.ctx.bail?.("wechat/inbound-admit", { agent, message, receipt: { ...receipt } });
++      if (decision && typeof decision === "object" && (decision as { kind?: unknown }).kind === "transport-only") return false;
++      this.markWechatMessage(id);
++      this.ctx.emit?.("wechat/inbound-forwarded", { agent, messageId: id, receipt: { ...receipt } });
++    });
+   }
+ 
+   // ─── Outbound: DSH → WeChat ───
+@@ -4792,7 +4813,7 @@ export class WeChatDSHBridge {
+         ? { ok: true, message: `sent ${kind} ${fileName}` }
+         : { ok: true, message: this.tokenInvalid
+           ? `queued ${kind} ${fileName}; WeChat session timed out, will send after recover`
+-          : `queued ${kind} ${fileName}; delivery deferred by WeChat rate limiting, the user can flush with /next` };
++          : `queued ${kind} ${fileName}; bridge owns deferred delivery; receipt unconfirmed, /next or the next inbound message can flush` };
+     }
+     if (args.text) {
+       const segments = splitText(args.text, this.config.textChunkLimit);
+@@ -4812,7 +4833,7 @@ export class WeChatDSHBridge {
+         ? { ok: true, message: `sent ${sent} message(s)` }
+         : { ok: true, message: this.tokenInvalid
+           ? `sent ${sent} message(s), queued ${queued} (session timeout; will send after recover)`
+-          : `sent ${sent} message(s), queued ${queued} (WeChat rate limiting); the user can flush with /next` };
++          : `sent ${sent} message(s), queued ${queued} (bridge owns deferred delivery; receipt unconfirmed); /next or the next inbound message can flush` };
+     }
+     return { ok: false, message: "provide either text or file_path" };
+   }
+@@ -4822,6 +4843,55 @@ export class WeChatDSHBridge {
+   // Assistant replies and send_wechat tool pushes share ONE window budget
+   // and ONE FIFO queue because this bridge intentionally serves one peer.
+ 
++  private clearOutboundRetry(): void {
++    if (this.outboundRetryTimer) clearTimeout(this.outboundRetryTimer);
++    this.outboundRetryTimer = undefined;
++    this.outboundRetryAt = null;
++  }
++
++  private recordOutboundError(error: unknown): void {
++    const kind = isMessageLimitError(error) ? "message_limit"
++      : isSessionTimeoutError(error) ? "session_timeout"
++      : isInvalidRequestError(error) ? "invalid_request"
++      : isDefinitelyUnsentNetworkError(error) ? "definite_unsent" : "uncertain";
++    const detail: Record<string, unknown> = { at: new Date().toISOString(), kind };
++    if (error && typeof error === "object") {
++      const value = error as Record<string, unknown>;
++      for (const key of ["status", "ret", "errcode"]) {
++        if (typeof value[key] === "number" && Number.isFinite(value[key])) detail[key] = value[key];
++      }
++    }
++    this.lastOutboundError = detail;
++    this.log(`outbound delivery error: ${JSON.stringify(detail)}`);
++  }
++
++  /** Retry only a FIFO head proven not to have crossed the remote boundary.
++   * Eligibility is memory-only: a restart never guesses whether a persisted
++   * item was accepted before a crash. Durable state and pairing stay intact.
++   */
++  private scheduleOutboundRetry(userId: string, head: CachedMessage): void {
++    if (this.outboundCache[0] !== head || this.interactionStopped || !this.token || this.tokenGiveUp || this.tokenInvalid || this.wechatMsgCount >= MSG_LIMIT_MAX) return;
++    if (this.outboundRetryHead !== head) {
++      this.clearOutboundRetry();
++      this.outboundRetryHead = head;
++      this.outboundRetryAttempt = 0;
++    }
++    if (this.outboundRetryTimer || this.outboundRetryAttempt >= OUTBOUND_RETRY_DELAYS.length) return;
++    const delay = OUTBOUND_RETRY_DELAYS[this.outboundRetryAttempt]!;
++    const generation = this.outboundGeneration;
++    this.outboundRetryAt = new Date(Date.now() + delay).toISOString();
++    this.outboundRetryTimer = setTimeout(() => {
++      this.outboundRetryTimer = undefined;
++      this.outboundRetryAt = null;
++      void this.serializeOutbound(async () => {
++        if (generation !== this.outboundGeneration || this.interactionStopped || this.outboundCache[0] !== head || this.wechatMsgCount >= MSG_LIMIT_MAX) return;
++        this.outboundRetryAttempt++;
++        await this.flushPendingLocked(userId, { silent: true, automatic: true });
++      }).catch(error => this.recordOutboundError(error));
++    }, delay);
++    this.outboundRetryTimer.unref?.();
++  }
++
+   /** Deliver one item, serialized with all other outbound sends and flushes. */
+   private deliverOutbound(
+     userId: string,
+@@ -4901,9 +4971,10 @@ export class WeChatDSHBridge {
+           fileName: item.fileName,
+         });
+       }
++      this.lastOutboundSentAt = new Date().toISOString();
+       return "sent";
+     } catch (err) {
+-      this.log(`outbound send error (${item.kind}): ${String(err)}`);
++      this.recordOutboundError(err);
+       if (generation !== this.outboundGeneration) return "failed";
+       if (isMessageLimitError(err)) {
+         this.wechatMsgCount = MSG_LIMIT_MAX;
+@@ -4933,64 +5004,23 @@ export class WeChatDSHBridge {
+         return "failed";
+       }
+       await this.parkOutbound(userId, item);
+-      await this.notifyCachePendingLocked(userId);
++      if (isDefinitelyUnsentNetworkError(err)) this.scheduleOutboundRetry(userId, this.outboundCache[0]!);
++      else await this.notifyCachePendingLocked(userId);
+       return "cached";
+     }
+   }
+ 
+-  /**
+-   * Append to the one durable FIFO. At the soft cap the oldest item is
+-   * FORCE-SENT instead of dropped; at the hard ceiling it is dropped with a
+-   * loud log, because that ceiling is what actually bounds memory.
+-   *
+-   * The cap exists to bound memory, but the queue's contents are exactly
+-   * what must not vanish: notifications, task conclusions, tool pushes. So
+-   * reaching the cap means "try harder", not "discard": one item leaves the
+-   * queue by being delivered. The only way it is still lost is if that send
+-   * itself fails, and `deliverOutboundLocked` then appends it again (there
+-   * is room, one slot was just freed) so nothing is destroyed silently.
+-   *
+-   * A force-send that keeps failing, however, frees nothing: the queue would
+-   * otherwise grow for the whole outage, taking `state.json` with it. The
+-   * hard ceiling is where the oldest item is sacrificed instead, so the
+-   * "never silently drop" promise degrades to "never *silently* drop" rather
+-   * than to an unbounded process.
++  /** Append to the durable FIFO. Queue pressure is not permission to replay
++   * an ambiguous head or bypass the gateway's ten-message window. The existing
++   * hard ceiling still bounds memory and reports the number of evicted items.
+    */
+   private async parkOutbound(userId: string, item: CachedMessage): Promise<void> {
+-    // `capFlushActive` breaks the reentrancy: a failed force-send parks its
+-    // item again, and without the flag that park would ask for another
+-    // force-send, which fails again — an unbounded loop that never returns
+-    // to the caller waiting on `deliverOutbound`.
+-    if (this.outboundCache.length >= MAX_OUTBOUND_QUEUE && !this.capFlushActive) {
+-      const oldest = this.outboundCache[0];
+-      const label = oldest === undefined
+-        ? "(none)"
+-        : oldest.kind === "text" ? oldest.text.slice(0, 60) : oldest.fileName;
+-      // One line per force-send would flood the log when the queue sits at
+-      // the cap for a long time; report first entry and then every 50th.
+-      if (this.capFlushes === 0 || this.capFlushes % 50 === 0) {
+-        this.log(`outbound cache cap (${MAX_OUTBOUND_QUEUE}) reached; force-sending oldest instead of dropping it: ${label}${this.capFlushes > 0 ? ` (${this.capFlushes} force-sent so far)` : ""}`);
+-      }
+-      this.capFlushes++;
+-      this.capFlushActive = true;
+-      try {
+-        // MUST be the locked variant: `parkOutbound` only ever runs inside
+-        // `deliverOutboundLocked`, which already holds the `serializeOutbound`
+-        // slot. Calling the public `flushPending` here would queue this work
+-        // behind the operation that is awaiting it — a self-deadlock that
+-        // wedges the whole outbound chain (every later send, unrelated ones
+-        // included, never settles).
+-        await this.flushPendingLocked(userId, { silent: true, force: true });
+-      } finally {
+-        this.capFlushActive = false;
+-      }
+-    }
+-    // Hard ceiling: the force-send above could not free a slot (the outage is
+-    // still in effect), so drop the oldest — explicitly, not silently.
++    if (this.outboundCache.length === MAX_OUTBOUND_QUEUE) this.log(`outbound queue has ${MAX_OUTBOUND_QUEUE} pending items; transport recovery is required`);
+     while (this.outboundCache.length >= MAX_OUTBOUND_QUEUE_HARD) {
+       const evicted = this.outboundCache.shift();
+       if (evicted === undefined) break;
+-      this.log(`outbound cache hard ceiling (${MAX_OUTBOUND_QUEUE_HARD}) reached; dropping oldest to bound memory: ${evicted.kind === "text" ? evicted.text.slice(0, 60) : evicted.fileName}`);
++      if (evicted === this.outboundRetryHead) { this.clearOutboundRetry(); this.outboundRetryHead = undefined; }
++      this.log(`outbound cache hard ceiling (${MAX_OUTBOUND_QUEUE_HARD}) reached; dropping one oldest item to bound memory`);
+     }
+     this.outboundCache.push({ ...item });
+     this.persistOutboundState(userId);
+@@ -5048,24 +5078,30 @@ export class WeChatDSHBridge {
+     await this.flushPending(userId, { silent: true });
+   }
+ 
+-  /** Flush the one FIFO (/next, next inbound, or -14 recovery). */
+-  private flushPending(userId: string, opts?: { silent?: boolean; force?: boolean }): Promise<void> {
++  /** Flush the one FIFO (/next, next inbound, -14 recovery or safe retry). */
++  private flushPending(userId: string, opts?: { silent?: boolean; force?: boolean }): Promise<FlushReceipt> {
+     return this.serializeOutbound(() => this.flushPendingLocked(userId, opts));
+   }
+ 
+-  private async flushPendingLocked(userId: string, opts?: { silent?: boolean; force?: boolean }): Promise<void> {
++  private async flushPendingLocked(userId: string, opts?: { silent?: boolean; force?: boolean; automatic?: boolean }): Promise<FlushReceipt> {
++    const generation = this.outboundGeneration;
++    if (!opts?.automatic) {
++      this.clearOutboundRetry();
++      this.outboundRetryHead = undefined;
++      this.outboundRetryAttempt = 0;
++    }
+     if (this.outboundCache.length === 0) {
+       if (!opts?.silent) {
+         await this.deliverOutboundLocked(userId, { kind: "text", text: "✅ 没有缓存的消息。" }, { parkOnError: false });
+       }
+-      return;
++      return { attempted: false, sent: 0, remaining: 0, dropped: 0 };
+     }
+ 
+-    const cache = this.outboundCache.map((item) => ({ ...item }));
++    const cache = [...this.outboundCache];
+     // Keep the durable queue equal to the unsent tail throughout flush.
+     // This favors at-least-once delivery at the unavoidable remote-send /
+     // local-checkpoint crash boundary instead of losing queued messages.
+-    this.outboundCache = cache.map((item) => ({ ...item }));
++    this.outboundCache = [...cache];
+     this.cacheNoticeSent = false;
+     this.persistOutboundState(userId);
+     let dropped = 0;
+@@ -5073,14 +5109,8 @@ export class WeChatDSHBridge {
+ 
+     for (let index = 0; index < cache.length; index++) {
+       const msg = cache[index]!;
+-      if (!this.token || this.tokenGiveUp || this.tokenInvalid) break;
+-      // `force` (the cap-pressure flush) sends exactly ONE item past the
+-      // closed 10-message window: dropping is the one outcome the cap must
+-      // never produce, and the gateway is the authority on whether the
+-      // window is really closed. Bounded to the first iteration so a park
+-      // does not drain the whole 100-item cache into a closed window.
+-      const forced = opts?.force === true && index === 0;
+-      if (this.wechatMsgCount >= MSG_LIMIT_MAX && !forced) break;
++      if (generation !== this.outboundGeneration || this.interactionStopped || !this.token || this.tokenGiveUp || this.tokenInvalid) break;
++      if (this.wechatMsgCount >= MSG_LIMIT_MAX) break;
+       const token = this.token;
+       this.wechatMsgCount++;
+       this.persistOutboundState(userId);
+@@ -5110,11 +5140,17 @@ export class WeChatDSHBridge {
+             fileName: msg.fileName,
+           });
+         }
++        // A logout/rebind may replace the queue while the remote send awaits.
++        // Never shift the next identity's queue. On ordinary unload the same
++        // head can still checkpoint its confirmed completion, then stop.
++        if (generation !== this.outboundGeneration && this.outboundCache[0] !== msg) return { attempted: true, sent: sentCount + 1, remaining: this.outboundCache.length, dropped };
+         sentCount++;
++        this.lastOutboundSentAt = new Date().toISOString();
+         this.outboundCache.shift();
+         this.persistOutboundState(userId);
+       } catch (err) {
+-        this.log(`flush send error: ${String(err)}`);
++        this.recordOutboundError(err);
++        if (generation !== this.outboundGeneration) return { attempted: true, sent: sentCount, remaining: this.outboundCache.length, dropped };
+         if (isInvalidRequestError(err)) {
+           this.log(`flush dropping invalid cached ${msg.kind === "text" ? "text" : msg.fileName}`);
+           dropped++;
+@@ -5124,12 +5160,15 @@ export class WeChatDSHBridge {
+         }
+         if (isMessageLimitError(err)) this.wechatMsgCount = MSG_LIMIT_MAX;
+         if (isSessionTimeoutError(err)) this.markTokenInvalid();
++        if (isDefinitelyUnsentNetworkError(err)) this.scheduleOutboundRetry(userId, msg);
++        else { this.clearOutboundRetry(); this.outboundRetryHead = undefined; }
+         break;
+       }
+     }
+ 
+     const remaining = this.outboundCache;
+     this.persistOutboundState(userId);
++    if (generation !== this.outboundGeneration || this.interactionStopped) return { attempted: true, sent: sentCount, remaining: remaining.length, dropped };
+     const dropSuffix = dropped > 0 ? `，${dropped} 条无法投递的缓存已丢弃` : "";
+     if (remaining.length > 0) {
+       this.log(`flush leftover ${remaining.length} item(s) for ${userId} (sent ${sentCount})`);
+@@ -5141,6 +5180,8 @@ export class WeChatDSHBridge {
+         );
+       }
+     } else {
++      this.clearOutboundRetry();
++      this.outboundRetryHead = undefined;
+       this.log(`flush completed ${sentCount} item(s) for ${userId}${dropSuffix}`);
+       if (!opts?.silent && this.wechatMsgCount < MSG_LIMIT_MAX) {
+         await this.deliverOutboundLocked(
+@@ -5150,6 +5191,7 @@ export class WeChatDSHBridge {
+         );
+       }
+     }
++    return { attempted: true, sent: sentCount, remaining: remaining.length, dropped };
+   }
+ 
+ 
+diff --git a/src/dsh/sessions.ts b/src/dsh/sessions.ts
+index bf2d794..ef04326 100644
+--- a/src/dsh/sessions.ts
++++ b/src/dsh/sessions.ts
+@@ -11,7 +11,7 @@
+ import crypto from "node:crypto";
+ import { createUserMessage } from "./messages.js";
+ import type { BusyEnterBehavior } from "./ops.js";
+-import type { Agent, AgentHandle, ContentBlock, CreateAgentOptions, ResumeAgentOptions } from "./types.js";
++import type { Agent, AgentHandle, ContentBlock, CreateAgentOptions, ResumeAgentOptions, UserMessage } from "./types.js";
+ import type { UserState } from "../state.js";
+ 
+ /** Minimal structural surface of the `agents` registry service. */
+@@ -26,6 +26,8 @@ export interface AgentsService {
+ export interface BridgeContext {
+   get<T = unknown>(name: string): T | undefined;
+   on(event: string, listener: (...args: unknown[]) => unknown): () => void;
++  emit?(event: string, payload: unknown): unknown;
++  bail?(event: string, payload: unknown): unknown;
+ }
+ 
+ /** Result of {@link AgentStore.ensure}. */
+@@ -197,7 +199,7 @@ export class AgentStore {
+     agent: Agent,
+     content: ContentBlock[],
+     mode: BusyEnterBehavior = "queue",
+-    onCreated?: (messageId: string) => void,
++    onCreated?: (messageId: string, message: UserMessage) => boolean | void,
+   ): string {
+     const message = createUserMessage({
+       content,
+@@ -209,7 +211,10 @@ export class AgentStore {
+     // Record the minted id BEFORE followup/steer. Those calls synchronously
+     // emit `agent/inbox/spliced`; the surface-prompt marker must already
+     // know this id or the splice handler treats the WeChat message as GUI.
+-    onCreated?.(message.id);
++    // A synchronous admission hook may consume this transport-only input
++    // before waking or steering any agent turn. Existing observers returning
++    // void retain the historical forwarding behavior.
++    if (onCreated?.(message.id, message) === false) return message.id;
+     if (mode === "steer") {
+       agent.steer(message);
+     } else {
+diff --git a/src/state.ts b/src/state.ts
+index 8e8bd93..43503f9 100644
+--- a/src/state.ts
++++ b/src/state.ts
+@@ -39,22 +39,20 @@ export type OutboundMessage =
+   | { kind: "file"; filePath: string; fileName: string };
+ 
+ /**
+- * Soft cap for the outbound FIFO. Reaching it makes `parkOutbound` try to
+- * force-send the oldest item instead of dropping it, so a full queue means
+- * "try harder", not "discard".
++ * Warning threshold for the outbound FIFO. Reaching it does not authorize a
++ * retry, because an ambiguous queue head may already have reached the gateway.
+  */
+ export const MAX_OUTBOUND_QUEUE = 100;
+ 
+ /**
+  * Hard ceiling for the outbound FIFO — the actual memory bound.
+  *
+- * The soft cap alone cannot bound memory: when the force-send fails (invalid
+- * token, gateway rejection, closed message window) nothing leaves the queue,
+- * yet the caller still appends. Without a ceiling the queue — and the
++ * The warning threshold alone cannot bound memory: during an outage nothing
++ * leaves the queue, yet the caller still appends. Without a ceiling the queue — and the
+  * `state.json` snapshot written from it — grows without limit for as long as
+  * the outage lasts. This ceiling is the point where the oldest item is
+  * dropped *with a loud log* instead, trading the least-recent message for a
+- * bounded process. It sits well above the soft cap so the force-send path has
++ * bounded process. It sits well above the warning threshold so recovery has
+  * room to work before any loss is contemplated.
+  */
+ export const MAX_OUTBOUND_QUEUE_HARD = MAX_OUTBOUND_QUEUE * 4;
+diff --git a/src/utils/network.ts b/src/utils/network.ts
+index 59a59aa..a9641bb 100644
+--- a/src/utils/network.ts
++++ b/src/utils/network.ts
+@@ -46,3 +46,23 @@ export function isRetryableNetworkError(err: unknown): boolean {
+   }
+   return false;
+ }
++
++/** A connection could not be established, so no message request was written.
++ * Socket resets and generic timeouts deliberately do not qualify: the gateway
++ * may already have accepted a message before the response was lost.
++ */
++export function isDefinitelyUnsentNetworkError(err: unknown): boolean {
++  const safe = new Set(["UND_ERR_CONNECT_TIMEOUT", "ECONNREFUSED", "EAI_AGAIN", "ENOTFOUND"]);
++  let current: unknown = err;
++  let found = false;
++  const seen = new Set<unknown>();
++  while (current && typeof current === "object" && !seen.has(current)) {
++    seen.add(current);
++    const item = current as { name?: unknown; code?: unknown; cause?: unknown; sendOutcome?: unknown };
++    if (item.sendOutcome === "uncertain") return false;
++    if (item.name === "AbortError" || ["ECONNRESET", "ETIMEDOUT", "UND_ERR_SOCKET", "UND_ERR_HEADERS_TIMEOUT", "UND_ERR_BODY_TIMEOUT"].includes(String(item.code))) return false;
++    if (typeof item.code === "string" && safe.has(item.code)) found = true;
++    current = item.cause;
++  }
++  return found;
++}
+diff --git a/src/weixin/api.ts b/src/weixin/api.ts
+index df4e5ba..20d06a5 100644
+--- a/src/weixin/api.ts
++++ b/src/weixin/api.ts
+@@ -16,7 +16,7 @@ import type {
+   SendTypingReq,
+   GetConfigResp,
+ } from "./types.js";
+-import { isRetryableNetworkError } from "../utils/network.js";
++import { isRetryableNetworkError, isDefinitelyUnsentNetworkError } from "../utils/network.js";
+ 
+ const CHANNEL_VERSION = "1.0.2";
+ 
+@@ -82,6 +82,7 @@ export function isInvalidRequestError(err: unknown): boolean {
+ 
+ /** Validate only sendmessage business status; other endpoints keep their own contracts. */
+ function assertSendMessageAccepted(resp: SendMessageResp): void {
++  if (!resp || typeof resp !== "object" || Array.isArray(resp)) throw new Error("sendmessage response did not confirm acceptance");
+   if (isSessionTimeoutApiBody(resp)) {
+     throw new SessionTimeoutError(resp.errmsg || "session timeout");
+   }
+@@ -91,6 +92,10 @@ function assertSendMessageAccepted(resp: SendMessageResp): void {
+   if (rejected) {
+     throw new IlinkApiError("ilink/bot/sendmessage", resp.ret, resp.errcode, resp.errmsg);
+   }
++  const messageId = (resp as { message_id?: unknown }).message_id;
++  if (resp.ret !== 0 && resp.errcode !== 0 && !(typeof messageId === "number" && Number.isFinite(messageId)) && !(typeof messageId === "string" && messageId.trim())) {
++    throw new Error("sendmessage response did not confirm acceptance");
++  }
+ }
+ 
+ /** True when a parsed iLink JSON body reports session timeout. */
+@@ -208,6 +213,7 @@ async function apiPost<T>(
+ 
+   let lastError: unknown;
+   for (let attempt = 0; attempt < maxAttempts; attempt++) {
++    let responseStarted = false;
+     const controller = new AbortController();
+     const timer = setTimeout(() => controller.abort(), timeoutMs);
+     let externalAbortListener: (() => void) | undefined;
+@@ -227,10 +233,10 @@ async function apiPost<T>(
+         body: bodyStr,
+         signal: controller.signal,
+       });
+-      clearTimeout(timer);
++      responseStarted = true;
+       const text = await res.text();
+       if (!res.ok) {
+-        throw new Error(`HTTP ${res.status}: ${text}`);
++        throw Object.assign(new Error(`HTTP ${res.status}`), { status: res.status });
+       }
+       const parsed = (text.trim() ? JSON.parse(text) : {}) as T;
+       if (isSessionTimeoutApiBody(parsed)) {
+@@ -243,8 +249,9 @@ async function apiPost<T>(
+       return parsed;
+     } catch (err) {
+       clearTimeout(timer);
+-      // AbortError sentinel: getUpdates long-poll timed out, no messages.
+-      if ((err as Error).name === "AbortError") {
++      // Only getUpdates owns the long-poll empty sentinel. A send timeout has
++      // an unknown remote outcome, never a synthetic successful receipt.
++      if ((err as Error).name === "AbortError" && endpoint === "ilink/bot/getupdates") {
+         return { ret: 0, msgs: [] } as T;
+       }
+       // Session timeout (-14): either a parseable JSON body we just threw
+@@ -255,10 +262,19 @@ async function apiPost<T>(
+         lastError = err;
+         break;
+       }
++      if (responseStarted && endpoint === "ilink/bot/sendmessage") {
++        const status = (err as { status?: unknown })?.status;
++        throw Object.assign(new Error("sendmessage response did not confirm acceptance", { cause: err }), {
++          sendOutcome: "uncertain", ...(typeof status === "number" ? { status } : {}),
++        });
++      }
+       lastError = err;
+ 
+       const isLastAttempt = attempt >= retries;
+-      if (isLastAttempt || !isRetryableNetworkError(err)) {
++      const safeRetry = endpoint === "ilink/bot/sendmessage"
++        ? !responseStarted && isDefinitelyUnsentNetworkError(err)
++        : isRetryableNetworkError(err);
++      if (isLastAttempt || !safeRetry) {
+         break;
+       }
+ 
+@@ -266,10 +282,11 @@ async function apiPost<T>(
+       // eslint-disable-next-line no-console
+       console.error(
+         `apiPost ${endpoint} failed (attempt ${attempt + 1}/${maxAttempts}), ` +
+-          `retrying in ${delayMs}ms: ${String(err)}`,
++          `retrying in ${delayMs}ms (network connection failure)`,
+       );
+       await sleep(delayMs);
+     } finally {
++      clearTimeout(timer);
+       if (externalAbortListener && options?.abortSignal) {
+         options.abortSignal.removeEventListener("abort", externalAbortListener);
+       }
+diff --git a/tests/cold-start.test.ts b/tests/cold-start.test.ts
+index 080afe9..af9dd1f 100644
+--- a/tests/cold-start.test.ts
++++ b/tests/cold-start.test.ts
+@@ -237,7 +237,7 @@ describe("outbound cache cap", () => {
+     vi.clearAllMocks();
+   });
+ 
+-  it("parkOutbound force-sends the oldest at the cap instead of dropping it", async () => {
++  it("parkOutbound preserves FIFO at the soft cap without bypassing a closed window", async () => {
+     const mock = makeMockAgent("wx-s1");
+     const { bridge } = makeBridge(mock, true);
+     const anyBridge = bridge as unknown as {
+@@ -255,15 +255,13 @@ describe("outbound cache cap", () => {
+     const sent = () => sendTextMessage.mock.calls.map((c) => (c as [string, string])[1]);
+     expect(sent()).toEqual([]);
+ 
+-    // Over the cap: the OLDEST item leaves the queue by being SENT, not by
+-    // being discarded. It goes out even though the window is closed — the
+-    // gateway is the authority on that, and dropping is the one outcome the
+-    // cap must never produce.
++    // Queue pressure cannot authorize another remote send. The existing hard
++    // ceiling remains the memory bound; every item here remains durable.
+     await anyBridge.parkOutbound("u1", { kind: "text", text: "msg-100" });
+-    expect(sent()).toEqual(["msg-0"]);
+-    expect(anyBridge.outboundCache).toHaveLength(100);
+-    expect(anyBridge.outboundCache[0]!.text).toBe("msg-1");
+-    expect(anyBridge.outboundCache[99]!.text).toBe("msg-100");
++    expect(sent()).toEqual([]);
++    expect(anyBridge.outboundCache).toHaveLength(101);
++    expect(anyBridge.outboundCache[0]!.text).toBe("msg-0");
++    expect(anyBridge.outboundCache[100]!.text).toBe("msg-100");
+   });
+ 
+   it("nothing is discarded across repeated cap pressure", async () => {
+@@ -280,12 +278,12 @@ describe("outbound cache cap", () => {
+     }
+     const sent = sendTextMessage.mock.calls.map((c) => (c as [string, string])[1]);
+     const queued = anyBridge.outboundCache.map((i) => i.text);
+-    // Every enqueued message is either in the queue or was force-sent; the
+-    // union is exactly the input, with no gap and no duplicate.
++    // Every item remains in FIFO until explicit inbound recovery opens the
++    // window. A full soft cap does not itself authorize retries.
+     const all = [...sent, ...queued].sort((a, b) => Number(a!.slice(4)) - Number(b!.slice(4)));
+     expect(all).toHaveLength(140);
+     for (let i = 0; i < 140; i++) expect(all[i]).toBe(`msg-${i}`);
+-    expect(sent.length).toBeGreaterThan(0);
+-    expect(queued).toHaveLength(100);
++    expect(sent).toHaveLength(0);
++    expect(queued).toHaveLength(140);
+   });
+ });
+diff --git a/tests/dot-admission.test.ts b/tests/dot-admission.test.ts
+new file mode 100644
+index 0000000..1a85f0c
+--- /dev/null
++++ b/tests/dot-admission.test.ts
+@@ -0,0 +1,28 @@
++import { describe, expect, it, vi } from "vitest";
++import { AgentStore } from "../src/dsh/sessions.js";
++
++describe("synchronous bridge admission", () => {
++  it.each(["queue", "steer"] as const)("can consume the identified frozen message before %s enqueue", mode => {
++    const store = new AgentStore({ get: () => undefined, on: () => () => {} });
++    const agent = { followup: vi.fn(), steer: vi.fn() } as any;
++    let created: any;
++    const id = store.followup(agent, [{ type: "text", text: "synthetic recovery request" }], mode, ((_id: string, message: unknown) => {
++      created = message;
++      return false;
++    }) as any);
++    expect(created?.id).toBe(id);
++    expect(Object.isFrozen(created)).toBe(true);
++    expect(created.source).toEqual({ kind: "user" });
++    expect(agent.followup).not.toHaveBeenCalled(); expect(agent.steer).not.toHaveBeenCalled();
++  });
++
++  it("keeps normal callback and no-hook forwarding compatible", () => {
++    const store = new AgentStore({ get: () => undefined, on: () => () => {} });
++    const agent = { followup: vi.fn(), steer: vi.fn() } as any;
++    const callback = vi.fn();
++    store.followup(agent, [{ type: "text", text: "new request" }], "queue", callback);
++    store.followup(agent, [{ type: "text", text: "another request" }], "steer");
++    expect(agent.followup).toHaveBeenCalledOnce(); expect(agent.steer).toHaveBeenCalledOnce();
++    expect(callback.mock.calls[0][0]).toBe(agent.followup.mock.calls[0][0].id);
++  });
++});
+diff --git a/tests/dot-api-delivery.test.ts b/tests/dot-api-delivery.test.ts
+new file mode 100644
+index 0000000..ccd177f
+--- /dev/null
++++ b/tests/dot-api-delivery.test.ts
+@@ -0,0 +1,54 @@
++import { afterEach, expect, it, vi } from "vitest";
++import { getUpdates, sendMessage } from "../src/weixin/api.js";
++import { isDefinitelyUnsentNetworkError } from "../src/utils/network.js";
++const originalFetch = globalThis.fetch;
++afterEach(() => { globalThis.fetch = originalFetch; vi.useRealTimers(); });
++const params = { baseUrl: "https://invalid.test", token: "PRIVATE_TOKEN", body: { msg: { client_id: "same-id" } } };
++
++it("send timeout is uncertain rather than a synthetic success", async () => {
++  globalThis.fetch = vi.fn().mockRejectedValue(Object.assign(new Error("timeout"), { name: "AbortError" }));
++  await expect(sendMessage(params)).rejects.toMatchObject({ name: "AbortError" });
++  expect(globalThis.fetch).toHaveBeenCalledTimes(1);
++});
++
++it("long-poll timeout retains the empty-update sentinel", async () => {
++  globalThis.fetch = vi.fn().mockRejectedValue(Object.assign(new Error("timeout"), { name: "AbortError" }));
++  await expect(getUpdates({ ...params, get_updates_buf: "" })).resolves.toMatchObject({ ret: 0, msgs: [] });
++});
++
++it("sendmessage does not automatically retry socket-reset ambiguity", async () => {
++  globalThis.fetch = vi.fn().mockRejectedValue(Object.assign(new Error("reset"), { code: "ECONNRESET" }));
++  await expect(sendMessage(params)).rejects.toMatchObject({ code: "ECONNRESET" });
++  expect(globalThis.fetch).toHaveBeenCalledTimes(1);
++});
++
++it("sendmessage retries definite connection failures with one stable client id", async () => {
++  vi.useFakeTimers();
++  globalThis.fetch = vi.fn().mockRejectedValueOnce(Object.assign(new Error("connect"), { code: "ECONNREFUSED" }))
++    .mockResolvedValueOnce(new Response('{"ret":0}', { status: 200 }));
++  const sent = sendMessage(params); const asserted = expect(sent).resolves.toBeUndefined();
++  await vi.advanceTimersByTimeAsync(1000); await asserted;
++  const calls = (globalThis.fetch as any).mock.calls;
++  expect(calls).toHaveLength(2); expect(calls[0][1].body).toBe(calls[1][1].body);
++});
++
++it.each(["", "{}", "null", "[]", '{"note":"accepted?"}'])("rejects an unconfirmed send response %s", async body => {
++  globalThis.fetch = vi.fn().mockResolvedValue(new Response(body, { status: 200 }));
++  await expect(sendMessage({ ...params, retries: 0 })).rejects.toThrow(/confirm|accept|response/i);
++});
++
++it("a body-read failure after response headers cannot become a definitely-unsent retry", async () => {
++  globalThis.fetch = vi.fn().mockResolvedValue({ ok: true, text: async () => { throw Object.assign(new Error("body failed"), { code: "ECONNREFUSED" }); } });
++  let caught: unknown; try { await sendMessage(params); } catch (error) { caught = error; }
++  expect(caught).toBeInstanceOf(Error); expect(globalThis.fetch).toHaveBeenCalledTimes(1);
++  expect(isDefinitelyUnsentNetworkError(caught)).toBe(false);
++});
++
++it("the send timeout remains armed until the response body finishes", async () => {
++  vi.useFakeTimers();
++  globalThis.fetch = vi.fn().mockImplementation(async (_url, options) => ({ ok: true,
++    text: () => new Promise((_resolve, reject) => options.signal.addEventListener("abort", () => reject(Object.assign(new Error("body timeout"), { name: "AbortError" })))) }));
++  const outcome = sendMessage(params).then(() => "sent", () => "uncertain");
++  await vi.advanceTimersByTimeAsync(15000);
++  expect(await outcome).toBe("uncertain");
++});
+diff --git a/tests/dot-delivery.test.ts b/tests/dot-delivery.test.ts
+new file mode 100644
+index 0000000..afc3d7b
+--- /dev/null
++++ b/tests/dot-delivery.test.ts
+@@ -0,0 +1,130 @@
++import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
++import fs from "node:fs";
++import os from "node:os";
++import path from "node:path";
++
++const sendText = vi.fn();
++vi.mock("../src/weixin/send.js", async original => ({
++  ...await original<typeof import("../src/weixin/send.js")>(),
++  sendTextMessage: (...args: unknown[]) => sendText(...args),
++}));
++import { WeChatDSHBridge } from "../src/bridge/bridge.js";
++import { defaultConfig } from "../src/config.js";
++
++const connectionError = () => Object.assign(new Error("PRIVATE_NETWORK_ENDPOINT"), { cause: Object.assign(new Error("PRIVATE_ADDRESS"), { code: "ECONNREFUSED" }) });
++type Internal = {
++  token: unknown; wechatMsgCount: number; outboundSerial: Promise<void>;
++  state: { ensureUser(user: string, cwd: string): void; update(user: string, patch: unknown): void };
++  outboundCache: Array<{ kind: string; text: string }>;
++  deliverOutbound(user: string, item: unknown): Promise<string>;
++  handleMessage(message: unknown): Promise<void>;
++};
++let dir: string, bridge: WeChatDSHBridge, b: Internal;
++let events: Array<{ name: string; payload: any }>;
++let received: any[];
++beforeEach(() => {
++  vi.useFakeTimers(); sendText.mockReset().mockResolvedValue(undefined);
++  events = []; received = [];
++  const agent = { id: "s1", status: "idle", options: {}, followup: (message: any) => {
++    expect(events.some(event => event.payload.messageId === message.id)).toBe(true);
++    received.push(message);
++  }};
++  const agents = { get: () => agent, list: () => [agent], create: async () => ({ agent }), resume: async () => ({ agent }) };
++  dir = fs.mkdtempSync(path.join(os.tmpdir(), "dot-wx-delivery-"));
++  bridge = new WeChatDSHBridge({ get: (name: string) => name === "agents" ? agents : undefined,
++    on: () => () => {}, emit: (name: string, payload: any) => { events.push({ name, payload }); } } as any,
++  { ...defaultConfig(), storageDir: dir });
++  b = bridge as unknown as Internal;
++  b.token = { baseUrl: "https://invalid.test", token: "PRIVATE_TOKEN" };
++  b.state.ensureUser("PRIVATE_PEER", "/synthetic"); b.state.update("PRIVATE_PEER", { sessionId: "s1" });
++});
++afterEach(async () => { await bridge.stop(); vi.useRealTimers(); fs.rmSync(dir, { recursive: true, force: true }); });
++
++describe("Dot definite-unsent recovery", () => {
++  it("retries a definite connection failure without a user message and drains FIFO once", async () => {
++    sendText.mockRejectedValueOnce(connectionError());
++    expect(await b.deliverOutbound("PRIVATE_PEER", { kind: "text", text: "PRIVATE_REMINDER" })).toBe("cached");
++    expect(await b.deliverOutbound("PRIVATE_PEER", { kind: "text", text: "PRIVATE_RESULT" })).toBe("cached");
++    expect(sendText).toHaveBeenCalledTimes(1);
++    await vi.advanceTimersByTimeAsync(1000); await b.outboundSerial;
++    expect(sendText.mock.calls.map(call => call[1])).toEqual(["PRIVATE_REMINDER", "PRIVATE_REMINDER", "PRIVATE_RESULT"]);
++    expect(b.outboundCache).toHaveLength(0);
++    await vi.advanceTimersByTimeAsync(60000); expect(sendText).toHaveBeenCalledTimes(3);
++  });
++
++  it("bounds retries and exposes only safe diagnostics without resetting the ten-message budget", async () => {
++    sendText.mockRejectedValue(connectionError());
++    await b.deliverOutbound("PRIVATE_PEER", { kind: "text", text: "PRIVATE_BODY" });
++    await vi.advanceTimersByTimeAsync(60000); await b.outboundSerial;
++    expect(sendText).toHaveBeenCalledTimes(4); // original + three bounded retries
++    const status = bridge.getStatus().outbound as any;
++    expect(status.queueCount).toBe(1); expect(status.messageCount).toBe(4);
++    expect(status.retry.scheduled).toBe(false); expect(status.retry.attempt).toBe(3);
++    expect(status.lastError.kind).toBe("definite_unsent");
++    expect(JSON.stringify(status)).not.toMatch(/PRIVATE|https:|token|peer|body/i);
++  });
++
++  it("does not retry a socket reset with an ambiguous outcome", async () => {
++    sendText.mockRejectedValueOnce(Object.assign(new Error("PRIVATE_BODY"), { code: "ECONNRESET" }));
++    await b.deliverOutbound("PRIVATE_PEER", { kind: "text", text: "PRIVATE_BODY" });
++    const attempted = sendText.mock.calls.length;
++    await vi.advanceTimersByTimeAsync(60000); await b.outboundSerial;
++    expect(sendText).toHaveBeenCalledTimes(attempted); expect(b.outboundCache).toHaveLength(1);
++    expect((bridge.getStatus().outbound as any).lastError.kind).toBe("uncertain");
++  });
++
++  it("an unknown queued failure is not mislabeled as a proven rate limit", async () => {
++    sendText.mockRejectedValueOnce(new Error("unclassified send failure"));
++    const result = await bridge.handleSendWeChat("s1", { text: "synthetic" });
++    expect(result.ok).toBe(true); expect(result.message).toMatch(/queued/);
++    expect(result.message).not.toMatch(/rate limit/i);
++  });
++
++  it("never lets a scheduled retry bypass a closed message window", async () => {
++    sendText.mockRejectedValueOnce(connectionError());
++    await b.deliverOutbound("PRIVATE_PEER", { kind: "text", text: "PRIVATE_BODY" });
++    b.wechatMsgCount = 10;
++    await vi.advanceTimersByTimeAsync(60000); await b.outboundSerial;
++    expect(sendText).toHaveBeenCalledTimes(1); expect(b.wechatMsgCount).toBe(10);
++    expect(b.outboundCache).toHaveLength(1);
++  });
++
++  it("cancels retry on unload while preserving the durable queue", async () => {
++    sendText.mockRejectedValueOnce(connectionError());
++    await b.deliverOutbound("PRIVATE_PEER", { kind: "text", text: "PRIVATE_BODY" });
++    await bridge.stop(); await vi.advanceTimersByTimeAsync(60000);
++    expect(sendText).toHaveBeenCalledTimes(1);
++    const stored = JSON.parse(fs.readFileSync(path.join(dir, "state.json"), "utf8"));
++    expect(stored.outbound.queue).toEqual([{ kind: "text", text: "PRIVATE_BODY" }]);
++  });
++
++  it("queue pressure cannot retry a head whose previous delivery is ambiguous", async () => {
++    b.outboundCache = Array.from({ length: 100 }, (_, i) => ({ kind: "text", text: `uncertain-${i}` }));
++    b.wechatMsgCount = 2;
++    await b.deliverOutbound("PRIVATE_PEER", { kind: "text", text: "new-tail" });
++    expect(sendText).not.toHaveBeenCalled(); expect(b.outboundCache).toHaveLength(101);
++    expect(b.outboundCache[0]?.text).toBe("uncertain-0");
++  });
++
++  it("unload during a pending retry does not send the next cached item", async () => {
++    let release!: () => void;
++    sendText.mockRejectedValueOnce(connectionError()).mockImplementationOnce(() => new Promise<void>(resolve => { release = resolve; }));
++    await b.deliverOutbound("PRIVATE_PEER", { kind: "text", text: "first" });
++    await b.deliverOutbound("PRIVATE_PEER", { kind: "text", text: "second" });
++    await vi.advanceTimersByTimeAsync(1000);
++    expect(sendText).toHaveBeenCalledTimes(2); expect(typeof release).toBe("function");
++    await bridge.stop(); release(); await b.outboundSerial;
++    expect(sendText).toHaveBeenCalledTimes(2);
++    expect(b.outboundCache).toEqual([{ kind: "text", text: "second" }]);
++  });
++
++  it("emits a body-free exact-message receipt before forwarding the recovery input", async () => {
++    b.outboundCache = [{ kind: "text", text: "PRIVATE_REMINDER" }, { kind: "text", text: "PRIVATE_RESULT" }];
++    await b.handleMessage({ message_type: 1, from_user_id: "PRIVATE_PEER", item_list: [{ type: 1, text_item: { text: "只收取缓存" } }] });
++    expect(received).toHaveLength(1);
++    const event = events.find(event => event.name === "wechat/inbound-forwarded")!;
++    expect(event.payload.agent.id).toBe("s1"); expect(event.payload.messageId).toBe(received[0].id);
++    expect(event.payload.receipt).toEqual({ attempted: true, sent: 2, remaining: 0, dropped: 0 });
++    expect(JSON.stringify(event.payload.receipt)).not.toMatch(/PRIVATE|token|peer|body/i);
++  });
++});

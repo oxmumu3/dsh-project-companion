@@ -4,15 +4,15 @@ Dot 将用户明确连接的来源作为按需、只读材料。连接不代表�
 
 ## 怎么连接和使用
 
-1. 打开 Harness 设置 → DeepSeek Dot，在资料来源的原生配置表单填写自己的滴答 MCP API 口令或 flomo Token；秘密字段在原生表单中遮蔽，不要把口令发进微信。
-2. Google 使用你自己创建并满足下述预览条件的 Desktop OAuth Client ID 与 Client Secret。保存后在同一页点 Google 授权并打开授权链接；浏览器只会回到本机随机端口，成功后刷新连接状态。
-3. 逐项点击要使用的来源「启用读取」，或在对应会话明确要求启用。此步验证工具目录，不读取私人正文，也不创建扫描计划。
+1. 打开 Harness 设置 → DeepSeek Dot，在资料来源点「登录 flomo」或「登录滴答清单」，打开官方账号授权页。用自己的账号登录并同意授权；无需创建、复制或粘贴 Token。flomo MCP 仍需 MAX 会员。
+2. 授权页面回到本机后，返回 Dot 刷新连接状态。逐项点击要使用的来源「启用读取」，或在对应会话明确要求启用。此步验证工具目录，不读取私人正文，也不创建扫描计划。
+3. Google 当前仍是开发者接入：需满足下述官方预览条件，再在高级配置填写自己的 Desktop OAuth Client ID 与 Client Secret 并完成 Google 授权。旧版个人 Token 也仅保留为高级兼容配置，不是 flomo、滴答的默认连接方式。
 4. 回到原微信对话自然提问，例如「搜 flomo 中关于插件生态的笔记」「查看未来 24 小时 Google 日历」「先列滴答项目，再查看这个项目未完成任务」。首次没有返回资料、授权不足或工具字段不兼容时，会明确失败，不改用写工具。
 5. Docs、Sheets、Slides 正文读取需指定资源 ID；Sheets 还需明确有界范围，例如 `A1:F30`。Drive、Gmail 搜索先返回有限资料，再由你明确选择全文。来源输出会保留资源 ID、更新时间、读取时间、官方链接和截断状态。
 
 Gmail、Drive 和 flomo 可按同一个明确搜索词汇总；日历和滴答项目可以不带搜索词汇总。最多四个来源，每源有限条目；需要各自不同范围时分别查询，接口不支持的限定条件会拒绝，不静默忽略。日历时间范围默认未来 24 小时、最多 7 天；flomo 单次最多 5 条、其他来源最多 10 条；Sheets 最多 200 行、26 列、2000 格。当前不自动把私人来源塞入项目日报，不把正文写进项目记忆，也不修改任务、邮件、文档或笔记。
 
-启用绑定原对话、原微信连接和当前账号；更换账号或绑定后需重新启用。停用立即中断待返回读取；停用来源不会替你撤销服务商的 OAuth 许可，彻底撤销需到服务商授权页操作。凭据由 Harness 原生 profile 配置保存，秘密表单遮蔽和文件权限不等同系统钥匙串加密。读取结果会进入当前宿主会话，并可能发给你配置的模型；模型与日志保留由宿主配置决定。
+启用绑定原对话、原微信连接和当前账号；更换账号、重新授权或绑定后需重新启用。flomo 自动刷新同一连接的令牌不会改变原有启用状态。停用立即中断待返回读取；停用来源不会替你撤销服务商的 OAuth 许可，彻底撤销需到服务商授权页操作。凭据由 Harness 原生 profile 配置保存，秘密表单遮蔽和文件权限不等同系统钥匙串加密。读取结果会进入当前宿主会话，并可能发给你配置的模型；模型与日志保留由宿主配置决定。
 
 ## Google 官方 remote MCP
 
@@ -70,8 +70,13 @@ Google 刷新授权要求 `access_type=offline`，已同意的用户重新取得
 
 ## 滴答与 flomo
 
-- 滴答官方 MCP 固定使用 `https://mcp.dida365.com`，不猜测或追加 `/mcp` 路径。用户通过自己的滴答 API 口令连接；普通用户的 Token 不经过聊天或公开配置文件。
-- flomo 官方端点为 `https://flomoapp.com/mcp`。[官方个人 Token 教程](https://help.flomoapp.com/advance/mcp/token.html) 与 [客户端接入说明](https://help.flomoapp.com/advance/mcp/connect-cursor.html)要求 flomo MAX。Dot 只能使用用户为自己生成的独立 Token。
+- 滴答官方 MCP 固定使用 `https://mcp.dida365.com`，不猜测或追加 `/mcp` 路径。[官方 OAuth metadata](https://dida365.com/.well-known/oauth-authorization-server) 发布动态客户端注册与 S256 PKCE；[MCP 资源 metadata](https://mcp.dida365.com/.well-known/oauth-protected-resource)发布 `tasks:read` 与 `tasks:write`，Dot 只申请 `tasks:read`。[官方 Open API 授权文档](https://developer.dida365.com/docs/index.html#/openapi?id=authorization)也说明账号同意流程与上述权限。metadata 仅声明 `authorization_code`，因此 Dot 不猜测滴答支持刷新授权，过期后需重新连接。
+- flomo 官方端点为 `https://flomoapp.com/mcp`。[官方自动授权教程](https://help.flomoapp.com/advance/mcp/connect-chatgpt-web.html)明确支持 OAuth 且无需个人 Token；[官方 OAuth metadata](https://flomoapp.com/.well-known/oauth-authorization-server)发布动态客户端注册、S256 PKCE 和刷新授权；[MCP 资源 metadata](https://flomoapp.com/.well-known/oauth-protected-resource)发布 `mcp` scope。flomo 当前没有公开更细的只读 OAuth scope，因此 Dot 的只读边界由下述工具白名单继续强制执行，不把账号授权范围描述成服务端只读许可。仍需 flomo MAX。
+- 默认连接由用户点击后才注册此客户端、生成一次性授权链接，再由用户亲自在官方页面登录与同意。Dot 不接收账号密码，不复用作者或其他客户端的令牌；页面挂载和状态刷新不会注册客户端、开始登录或查询账号。
+- 本机回调仅绑定 `127.0.0.1` 随机端口，授权有效期五分钟；校验原始 Host、回调路径、单值 state、可选 issuer 与 PKCE，授权码只交换一次。固定官方 HTTPS 端点拒绝重定向；HTTP、响应体与关闭取消均有上限。配置变化后的旧回调与旧刷新响应不能保存；关闭会中断请求并关闭回调监听。
+- 授权流程绑定开始时的原对话、微信绑定和暂停状态，在注册、换码、保存及原生写入前重新验证。凭据写入同时核对原 OAuth 字段、兼容 Token 字段与原生配置 revision；授权期间清空、更换凭据不会被迟到回调覆盖；已换绑后到达的回调会被拒绝。原绑定检查以派发原生保存请求为界，不能原子撤销已进入其他插件事务的操作。刷新授权也使用相同的配置比较与当前来源授权检查。
+- OAuth 凭据保存在本插件的原生 secret 配置中，连接状态仅返回布尔值和授权链接失效时间。flomo 刷新令牌轮换会保存新值；滴答仅保存有界访问令牌。服务端未提供过期秒数时，Dot 最多复用一小时；令牌不会因缺少到期字段无限期有效。
+- 个人 Token 仍可按[官方 Token 教程](https://help.flomoapp.com/advance/mcp/token.html)作为高级兼容方式使用。存在 OAuth 凭据时，授权失效会明确要求重新连接，不悄悄回退到另一个账号的 Token。清除本机凭据与撤销服务商许可是两项操作；flomo 可在「设置 → MCP / API → MCP → OAuth 授权模式 → 应用列表」断开。
 - 这两个端点都可能发布写工具。连接后也必须 exact-name 白名单与输入校验，不能因为工具描述声称只读就执行，不能在找不到工具时回退至第一项工具。
 - flomo 搜索摘要与全文读取有不同截断边界；读取结果需要保留 `content_truncated/omitted_ids/truncated` 等标记。
 - 不默认调用外部 AI 画像工具；来源内容不会自动升级为个人稳定事实或项目记忆。
@@ -88,7 +93,7 @@ Google 刷新授权要求 `access_type=offline`，已同意的用户重新取得
 - 拒绝重定向；错误只返回固定 code/message，不回传服务器原始错误正文、Token 或会话 ID。
 - 忽略服务器通知与初始化说明，目录只投影 `name/inputSchema`。真正的业务调用仍须经过 Dot 的只读合同白名单和输出投影。
 
-合成测试覆盖协议协商、流式响应、分页上限、错误脱敏、取消、总超时、凭据切换和同来源排队。公开 metadata 或未授权 HTTP 401 仅验证端点存在和鉴权边界，不能冒充用户已授权、私人材料已读或微信已送达。
+合成测试覆盖协议协商、流式响应、分页上限、错误脱敏、取消、总超时、凭据切换和同来源排队；账号授权还覆盖按点击注册、PKCE、本机回调、重复授权码、到期、保存失败、配置轮换、刷新轮换及连接身份稳定性。2026-10-19 实际核对了上述公开文档和 metadata，并对两源各做一次公开 DCR 注册：flomo 返回201，滴答返回200，均生成本机回调及S256授权链接后立即关闭监听；未登录账号、同意授权、交换令牌或读取私人材料。滴答注册响应的scope与申请值不一致，授权链接仍仅申请tasks:read，最终同意及令牌权限尚待本人登录验证。公开 metadata 或未授权 HTTP 401 仅验证端点存在和鉴权边界，不能冒充用户已授权、私人材料已读或微信已送达。
 
 ## 可选复用路线与许可证
 

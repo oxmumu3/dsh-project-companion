@@ -1,0 +1,119 @@
+{
+  "schemaVersion": 1,
+  "name": "dsh-wechat",
+  "version": "0.11.1-dot.1",
+  "maintainer": "DSH Dot / 牛村木木山",
+  "upstream": {
+    "repository": "https://github.com/pan17/dsh-wechat",
+    "tag": "v0.11.0",
+    "sourceCommit": "218537511681be7557589f5ae0eab84f80267dc8",
+    "originalNpmVersion": "0.11.0",
+    "originalNpmArchiveSha256": "993e1e1afce3c0dcd2610bf9e84ffbfd6d08768f5c4b4fa30eeec50dc2e97d3f"
+  },
+  "sourceCommit": "1f28de0f5a9d338db884ff5b84e90e9572eaf1cc",
+  "delta": {
+    "file": "dsh-wechat-0.11.1-dot.1.patch",
+    "sha256": "6e34feef2dc29cb82fdfef0305c27ae4bf604962cd7ca43e616a53d8aedc2c64",
+    "format": "git diff --binary upstream sourceCommit..sourceCommit"
+  },
+  "archive": {
+    "file": "dsh-wechat-0.11.1-dot.1.tgz",
+    "sha256": "b40031cd0928c9df76a864d6ff15bc3fe7356b6298ad2758b6272f127f965878",
+    "bytes": 1317789
+  },
+  "license": {
+    "type": "MIT",
+    "originalPreserved": true,
+    "copyright": "Copyright (c) 2026 dsh-wechat contributors",
+    "sha256": "85786833fc6145d3da5c0544cf5195c3397967a34b22ddf10db05d4a23da4067"
+  },
+  "buildTools": {
+    "node": "22.22.0",
+    "npm": "10.9.4",
+    "typescript": "5.9.3",
+    "packageLockSha256": "d2f9e2bd625f17ff9410f8b2f3c7ecc6600e3cc45a7a217e88a489d323679163"
+  },
+  "changedFiles": [
+    {
+      "file": "NOTICE.md",
+      "sha256": "d4b64c5a3cde169b44e130cf72c4a9c5591b97c6a439e372606132c7b966ca10"
+    },
+    {
+      "file": "README.md",
+      "sha256": "4aa578ad77517e36c0e405cf51c7de404a59ec76da74c4bf510d93be64660198"
+    },
+    {
+      "file": "SOURCE.json",
+      "sha256": "2b0c77b0ba69aab01732c9ffa830090479a131d20f42c3e31cb84ad92adcf3d7"
+    },
+    {
+      "file": "package-lock.json",
+      "sha256": "d2f9e2bd625f17ff9410f8b2f3c7ecc6600e3cc45a7a217e88a489d323679163"
+    },
+    {
+      "file": "package.json",
+      "sha256": "6a6344c0fd7632d350cb56748b60902bd900b795265a0d3fea723accd622d96c"
+    },
+    {
+      "file": "src/bridge/bridge.ts",
+      "sha256": "18dd3d2571d4bb7cca6cf0f6e5a978e2ecb1f5a045db81e2f7a6c5f5b5aea7ed"
+    },
+    {
+      "file": "src/dsh/sessions.ts",
+      "sha256": "09cb3400c6410f3725d64f57a1ad98c3700f685bf906087ce3b164b9c1d98284"
+    },
+    {
+      "file": "src/state.ts",
+      "sha256": "9fc681e140147e72f2498f4f1f2a761bf04e4b0264caaa649c92be2bf331c057"
+    },
+    {
+      "file": "src/utils/network.ts",
+      "sha256": "24d2791176919aa0acce8c84fdba3dc12a6bd7fcdda77014633bd2838121cc6d"
+    },
+    {
+      "file": "src/weixin/api.ts",
+      "sha256": "e1e7be44931d99940112bb21ff35d21a1a3aa50358f1ca096d0285400c68df33"
+    },
+    {
+      "file": "tests/cold-start.test.ts",
+      "sha256": "91a906345bc79b86231e11d3a34e18419179fc547176f163718db5d80b38d6f4"
+    },
+    {
+      "file": "tests/dot-admission.test.ts",
+      "sha256": "2a8fc83b35cc8632a4551ab9af4b7ecfa59b68d0dfe2bcbc28287a4d52c3fd63"
+    },
+    {
+      "file": "tests/dot-api-delivery.test.ts",
+      "sha256": "64d19bfeeef184129f38776d9ad688ec8156553eae6aa698a6fdfaf9dd8de617"
+    },
+    {
+      "file": "tests/dot-delivery.test.ts",
+      "sha256": "7ce7e4629bc95a08941f7c42df79951441c6a52d9301e48421c106a816714086"
+    }
+  ],
+  "verification": {
+    "bridgeTests": {
+      "files": 50,
+      "passed": 755,
+      "failed": 0
+    },
+    "build": "npm run build: passed",
+    "scope": "Automated source/build and stubbed transport tests; no phone delivery claim",
+    "buildCacheExcluded": "dist/.tsbuildinfo excluded from npm package; runtime files retained",
+    "offlinePatchRebuild": {
+      "appliedToPinnedUpstream": true,
+      "changedFileHashesVerified": 14,
+      "buildPassed": true,
+      "archiveByteIdentical": true,
+      "sha256": "b40031cd0928c9df76a864d6ff15bc3fe7356b6298ad2758b6272f127f965878",
+      "dependencyInstall": false,
+      "dependencySource": "Existing build dependencies from the locked fork checkout"
+    }
+  },
+  "boundaries": [
+    "This is a local maintained fork, not an upstream release or endorsement.",
+    "The base source tag and original npm archive are pinned independently; byte equivalence between them is not asserted.",
+    "No account state, credentials, pairing files, user messages or node_modules are included.",
+    "No app/plugin installation, real send or publication was performed by packaging."
+  ]
+}

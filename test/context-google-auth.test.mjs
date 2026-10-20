@@ -8,7 +8,7 @@ const requireModules = () => {
   assert.equal(typeof configModule?.readContextConfig, 'function', 'native secret config reader must exist');
   assert.equal(typeof authModule?.createGoogleAuth, 'function', 'Google OAuth owner must exist');
 };
-const initial = () => ({ flomoToken: '', didaToken: '', googleClientId: 'fixture.apps.googleusercontent.com', googleClientSecret: 'fixture-client-secret', googleRefreshToken: '' });
+const initial = () => ({ flomoToken: '', didaToken: '', flomoOAuthCredentials: '', didaOAuthCredentials: '', googleClientId: 'fixture.apps.googleusercontent.com', googleClientSecret: 'fixture-client-secret', googleRefreshToken: '' });
 const tokenResponse = (extra = {}) => new Response(JSON.stringify({ access_token: 'fixture-access', refresh_token: 'fixture-refresh', expires_in: 3600, token_type: 'Bearer', scope: authModule.GOOGLE_READ_SCOPES.join(' '), ...extra }), { status: 200 });
 function callback(url, override = {}) {
   const auth = new URL(url);
@@ -32,7 +32,7 @@ function fixture(options = {}) {
   return { auth, saved, requests, config, now: (value) => { now = value; }, set: (patch) => Object.assign(config, patch) };
 }
 
-test('native Config keeps five live credential fields separate from normal Dot appearance', () => {
+test('native Config keeps live credential fields separate from normal Dot appearance', () => {
   requireModules();
   const schema = configModule.Config;
   assert.deepEqual(Object.keys(schema.dict).sort(), [...Object.keys(initial()),'dotAppearance'].sort());

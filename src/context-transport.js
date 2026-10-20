@@ -128,9 +128,10 @@ export function createContextTransport(options = {}) {
     return states.get(source);
   }
   function reset(state) { state.hash = null; state.sessionId = null; state.initialized = false; }
-  async function token(source, signal) {
+  async function token(source, signal, authorizeMutation) {
     try {
-      const value = await bounded(Promise.resolve().then(() => tokenForSource?.(source, { signal })), signal);
+      const accountAuth = source === 'flomo' ? options.flomoAuth : source === 'dida' ? options.didaAuth : null;
+      const value = await bounded(Promise.resolve().then(() => accountAuth ? accountAuth.getToken({ signal, authorizeMutation }) : tokenForSource?.(source, { signal })), signal);
       if (typeof value !== 'string' || value.length === 0 || value.length > 8192 || /[\r\n]/.test(value)) throw failure('CONTEXT_AUTH_REQUIRED');
       return value;
     } catch (error) {
@@ -144,7 +145,7 @@ export function createContextTransport(options = {}) {
     return new Date(now).toISOString();
   }
   async function request(source, state, operation, method, params, notification = false) {
-    const bearer = operation.primedToken ?? await token(source, operation.signal);
+    const bearer = operation.primedToken ?? await token(source, operation.signal, operation.authorize);
     operation.primedToken = undefined;
     if (hash(bearer) !== state.hash) { reset(state); throw failure('CONTEXT_CREDENTIALS_CHANGED'); }
     const id = ++nextId;
@@ -187,7 +188,7 @@ export function createContextTransport(options = {}) {
     return readRpc(response, id, operation.signal);
   }
   async function initialized(source, state, operation) {
-    const bearer = await token(source, operation.signal);
+    const bearer = await token(source, operation.signal, operation.authorize);
     const current = hash(bearer);
     if (state.hash !== current) reset(state);
     state.hash = current;

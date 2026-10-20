@@ -213,3 +213,24 @@ test('read-only native configuration prevents credential staging and writes', as
 test('credential form catches a ready snapshot published before its subscription',async()=>{
  const c=await load({native:true});try{c.render();await c.flush();const panel=c.render();c.context.formSnapshot={...c.context.formSnapshot,status:'loading'};let view=c.renderCredentials(panel);assert.equal(nodes(view,n=>n.type==='native-form')[0].props.state.available,false);c.context.formSnapshot={...c.context.formSnapshot,status:'ready'};await c.flush();view=c.renderCredentials(panel);assert.equal(nodes(view,n=>n.type==='native-form')[0].props.state.available,true);assert.equal(c.configRequests.length,0);}finally{c.dispose();}
 });
+
+test('flomo and Dida offer explicit official account login with legacy fields collapsed',async()=>{
+ for(const source of ['flomo','dida']){
+  const c=await load();c.context.snapshot[source+'Auth']={clientConfigured:true,refreshConfigured:false,authInProgress:false};
+  try{c.render();await c.flush();let view=c.render();const labels={flomo:'flomo',dida:'滴答清单'};
+   const advanced=nodes(view,n=>n.type==='details'&&n.props['data-context-advanced'])[0];assert.ok(advanced);assert.notEqual(advanced.props.open,true);assert.equal(c.requests.length,1);
+   const url=source==='flomo'?'https://flomoapp.com/integration/grant?client_id=fixture&state=x':'https://dida365.com/oauth/authorize?client_id=fixture&state=x';c.context.onFetch=()=>Response.json({url,expiresAt:'2030-01-01T01:05:00Z'});
+   await nodes(view,n=>n.type==='button'&&text(n).includes('登录 '+labels[source]+' 授权'))[0].props.onClick();view=c.render();assert.deepEqual(JSON.parse(c.requests.at(-1).options.body),{action:source+'_authorize'});
+   const link=nodes(view,n=>n.type==='a')[0];assert.equal(link.props.href,url);assert.equal(link.props.target,'_blank');assert.match(link.props.rel,/noreferrer/);assert.equal(c.opened.length,0);assert.equal(c.requests.length,2);
+  }finally{c.dispose();}
+ }
+});
+
+test('account authorization refuses unexpected hosts and never accepts tokens from chat or page input',async()=>{
+ for(const source of ['flomo','dida']){
+  const c=await load();c.context.snapshot[source+'Auth']={clientConfigured:true,refreshConfigured:false,authInProgress:false};
+  try{c.render();await c.flush();const view=c.render(),label=source==='flomo'?'flomo':'滴答清单';c.context.onFetch=()=>Response.json({url:'https://evil.example/login?token=PRIVATE',expiresAt:'2030-01-01T01:05:00Z'});
+   await nodes(view,n=>n.type==='button'&&text(n).includes('登录 '+label+' 授权'))[0].props.onClick();const after=c.render();assert.equal(nodes(after,n=>n.type==='a').length,0);assert.doesNotMatch(text(after),/evil.example|PRIVATE/);assert.match(text(after),/不确定/);assert.equal(c.requests.filter(r=>r.options.method==='POST').length,1);
+  }finally{c.dispose();}
+ }
+});

@@ -1,6 +1,7 @@
 import {createHash} from 'node:crypto';
 import {z} from 'zod';
 import {SOURCE_INFO,buildContextCall,validateContextCall,projectContextResult} from './context-contracts.js';
+import {contextAccountCredentialState} from './context-account-auth.js';
 
 export const CONTEXT_SOURCES=['gmail','calendar','drive','docs','sheets','slides','dida','flomo'];
 const identity=z.string().min(1).max(200),hash=z.string().regex(/^[a-f0-9]{64}$/);
@@ -20,7 +21,7 @@ export function createPersonalContext({store,transport,readConfig,readBinding,ca
   const now=()=>new Date(clock());
   async function load(){if(failed)fail('CONTEXT_STORE_UNAVAILABLE');if(state)return;try{state=contextRowSchema.parse(await store.get('profile')??fresh());}catch{failed=true;fail('CONTEXT_STORE_UNAVAILABLE');}}
   async function save(){try{await store.put('profile',contextRowSchema.parse(structuredClone(state)));}catch{failed=true;fail('CONTEXT_STORE_UNAVAILABLE');}}
-  function credentials(source){const c=readConfig();const values=['dida','flomo'].includes(source)?[c[`${source}Token`]]:[c.googleClientId,c.googleRefreshToken,c.googleClientSecret??''];const configured=['dida','flomo'].includes(source)?!!values[0]:!!values[0]&&!!values[1]&&!!values[2];return{configured,key:digest(JSON.stringify(values))};}
+  function credentials(source){const c=readConfig();if(['dida','flomo'].includes(source))return contextAccountCredentialState(source,c,now().getTime());const values=[c.googleClientId,c.googleRefreshToken,c.googleClientSecret??''];return{configured:!!values[0]&&!!values[1]&&!!values[2],key:digest(JSON.stringify(values))};}
   function validateOwner(owner){if(!owner?.sessionId||typeof owner.cwd!=='string'||!owner.cwd.startsWith('/'))fail('CONTEXT_INTENT_REQUIRED');}
   function intent(input){if(input.userRequested!==true)fail('CONTEXT_INTENT_REQUIRED');}
   function sourceId(source){if(!CONTEXT_SOURCES.includes(source))fail('CONTEXT_UNAVAILABLE');return source;}

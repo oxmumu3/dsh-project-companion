@@ -6,6 +6,7 @@ import {defineDomain,domainTable} from '@deepseek-ai/dsh-storage-domain';
 import {createUserMessage} from '@deepseek-ai/dsh-llm';
 import {createService,parseCommand} from './src/service.js';
 import {registerGuidance} from './src/guidance.js';
+import {createWechatRecoveryGuard} from './src/wechat-recovery.js';
 import {createCoordinator,effectiveCwd} from './src/coordination.js';
 import {createTaskResults,taskResultsRowSchema} from './src/task-results.js';
 import {readWechatBinding,readWechatRoute,readWechatSetup} from './src/wechat-route.js';
@@ -18,6 +19,8 @@ import {fetchNewsCandidates,readNewsArticle} from './src/news-feeds.js';
 import {createNewsModel} from './src/news-model.js';
 import {Config,readContextConfig} from './src/context-config.js';
 import {createGoogleAuth} from './src/context-google-auth.js';
+import {createContextCredentialWriter} from './src/context-credential-writer.js';
+import {createContextAccountAuth} from './src/context-account-auth.js';
 import {createContextTransport} from './src/context-transport.js';
 import {createPersonalContext,contextRowSchema,CONTEXT_SOURCES,contextErrorText} from './src/context-service.js';
 import {createContextRoute,registerContextRoute} from './src/context-route.js';
@@ -92,6 +95,7 @@ export async function installCompanion(ctx,options={}){
   const readBinding=options.readBinding??(sessionId=>readWechatBinding(ctx,sessionId,{...(options.fetch?{fetch:options.fetch}:{})}));
   const readNativeRoute=options.readNativeRoute??(sessionId=>readWechatRoute(ctx,sessionId,{...(options.fetch?{fetch:options.fetch}:{})}));
   const readSetup=options.readSetup??(()=>readWechatSetup(ctx,{...(options.fetch?{fetch:options.fetch}:{})}));
+  const recoveryGuard=createWechatRecoveryGuard({ctx});
   const taskResults=createTaskResults({
     store:{get:key=>taskTable.get(key),put:(key,value)=>taskTable.put(key,taskResultsRowSchema.parse(value))},
     ...(options.clock?{clock:options.clock}:{}),
@@ -182,7 +186,10 @@ export async function installCompanion(ctx,options={}){
     await settings.mutate(entryId,[{op:'set',path:['googleRefreshToken'],value}]);
   });
   const googleAuth=options.context?.googleAuth??createGoogleAuth({readConfig,saveRefreshToken,...(options.context?.fetch?{fetch:options.context.fetch}:{}),...(options.clock?{clock:()=>new Date(options.clock()).getTime()}: {})});
-  const contextTransport=options.context?.transport??createContextTransport({
+  const credentialWriter=createContextCredentialWriter({ctx,readConfig,isClosed:()=>disposed});
+  const makeAccountAuth=source=>options.context?.[source+'Auth']??createContextAccountAuth({source,readConfig,saveCredentials:(value,conditions)=>credentialWriter(source,value,conditions),...(options.context?.fetch?{fetch:options.context.fetch}:{}),...(options.clock?{clock:()=>new Date(options.clock()).getTime()}: {})});
+  const flomoAuth=makeAccountAuth('flomo'),didaAuth=makeAccountAuth('dida');
+  const contextTransport=options.context?.transport??createContextTransport({flomoAuth,didaAuth,
     ...(options.context?.fetch?{fetch:options.context.fetch}:{}),...(options.clock?{clock:options.clock}:{}),
     tokenForSource:async(source,{signal})=>{
       const config=readConfig();
@@ -204,11 +211,11 @@ export async function installCompanion(ctx,options={}){
   ctx.effect(()=>async()=>{
     disposed=true;
     lifecycle.abort();
-    workbench?.close();workbenchActions?.close();
+    workbench?.close();workbenchActions?.close();recoveryGuard.close();
     const newsClosing=news.close();newsModel.close?.();
     const contextClosing=context.close();contextRoute?.close();
     const contextTransportClosing=contextTransport.close();const googleAuthClosing=googleAuth.close();
-    const externalClosing=Promise.allSettled([newsClosing,contextClosing,contextTransportClosing,googleAuthClosing]);
+    const externalClosing=Promise.allSettled([newsClosing,contextClosing,contextTransportClosing,googleAuthClosing,flomoAuth.close(),didaAuth.close()]);
     if(timer!==undefined){timers.clearInterval(timer);timer=undefined;}
     await Promise.allSettled([...coordinates]);
     await Promise.allSettled([memory?.close(),followup?.close(),onboarding?.close(),welcomeGuard?.close()]);
@@ -254,7 +261,7 @@ export async function installCompanion(ctx,options={}){
     },
   });
   contextRoute=createContextRoute({
-    context,googleAuth,readConnection:readSetup,isClosed:()=>disposed,
+    context,googleAuth,flomoAuth,didaAuth,readConnection:readSetup,isClosed:()=>disposed,
     canRun:async()=>!disposed&&!await service.isPaused(),
     resolveOwner:sessionId=>{const agent=ctx.get('agents')?.get?.(sessionId);const cwd=effectiveCwd(ctx,agent);return !disposed&&agent&&String(agent.id)===sessionId&&cwd?{sessionId,cwd}:null;},
     activateOwner:async sessionId=>{
@@ -341,7 +348,7 @@ export async function installCompanion(ctx,options={}){
   }
   function syncTimer(){
     if(disposed)return;
-    if((service.needsTimer()||taskResults.needsTimer()||news.needsTimer())&&timer===undefined){timer=timers.setInterval(async()=>{try{await service.tick();await taskResults.tick();await news.tick();}catch(error){noteError(error);}finally{syncTimer();}},60000);timer?.unref?.();}
+    if((service.needsTimer()||taskResults.needsTimer()||news.needsTimer())&&timer===undefined){timer=timers.setInterval(async()=>{try{await service.tick();await taskResults.tick();await news.tick();}catch(error){noteError(error);}finally{syncTimer();}},15000);timer?.unref?.();}
     else if(!service.needsTimer()&&!taskResults.needsTimer()&&!news.needsTimer()&&timer!==undefined){timers.clearInterval(timer);timer=undefined;}
   }
   async function act(agent,input){
@@ -547,7 +554,7 @@ export async function installCompanion(ctx,options={}){
   for(const project of await service.watchedProjects()){
     try{await followup.resume({root:project.root});}catch(error){noteError(error);}
   }
-  return{service,taskResults,memory,followup,onboarding,news,context,workbench,workbenchActions};
+  return{service,taskResults,memory,followup,onboarding,news,context,flomoAuth,didaAuth,workbench,workbenchActions};
 }
 
 export async function apply(ctx,config){await installCompanion(ctx,{context:{config}});}

@@ -10,6 +10,7 @@ import {spawn} from 'node:child_process';
 export const OFFICIAL_HARNESS_URL='https://github.com/deepseek-ai/deepseek-harness/releases';
 const RUNTIMES=['0.2.0-rc.2','0.2.1-rc.2'];
 const NAMES=['dsh-wechat','dsh-project-companion'];
+const BRIDGE_VERSIONS=new Set(['0.11.0','0.11.1-dot.1']);
 const MAX_PACKAGE=20*1024*1024;
 const MAX_TAR=64*1024*1024;
 function failure(code,message,extra={}){return Object.assign(new Error(message),{code,...extra});}
@@ -63,7 +64,7 @@ async function validateBundle(bundleDir){
   const packages=[];
   for(let i=0;i<NAMES.length;i++){
     const p=manifest.packages[i];
-    if(!p||p.name!==NAMES[i]||(p.name==='dsh-wechat'&&p.version!=='0.11.0')||typeof p.file!=='string'||basename(p.file)!==p.file||!p.file.endsWith('.tgz')||! /^[a-f0-9]{64}$/.test(p.sha256??''))throw failure('INVALID_MANIFEST','包顺序、固定微信桥接版本、文件名或 SHA256 无效。');
+    if(!p||p.name!==NAMES[i]||(p.name==='dsh-wechat'&&!BRIDGE_VERSIONS.has(p.version))||typeof p.file!=='string'||basename(p.file)!==p.file||!p.file.endsWith('.tgz')||! /^[a-f0-9]{64}$/.test(p.sha256??''))throw failure('INVALID_MANIFEST','包顺序、固定微信桥接版本、文件名或 SHA256 无效。');
     versionParts(p.version);
     const file=await realpath(join(dir,p.file));if(dirname(file)!==dir)throw failure('INVALID_MANIFEST','包文件不得通过符号链接指向分发目录之外。');
     if((await stat(file)).size>MAX_PACKAGE)throw failure('INVALID_PACKAGE','安装包超过本地校验大小限制。');
@@ -135,7 +136,7 @@ export async function runInstallation({bundleDir,appPath='/Applications/DeepSeek
     const existing=await installedPackage(profile,p.name);let action='install';
     if(existing){
       if(existing.version===p.version)action='preserve';
-      else if(p.name==='dsh-wechat')throw failure('BRIDGE_VERSION_CONFLICT','现有微信桥接版本与固定 0.11.0 不同；请先自行评估兼容性，本安装器不会覆盖或重置配对。');
+      else if(p.name==='dsh-wechat'){if(existing.version==='0.11.0'&&p.version==='0.11.1-dot.1')action='upgrade';else throw failure('BRIDGE_VERSION_CONFLICT','现有微信桥接与已验证升级路径不同；不会降级或重置配对。');}
       else if(compareVersions(existing.version,p.version)>0)throw failure('COMPANION_DOWNGRADE','已装 companion 版本更高；拒绝降级。');
       else action='upgrade';
     }
