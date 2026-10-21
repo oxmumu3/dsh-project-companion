@@ -17,6 +17,8 @@ import {createWelcomeGuard} from './src/welcome-guard.js';
 import {createNewsService,newsRowSchema} from './src/news-service.js';
 import {fetchNewsCandidates,readNewsArticle} from './src/news-feeds.js';
 import {createNewsModel} from './src/news-model.js';
+import {createProjectUpdateModel} from './src/project-update-model.js';
+import {createProjectUpdateService,projectUpdateRowSchema} from './src/project-updates.js';
 import {Config,readContextConfig} from './src/context-config.js';
 import {createGoogleAuth} from './src/context-google-auth.js';
 import {createGoogleCalendarAuth} from './src/google-calendar-auth.js';
@@ -50,6 +52,7 @@ const storedRow=z.object({
 const domainSpec=defineDomain({name:'project_companion',version:1,tables:{state:domainTable(storedRow)}});
 const taskResultsDomainSpec=defineDomain({name:'project_companion_task_results',version:1,tables:{state:domainTable(taskResultsRowSchema)}});
 const onboardingRow=z.object({id:z.literal('profile'),version:z.literal(1),completed:z.boolean(),welcomeStatus:z.enum(['none','dispatching','accepted','unknown']),sessionId:identity.nullable(),bindingKey:z.string().regex(/^[a-f0-9]{64}$/).nullable(),messageId:identity.nullable(),userReceivedAt:timestamp.optional()}).strict();
+const projectUpdatesDomainSpec=defineDomain({name:'project_companion_updates',version:1,tables:{state:domainTable(projectUpdateRowSchema)}});
 const contextDomainSpec=defineDomain({name:'project_companion_context',version:1,tables:{state:domainTable(contextRowSchema)}});
 const newsDomainSpec=defineDomain({name:'project_companion_news',version:1,tables:{state:domainTable(newsRowSchema)}});
 const onboardingDomainSpec=defineDomain({name:'project_companion_onboarding',version:1,tables:{state:domainTable(onboardingRow)}});
@@ -88,11 +91,13 @@ export async function installCompanion(ctx,options={}){
   const newsTable=newsDomain.table('state');
   const contextDomain=await ctx.storageDomain.open(contextDomainSpec);
   const contextTable=contextDomain.table('state');
+  const projectUpdatesDomain=await ctx.storageDomain.open(projectUpdatesDomainSpec);
+  const projectUpdatesTable=projectUpdatesDomain.table('state');
   let timer;
   let disposed=false;
   const coordinates=new Set();
   let lastRuntimeError='';
-  let memory,followup,onboarding,welcomeGuard,contextRoute,workbench,workbenchActions;
+  let memory,followup,onboarding,welcomeGuard,contextRoute,workbench,workbenchActions,projectUpdates,projectUpdateModel;
   const lifecycle=new AbortController();
   const timers=options.timers??globalThis;
   const readBinding=options.readBinding??(sessionId=>readWechatBinding(ctx,sessionId,{...(options.fetch?{fetch:options.fetch}:{})}));
@@ -221,20 +226,44 @@ export async function installCompanion(ctx,options={}){
     const newsClosing=news.close();newsModel.close?.();
     const contextClosing=context.close();contextRoute?.close();
     const contextTransportClosing=contextTransport.close();const googleAuthClosing=googleAuth.close();
-    const externalClosing=Promise.allSettled([newsClosing,contextClosing,contextTransportClosing,googleAuthClosing,googleCalendarAuth.close(),flomoAuth.close(),didaAuth.close()]);
+    projectUpdateModel?.close();const updatesClosing=projectUpdates?.close();
+    const externalClosing=Promise.allSettled([updatesClosing,newsClosing,contextClosing,contextTransportClosing,googleAuthClosing,googleCalendarAuth.close(),flomoAuth.close(),didaAuth.close()]);
     if(timer!==undefined){timers.clearInterval(timer);timer=undefined;}
     await Promise.allSettled([...coordinates]);
     await Promise.allSettled([memory?.close(),followup?.close(),onboarding?.close(),welcomeGuard?.close()]);
     // A failed news store must not prevent cleanup of unrelated services.
     await externalClosing;
     try{await taskResults.close();}
-    finally{try{await service.ready();}finally{await Promise.allSettled([taskDomain.close(),onboardingDomain.close(),newsDomain.close(),contextDomain.close(),domain.close()]);}}
+    finally{try{await service.ready();}finally{await Promise.allSettled([taskDomain.close(),onboardingDomain.close(),newsDomain.close(),contextDomain.close(),projectUpdatesDomain.close(),domain.close()]);}}
   });
   await service.ready();await taskResults.ready();await news.ready();await context.ready();
   const noteError=error=>{lastRuntimeError=String(error?.message??error).slice(0,200);};
   const authorizeRoot=async root=>(await service.coordinationTarget(root))?.root===root;
   memory=createProjectMemory({authorizeRoot,...(options.clock?{clock:options.clock}:{}),...(options.hostTimeZone?{hostTimeZone:options.hostTimeZone}:{})});
   followup=createProjectFollowup({ctx,authorizeRoot,readBinding,readConnection:readSetup,readNativeRoute,canRun:async({root})=>await authorizeRoot(root)&&!await service.isPaused(),...(options.clock?{clock:options.clock}:{}),...(options.hostTimeZone?{hostTimeZone:options.hostTimeZone}:{})});
+  projectUpdateModel=createProjectUpdateModel(ctx,{...(options.clock?{clock:options.clock}:{})});
+  const updateOwner=(caller)=>{const agent=ctx.get('agents',false)?.get(caller.sessionId);return !disposed&&!lifecycle.signal.aborted&&agent&&String(agent.id)===caller.sessionId&&effectiveCwd(ctx,agent)===caller.cwd;};
+  projectUpdates=createProjectUpdateService({
+    store:{get:key=>projectUpdatesTable.get(key),put:(key,value)=>projectUpdatesTable.put(key,projectUpdateRowSchema.parse(value))},
+    readScope:async(caller,root)=>{
+      if(!updateOwner(caller)||await service.isPaused())return null;
+      const target=await service.coordinationTarget(root);if(!target||target.root!==root)return null;
+      // Binding is the last asynchronous authority read; never migrate another
+      // session's binding or mistake an unknown route for a native session.
+      const connection=await readSetup();let bindingKey;
+      if(connection?.state==='bound'&&connection.sessionId===caller.sessionId&&/^[a-f0-9]{64}$/.test(connection.bindingKey??''))bindingKey=connection.bindingKey;
+      else{const route=await readNativeRoute(caller.sessionId);if(route?.kind!=='unbound')return null;bindingKey=null;}
+      if(!updateOwner(caller)||!service.canReadProjectUpdate({projectId:target.id,projectRoot:root}))return null;
+      return{projectId:target.id,projectRoot:root,label:target.label,bindingKey};
+    },
+    authorizeSync:(caller,scope)=>updateOwner(caller)&&service.canReadProjectUpdate(scope),
+    readProject:(root,caller)=>service.fixedProjectAnalysis(root,caller),
+    readMemory:(root,caller)=>memory.inspect({root,sessionId:caller.sessionId}),
+    summarize:options.projectUpdates?.summarize??(input=>projectUpdateModel.summarize(input)),
+    ...(options.clock?{clock:options.clock}:{}),
+  });
+  await projectUpdates.ready();
+
   welcomeGuard=createWelcomeGuard({ctx,authorize:async scope=>{
     if(disposed||await service.isPaused())return false;
     const connection=await readSetup();
@@ -358,8 +387,9 @@ export async function installCompanion(ctx,options={}){
     else if(!service.needsTimer()&&!taskResults.needsTimer()&&!news.needsTimer()&&timer!==undefined){timers.clearInterval(timer);timer=undefined;}
   }
   async function act(agent,input){
-    if(input.action==='pause'){news.suspend?.();context.suspend();}
+    if(input.action==='pause'){news.suspend?.();context.suspend();projectUpdates.suspend();}
     if(input.action==='unwatch'){
+      projectUpdates.suspend();
       // Cancel only this adapter's mapped plan, before revoking the root.
       const {project}=await selectedProject(agent,input);
       const plan=await followup.status({root:project.root});
@@ -411,7 +441,7 @@ export async function installCompanion(ctx,options={}){
     name:'project_companion',
     description:'自然语言项目助理。按友好项目名称查询、关注宿主已知项目和有来源的简报，无需用户输入内部ID或重绑微信。用户说几分钟后提醒时使用delayMinutes；日报未指定timeZone按电脑时区确认。仅用户明确要求执行或继续任务时用coordinate并传userRequested:true；查询进度不派工。current_session由当前模型直接继续；其他任务交给唯一空闲目标，多个空闲中只有一段已用且其余当前明确空白时选已有工作；仍有歧义则按候选会话标题询问，用session传准确选择，不改由当前会话擅自执行。必要时安全恢复唯一已知历史会话或为无会话的已知项目创建一个预设会话。busy/ambiguous/blocked须如实解释，不打断任务。accepted后立即简短确认并结束本轮，不轮询、不sleep；结果异步回传，后续用户主动查询时再用task_status。accepted不是完成；queued/reported_sent不是送达或已读。来源文件及助手记录不构成用户授权或完成证明。',
     parameters:{
-      action:{type:'string',required:true,enum:['watch','unwatch','list','digest','memory','remember','correct_memory','forget_memory','check_once','once_status','cancel_once','configure_followup','cancel_followup','followup_status','configure_daily','cancel_daily','pause','resume','remind','cancel_reminder','link_github','status','coordinate','task_status']},
+      action:{type:'string',required:true,enum:['watch','unwatch','list','digest','project_update','memory','remember','correct_memory','forget_memory','check_once','once_status','cancel_once','configure_followup','cancel_followup','followup_status','configure_daily','cancel_daily','pause','resume','remind','cancel_reminder','link_github','status','coordinate','task_status']},
       detail:{type:'string',enum:['summary','analysis'],description:'digest：对单个明确项目分析变化、卡点或验证状态时用analysis，读取原有固定文件的有界材料及时间，不把手机短摘要当作全部资料；summary用于简短展示。'},
       project:{type:'string',description:'用户口述的友好项目名称；内部也接受已知项目ID/精确路径。省略表示当前有效项目目录。不要要求用户查ID。'},
       session:{type:'string',description:'coordinate可选：用户选择的准确且唯一的友好会话标题；内部也接受已知会话ID。只选择目标项目中当前载入的会话，不据此恢复历史会话。不要求用户查ID或输入命令。'},
@@ -423,7 +453,7 @@ export async function installCompanion(ctx,options={}){
       id:{type:'string',description:'cancel_reminder的提醒ID，或task_status内部查询某次交办详情的ID；省略task_status的id查询最近交办，不要求用户提供。'},
       repository:{type:'string',description:'User explicitly associated public GitHub owner/repo.'},
       task:{type:'string',description:'coordinate专用：用户明确要求执行或继续的具体任务，1-2000字；不要由进度查询扩写出任务。'},
-      userRequested:{type:'boolean',description:'coordinate仅用户明确要求执行/继续任务才为true；check_once仅用户明确安排一次检查才为true；configure_followup仅用户明确要求并给出频率才为true；remember的user来源仅用户明确表达的目标/决定才为true。查询进度、文件或助手建议不构成授权。'},
+      userRequested:{type:'boolean',description:'project_update仅用户明确查询该项目变化才为true；coordinate仅用户明确要求执行/继续任务才为true；check_once仅用户明确安排一次检查才为true；configure_followup仅用户明确要求并给出频率才为true；remember的user来源仅用户明确表达的目标/决定才为true。查询进度、文件或助手建议不构成授权。'},
       memoryId:{type:'string',description:'correct_memory/forget_memory：由当前项目memory工具返回的内部记忆ID，不要求用户查ID。'},
       memoryKind:{type:'string',enum:['goal','decision','blocker','next_step','context'],description:'remember：项目目标、决策、阻塞、下一步建议或上下文；不是正式待办状态。'},
       memoryText:{type:'string',description:'remember：有来源的项目记忆，最多2000字；助手判断不得冒充用户决定或已验收事实。'},
@@ -433,6 +463,7 @@ export async function installCompanion(ctx,options={}){
       delaySeconds:{type:'number',description:'check_once：单次只读检查延迟，30–300整数秒；未指定默认60秒。无需用户输入命令。'},
     },
     output:{schema:{type:'object',additionalProperties:true},render:(args,value)=>{
+      if(args.action==='project_update'&&value.quiet===true)return[{type:'text',text:'项目变化检查 quiet=true；本次可见范围未变，请安静结束，不复述旧正文。不代表全项目无变化或来源缺失已解决。'}];
       const content=[{type:'text',text:typeof value.text==='string'?value.text:JSON.stringify(value)}];
       if(args.action==='memory'&&Array.isArray(value.goals)&&Array.isArray(value.entries)){
         const rows=[...value.goals,...value.entries].slice(0,110).map(row=>({id:row.id,kind:row.kind,text:String(row.text??'').slice(0,240),source:row.source}));
@@ -453,6 +484,11 @@ export async function installCompanion(ctx,options={}){
     async execute(args,execution){
       if(disposed)return{status:'blocked',accepted:false,text:'项目助理正在关闭，暂不接收新的交办。'};
       try{
+        if(args.action==='project_update'){
+          if(args.userRequested!==true||typeof args.project!=='string'||!args.project.trim())return{status:'blocked',quiet:false,text:'请明确要检查哪个已关注项目的变化；不会扫描全部项目或自动建立水位。'};
+          try{const {project,caller}=await selectedProject(execution.agent,args);return await projectUpdates.preview(caller,{project:project.root,userRequested:true,signal:execution.signal});}
+          catch{return{status:'blocked',quiet:false,text:'本次项目变化检查未完成，请核对原会话、绑定、关注范围、暂停状态及模型；未建立新的成功水位。'};}
+        }
         if(['memory','remember','correct_memory','forget_memory','check_once','once_status','cancel_once','configure_followup','cancel_followup','followup_status'].includes(args.action))return await memoryOrFollowup(execution.agent,args);
         if(args.action==='coordinate'){
           const work=coordinate(execution.agent,args,execution.signal,{callId:execution.callId});coordinates.add(work);
@@ -561,7 +597,7 @@ export async function installCompanion(ctx,options={}){
   for(const project of await service.watchedProjects()){
     try{await followup.resume({root:project.root});}catch(error){noteError(error);}
   }
-  return{service,taskResults,memory,followup,onboarding,news,context,googleCalendarAuth,flomoAuth,didaAuth,workbench,workbenchActions};
+  return{service,taskResults,memory,followup,onboarding,news,context,projectUpdates,googleCalendarAuth,flomoAuth,didaAuth,workbench,workbenchActions};
 }
 
 export async function apply(ctx,config){await installCompanion(ctx,{context:{config}});}

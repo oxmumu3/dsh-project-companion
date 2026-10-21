@@ -418,7 +418,19 @@ export function createService(options = {}) {
     const project=state.projects.find(candidate=>candidate?.id===scope.projectId&&candidate.root===scope.projectRoot);
     return !!project&&Array.isArray(project.sessionIds)&&project.sessionIds.includes(scope.sessionId);
   };
+  // Explicit update previews share the existing fixed reader, but never read
+  // GitHub or observed session history as an incidental side effect.
+  const fixedProjectAnalysis=(root,caller)=>serial(async()=>{
+    await load();requireOwner(caller);
+    if(typeof root!=='string'||!isAbsolute(root)||resolve(root)!==root||state.paused)throw new Error('Project update scope unavailable');
+    const project=state.projects.find(p=>p.root===root);if(!project)throw new Error('Project update requires an already watched project');
+    const files=await readProject(root);
+    if(state.paused||!state.projects.some(p=>p.id===project.id&&p.root===root))throw new Error('Project update scope changed');
+    if(!Array.isArray(files))throw new Error('Project update sources unavailable');
+    return{project:{id:project.id,root:project.root,label:project.label},generatedAt:clock().toISOString(),historyScan:false,sources:files.filter(file=>PROJECT_FILES.includes(file.path)).slice(0,3).map(analysisSource)};
+  });
+  const canReadProjectUpdate=scope=>coordinationReady&&!state?.paused&&typeof scope?.projectRoot==='string'&&state.projects.some(p=>p.id===scope.projectId&&p.root===scope.projectRoot);
   const watchedProjects = () => serial(async()=>{await load();return structuredClone(state.projects);});
   const isPaused = () => serial(async()=>{await load();return state.paused;});
-  return { ready, act, record, tick, needsTimer, coordinationTarget, canCoordinate, watchedProjects, isPaused };
+  return { ready, act, record, tick, needsTimer, coordinationTarget, canCoordinate, watchedProjects, isPaused, fixedProjectAnalysis, canReadProjectUpdate };
 }

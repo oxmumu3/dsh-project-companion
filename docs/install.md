@@ -1,45 +1,50 @@
-# 安装 DeepSeek Dot
+# 安装 DSH Dot
 
-当前版本为 `0.6.0-preview.1`，社区项目，非官方产品。统一安装包包含固定的微信桥接 `dsh-wechat@0.11.0` 和项目助理，通过官方 Desktop CLI 安装；不修改官方 App、不导入作者账户，也不复制微信配对凭据。
+本页面向正在准备的 `0.11.0-preview.2`，尚未安装到本机或公开发布。它为已有官方 DeepSeek Harness 增加项目助理与微信入口，通过官方 Desktop CLI 或插件管理页面安装；不是完整一体机，也不是另一款微信版 App。
 
-源码候选为 `0.11.0-preview.1`：候选统一包带保留上游MIT许可的 `dsh-wechat@0.11.1-dot.2` 维护版。它只允许从已审计0.11.0或0.11.1-dot.1升级，或保留同版本，绑定不迁出原目录；下方公开下载仍是旧版，未自动更新。候选的来源差异和固定归档校验见 `bridge-maintenance/`。
+## 取得同版本安装包
 
-## macOS 双击安装
+打开[本项目 Releases](https://github.com/piggy00544/dsh-project-companion/releases)。只有实际出现 `v0.11.0-preview.2` 和对应资产后，才下载同版本 macOS 完整安装包或 companion tgz；当前没有该版本的公开下载。`v0.6.0-preview.1` 仅作历史归档，不适用本页的新界面与恢复流程。
 
-[下载安装包](https://github.com/piggy00544/dsh-project-companion/releases/download/v0.6.0-preview.1/dsh-dot-0.6.0-preview.1-macos.zip) · [查看版本文件](https://github.com/piggy00544/dsh-project-companion/releases/tag/v0.6.0-preview.1)
+统一包配套 `dsh-wechat@0.11.1-dot.2` 维护版，保留 pan17/dsh-wechat 的 MIT 许可、版权和原配对目录；不导入作者账户或复制配对凭据。固定源码、差异与校验见[桥接来源说明](../bridge-maintenance/README.md)。
 
-1. 解压并保留整个目录，不要只移出 `Install.command`。
-2. 已有官方 Harness：保存工作并正常退出 App，再双击 `Install.command`。安装器不会结束运行中的任务。
-3. 没有 Harness：入口打开[官方 Releases](https://github.com/deepseek-ai/deepseek-harness/releases)。本人完成官方应用安装后，回到终端按回车，入口继续检查并安装插件；它不自动下载或覆盖官方 App。
-4. 阅读安装结果，成功后本人打开 Harness，确认微信桥接和项目助理均已启用。完成模型登录配置，再进入设置中的「DeepSeek Dot」。
+## macOS 标准安装
 
-只支持官方 DSH `0.2.0-rc.2` 或 `0.2.1-rc.2`。安装仍可能联网下载依赖，不是完整离线包。当前入口未签名、公证；如果 macOS 阻止打开，请先停下核对，不要绕过安全检查。不要向安装器提供模型密钥或微信凭据。Windows 整合安装尚未验证。
+1. 确认已有受支持的官方 DSH `0.2.0-rc.2` 或 `0.2.1-rc.2`，保存工作并正常退出 App。安装器不会结束正在运行的任务。
+2. 解压同版本完整目录，不要只移出 `Install.command`，然后双击它。
+3. 若没有 Harness，入口只会指引前往[官方 Releases](https://github.com/deepseek-ai/deepseek-harness/releases)。本人安装官方应用后，回到终端按回车继续；脚本不自动下载或覆盖官方 App。
+4. 阅读安装结果。成功后本人打开 Harness，完成自己的模型登录配置，确认微信桥接与项目助理均启用，从左侧打开「DSH Dot」。
+5. 按[首次使用](first-use.md)沿用或建立微信会话，先用一个项目生成简报，再在手机核对实际内容。
 
-安装成功表示官方 CLI 返回成功且精确版本回读匹配，不等于组件已运行、微信已绑定或手机已收到消息。下一步见[首次使用](first-use.md)。
+安装可能联网下载依赖，不是完整离线包。入口未签名、公证；如果 macOS 阻止打开，先停止核对，不绕过系统安全检查。不要向安装器提供模型密钥或微信凭据。Windows 整合安装尚未验证。
+
+安装成功只表示官方 CLI 返回成功且精确版本回读匹配；组件运行、微信绑定、执行回复和手机收到仍需分别核对。
 
 ## 已有 Harness：官方插件页面添加
 
-下载 [dsh-project-companion-0.6.0-preview.1.tgz](https://github.com/piggy00544/dsh-project-companion/releases/download/v0.6.0-preview.1/dsh-project-companion-0.6.0-preview.1.tgz)，在官方插件管理页面添加并启用。微信能力需另行安装并启用 `dsh-wechat@0.11.0`，可以使用统一安装包内的桥接 tgz。不要额外启用 YOLO 或 proactive 整包来满足本项目依赖。
+同版本 Release 实际出现后，也可从中取得 companion tgz，通过官方插件页面添加并启用。微信能力需要该 Release 配套的 `dsh-wechat@0.11.1-dot.2`；推荐用统一安装包处理已有桥接的兼容升级。不要混入旧版资产，也不要额外启用 YOLO 或 proactive 整包来满足本项目依赖。
 
-## 安装器会保留什么
+## 保留与升级规则
 
-- 已有微信桥接精确为 `0.11.0` 时原样保留；其他版本停止，避免覆盖既有连接。
+- 未安装桥接时安装配套的 `0.11.1-dot.2`；已有 `0.11.0` 或 `0.11.1-dot.1` 时允许升级至 `0.11.1-dot.2`，沿用原配对目录和绑定；已是 `0.11.1-dot.2` 时原样保留。其他版本停止，不降级或重置配对。
 - 项目助理同版本保留，显式安装允许升级旧版，拒绝降级。
-- 已有禁用状态不会静默改成启用；结果会列出需要在官方管理器启用的组件。
-- 模块与 profile 登记不一致时停止并提示修复，不把残留模块当作已安装。
-- Harness 正在运行或安装中途启动时停止，稍后可从同一入口重试。
-- 第二个包失败时报告已完成与未完成的步骤，不冒称整体成功或自动回滚。
+- 已有禁用状态不会静默改成启用；安装结果会列出需在官方管理器启用的组件。
+- 模块与 profile 登记不一致时停止，交由官方插件管理器检查，不手改 profile。
+- Harness 正在运行或安装中途启动时停止；保存工作、正常退出后再从同一入口重试。
+- 第二个包失败时报告已完成与未完成步骤，不冒称整体成功或自动回滚。
 
-## 分发校验与开发预览
+## 维护者本地候选与校验
 
-完整目录包含 `Install.command`、`bundle-manifest.json`、安装脚本、两个固定 tgz，以及主项目和上游许可证。manifest 记录精确版本和 SHA256；安装器还会核对包名、版本、MIT 许可和 bundle 声明。
+本轮约定候选目录为 Agent 工作区的 `output/dsh-dot-0.11.0-preview.2-candidate/`，须由本轮构建生成并校验后才可使用；目录名不代表已经有包，也不能拿旧 `preview.1` 替代本轮验收。未发布的本地路径不是公众下载入口。
 
-已有 Node 的开发者可在解压目录只预览计划：
+完整目录应包含 `Install.command`、`bundle-manifest.json`、安装脚本、配套两个 tgz、主项目与上游许可证。manifest 记录精确版本和 SHA256；安装器核对包名、版本、MIT 许可及 bundle 声明。
+
+已有 Node 的维护者可在完整候选目录只预览安装计划：
 
 ```sh
 node scripts/install.mjs --bundle-dir . --dry-run
 ```
 
-确认后在同一命令增加 `--install` 执行。无 Node 的用户由双击入口使用官方 App 自带运行时。散装源码目录缺少 manifest 时不能当作完整安装包使用。
+确认计划后，在同一命令增加 `--install` 执行。没有独立 Node 时，双击入口使用官方 App 自带运行时。散装源码缺少 manifest 时不能当作完整安装包。
 
-安装器已覆盖版本冲突、包篡改、运行中宿主、保留与升级、合法禁用状态及分步失败的自动回归；本机完成过官方 CLI 升级。陌生用户下载后双击、新装 Harness 与全新微信扫码的完整开箱流程仍待验证。来源与许可见[第三方声明](../THIRD_PARTY_NOTICES.md)。
+已有版本的安装与手机记录见[验证记录](verification.md)，不能替代 `0.11.0-preview.2` 的精确包、宿主及手机验收。新用户从零安装、扫码到首份简报的完整开箱仍待验证。

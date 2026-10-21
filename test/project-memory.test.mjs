@@ -1,10 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {mkdtemp,mkdir,readFile,readdir,writeFile,symlink,link,rm,realpath,stat} from 'node:fs/promises';
+import {mkdtemp,mkdir,readFile,readdir,writeFile,symlink,link,rm,realpath,stat,chmod} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {DatabaseSync} from 'node:sqlite';
 import {createHash} from 'node:crypto';
+import {spawnSync} from 'node:child_process';
+import {constants as fsConstants,accessSync} from 'node:fs';
 
 async function api(){
   const module=await import('../src/project-memory.js').catch(()=>({}));
@@ -337,4 +339,44 @@ test('vendored runtime matches its pinned-source manifest and retains the comple
   assert.equal(sha(license),source.licenseSha256);
   assert.match(license.toString('utf8'),/Copyright \(c\) 2026 dsh-plugin-yolo contributors/);
   assert.match(license.toString('utf8'),/THE SOFTWARE IS PROVIDED "AS IS"/);
+});
+
+
+test('macOS metadata-only ctime changes keep the validated memory snapshot readable and correctable',{skip:process.platform!=='darwin'},async t=>{
+  const create=await api();const {root}=await fixture(t);const memory=allowed(create);t.after(()=>memory.close());
+  const saved=await memory.remember(memoryInput(root,'goal','纠正前的合成目标'));
+  const directory=join(root,'.dsh','dot-memory');
+  const before=await Promise.all((await readdir(directory)).map(async name=>({name,bytes:await readFile(join(directory,name)),info:await stat(join(directory,name))})));
+  for(const file of before)await chmod(join(directory,file.name),file.info.mode&0o777);
+  const view=await memory.inspect({root,sessionId:'same-session'});assert.equal(view.goals[0].text,'纠正前的合成目标');
+  for(const file of before)assert.deepEqual(await readFile(join(directory,file.name)),file.bytes,'inspection must not write data or WAL');
+  const edited=await memory.revise({root,sessionId:'same-session',id:saved.receipt.id,text:'纠正后的合成目标',userRequested:true,authorizeMutation:async()=>true});
+  assert.equal(edited.receipt.status,'revised');assert.equal(edited.goals[0].text,'纠正后的合成目标');
+});
+
+test('real file permission changes still invalidate an existing safe inspection snapshot',async t=>{
+  const create=await api();const {root}=await fixture(t);const memory=allowed(create);t.after(()=>memory.close());await memory.remember(memoryInput(root));
+  const path=join(root,'.dsh','dot-memory','memory.sqlite'),before=await stat(path);await chmod(path,((before.mode&0o777)^0o040));
+  await assert.rejects(memory.inspect({root,sessionId:'same-session'}),/changed|snapshot|unavailable/i);
+});
+
+
+test('macOS ACL-only changes invalidate cached inspection and cannot authorize edits', {skip:process.platform!=='darwin'}, async t=>{
+ const create=await api();const {root}=await fixture(t);const memory=allowed(create);t.after(()=>memory.close());
+ const saved=await memory.remember(memoryInput(root,'goal','ACL守卫的公开测试目标'));
+ const path=join(root,'.dsh','dot-memory','memory.sqlite');
+ const r=spawnSync('/bin/chmod',['+a','group:everyone deny write',path],{encoding:'utf8'});assert.equal(r.status,0,r.stderr);
+ try{
+  assert.throws(()=>accessSync(path,fsConstants.W_OK));
+  await assert.rejects(memory.inspect({root,sessionId:'same-session'}),/changed|snapshot|unavailable/i);
+  await assert.rejects(memory.revise({root,sessionId:'same-session',id:saved.receipt.id,text:'不应保存的目标',userRequested:true,authorizeMutation:async()=>true}),/changed|snapshot|unavailable|permission/i);
+ }finally{assert.equal(spawnSync('/bin/chmod',['-N',path]).status,0);}
+});
+
+test('a write permission revoked inside the final mutation guard blocks the existing SQLite writer', {skip:process.platform!=='darwin'}, async t=>{
+ const create=await api();const {root}=await fixture(t);const memory=allowed(create);t.after(()=>memory.close());
+ const saved=await memory.remember(memoryInput(root,'goal','原目标应保持'));const path=join(root,'.dsh','dot-memory','memory.sqlite');
+ try{await assert.rejects(memory.revise({root,sessionId:'same-session',id:saved.receipt.id,text:'权限收回后不得写入',userRequested:true,authorizeMutation:async()=>{assert.equal(spawnSync('/bin/chmod',['+a','group:everyone deny write',path]).status,0);return true;}}),/permission|changed|snapshot/i);}
+ finally{assert.equal(spawnSync('/bin/chmod',['-N',path]).status,0);}
+ assert.equal((await memory.read({root,sessionId:'same-session'})).goals[0].text,'原目标应保持');
 });

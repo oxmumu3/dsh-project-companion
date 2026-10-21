@@ -1,4 +1,6 @@
-import {constants} from 'node:fs';
+import {constants,accessSync,lstatSync} from 'node:fs';
+import {execFile} from 'node:child_process';
+import {promisify} from 'node:util';
 import {lstat,mkdir,open,realpath} from 'node:fs/promises';
 import {isAbsolute,join,resolve,sep} from 'node:path';
 import {createHash} from 'node:crypto';
@@ -15,9 +17,22 @@ const LABELS={goal:'目标',decision:'决策',blocker:'阻塞',next_step:'下一
 const ROLES={user:'用户来源',assistant:'助手记录',file:'文件来源'};
 const LIMITS={goals:10,entries:100};
 const MAX_HANDLES=5;
+const runFile=promisify(execFile);
+async function macAclHash(path){
+  if(process.platform!=='darwin')return null;
+  let stdout;
+  try{({stdout}=await runFile('/bin/ls',['-ledb','--',path],{encoding:'utf8',maxBuffer:65536,timeout:2000,env:{LC_ALL:'C'}}));}
+  catch{throw new Error('Memory ACL fingerprint unavailable');}
+  const lines=stdout.trimEnd().split('\n');
+  if(!lines[0]||lines.slice(1).some(line=>!/^\s+\d+:\s+/.test(line)))throw new Error('Memory ACL fingerprint unavailable');
+  return createHash('sha256').update(lines.slice(1).map(line=>line.trim()).join('\n')).digest('hex');
+}
 const RECEIPT_TEXT_LIMIT=280;
 const fingerprint=value=>createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const sameFile=(a,b)=>a?.dev===b?.dev&&a?.ino===b?.ino;
+// File-provider bookkeeping can change ctime without changing data. Compare
+// identity and real access metadata separately; content SHA/mtime remain required.
+const sameFilePolicy=(a,b)=>sameFile(a,b)&&a?.mode===b?.mode&&a?.uid===b?.uid&&a?.gid===b?.gid&&a?.nlink===b?.nlink;
 const publicEntry=({fingerprint:_key,...entry})=>entry;
 
 function boundedString(value,max,label){
@@ -130,13 +145,14 @@ export function createProjectMemory({clock=()=>new Date(),authorizeRoot=async()=
       try{
         file=await open(path,constants.O_RDONLY|constants.O_NOFOLLOW|constants.O_NONBLOCK);
         const stat=await file.stat();fileSafety(stat);
-        if(!sameFile(initial,stat)||stat.size>64*1024*1024)throw new Error('Memory fingerprint unavailable');
+        if(!sameFilePolicy(initial,stat)||stat.size>64*1024*1024)throw new Error('Memory fingerprint unavailable');
         const hash=createHash('sha256'),buffer=Buffer.alloc(64*1024);let position=0;
         while(position<stat.size){const {bytesRead}=await file.read(buffer,0,Math.min(buffer.length,stat.size-position),position);if(!bytesRead)throw new Error('Memory file changed while fingerprinting');hash.update(buffer.subarray(0,bytesRead));position+=bytesRead;}
+        const aclHash=await macAclHash(path);
         const after=await file.stat(),current=await maybeStat(path);
-        if(!current||!sameFile(stat,current)||!sameFile(stat,after)||stat.size!==after.size||stat.mtimeMs!==after.mtimeMs||stat.ctimeMs!==after.ctimeMs)throw new Error('Memory file changed while fingerprinting');
+        if(!current||!sameFilePolicy(stat,current)||!sameFilePolicy(stat,after)||stat.size!==after.size||stat.size!==current.size||stat.mtimeMs!==after.mtimeMs||stat.mtimeMs!==current.mtimeMs||(process.platform!=='darwin'&&stat.ctimeMs!==after.ctimeMs))throw new Error('Memory file changed while fingerprinting');
         fileSafety(current);
-        result.push({suffix,dev:stat.dev,ino:stat.ino,size:stat.size,mtimeMs:stat.mtimeMs,ctimeMs:stat.ctimeMs,hash:hash.digest('hex')});
+        result.push({suffix,dev:stat.dev,ino:stat.ino,size:stat.size,mtimeMs:stat.mtimeMs,mode:stat.mode,uid:stat.uid,gid:stat.gid,nlink:stat.nlink,aclHash,...(process.platform==='darwin'?{}:{ctimeMs:stat.ctimeMs}),hash:hash.digest('hex')});
       }finally{await file?.close();}
     }
     await paths(root,false);return result;
@@ -194,9 +210,19 @@ export function createProjectMemory({clock=()=>new Date(),authorizeRoot=async()=
       if(cached){
         if(JSON.stringify(await filesFingerprint(selected))!==cached.inspection.fingerprint)throw new Error('Memory files changed since the safe inspection snapshot');
       }else{
-        if(stat.size!==after.stat.size||stat.mtimeMs!==after.stat.mtimeMs||stat.ctimeMs!==after.stat.ctimeMs)throw new Error('Memory file changed while inspecting');
+        // Cold immutable inspection has no cached content hash: keep its stricter
+        // metadata-change barrier instead of treating ctime-only changes as safe.
+        if(!sameFilePolicy(stat,after.stat)||stat.size!==after.stat.size||stat.mtimeMs!==after.stat.mtimeMs||stat.ctimeMs!==after.stat.ctimeMs)throw new Error('Memory file changed while inspecting');
         await noSidecars();
       }
+      // An already-open descriptor may outlive an ACL read revocation.
+      // Inspection needs current read permission only, never write permission.
+      try{for(const suffix of ['','-wal','-shm','-journal']){
+        const path=info.path+suffix;let current;
+        try{current=lstatSync(path);}catch(error){if(suffix&&error?.code==='ENOENT')continue;throw error;}
+        fileSafety(current);if(!suffix&&!sameFile(current,stat))throw new Error('Memory identity changed');
+        accessSync(path,constants.R_OK);
+      }}catch{throw new Error('Memory read permission or identity changed');}
       return result;
     }finally{
       db?.close();
@@ -244,6 +270,17 @@ export function createProjectMemory({clock=()=>new Date(),authorizeRoot=async()=
     // UI binding may change during any preceding filesystem/root await. The
     // optional caller guard is the final async boundary before an atomic edit.
     if(authorizeMutation!==undefined&&(typeof authorizeMutation!=='function'||await authorizeMutation()!==true))throw new Error('Project memory mutation is no longer authorized');
+    // SQLite may retain an earlier writable descriptor. Recheck effective OS
+    // permissions synchronously after the final caller guard, before writing.
+    try{
+      accessSync(join(selected,'.dsh','dot-memory'),constants.R_OK|constants.W_OK|constants.X_OK);
+      for(const suffix of ['','-wal','-shm','-journal']){
+        const path=join(selected,'.dsh','dot-memory','memory.sqlite'+suffix);let stat;
+        try{stat=lstatSync(path);}catch(error){if(suffix&&error?.code==='ENOENT')continue;throw error;}
+        fileSafety(stat);if(!suffix&&!sameFile(stat,handle.stat))throw new Error('Memory identity changed');
+        accessSync(path,constants.R_OK|constants.W_OK);
+      }
+    }catch{throw new Error('Memory write permission or identity changed');}
     withTransaction(handle.db,()=>{
       if(getMeta(handle.db,'dot_memory_owner')!==OWNER||getMeta(handle.db,'dot_memory_root')!==selected)throw new Error('Foreign project memory owner rejected');
       const current=storedEntry(handle.db.prepare('SELECT * FROM events WHERE id=? AND scope_key=?').get(id,handle.scope));
