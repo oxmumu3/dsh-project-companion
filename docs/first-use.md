@@ -1,8 +1,8 @@
 # 第一次使用 DSH Dot
 
-这是奥克斯木木山制作的社区项目助理，为已有官方 DeepSeek Harness 增加项目与微信流程，非官方产品。本页面向已在日常 App 安装的 `0.12.0-preview.3`，原生界面确认启用、一个组件运行，尚未公开发布。原微信绑定和 Google 三来源保留；本版已真实读取滴答两项清单及 flomo 两条关键词结果，之后恢复两家在日常 Dot 的启用状态。Google 有限读取此前在 `preview.1` 完成。滴答任务正文、Drive 正文、非空日程、长期令牌刷新和新版手机体验仍待验。Google 仍为 External / Testing，仅登记测试账号可登录；flomo 需要 MAX。当前公开最高预览版本仍为 `0.6.0-preview.1`，不能照本页新步骤验证旧包。
+这是奥克斯木木山制作的社区项目助理，为已有官方 DeepSeek Harness 增加项目与微信流程，非官方产品。本页面向已在日常 App 安装的 `0.12.0-preview.3`，原生界面确认启用、一个组件运行，固定版本发布入口见[安装说明](install.md)。原微信绑定和 Google 三来源保留；本版已真实读取滴答两项清单及 flomo 两条关键词结果，之后恢复两家在日常 Dot 的启用状态。Google 有限读取此前在 `preview.1` 完成。滴答任务正文、Drive 正文、非空日程、长期令牌刷新和新版手机体验仍待验。Google 仍为 External / Testing，仅登记测试账号可登录；flomo 需要 MAX。旧 `0.6.0-preview.1` 不能用于验证本页新步骤。
 
-1. 先按[安装说明](install.md)准备受支持的官方 Harness。仅在[Releases](https://github.com/oxmumu3/dsh-project-companion/releases)实际出现 `v0.12.0-preview.3` 后下载同版本包。解压完整目录，保存工作并正常退出 Harness，再双击 `Install.command`。没有 Harness 时入口只指引安装官方应用，不会自动装好一整套；模型登录与配置由你本人完成。
+1. 先按[安装说明](install.md)准备受支持的官方 Harness。从[0.12.0-preview.3 发布页](https://github.com/oxmumu3/dsh-project-companion/releases/tag/v0.12.0-preview.3)下载同版本完整包。解压完整目录，保存工作并正常退出 Harness，再双击 `Install.command`。没有 Harness 时入口只指引安装官方应用，不会自动装好一整套；模型登录与配置由你本人完成。
 2. 打开 Harness，从左侧打开「DSH Dot」，首次使用时主按钮是「连接微信」。全新或空白会话按宿主规则显示首次引导；已有工作对话不会被抢走。
 3. 已连接微信直接继续。首次连接时扫码确认，再从微信发一句「你好」。扫码登录和建立会话是两步，页面会显示当前状态；此页不会重置已有连接。
 4. 先选择一个关注项目，点「保存关注并预览简报」。最多可关注五个；已有关注保留，之后可在会话里取消。列表来自 Harness 已知项目；没有项目时先在 Harness 添加一个项目，再回此页刷新。不会扫描整台电脑或读取全部历史。

@@ -1,50 +1,45 @@
-# 安装 DSH Dot
+# 安装 DSH Dot 0.12.0-preview.3
 
-本页面向 `0.12.0-preview.3`，已在日常 App 通过官方安装器升级并核验精确包、启用状态和一个运行组件，尚未公开发布。原微信绑定与 Google 三来源保留；本版滴答两项清单、flomo 两条关键词搜索已真实读取，随后恢复两家在日常 Dot 的启用状态。Google 本人授权与有限读取在 `preview.1` 完成。滴答任务正文、Drive 正文、非空日程、长期令牌刷新和新版手机体验仍待验。Google 仍为 External / Testing，未登记的公开新用户不能直接登录；flomo 需要 MAX。它为已有官方 DeepSeek Harness 增加项目助理与微信入口，通过官方 Desktop CLI 或插件管理页面安装；不是完整一体机，也不是另一款微信版 App。
+适用于 macOS 上已有的官方 DeepSeek Harness `0.2.0-rc.2` 或 `0.2.1-rc.2`。安装包包含项目助理和配套微信桥接，沿用已有兼容绑定；这是社区预览版，作者奥克斯木木山，非 DeepSeek 或 OpenAI 官方产品。
 
-## 取得同版本安装包
+## 复制安装指令
 
-打开本项目 [Releases](https://github.com/oxmumu3/dsh-project-companion/releases)。只有实际出现 `v0.12.0-preview.3` 和对应资产后，才下载同版本 macOS 完整安装包或 companion tgz；当前没有该版本的公开下载。当前公开最高预览版本仍为 `v0.6.0-preview.1`，不适用本页的新界面与恢复流程。
+先保存工作并正常退出 Harness，再打开 macOS「终端」粘贴下面这一行：
 
-统一包配套 `dsh-wechat@0.11.1-dot.2` 维护版，保留 pan17/dsh-wechat 的 MIT 许可、版权和原配对目录；不导入作者账户或复制配对凭据。固定源码、差异与校验见[桥接来源说明](../bridge-maintenance/README.md)。
+```sh
+(dsh_dot_dir="$(mktemp -d)" && cd "$dsh_dot_dir" && curl -fLO "https://github.com/oxmumu3/dsh-project-companion/releases/download/v0.12.0-preview.3/dsh-dot-0.12.0-preview.3-macos.zip" && curl -fLO "https://github.com/oxmumu3/dsh-project-companion/releases/download/v0.12.0-preview.3/dsh-dot-0.12.0-preview.3-macos.zip.sha256" && shasum -a 256 -c "dsh-dot-0.12.0-preview.3-macos.zip.sha256" && ditto -x -k "dsh-dot-0.12.0-preview.3-macos.zip" . && open "dsh-dot-0.12.0-preview.3-macos/Install.command")
+```
 
-## macOS 标准安装
+它会下载固定版本、核对 SHA256、解压到独立临时目录并打开 `Install.command`。脚本会显示安装结果；安装结束后打开 Harness，在左侧进入「DSH Dot」。已有微信连接可以沿用；首次使用需要本人扫码、配置自己的模型。若电脑尚未安装 Harness，安装入口会打开官方应用下载页，待本人装好后继续。
 
-1. 确认已有受支持的官方 DSH `0.2.0-rc.2` 或 `0.2.1-rc.2`，保存工作并正常退出 App。安装器不会结束正在运行的任务。
-2. 解压同版本完整目录，不要只移出 `Install.command`，然后双击它。
-3. 若没有 Harness，入口只会指引前往[官方 Releases](https://github.com/deepseek-ai/deepseek-harness/releases)。本人安装官方应用后，回到终端按回车继续；脚本不自动下载或覆盖官方 App。
-4. 阅读安装结果。成功后本人打开 Harness，完成自己的模型登录配置，确认微信桥接与项目助理均启用，从左侧打开「DSH Dot」。
-5. 按[首次使用](first-use.md)沿用或建立微信会话，先用一个项目生成简报，再在手机核对实际内容。
+也可以直接下载[完整 macOS 安装包](https://github.com/oxmumu3/dsh-project-companion/releases/download/v0.12.0-preview.3/dsh-dot-0.12.0-preview.3-macos.zip)，解压并双击 `Install.command`。完整目录须一起保留，不要只移出入口文件。校验文件：[ZIP SHA256](https://github.com/oxmumu3/dsh-project-companion/releases/download/v0.12.0-preview.3/dsh-dot-0.12.0-preview.3-macos.zip.sha256)；全部发布资产见[固定版本页面](https://github.com/oxmumu3/dsh-project-companion/releases/tag/v0.12.0-preview.3)。
 
-安装可能联网下载依赖，不是完整离线包。入口未签名、公证；如果 macOS 阻止打开，先停止核对，不绕过系统安全检查。不要向安装器提供模型密钥或微信凭据。Windows 整合安装尚未验证。
+Google 三件套仍处于 External / Testing，仅登记的测试账号可登录；flomo 需要 MAX。两者都是可选来源，不影响本地项目和微信基本流程。私人来源按需读取，连接不会自动开启持续扫描或推送。完整能力与真实验收范围见[连接说明](https://github.com/oxmumu3/dsh-project-companion/blob/v0.12.0-preview.3/docs/context-sources.md)和[验证记录](https://github.com/oxmumu3/dsh-project-companion/blob/v0.12.0-preview.3/docs/verification.md)。
 
-安装成功只表示官方 CLI 返回成功且精确版本回读匹配；组件运行、微信绑定、执行回复和手机收到仍需分别核对。
+## 安装后
 
-## 已有 Harness：官方插件页面添加
+完整操作见[首次使用](https://github.com/oxmumu3/dsh-project-companion/blob/v0.12.0-preview.3/docs/first-use.md)。
 
-同版本 Release 实际出现后，也可从中取得 companion tgz，通过官方插件页面添加并启用。微信能力需要该 Release 配套的 `dsh-wechat@0.11.1-dot.2`；推荐用统一安装包处理已有桥接的兼容升级。不要混入旧版资产，也不要额外启用 YOLO 或 proactive 整包来满足本项目依赖。
+1. 打开 Harness，完成自己的模型登录配置，确认微信桥接与项目助理启用。
+2. 从左侧进入「DSH Dot」，沿用微信绑定或扫码；首次连接后从微信发一句「你好」建立会话。
+3. 选一个已经添加到 Harness 的项目，先生成首份简报，再按需交办、安排提醒或日报。
+4. 手机实际收到和排版由本人核对。安装、组件运行、通道报告发送与手机收到是不同状态。
+
+电脑、Harness 和网络需要保持可用，休眠或退出会影响主动提醒。macOS 安全拦截时先停止核对，不关闭系统安全保护。安装仍可能联网下载依赖；Windows 整合安装未验证。
+
+## 官方插件页面添加
+
+高级用户可在官方插件管理页添加并启用同版本 [companion tgz](https://github.com/oxmumu3/dsh-project-companion/releases/download/v0.12.0-preview.3/dsh-project-companion-0.12.0-preview.3.tgz)。微信能力需要同一 Release 的 [dsh-wechat 0.11.1-dot.2](https://github.com/oxmumu3/dsh-project-companion/releases/download/v0.12.0-preview.3/dsh-wechat-0.11.1-dot.2.tgz)；推荐使用完整安装包处理版本和依赖。无需额外启用 YOLO 或 proactive 整包。
 
 ## 保留与升级规则
 
-- 未安装桥接时安装配套的 `0.11.1-dot.2`；已有 `0.11.0` 或 `0.11.1-dot.1` 时允许升级至 `0.11.1-dot.2`，沿用原配对目录和绑定；已是 `0.11.1-dot.2` 时原样保留。其他版本停止，不降级或重置配对。
-- 项目助理同版本保留，显式安装允许升级旧版，拒绝降级。
-- 已有禁用状态不会静默改成启用；安装结果会列出需在官方管理器启用的组件。
-- 模块与 profile 登记不一致时停止，交由官方插件管理器检查，不手改 profile。
-- Harness 正在运行或安装中途启动时停止；保存工作、正常退出后再从同一入口重试。
-- 第二个包失败时报告已完成与未完成步骤，不冒称整体成功或自动回滚。
+- 桥接未安装时安装配套 `0.11.1-dot.2`；已有 `0.11.0` 或 `0.11.1-dot.1` 时升级并沿用绑定；已是 `.2` 则保留。其他版本停止，不降级、不重置配对。
+- 项目助理同版本保留，允许升级旧版，拒绝降级。已有禁用状态保留，安装结果会列出需本人启用的组件。
+- Harness 正在运行或安装中途启动时停止，正常退出后从同一入口重试；脚本不会结束正在运行的任务。
+- 模块与 profile 登记不一致时停止，交由官方插件管理器处理，不手改 profile。第二个包失败会报告已完成与未完成步骤，不冒称整体成功。
 
-## 维护者本地候选与校验
+## 维护者核验
 
-本轮候选目录为 Agent 工作区的 `output/dsh-dot-0.12.0-preview.3-candidate/`，已完成构建、校验和日常 App 安装；证据见验证记录，不能仅凭目录名判断安装成功，也不能拿旧 `preview.1` 替代本轮验收。旧候选保留，未发布的本地路径不是公众下载入口。
+完整目录包含 `Install.command`、`bundle-manifest.json`、安装脚本、两个固定 tgz 和完整许可证。原始桥接来源与固定差异见[桥接来源说明](https://github.com/oxmumu3/dsh-project-companion/blob/v0.12.0-preview.3/bridge-maintenance/README.md)。有 Node 时可在完整目录运行 `node scripts/install.mjs --bundle-dir . --dry-run`；显式安装加 `--install`。没有独立 Node 时，入口使用官方 App 自带运行时。
 
-完整目录应包含 `Install.command`、`bundle-manifest.json`、安装脚本、配套两个 tgz、主项目与上游许可证。manifest 记录精确版本和 SHA256；安装器核对包名、版本、MIT 许可及 bundle 声明。
-
-已有 Node 的维护者可在完整候选目录只预览安装计划：
-
-```sh
-node scripts/install.mjs --bundle-dir . --dry-run
-```
-
-确认计划后，在同一命令增加 `--install` 执行。没有独立 Node 时，双击入口使用官方 App 自带运行时。散装源码缺少 manifest 时不能当作完整安装包。
-
-本轮 `0.12.0-preview.3` 的精确包、宿主和有限读取证据见[验证记录](verification.md)；旧版手机记录不能替代新版手机验收。dry-run 仅核对安装计划，不证明运行中任务已经安全退出。新用户从零安装、扫码到首份简报的完整开箱仍待验证。
+本版运行代码与已安装验收包一致。源码、两套 SDK、升级保留与有限账号读取已有证据；陌生用户从零扫码开箱、长期运行、新版手机恢复、滴答任务正文、Drive 文档正文和非空日程仍分别待验。预览版发布不扩大这些验收结论。
