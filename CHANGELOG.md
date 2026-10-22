@@ -1,10 +1,20 @@
 # 版本记录
 
+## v0.12.0-preview.4 · Google 公众预览与安全存储
+
+- 普通 Google 三件套、单独日历的点击登录新增 macOS Keychain 密钥 + AES-256-GCM 本机存储；已有普通明文授权仅在明确查询前经过 guard 和原生 CAS 迁移，状态刷新不写配置。高级手填凭据、会话和备份不在该保证范围。
+- 授权按钮前增加资料用途说明、隐私链接和明确同意文案，说明配置模型与微信的数据路径。
+- 修复安全存储取消、迟到宿主写入及未知配置读取时的密钥保留竞态；单独日历缺少密钥时，不静默改用三件套账号。
+- Google 受众已切为 External / In production，退出测试白名单制；仍有未验证应用提示、累计 100 个账号上限，陌生账号实测未完成。Search Console 项目 URL-prefix 已验证；品牌校验等待新所有权同步，Google 提示可能需 24 小时，scope 验证入口尚不可提交，未把材料准备当作已提交或已通过。
+- 源码双 SDK 回归、独立复审及隔离官方 Host 检查记录见[验证记录](docs/verification.md)。日常 App 仍为此前 `0.12.0-preview.3`，未把旧版本本人读取或旧手机收件改写为本版验收。
+
+[固定版本与安装资产](https://github.com/oxmumu3/dsh-project-companion/releases/tag/v0.12.0-preview.4) · [安装说明](docs/install.md)。
+
 ## v0.12.0-preview.3 · 预览发布
 
-Google 三件套、flomo、滴答均有本人授权及有限读取证据；滴答改用官方只读 Open API，保持 tasks:read。正式仓库已迁至 oxmumu3，署名奥克斯木木山。源码、两套 SDK 兼容回归和本机验收范围见[验证记录](docs/verification.md)。[固定版本与安装资产](https://github.com/oxmumu3/dsh-project-companion/releases/tag/v0.12.0-preview.3)。Google仍为受限内测，flomo需MAX；私人Context主动订阅尚未实现。
+Google 三件套、flomo、滴答均有本人授权及有限读取证据；滴答改用官方只读 Open API，保持 tasks:read。正式仓库已迁至 oxmumu3，署名奥克斯木木山。源码、两套 SDK 兼容回归和本机验收范围见[验证记录](docs/verification.md)。[固定版本与安装资产](https://github.com/oxmumu3/dsh-project-companion/releases/tag/v0.12.0-preview.3)。该版本发布当时 Google 仍为受限内测，flomo需MAX；私人Context主动订阅尚未实现。
 
-以下为历史版本快照；当时的“公开下载”记录不证明任意新版本已发布；2026-10-22迁移后已核对现存最高公开预览版为v0.6.0-preview.1。
+以下为各历史阶段快照；当时的“公开下载”记录不证明之后版本的发布或验收。仓库迁移核验时的公开最高版本为 v0.6.0-preview.1，随后发布记录见上文。
 
 ## v0.11.0-preview.2 · 历史候选（当时准备中，未安装、未公开）
 

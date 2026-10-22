@@ -28,3 +28,9 @@ test('Calendar credentials use their own secret and exact native CAS without leg
 test('Calendar CAS rejects a user clear or replacement while native mutation is pending',async()=>{for(const value of ['','replaced']){const h=setup();h.change({googleCalendarOAuthCredentials:'calendar-old'});let release;h.block(new Promise(r=>release=r));const write=h.writer('googleCalendar','calendar-late',{expectedValue:'calendar-old',authorizeMutation:async()=>true});while(!h.mutations.length)await new Promise(r=>setImmediate(r));h.change({googleCalendarOAuthCredentials:value});release();await assert.rejects(write);assert.equal(h.read().googleCalendarOAuthCredentials,value);}});
 
 test('Google suite credentials use independent CAS and do not overwrite Calendar or legacy credentials',async()=>{const h=setup();h.change({googleCalendarOAuthCredentials:'calendar-kept',googleClientId:'legacy-kept'});await h.writer('googleSuite','suite-record',{expectedValue:'',authorizeMutation:async()=>true});assert.equal(h.read().googleSuiteOAuthCredentials,'suite-record');assert.equal(h.read().googleCalendarOAuthCredentials,'calendar-kept');assert.equal(h.read().googleClientId,'legacy-kept');assert.deepEqual(h.mutations[0].ops,[{op:'set',path:['googleSuiteOAuthCredentials'],value:'suite-record'}]);});
+
+test('Google encrypted envelope can exceed clear-record bound without admitting unbounded writes',async()=>{
+ const h=setup();const envelope='e'.repeat(45000);await h.writer('googleSuite',envelope,{expectedValue:'',authorizeMutation:async()=>true});assert.equal(h.read().googleSuiteOAuthCredentials,envelope);
+ await assert.rejects(h.writer('googleSuite','e'.repeat(65537),{expectedValue:envelope,authorizeMutation:async()=>true}));
+ await assert.rejects(h.writer('flomo','e'.repeat(45000),{expectedValue:'old',expectedLegacy:'legacy',authorizeMutation:async()=>true}));
+});

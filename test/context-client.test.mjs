@@ -96,7 +96,7 @@ test('Google authorization is an explicit POST and displays a validated click-on
     c.context.onFetch = () => Response.json({ url: 'https://accounts.google.com/o/oauth2/v2/auth?client_id=fixture&state=fixture', expiresAt: '2030-01-01T01:05:00Z' });
     const button = nodes(view, n => n.type === 'button' && text(n).includes('连接 Google 账号'))[0]; await button.props.onClick(); view = c.render();
     assert.deepEqual(JSON.parse(c.requests.at(-1).options.body), { action: 'google_authorize' });
-    const link = nodes(view, n => n.type === 'a')[0]; assert.match(link.props.href, /^https:\/\/accounts\.google\.com\/o\/oauth2\/v2\/auth\?/);
+    const link = nodes(view, n => n.type === 'a' && !n.props['data-google-privacy'])[0]; assert.match(link.props.href, /^https:\/\/accounts\.google\.com\/o\/oauth2\/v2\/auth\?/);
     assert.equal(link.props.target, '_blank'); assert.match(link.props.rel, /noreferrer/);
     assert.equal(c.opened.length, 0); assert.equal(c.requests.length, 2);
     assert.match(text(view), /Desktop/);
@@ -109,7 +109,7 @@ test('authorization rejects external or credential-bearing callback links withou
     try {
       c.render(); await c.flush(); const view = c.render(); c.context.onFetch = () => Response.json({ url, expiresAt: '2030-01-01T01:05:00Z' });
       await nodes(view, n => n.type === 'button' && text(n).includes('连接 Google 账号'))[0].props.onClick();
-      assert.equal(nodes(c.render(), n => n.type === 'a').length, 0); assert.doesNotMatch(text(c.render()), /evil.example|PRIVATE|user:secret/);
+      assert.equal(nodes(c.render(), n => n.type === 'a' && !n.props['data-google-privacy']).length, 0); assert.doesNotMatch(text(c.render()), /evil.example|PRIVATE|user:secret/);
       assert.match(text(c.render()), /未完成|不确定|不可用/);
     } finally { c.dispose(); }
   }
@@ -224,7 +224,7 @@ test('flomo and Dida offer explicit official account login with legacy fields co
    const advanced=nodes(view,n=>n.type==='details'&&n.props['data-context-advanced'])[0];assert.ok(advanced);assert.notEqual(advanced.props.open,true);assert.equal(c.requests.length,1);
    const url=source==='flomo'?'https://flomoapp.com/integration/grant?client_id=fixture&state=x':'https://dida365.com/oauth/authorize?client_id=fixture&state=x';c.context.onFetch=()=>Response.json({url,expiresAt:'2030-01-01T01:05:00Z'});
    await nodes(view,n=>n.type==='button'&&text(n).includes('登录 '+labels[source]+' 授权'))[0].props.onClick();view=c.render();assert.deepEqual(JSON.parse(c.requests.at(-1).options.body),{action:source+'_authorize'});
-   const link=nodes(view,n=>n.type==='a')[0];assert.equal(link.props.href,url);assert.equal(link.props.target,'_blank');assert.match(link.props.rel,/noreferrer/);assert.equal(c.opened.length,0);assert.equal(c.requests.length,2);
+   const link=nodes(view,n=>n.type==='a'&&!n.props['data-google-privacy'])[0];assert.equal(link.props.href,url);assert.equal(link.props.target,'_blank');assert.match(link.props.rel,/noreferrer/);assert.equal(c.opened.length,0);assert.equal(c.requests.length,2);
   }finally{c.dispose();}
  }
 });
@@ -233,7 +233,7 @@ test('account authorization refuses unexpected hosts and never accepts tokens fr
  for(const source of ['flomo','dida']){
   const c=await load();c.context.snapshot[source+'Auth']={clientConfigured:true,refreshConfigured:false,authInProgress:false};
   try{c.render();await c.flush();const view=c.render(),label=source==='flomo'?'flomo':'滴答清单';c.context.onFetch=()=>Response.json({url:'https://evil.example/login?token=PRIVATE',expiresAt:'2030-01-01T01:05:00Z'});
-   await nodes(view,n=>n.type==='button'&&text(n).includes('登录 '+label+' 授权'))[0].props.onClick();const after=c.render();assert.equal(nodes(after,n=>n.type==='a').length,0);assert.doesNotMatch(text(after),/evil.example|PRIVATE/);assert.match(text(after),/不确定/);assert.equal(c.requests.filter(r=>r.options.method==='POST').length,1);
+   await nodes(view,n=>n.type==='button'&&text(n).includes('登录 '+label+' 授权'))[0].props.onClick();const after=c.render();assert.equal(nodes(after,n=>n.type==='a'&&!n.props['data-google-privacy']).length,0);assert.doesNotMatch(text(after),/evil.example|PRIVATE/);assert.match(text(after),/不确定/);assert.equal(c.requests.filter(r=>r.options.method==='POST').length,1);
   }finally{c.dispose();}
  }
 });
@@ -242,7 +242,7 @@ test('Calendar ordinary entry truthfully stays in preparation without a product 
  const c=await load();c.context.snapshot.googleCalendarAuth={clientConfigured:false,refreshConfigured:false,authInProgress:false};try{c.render();await c.flush();const view=c.render();assert.match(text(view),/Google 日历连接准备中/);const button=nodes(view,n=>n.type==='button'&&text(n).includes('登录 Google 日历'))[0];assert.equal(button.props.disabled,true);await button.props.onClick();assert.equal(c.requests.length,1);assert.equal(c.opened.length,0);}finally{c.dispose();}
 });
 test('Calendar login uses its own action and first-party link, without legacy credentials or an automatic read',async()=>{
- const c=await load();c.context.snapshot.googleCalendarAuth={clientConfigured:true,refreshConfigured:false,authInProgress:false};try{c.render();await c.flush();let view=c.render();const button=nodes(view,n=>n.type==='button'&&text(n).includes('登录 Google 日历'))[0];assert.equal(button.props.disabled,false);c.context.onFetch=()=>Response.json({url:'https://accounts.google.com/o/oauth2/v2/auth?state=calendar',expiresAt:'2030-01-01T01:05:00Z'});await button.props.onClick();view=c.render();assert.deepEqual(JSON.parse(c.requests.at(-1).options.body),{action:'google_calendar_authorize'});assert.match(text(view),/主日历/);assert.match(text(view),/登录不会自动查询/);assert.equal(c.requests.length,2);assert.equal(c.opened.length,0);assert.equal(nodes(view,n=>n.type==='a')[0].props.href,'https://accounts.google.com/o/oauth2/v2/auth?state=calendar');}finally{c.dispose();}
+ const c=await load();c.context.snapshot.googleCalendarAuth={clientConfigured:true,refreshConfigured:false,authInProgress:false};try{c.render();await c.flush();let view=c.render();const button=nodes(view,n=>n.type==='button'&&text(n).includes('登录 Google 日历'))[0];assert.equal(button.props.disabled,false);c.context.onFetch=()=>Response.json({url:'https://accounts.google.com/o/oauth2/v2/auth?state=calendar',expiresAt:'2030-01-01T01:05:00Z'});await button.props.onClick();view=c.render();assert.deepEqual(JSON.parse(c.requests.at(-1).options.body),{action:'google_calendar_authorize'});assert.match(text(view),/主日历/);assert.match(text(view),/登录不会自动查询/);assert.equal(c.requests.length,2);assert.equal(c.opened.length,0);assert.equal(nodes(view,n=>n.type==='a'&&!n.props['data-google-privacy'])[0].props.href,'https://accounts.google.com/o/oauth2/v2/auth?state=calendar');}finally{c.dispose();}
 });
 
 test('Calendar record can only be cleared via an explicit revision-CAS native form save',async()=>{const c=await load({native:true});try{c.render();await c.flush();const panel=c.render();let view=c.renderCredentials(panel);await c.flush();assert.equal(nodes(view,n=>n.type==='native-secret'&&n.props.id.endsWith('googleCalendarOAuthCredentials')).length,0);await nodes(view,n=>n.type==='button'&&text(n).includes('清除 Google 日历授权'))[0].props.onClick();assert.equal(c.configRequests.length,0);view=c.renderCredentials(panel);await nodes(view,n=>n.type==='native-form')[0].props.onSave();assert.deepEqual(c.configRequests,[{ops:[{op:'unset',path:['googleCalendarOAuthCredentials']}],revision:7}]);}finally{c.dispose();}});
@@ -255,9 +255,17 @@ test('Google suite is the primary ordinary path with three clear services and no
  try { c.render(); await c.flush(); const view=c.render(); const suite=nodes(view,n=>n.props['data-google-suite-connect'])[0];
   assert.ok(suite,'one ordinary suite block'); assert.match(text(suite),/Gmail/); assert.match(text(suite),/日历/); assert.match(text(suite),/Drive/);
   assert.equal(nodes(suite,n=>n.props['data-context-source']).length,3); assert.equal(suiteButton(view).props.disabled,false);
-  assert.match(text(suite),/只读/); assert.match(text(suite),/内测/); assert.doesNotMatch(text(suite),/Client ID|Client Secret|Refresh Token/);
+  assert.match(text(suite),/只读/); assert.match(text(suite),/预览/); assert.doesNotMatch(text(suite),/Client ID|Client Secret|Refresh Token/);
   assert.equal(c.intervals.size,0); assert.equal(c.external.length,0); assert.equal(c.requests.length,1);
  } finally {c.dispose();}
+});
+test('Google login prominently explains model and WeChat processing before affirmative consent',async()=>{
+ const c=await load();try{c.render();await c.flush();const view=c.render(),suite=nodes(view,n=>n.props['data-google-suite-connect'])[0];
+  const notice=nodes(suite,n=>n.props['data-google-data-use-disclosure'])[0];assert.ok(notice,'data disclosure is visible in ordinary Google login, outside collapsed help');
+  assert.match(text(notice),/模型/);assert.match(text(notice),/微信/);assert.match(text(notice),/训练/);assert.match(text(suiteButton(view)),/同意.*连接 Google/);
+  const privacy=nodes(suite,n=>n.type==='a'&&n.props.href==='https://oxmumu3.github.io/dsh-project-companion/privacy.html')[0];assert.ok(privacy,'public privacy notice is linked beside ordinary Google consent');assert.equal(privacy.props['data-google-privacy'],true);assert.match(privacy.props.rel,/noopener/);assert.match(text(privacy),/隐私/);
+  assert.equal(c.requests.filter(r=>r.options.method==='POST').length,0,'disclosure alone never starts OAuth');
+ }finally{c.dispose();}
 });
 test('Google suite opens only its validated URL once and polls sanitized status until saved without enabling sources',async()=>{
  const c=await load();
@@ -275,7 +283,7 @@ test('Google suite opens only its validated URL once and polls sanitized status 
 test('Google suite refuses invalid authorization origins and neither opens nor polls',async()=>{
  const c=await load();try{c.render();await c.flush();const button=suiteButton(c.render());assert.ok(button);
   c.context.onFetch=()=>Response.json({url:'https://evil.example/login?secret=fixture',expiresAt:new Date(Date.now()+240000).toISOString()});
-  await button.props.onClick();c.render();await c.flush();assert.equal(c.external.length,0);assert.equal(c.intervals.size,0);assert.equal(nodes(c.render(),n=>n.type==='a').length,0);assert.doesNotMatch(text(c.render()),/evil|secret=fixture/);
+  await button.props.onClick();c.render();await c.flush();assert.equal(c.external.length,0);assert.equal(c.intervals.size,0);assert.equal(nodes(c.render(),n=>n.type==='a'&&!n.props['data-google-privacy']).length,0);assert.doesNotMatch(text(c.render()),/evil|secret=fixture/);
  }finally{c.dispose();}
 });
 test('Google authorization polling is bounded by expiry and disappears on unmount',async()=>{
@@ -301,7 +309,7 @@ test('Suite authorization can be cleared only by explicit native revision-fenced
 test('Reauthorization keeps waiting while an older saved grant still exists',async()=>{
  const c=await load();c.context.snapshot.googleSuiteAuth={...suiteState(),refreshConfigured:true,grantedSources:['calendar']};
  try{c.render();await c.flush();const expiry=new Date(Date.now()+240000).toISOString();c.context.onFetch=(_url,o)=>o.method==='POST'?Response.json({url:'https://accounts.google.com/o/oauth2/v2/auth?state=suite',expiresAt:expiry}):Response.json(c.context.snapshot);
-  await suiteButton(c.render()).props.onClick();c.render();await c.flush();c.context.snapshot.googleSuiteAuth={...c.context.snapshot.googleSuiteAuth,authInProgress:true,expiresAt:expiry};await c.tick();c.render();await c.flush();assert.equal(c.intervals.size,1);assert.equal(nodes(c.render(),n=>n.type==='a').length,1);assert.match(text(c.render()),/等待你完成 Google 授权/);
+  await suiteButton(c.render()).props.onClick();c.render();await c.flush();c.context.snapshot.googleSuiteAuth={...c.context.snapshot.googleSuiteAuth,authInProgress:true,expiresAt:expiry};await c.tick();c.render();await c.flush();assert.equal(c.intervals.size,1);assert.equal(nodes(c.render(),n=>n.type==='a'&&!n.props['data-google-privacy']).length,1);assert.match(text(c.render()),/等待你完成 Google 授权/);
  }finally{c.dispose();assert.equal(c.intervals.size,0);}
 });
 test('Unmount aborts pending authorization status refresh and suppresses late updates',async()=>{
@@ -321,7 +329,7 @@ test('pending account login explains which provider holds the other login button
       assert.match(text(notice), new RegExp(`正在完成 ${label} 授权`));
       assert.match(text(notice), /其他登录按钮暂时不可用/);
       assert.match(text(notice), /完成或超时后.*重新连接/);
-      assert.equal(nodes(view, n => n.type === 'button' && text(n) === '连接 Google ')[0].props.disabled, true);
+      assert.equal(suiteButton(view).props.disabled, true);
       assert.equal(c.requests.filter(r => r.options.method === 'POST').length, 0);
     } finally { c.dispose(); }
   }

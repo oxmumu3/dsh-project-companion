@@ -28,6 +28,8 @@ import {createGoogleCalendarRest} from './src/google-calendar-rest.js';
 import {createDidaRest} from './src/dida-rest.js';
 import {createContextProvider} from './src/context-provider.js';
 import {createContextCredentialWriter} from './src/context-credential-writer.js';
+import {createGoogleTokenVault} from './src/google-token-vault.js';
+import {secureGoogleAuth} from './src/google-secure-auth.js';
 import {createContextAccountAuth} from './src/context-account-auth.js';
 import {createContextTransport} from './src/context-transport.js';
 import {createPersonalContext,contextRowSchema,CONTEXT_SOURCES,contextErrorText} from './src/context-service.js';
@@ -190,25 +192,36 @@ export async function installCompanion(ctx,options={}){
       }catch{return{status:'uncertain',detail:'News dispatch outcome unknown; not automatically retried'};}
     },
   });
-  const readConfig=options.context?.readConfig??(()=>readContextConfig(options.context?.config));
+  const rawReadConfig=options.context?.readConfig??(()=>readContextConfig(options.context?.config));
+  const rawCredentialWriter=createContextCredentialWriter({ctx,readConfig:rawReadConfig,isClosed:()=>disposed});
+  // Native App configuration uses the vault by default. Programmatic embeddings
+  // with an injected config reader own their secret provider, or inject a vault.
+  const nativeScope=String(ctx.baseUrl??'standalone-native-profile')+'#'+String(ctx.fiber?.entry?.options?.id??name);
+  const googleTokenVault=options.context?.googleTokenVault??(options.context?.readConfig?null:createGoogleTokenVault({rawReadConfig,rawWrite:rawCredentialWriter,scope:nativeScope,isClosed:()=>disposed}));
+  const readConfig=googleTokenVault?()=>googleTokenVault.readConfig():rawReadConfig;
   const saveRefreshToken=options.context?.saveRefreshToken??(async value=>{
     const settings=ctx.get('settings',false);const entryId=ctx.fiber?.entry?.options?.id;
     if(disposed||!entryId||typeof settings?.mutate!=='function')throw new Error('原生凭据保存暂不可用。');
     await settings.mutate(entryId,[{op:'set',path:['googleRefreshToken'],value}]);
   });
   const googleAuth=options.context?.googleAuth??createGoogleAuth({readConfig,saveRefreshToken,...(options.context?.fetch?{fetch:options.context.fetch}:{}),...(options.clock?{clock:()=>new Date(options.clock()).getTime()}: {})});
-  const credentialWriter=createContextCredentialWriter({ctx,readConfig,isClosed:()=>disposed});
+  const credentialWriter=(source,value,conditions)=>googleTokenVault&&['googleSuite','googleCalendar'].includes(source)?googleTokenVault.saveCredentials(source,value,conditions):rawCredentialWriter(source,value,conditions);
   const makeAccountAuth=source=>options.context?.[source+'Auth']??createContextAccountAuth({source,readConfig,saveCredentials:(value,conditions)=>credentialWriter(source,value,conditions),...(options.context?.fetch?{fetch:options.context.fetch}:{}),...(options.clock?{clock:()=>new Date(options.clock()).getTime()}: {})});
   const flomoAuth=makeAccountAuth('flomo'),didaAuth=makeAccountAuth('dida');
-  const googleCalendarAuth=options.context?.googleCalendarAuth??createGoogleCalendarAuth({publisher:options.context?.googlePublisher,readConfig,saveCredentials:(value,conditions)=>credentialWriter('googleCalendar',value,conditions),...(options.context?.fetch?{fetch:options.context.fetch}:{}),...(options.clock?{clock:()=>new Date(options.clock()).getTime()}: {})});
-  const googleSuiteAuth=options.context?.googleSuiteAuth??createGoogleSuiteAuth({publisher:options.context?.googlePublisher,readConfig,saveCredentials:(value,conditions)=>credentialWriter('googleSuite',value,conditions),...(options.context?.fetch?{fetch:options.context.fetch}:{}),...(options.clock?{clock:()=>new Date(options.clock()).getTime()}: {})});
-  const calendarCredentials=()=>googleCalendarAuth.credentialState().configured?googleCalendarAuth.credentialState():googleSuiteAuth.credentialState('calendar');
+  const googleCalendarController=options.context?.googleCalendarAuth??createGoogleCalendarAuth({publisher:options.context?.googlePublisher,readConfig,saveCredentials:(value,conditions)=>credentialWriter('googleCalendar',value,conditions),...(options.context?.fetch?{fetch:options.context.fetch}:{}),...(options.clock?{clock:()=>new Date(options.clock()).getTime()}: {})});
+  const googleSuiteController=options.context?.googleSuiteAuth??createGoogleSuiteAuth({publisher:options.context?.googlePublisher,readConfig,saveCredentials:(value,conditions)=>credentialWriter('googleSuite',value,conditions),...(options.context?.fetch?{fetch:options.context.fetch}:{}),...(options.clock?{clock:()=>new Date(options.clock()).getTime()}: {})});
+  const googleCalendarAuth=secureGoogleAuth({controller:googleCalendarController,vault:googleTokenVault,source:'googleCalendar'});
+  const googleSuiteAuth=secureGoogleAuth({controller:googleSuiteController,vault:googleTokenVault,source:'googleSuite'});
+  // An unavailable independent Calendar grant still owns its account route.
+  // Never silently switch to the Suite account after losing its vault key.
+  const useCalendarRecord=()=>Boolean(rawReadConfig().googleCalendarOAuthCredentials)||googleCalendarAuth.credentialState().configured;
+  const calendarCredentials=()=>useCalendarRecord()?googleCalendarAuth.credentialState():googleSuiteAuth.credentialState('calendar');
   const suiteSources=new Set(['gmail','drive','docs','sheets','slides']);
   // Existing explicit advanced MCP configurations are retained until the user
   // saves a suite connection. There is never fallback after a REST failure.
   const useSuite=source=>{const config=readConfig();return suiteSources.has(source)&&(!!config.googleSuiteOAuthCredentials||googleSuiteAuth.credentialState(source).configured||!config.googleClientId||!config.googleRefreshToken||!config.googleClientSecret);};
   const suiteTransport=options.context?.suiteTransport??createGoogleSuiteRest({getToken:(source,settings)=>googleSuiteAuth.getToken(source,settings),...(options.context?.fetch?{fetch:options.context.fetch}:{}),...(options.clock?{clock:options.clock}:{})});
-  const calendarTransport=options.context?.calendarTransport??createGoogleCalendarRest({getToken:settings=>googleCalendarAuth.credentialState().configured?googleCalendarAuth.getToken(settings):googleSuiteAuth.getToken('calendar',settings),...(options.context?.fetch?{fetch:options.context.fetch}:{}),...(options.clock?{clock:options.clock}:{})});
+  const calendarTransport=options.context?.calendarTransport??createGoogleCalendarRest({getToken:settings=>useCalendarRecord()?googleCalendarAuth.getToken(settings):googleSuiteAuth.getToken('calendar',settings),...(options.context?.fetch?{fetch:options.context.fetch}:{}),...(options.clock?{clock:options.clock}:{})});
   // An ordinary saved OAuth connection always uses the read-only Open API.
   // Invalid/expired OAuth never falls back to an older manual MCP token.
   const useDidaRest=()=>{const config=readConfig();return Boolean(config.didaOAuthCredentials)||!config.didaToken;};
@@ -241,7 +254,7 @@ export async function installCompanion(ctx,options={}){
     const contextClosing=context.close();contextRoute?.close();
     const contextTransportClosing=contextTransport.close();const googleAuthClosing=googleAuth.close();
     projectUpdateModel?.close();const updatesClosing=projectUpdates?.close();
-    const externalClosing=Promise.allSettled([updatesClosing,newsClosing,contextClosing,contextTransportClosing,googleAuthClosing,googleCalendarAuth.close(),googleSuiteAuth.close(),flomoAuth.close(),didaAuth.close()]);
+    const externalClosing=Promise.allSettled([updatesClosing,newsClosing,contextClosing,contextTransportClosing,googleAuthClosing,googleCalendarAuth.close(),googleSuiteAuth.close(),flomoAuth.close(),didaAuth.close(),googleTokenVault?.close()]);
     if(timer!==undefined){timers.clearInterval(timer);timer=undefined;}
     await Promise.allSettled([...coordinates]);
     await Promise.allSettled([memory?.close(),followup?.close(),onboarding?.close(),welcomeGuard?.close()]);
@@ -250,6 +263,19 @@ export async function installCompanion(ctx,options={}){
     try{await taskResults.close();}
     finally{try{await service.ready();}finally{await Promise.allSettled([taskDomain.close(),onboardingDomain.close(),newsDomain.close(),contextDomain.close(),projectUpdatesDomain.close(),domain.close()]);}}
   });
+  // Cordis emits disposal before waiting for an asynchronous apply to settle.
+  // Abort startup at that boundary; normal effect cleanup alone runs too late.
+  ctx.on('internal/plugin',fiber=>{
+    if(fiber===ctx.fiber&&fiber.uid===null){disposed=true;lifecycle.abort();}
+  },{global:true});
+  if(googleTokenVault){
+    // Register cleanup before waiting for Keychain. Startup hydrates only our
+    // encrypted records: no migration, Google request, source enable or plan.
+    for(const source of ['googleSuite','googleCalendar']){
+      try{await googleTokenVault.prepare({source,authorizeMutation:async()=>!disposed,signal:lifecycle.signal});}catch{}
+      if(disposed||lifecycle.signal.aborted)return;
+    }
+  }
   await service.ready();await taskResults.ready();await news.ready();await context.ready();
   const noteError=error=>{lastRuntimeError=String(error?.message??error).slice(0,200);};
   const authorizeRoot=async root=>(await service.coordinationTarget(root))?.root===root;

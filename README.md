@@ -2,20 +2,20 @@
 
 给已有官方 DeepSeek Harness 加上项目助理：在微信里明确交办到对应项目，把本轮执行回复带回原对话，恢复缓存时避免重新执行。
 
-作者：奥克斯木木山 · [正式仓库](https://github.com/oxmumu3/dsh-project-companion)。社区开源项目，非 DeepSeek 或 OpenAI 官方产品。当前预览版 **`0.12.0-preview.3`** 已在日常官方 App 安装并核验启用、一个组件运行，发布入口见下方。保留普通 Google、flomo、滴答登录；滴答普通账号使用官方只读 Open API，仍只申请 `tasks:read`，不为适配 MCP 增加写权限。支持清单、指定清单任务和指定任务读取，不自动跨清单搜索。
+作者：奥克斯木木山 · [正式仓库](https://github.com/oxmumu3/dsh-project-companion)。社区开源项目，非 DeepSeek 或 OpenAI 官方产品。本版 **`0.12.0-preview.4`** 面向 macOS 上已有的官方 Harness，包含 Dot 和配套微信桥接。
 
-本版原生会话已真实读取滴答两项清单和 flomo 两条关键词搜索结果；原微信绑定、Google 三来源及两家在日常 Dot 的启用状态保留，未新增提醒或日报。此前 Google 邮件搜索与限长正文、主日历七天空窗、云盘文件名搜索通过。滴答任务正文、Drive 正文、非空日程、长期令牌刷新和新版手机体验仍待验。Google 已切为 External / In production，不再要求逐个登记测试账号；当前权限尚未验证，有未验证应用提示与累计 100 个账号上限，陌生账号首次授权实测仍待完成；flomo 需要 MAX。安装、授权、有限读取与手机证据分别见[验证记录](docs/verification.md)。
+本版为普通 Google 三件套、单独日历登录增加授权前的数据用途说明，以及 macOS Keychain 密钥 + AES-256-GCM 本机凭据存储；已有普通 Google 明文记录仅在明确查询前受控迁移。flomo 与滴答保留官方登录入口，滴答普通账号继续只申请 `tasks:read`。
 
-Google 点击登录保留，采用已核实的 Desktop 公共客户端、本机回调与 PKCE。应用注册与用户私人 token 的区别及开源依据见[桌面授权分发说明](docs/google-desktop-oauth.md)。
+**Google 当前是受限公众预览**：已切到 External / In production，不再逐个登记测试账号；权限尚未验证，可能出现未验证应用提示，并受累计 100 个账号上限及账号策略限制。陌生账号首次授权、日常 App 本版升级与新版手机体验仍待验收。flomo 需要 MAX。具体实测范围见[验证记录](docs/verification.md)，Google 状态与存储边界见[连接说明](docs/context-sources.md)。
 
 ## 安装
 
-[下载 0.12.0-preview.3 macOS 完整包](https://github.com/oxmumu3/dsh-project-companion/releases/download/v0.12.0-preview.3/dsh-dot-0.12.0-preview.3-macos.zip) · [固定版本发布页](https://github.com/oxmumu3/dsh-project-companion/releases/tag/v0.12.0-preview.3) · [安装说明](docs/install.md)。
+[下载 0.12.0-preview.4 macOS 完整包](https://github.com/oxmumu3/dsh-project-companion/releases/download/v0.12.0-preview.4/dsh-dot-0.12.0-preview.4-macos.zip) · [固定版本发布页](https://github.com/oxmumu3/dsh-project-companion/releases/tag/v0.12.0-preview.4) · [安装说明](docs/install.md)。
 
 先保存并正常退出 Harness，把下面一行粘贴到 macOS「终端」：
 
 ```sh
-(dsh_dot_dir="$(mktemp -d)" && cd "$dsh_dot_dir" && curl -fLO "https://github.com/oxmumu3/dsh-project-companion/releases/download/v0.12.0-preview.3/dsh-dot-0.12.0-preview.3-macos.zip" && curl -fLO "https://github.com/oxmumu3/dsh-project-companion/releases/download/v0.12.0-preview.3/dsh-dot-0.12.0-preview.3-macos.zip.sha256" && shasum -a 256 -c "dsh-dot-0.12.0-preview.3-macos.zip.sha256" && ditto -x -k "dsh-dot-0.12.0-preview.3-macos.zip" . && open "dsh-dot-0.12.0-preview.3-macos/Install.command")
+(dsh_dot_dir="$(mktemp -d)" && cd "$dsh_dot_dir" && curl -fLO "https://github.com/oxmumu3/dsh-project-companion/releases/download/v0.12.0-preview.4/dsh-dot-0.12.0-preview.4-macos.zip" && curl -fLO "https://github.com/oxmumu3/dsh-project-companion/releases/download/v0.12.0-preview.4/dsh-dot-0.12.0-preview.4-macos.zip.sha256" && shasum -a 256 -c "dsh-dot-0.12.0-preview.4-macos.zip.sha256" && ditto -x -k "dsh-dot-0.12.0-preview.4-macos.zip" . && open "dsh-dot-0.12.0-preview.4-macos/Install.command")
 ```
 
 命令会下载、校验并打开安装入口；安装结束后打开 Harness。Google 当前为受限公众预览，尚有未验证提示与累计 100 个账号上限，flomo 需要 MAX，均为可选来源。
@@ -40,7 +40,7 @@ Google 点击登录保留，采用已核实的 Desktop 公共客户端、本机�
 - **提醒与日报**：按明确时间设置一次提醒或固定日报，可以暂停、取消。
 - **只读跟进**：先试一次，或明确设置频率，让它核对项目变化、阻塞与下一步；没有值得告知的新情况时可静默结束。
 - **AI 资讯日报**：从 92 个技术博客 RSS 中筛选 AI 与 Builder 相关内容，最多 3 篇重点＋7 篇速览，保留原文链接和读取范围；预览可带明确关注点，解释与本次兴趣的联系；不保存兴趣或改变原计划。支持明确时间开启与取消。详见[资讯日报](docs/news.md)。
-- **Google 三件套与其他资料**：点击连接 Gmail、日历、Drive，授权后自行启用需要的只读来源；支持查邮件、看安排、找文件及读取指定文档/表格范围。原 Calendar-only 连接继续保留。flomo、滴答也有官方登录入口，五类来源已有本人有限读取证据，尚未验证所有读取操作。Google 仍为受限内测；私人资料持续扫描和主动推送尚未实现。详见[连接说明](docs/context-sources.md)。
+- **Google 三件套与其他资料**：点击连接 Gmail、日历、Drive，授权后自行启用需要的只读来源；支持查邮件、看安排、找文件及读取指定文档/表格范围。原 Calendar-only 连接继续保留。flomo、滴答也有官方登录入口，此前版本已有五类来源的本人有限读取证据，尚未验证所有读取操作。Google 当前为受限公众预览；私人资料持续扫描和主动推送尚未实现。详见[连接说明](docs/context-sources.md)。
 - **公开仓库动态**：可选关联公开 GitHub 仓库，读取最新 release。
 
 安装和首次引导都不会默认创建提醒、日报或周期跟进。首份简报及主动检查只允许读取选定项目的记忆和资料，不改文件、不派工。普通会话中，只有你明确交代执行时才派工。
@@ -89,7 +89,7 @@ AI 资讯抓取只访问固定公开来源，候选标题、摘要及选中文�
 
 ## 开发与许可
 
-MIT。默认开发环境为 Node.js 22.13+；测试方法、双 SDK 回归与真实验收边界见[验证记录](docs/verification.md)。请通过官方插件管理器安装与启用，不手改 profile 或宿主 bundle 绕过管理器。
+MIT。默认开发环境为 Node.js 22.13+；本版源码已做两套 SDK 回归、独立审读与隔离官方 Host 检查，最终包、日常升级及新用户验收分别记录。此前日常 `0.12.0-preview.3` 的本人有限读取不能替代本版验收；详见[验证记录](docs/verification.md)。请通过官方插件管理器安装与启用，不手改 profile 或宿主 bundle 绕过管理器。
 
 ## 后续迭代
 

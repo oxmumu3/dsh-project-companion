@@ -27,9 +27,11 @@ async function fixture(t,options={}){
   const agent={id:session.id,session,ctx,status:'idle'};agents.set(agent.id,agent);
   let adapter;
   const config={didaToken:'synthetic-private-token',flomoToken:'',googleClientId:'',googleClientSecret:'',googleRefreshToken:''};
+  const googleTokenVault=options.vaultFactory?.(config);
   const transport={catalog:async(source,{signal})=>{calls.push({type:'catalog',source});return options.catalog?.(source,{signal})??{tools:[{name:'list_projects',inputSchema:{type:'object',properties:{limit:{type:'integer'},offset:{type:'integer'}}}}],fetchedAt:'2026-10-19T12:00:00Z'};},call:async(source,name,args,{signal})=>{calls.push({type:'call',source,name,args});return options.call?.(source,name,args,{signal})??{value:{structuredContent:{projects:[{id:'p1',name:'当前事项'}]}},fetchedAt:'2026-10-19T12:00:00Z'};},close:async()=>closed.push('transport')};
   const googleAuth={status:()=>({clientConfigured:false,refreshConfigured:false,authInProgress:false}),start:async()=>{calls.push({type:'google_authorize'});return{url:'https://accounts.google.com/o/oauth2/v2/auth?state=synthetic',expiresAt:'2026-10-19T12:05:00Z'};},getToken:async()=>{throw new Error('must not access Google');},close:async()=>closed.push('googleAuth')};
-  const plugin=await ctx.plugin({name:'synthetic-context-host',inject:['tools','commands','storageDomain','sessions','systemPrompt'],async apply(scope){adapter=await installCompanion(scope,{clock:()=>new Date('2026-10-19T12:00:00Z'),readSetup:async()=>connection,readNativeRoute:options.readNativeRoute??(async()=>({kind:'unbound'})),readBinding:async()=>null,context:{readConfig:()=>({...config}),googlePublisher:options.googlePublisher??null,fetch:options.contextFetch??(async()=>{throw new Error('Synthetic context host must not contact real services');}),transport,googleAuth,...(options.flomoAuth?{flomoAuth:options.flomoAuth}:{}),...(options.didaAuth?{didaAuth:options.didaAuth}:{}),...(options.googleCalendarAuth?{googleCalendarAuth:options.googleCalendarAuth}:{}),...(options.googleSuiteAuth?{googleSuiteAuth:options.googleSuiteAuth}:{}),...(options.suiteTransport?{suiteTransport:options.suiteTransport}:{}),...(options.calendarTransport?{calendarTransport:options.calendarTransport}:{})},timers:{setInterval(){throw new Error('context must not start timers');},clearInterval(){}}});}});
+  options.onRoot?.(ctx);
+  const plugin=await ctx.plugin({name:'synthetic-context-host',inject:['tools','commands','storageDomain','sessions','systemPrompt'],async apply(scope){adapter=await installCompanion(scope,{clock:()=>new Date('2026-10-19T12:00:00Z'),readSetup:async()=>connection,readNativeRoute:options.readNativeRoute??(async()=>({kind:'unbound'})),readBinding:async()=>null,context:{readConfig:()=>({...config}),...(googleTokenVault?{googleTokenVault}:{}),googlePublisher:options.googlePublisher??null,fetch:options.contextFetch??(async()=>{throw new Error('Synthetic context host must not contact real services');}),transport,googleAuth,...(options.flomoAuth?{flomoAuth:options.flomoAuth}:{}),...(options.didaAuth?{didaAuth:options.didaAuth}:{}),...(options.googleCalendarAuth?{googleCalendarAuth:options.googleCalendarAuth}:{}),...(options.googleSuiteAuth?{googleSuiteAuth:options.googleSuiteAuth}:{}),...(options.suiteTransport?{suiteTransport:options.suiteTransport}:{}),...(options.calendarTransport?{calendarTransport:options.calendarTransport}:{})},timers:{setInterval(){throw new Error('context must not start timers');},clearInterval(){}}});}});
   let number=0;
   const tool=async args=>{const response=await ctx.tools.execute({callId:'context-test-'+(++number),name:'personal_context',arguments:args,agent,signal:new AbortController().signal});assert.equal(response.isError,false,JSON.stringify(response));return response.value;};
   const project=async args=>{const response=await ctx.tools.execute({callId:'context-project-'+(++number),name:'project_companion',arguments:args,agent,signal:new AbortController().signal});assert.equal(response.isError,false,JSON.stringify(response));return response.value;};
@@ -38,7 +40,7 @@ async function fixture(t,options={}){
   const post=async body=>{const response=await route().fetch(new Request('http://localhost/api/project_companion/context',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)}));return{status:response.status,value:await response.json()};};
   const close=()=>ctx.fiber.dispose();
   t.after(async()=>{await close();await rm(root,{recursive:true,force:true});});
-  return{ctx,agent,agents,routes,calls,closed,adapter,plugin,config,tool,project,get,post,route,close,setConnection:value=>connection=value};
+  return{ctx,agent,agents,routes,calls,closed,adapter,plugin,config,googleTokenVault,tool,project,get,post,route,close,setConnection:value=>connection=value};
 }
 
 test('installs a passive native context tool and authenticated route without reading sources',async t=>{
@@ -219,4 +221,64 @@ test('Google suite native login exposes only sanitized actual grants and require
 
 test('suite registration is passive and full-login request has only the three read scopes',async t=>{
  const requests=[];const h=await fixture(t,{googlePublisher:{kind:'desktop',clientId:'suite-fixture.apps.googleusercontent.com'},contextFetch:async()=>{requests.push('unexpected');throw Error('no network');}});const state=await h.get();assert.deepEqual(state.value.googleSuiteAuth,{clientConfigured:true,refreshConfigured:false,authInProgress:false,grantedSources:[]});const started=await h.post({action:'google_suite_authorize'});assert.equal(started.status,200);const url=new URL(started.value.url);assert.deepEqual(url.searchParams.get('scope').split(' '),['https://www.googleapis.com/auth/gmail.readonly','https://www.googleapis.com/auth/calendar.events.readonly','https://www.googleapis.com/auth/drive.readonly']);assert.equal(url.searchParams.get('include_granted_scopes'),null);assert.equal(url.searchParams.get('code_challenge_method'),'S256');assert.deepEqual(requests,[]);await h.project({action:'pause'});assert.equal((await h.post({action:'google_suite_authorize'})).status,400);
+});
+
+
+test('installed Google query secures an old Suite grant before token HTTP and keeps the source lease',async t=>{
+ const {createGoogleTokenVault}=await import('../src/google-token-vault.js');const requests=[],keys=new Map();let rawConfig;
+ const publisher={kind:'desktop',clientId:'suite-fixture.apps.googleusercontent.com',clientSecret:'synthetic-desktop-registration'};
+ const scopes=['https://www.googleapis.com/auth/gmail.readonly','https://www.googleapis.com/auth/calendar.events.readonly','https://www.googleapis.com/auth/drive.readonly'];
+ const h=await fixture(t,{googlePublisher:publisher,vaultFactory:config=>{rawConfig=config;return createGoogleTokenVault({scope:'native-fixture-profile',rawReadConfig:()=>({...config}),rawWrite:async(source,value,conditions)=>{assert.equal(await conditions.authorizeMutation(),true);assert.equal(config[source+'OAuthCredentials']??'',conditions.expectedValue??'');config[source+'OAuthCredentials']=value;},keychain:{supported:true,write:async(k,v)=>keys.set(k,v),read:async k=>keys.get(k),remove:async k=>keys.delete(k)}});},contextFetch:async(url,init)=>{
+  assert.doesNotMatch(rawConfig.googleSuiteOAuthCredentials,/synthetic-private-refresh/,'no Google request can precede encrypted persistence');requests.push(url);
+  if(url==='https://oauth2.googleapis.com/token')return Response.json({access_token:'synthetic-access',token_type:'Bearer',expires_in:3600,scope:scopes.join(' ')});
+  if(url.startsWith('https://gmail.googleapis.com/gmail/v1/users/me/messages'))return Response.json({messages:[]});throw Error('unexpected request');
+ }});
+ h.config.googleSuiteOAuthCredentials=JSON.stringify({version:1,source:'google-suite',profile:'readonly',connectionId:'saved-fixture',clientId:publisher.clientId,requestedScopes:scopes,grantedScopes:scopes,refreshToken:'synthetic-private-refresh',authorizedAt:'2026-10-19T00:00:00Z'});
+ await h.tool({action:'connect',source:'gmail',userRequested:true});assert.equal(requests.length,0);
+ const response=await h.tool({action:'query',source:'gmail',operation:'search',query:'fixture',userRequested:true});
+ assert.equal(response.source,'gmail');assert.equal(requests.length,2);assert.equal(keys.size,1);assert.doesNotMatch(h.config.googleSuiteOAuthCredentials,/synthetic-private-refresh/);
+});
+
+test('missing independent Calendar key cannot silently connect a different Suite calendar grant',async t=>{
+ const {createGoogleTokenVault}=await import('../src/google-token-vault.js');
+ const publisher={kind:'desktop',clientId:'suite-fixture.apps.googleusercontent.com',clientSecret:'synthetic-desktop-registration'};
+ const scopes=['https://www.googleapis.com/auth/gmail.readonly','https://www.googleapis.com/auth/calendar.events.readonly','https://www.googleapis.com/auth/drive.readonly'];
+ const keys=new Map(),calls=[];let seedRaw={googleSuiteOAuthCredentials:'',googleCalendarOAuthCredentials:''};
+ const keychain={supported:true,async write(k,v){keys.set(k,v);},async read(k){return keys.get(k)??null;},async remove(k){keys.delete(k);}};
+ const seed=createGoogleTokenVault({scope:'independent-calendar-account-isolation',rawReadConfig:()=>({...seedRaw}),rawWrite:async(source,value,conditions)=>{assert.equal(await conditions.authorizeMutation(),true);assert.equal(seedRaw[source+'OAuthCredentials'],conditions.expectedValue);seedRaw[source+'OAuthCredentials']=value;},keychain});
+ for(const source of ['googleSuite','googleCalendar']){
+  const calendar=source==='googleCalendar';const grant=JSON.stringify({version:1,source:calendar?'calendar':'google-suite',profile:calendar?'primary-events':'readonly',connectionId:calendar?'calendar-account-A':'suite-account-B',clientId:publisher.clientId,requestedScopes:calendar?[scopes[1]]:scopes,grantedScopes:calendar?[scopes[1]]:scopes,refreshToken:calendar?'synthetic-calendar-A-refresh':'synthetic-suite-B-refresh',authorizedAt:'2026-10-19T00:00:00Z'});
+  await seed.saveCredentials(source,grant,{expectedValue:'',authorizeMutation:async()=>true});
+ }
+ const calendarAccount=JSON.parse(seedRaw.googleCalendarOAuthCredentials).account;keys.delete(calendarAccount);await seed.close();
+ const h=await fixture(t,{googlePublisher:publisher,vaultFactory:config=>{Object.assign(config,seedRaw);return createGoogleTokenVault({scope:'independent-calendar-account-isolation',rawReadConfig:()=>({...config}),rawWrite:async(source,value,conditions)=>{assert.equal(await conditions.authorizeMutation(),true);config[source+'OAuthCredentials']=value;},keychain});},contextFetch:async(url,init)=>{calls.push({url,grant:new URLSearchParams(init?.body??'').get('refresh_token')});if(url==='https://oauth2.googleapis.com/token')return Response.json({access_token:'synthetic-suite-B-access',expires_in:3600,token_type:'Bearer',scope:scopes.join(' ')});return Response.json({items:[]});}});
+ const status=await h.get(),calendar=status.value.sources.find(row=>row.id==='calendar');
+ assert.equal(calendar.configured,false,'persisted independent Calendar must remain selected and fail closed instead of silently using Suite account B');
+ assert.equal(status.value.googleSuiteAuth.refreshConfigured,true,'unrelated Suite grant remains available');
+ const connected=await h.tool({action:'connect',source:'calendar',userRequested:true});assert.equal(connected.status,'blocked');assert.equal(calls.length,0);
+});
+
+test('dispose during startup vault hydration aborts before installing routes or requesting data',{timeout:4000},async t=>{
+ let root,entered;const ready=new Promise(resolve=>entered=resolve);const events=[];
+ const installing=fixture(t,{onRoot:ctx=>{root=ctx;},vaultFactory:config=>({
+  readConfig:()=>({...config}),status:()=>({supported:true}),
+  async prepare({source,signal}){events.push('prepare:'+source);entered();await new Promise((resolve,reject)=>{if(signal.aborted)reject(Error('aborted'));else signal.addEventListener('abort',()=>{events.push('aborted');reject(Error('aborted'));},{once:true});});},
+  async saveCredentials(){throw Error('must not write during startup');},async migrateLegacy(){throw Error('must not migrate during startup');},
+  async close(){events.push('vault:close');},
+ })});
+ await ready;const closing=root.fiber.dispose();await closing;const h=await installing;
+ assert.equal(events.filter(x=>x==='vault:close').length,1);assert.ok(events.includes('aborted'));
+ assert.deepEqual(events.filter(x=>x.startsWith('prepare:')),['prepare:googleSuite']);assert.equal(h.routes.size,0);assert.equal(h.calls.length,0);
+ assert.equal(h.adapter,undefined,'disposed startup must return before runtime actions are installed');
+ assert.ok(h.closed.includes('transport'));assert.ok(h.closed.includes('googleAuth'));
+});
+
+
+test('Google startup disposal observer ignores other fibers and is removed with its own plugin',async t=>{
+ const h=await fixture(t);const observerCount=()=>h.ctx.events._hooks['internal/plugin'].filter(hook=>hook.ctx.fiber===h.plugin).length;
+ assert.equal(observerCount(),1);
+ const unrelated=await h.ctx.plugin({name:'unrelated-lifecycle-fixture',apply(){}});await unrelated.dispose();
+ assert.equal((await h.get()).status,200,'disposing another plugin must not close Dot');
+ assert.notEqual((await h.tool({action:'connect',source:'dida',userRequested:true})).status,'blocked');
+ await h.plugin.dispose();assert.equal(observerCount(),0);assert.equal(h.routes.has('/api/project_companion/context'),false);
 });

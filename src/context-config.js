@@ -22,7 +22,7 @@ export function readContextConfig(config) {
     return Object.fromEntries(FIELDS.map((field) => {
       const ref = config?.[field];
       const value = ref && typeof ref.get === 'function' ? ref.get() : ref;
-      if (value !== undefined && (typeof value !== 'string' || value.length > (field.endsWith('OAuthCredentials') ? 32768 : 16384))) throw new Error();
+      if (value !== undefined && (typeof value !== 'string' || value.length > (['googleSuiteOAuthCredentials','googleCalendarOAuthCredentials'].includes(field) ? 65536 : field.endsWith('OAuthCredentials') ? 32768 : 16384))) throw new Error();
       return [field, value ?? ''];
     }));
   } catch { throw new Error('Context 连接配置无效，请在原生插件设置中检查。'); }

@@ -1,5 +1,18 @@
 # 验证记录
 
+## 0.12.0-preview.4 · Google 公众接入候选（2026-10-22）
+
+普通 Google 两种点击登录增加 Keychain 随机密钥与 AES-256-GCM 本机封装、明确查询前旧记录迁移、授权前数据披露/隐私链接及肯定同意。独立审读覆盖取消后迟到提交、暂时不可读配置、Calendar 跨账号回退及启动卸载，相关90项通过；隐私链接独立29项通过。
+
+真实 Node22.22 的两SDK基础各902/902、0skip，之后仅客户端隐私链接与对应断言变动，两SDK增量各29/29。重复用例不相加。首次 cache runtime 实际已更新为 Node24.19，SDK020902通过，SDK021901通过、1项解析墙钟阈值失败；原记录保留。三次 Node24 原输入/原阈值补验通过，但不能确证首轮原因。
+
+最终75个运行文件已在新建0700隔离官方Host安装核对；未认证接口401，原生Google入口exact3只读scope、S256、state与loopback回调通过；无私人同意、私人读取、模型调用、微信发送或新计划。最终客户端界面已显示真实隐私链接、模型/微信披露与启用的同意按钮。合成macOSKeychain随机密钥写入、读取、删除闭环通过，不涉及用户授权令牌。
+
+Google专用项目已切 External/In production，累计1/100、仍需verification；无需测试白名单不等于完成公众验收。SearchConsole项目URL-prefix HTML所有权通过；OAuth品牌校验要求等待24h同步，scope验证入口disabled，尚未提交。新账号本人真实授权与三项读取仍待完成。日常App仍preview3，另有AI分身任务处理，保留现场未退出；本候选不借用旧安装或手机收件作为新版证明。本段记录候选验收，不证明已有公开Release或新账号成功。
+
+本轮脱敏证据位于本地 output/dsh-dot-google-public-onboarding-2026-10-22/，包括矩阵基础与增量、独立审读、最终Host/UI、合成Keychain及Google生产受众/待同步证明；不将私人profile或授权值装入公开包。
+
+
 2026-10-22 公开分发再核验：Google 控制台客户端类型为 Desktop、注册 ID 与分发源码匹配；依据 Google 安装型应用专门指南、RFC 8252 及 Thunderbird/GNOME 先例，将该应用注册判定为可分发的公共客户端字段。它不包含用户 token，也不代表 Google 公众审核通过。授权、刷新和只读路径 104 项回归全部通过；运行代码保持与已安装冻结包一致。说明见[桌面授权分发](google-desktop-oauth.md)。
 
 ## 0.12.0-preview.3：对外预览发布范围（2026-10-22）
