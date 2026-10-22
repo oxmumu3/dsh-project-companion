@@ -2,13 +2,13 @@
 
 给已有官方 DeepSeek Harness 加上项目助理：在微信里明确交办到对应项目，把本轮执行回复带回原对话，恢复缓存时避免重新执行。
 
-作者：牛村木木山。社区开源项目，非 DeepSeek 或 OpenAI 官方产品。当前候选 **`0.12.0-preview.1`** 增加 Google 三件套的普通登录：点击连接，在 Google 同意后回到 Dot，无需填写 Token、Client ID 或密钥。应用仍处于内测；本人已完成三件套授权及日常 App 有限读取：邮件搜索与限长正文、主日历七天空窗、云盘文件名搜索。Drive 文档正文与非空日程仍待验，不能当作已对所有用户开放。
+作者：牛村木木山。社区开源项目，非 DeepSeek 或 OpenAI 官方产品。当前候选 **`0.12.0-preview.2`** 修复 flomo、滴答拒绝授权后无法立即重试，以及换码或保存较慢时页面提前结束等待的问题。它保留 Google 三件套普通登录：点击连接，在 Google 同意后回到 Dot，无需填写 Token、Client ID 或密钥。候选尚未安装或公开发布，两家真实授权与读取仍待验。
 
-日常 App 已升级并核验 `0.12.0-preview.1`：插件启用、1 个组件运行，Google 三件套主按钮可用，原微信绑定、项目记录与其他插件配置保留。Google 日历已在独立官方宿主完成本人授权、有界读取和重启刷新；未将该令牌复制到日常 App。当前候选的安装、测试与手机证据逐项见[验证记录](docs/verification.md)。
+日常 App 当前已验版本为 `0.12.0-preview.1`：本人已完成 Google 三件套授权，以及邮件搜索与限长正文、主日历七天空窗、云盘文件名搜索。Drive 文档正文与非空日程仍待验；Google 仍为受限内测。新版源码与候选验证不替代本机升级或真人验收，逐项见[验证记录](docs/verification.md)。
 
 ## 安装
 
-[查看 Releases](https://github.com/piggy00544/dsh-project-companion/releases)。仅当页面实际出现 `v0.12.0-preview.1` 及同版本资产后，再下载对应 macOS 完整安装包；当前没有该版本的公开下载。`v0.6.0-preview.1` 仅作历史归档，不能用它验证本页的新流程。
+[查看 Releases](https://github.com/piggy00544/dsh-project-companion/releases)。仅当页面实际出现 `v0.12.0-preview.2` 及同版本资产后，再下载对应 macOS 完整安装包；当前没有该版本的公开下载。`v0.6.0-preview.1` 仅作历史归档，不能用它验证本页的新流程。
 
 1. 准备受支持的官方 Harness，保存工作并正常退出。将同版本安装包解压，保留整个目录，再双击 `Install.command`。
 2. 打开 Harness，完成自己的模型登录与配置，确认微信桥接与项目助理均启用，从左侧打开「DSH Dot」。
