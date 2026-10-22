@@ -4,7 +4,7 @@ const invalid = () => { throw new Error('Context 操作未完成，请刷新连�
 const sourceIds = new Set(['gmail','calendar','drive','docs','sheets','slides','dida','flomo']);
 
 /** Owner-authenticated native settings facade. GET never resumes or queries a source. */
-export function createContextRoute({context,googleAuth,googleCalendarAuth,flomoAuth,didaAuth,readConnection,resolveOwner,activateOwner,canRun=async()=>true,isClosed=()=>false}={}){
+export function createContextRoute({context,googleAuth,googleCalendarAuth,googleSuiteAuth,flomoAuth,didaAuth,readConnection,resolveOwner,activateOwner,canRun=async()=>true,isClosed=()=>false}={}){
   let closed=false;
   const open=()=>{if(closed||isClosed())invalid();};
   const connection=async()=>{open();try{const value=await readConnection();return bound(value)?{state:'bound',sessionId:value.sessionId,bindingKey:value.bindingKey}:{state:'unknown'};}catch{return{state:'unknown'};}};
@@ -29,7 +29,7 @@ export function createContextRoute({context,googleAuth,googleCalendarAuth,flomoA
     const owner=bound(current)?{sessionId:current.sessionId}:null;
     const value=await context.snapshot(owner);
     open();
-    return{sources:value.sources,googleAuth:authStatus(),...(googleCalendarAuth?{googleCalendarAuth:authStatus(googleCalendarAuth)}:{}),...(flomoAuth?{flomoAuth:authStatus(flomoAuth)}:{}),...(didaAuth?{didaAuth:authStatus(didaAuth)}:{})};
+    return{sources:value.sources,googleAuth:authStatus(),...(googleCalendarAuth?{googleCalendarAuth:authStatus(googleCalendarAuth)}:{}),...(googleSuiteAuth?{googleSuiteAuth:{...authStatus(googleSuiteAuth),grantedSources:['gmail','calendar','drive'].filter(source=>googleSuiteAuth.status?.().grantedSources?.includes(source))}}:{}),...(flomoAuth?{flomoAuth:authStatus(flomoAuth)}:{}),...(didaAuth?{didaAuth:authStatus(didaAuth)}:{})};
   }
   return{
     snapshot,
@@ -37,17 +37,17 @@ export function createContextRoute({context,googleAuth,googleCalendarAuth,flomoA
       open();
       if(!input||typeof input!=='object'||Array.isArray(input))invalid();
       const keys=Object.keys(input);
-      if(['google_authorize','google_calendar_authorize','flomo_authorize','dida_authorize'].includes(input.action)){
+      if(['google_authorize','google_calendar_authorize','google_suite_authorize','flomo_authorize','dida_authorize'].includes(input.action)){
         if(keys.length!==1||!await canRun())invalid();
       }else if(!['connect','disconnect'].includes(input.action)||keys.length!==2||!keys.includes('source')||!sourceIds.has(input.source))invalid();
       if(input.action==='connect'&&!await canRun())invalid();
       const expected=await connection();
       if(!bound(expected))invalid();
       const owner=await readyOwner(expected);
-      if(['google_authorize','google_calendar_authorize','flomo_authorize','dida_authorize'].includes(input.action)){
+      if(['google_authorize','google_calendar_authorize','google_suite_authorize','flomo_authorize','dida_authorize'].includes(input.action)){
         if(!await canRun())invalid();
         await check(expected);
-        const controller={google_authorize:googleAuth,google_calendar_authorize:googleCalendarAuth,flomo_authorize:flomoAuth,dida_authorize:didaAuth}[input.action];
+        const controller={google_authorize:googleAuth,google_calendar_authorize:googleCalendarAuth,google_suite_authorize:googleSuiteAuth,flomo_authorize:flomoAuth,dida_authorize:didaAuth}[input.action];
         if(typeof controller?.start!=='function')invalid();
         const value=await controller.start({authorizeMutation:async()=>{await check(expected);if(!await canRun())invalid();await check(expected);return true;}});
         await check(expected);
@@ -76,7 +76,7 @@ export function registerContextRoute(ctx,adapter){
       const body=await request.text();
       if(Buffer.byteLength(body)>4096)return json({error:'请求过大。'},413);
       return json(await adapter.action(JSON.parse(body)));
-    }catch{return json({error:'未完成连接操作，请刷新状态并在原生配置中核对授权；未自动重试。'},400);}
+    }catch{return json({error:'未完成连接，请刷新状态后重新登录；未自动重试。'},400);}
   }});
   if(typeof stop==='function'&&typeof ctx.effect==='function')ctx.effect(()=>stop);
   return stop;

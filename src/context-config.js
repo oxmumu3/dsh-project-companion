@@ -7,13 +7,14 @@ export const Config = z.object({
   didaToken: z.string().default('').role('secret').description('滴答清单 MCP API 口令；仅用于只读查询').volatile(),
   flomoOAuthCredentials: z.string().default('').role('secret').description('flomo 账号授权后自动保存；清空可移除本机连接').volatile(),
   didaOAuthCredentials: z.string().default('').role('secret').description('滴答清单账号授权后自动保存；清空可移除本机连接').volatile(),
+  googleSuiteOAuthCredentials: z.string().default('').role('secret').description('Google 三件套账号授权后自动保存；只保留本机连接，不在聊天中展示').volatile(),
   googleCalendarOAuthCredentials: z.string().default('').role('secret').description('Google 日历独立授权后自动保存；清空可移除日历连接').volatile(),
   googleClientId: z.string().default('').description('你自己的 Google Desktop OAuth Client ID').volatile(),
   googleClientSecret: z.string().default('').role('secret').description('Google Desktop OAuth Client Secret').volatile(),
   googleRefreshToken: z.string().default('').role('secret').description('Google 授权后由本插件保存；也可在此清除连接').volatile(),
 });
 
-const FIELDS = ['flomoToken', 'didaToken', 'flomoOAuthCredentials', 'didaOAuthCredentials', 'googleCalendarOAuthCredentials', 'googleClientId', 'googleClientSecret', 'googleRefreshToken'];
+const FIELDS = ['flomoToken', 'didaToken', 'flomoOAuthCredentials', 'didaOAuthCredentials', 'googleCalendarOAuthCredentials', 'googleSuiteOAuthCredentials', 'googleClientId', 'googleClientSecret', 'googleRefreshToken'];
 
 /** Read only this plugin's credential fields; never persist, log or inspect other entries. */
 export function readContextConfig(config) {

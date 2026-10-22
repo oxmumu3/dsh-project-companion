@@ -22,6 +22,8 @@ import {createProjectUpdateService,projectUpdateRowSchema} from './src/project-u
 import {Config,readContextConfig} from './src/context-config.js';
 import {createGoogleAuth} from './src/context-google-auth.js';
 import {createGoogleCalendarAuth} from './src/google-calendar-auth.js';
+import {createGoogleSuiteAuth} from './src/google-suite-auth.js';
+import {createGoogleSuiteRest} from './src/google-suite-rest.js';
 import {createGoogleCalendarRest} from './src/google-calendar-rest.js';
 import {createContextProvider} from './src/context-provider.js';
 import {createContextCredentialWriter} from './src/context-credential-writer.js';
@@ -198,7 +200,14 @@ export async function installCompanion(ctx,options={}){
   const makeAccountAuth=source=>options.context?.[source+'Auth']??createContextAccountAuth({source,readConfig,saveCredentials:(value,conditions)=>credentialWriter(source,value,conditions),...(options.context?.fetch?{fetch:options.context.fetch}:{}),...(options.clock?{clock:()=>new Date(options.clock()).getTime()}: {})});
   const flomoAuth=makeAccountAuth('flomo'),didaAuth=makeAccountAuth('dida');
   const googleCalendarAuth=options.context?.googleCalendarAuth??createGoogleCalendarAuth({publisher:options.context?.googlePublisher,readConfig,saveCredentials:(value,conditions)=>credentialWriter('googleCalendar',value,conditions),...(options.context?.fetch?{fetch:options.context.fetch}:{}),...(options.clock?{clock:()=>new Date(options.clock()).getTime()}: {})});
-  const calendarTransport=options.context?.calendarTransport??createGoogleCalendarRest({getToken:settings=>googleCalendarAuth.getToken(settings),...(options.context?.fetch?{fetch:options.context.fetch}:{}),...(options.clock?{clock:options.clock}:{})});
+  const googleSuiteAuth=options.context?.googleSuiteAuth??createGoogleSuiteAuth({publisher:options.context?.googlePublisher,readConfig,saveCredentials:(value,conditions)=>credentialWriter('googleSuite',value,conditions),...(options.context?.fetch?{fetch:options.context.fetch}:{}),...(options.clock?{clock:()=>new Date(options.clock()).getTime()}: {})});
+  const calendarCredentials=()=>googleCalendarAuth.credentialState().configured?googleCalendarAuth.credentialState():googleSuiteAuth.credentialState('calendar');
+  const suiteSources=new Set(['gmail','drive','docs','sheets','slides']);
+  // Existing explicit advanced MCP configurations are retained until the user
+  // saves a suite connection. There is never fallback after a REST failure.
+  const useSuite=source=>{const config=readConfig();return suiteSources.has(source)&&(!!config.googleSuiteOAuthCredentials||googleSuiteAuth.credentialState(source).configured||!config.googleClientId||!config.googleRefreshToken||!config.googleClientSecret);};
+  const suiteTransport=options.context?.suiteTransport??createGoogleSuiteRest({getToken:(source,settings)=>googleSuiteAuth.getToken(source,settings),...(options.context?.fetch?{fetch:options.context.fetch}:{}),...(options.clock?{clock:options.clock}:{})});
+  const calendarTransport=options.context?.calendarTransport??createGoogleCalendarRest({getToken:settings=>googleCalendarAuth.credentialState().configured?googleCalendarAuth.getToken(settings):googleSuiteAuth.getToken('calendar',settings),...(options.context?.fetch?{fetch:options.context.fetch}:{}),...(options.clock?{clock:options.clock}:{})});
   const mcpTransport=options.context?.transport??createContextTransport({flomoAuth,didaAuth,
     ...(options.context?.fetch?{fetch:options.context.fetch}:{}),...(options.clock?{clock:options.clock}:{}),
     tokenForSource:async(source,{signal})=>{
@@ -206,7 +215,7 @@ export async function installCompanion(ctx,options={}){
       return source==='dida'?config.didaToken:source==='flomo'?config.flomoToken:googleAuth.getToken({signal});
     },
   });
-  const contextTransport=createContextProvider({calendar:calendarTransport,mcp:mcpTransport});
+  const contextTransport=createContextProvider({calendar:calendarTransport,suite:suiteTransport,useSuite,mcp:mcpTransport});
   const contextBinding=async sessionId=>{
     const setup=await readSetup();
     if(setup?.state==='bound'&&typeof setup.sessionId==='string'&&/^[a-f0-9]{64}$/.test(setup.bindingKey??''))return setup.sessionId===sessionId?{kind:'bound',bindingKey:setup.bindingKey}:{kind:'unbound'};
@@ -215,7 +224,7 @@ export async function installCompanion(ctx,options={}){
   };
   const context=createPersonalContext({
     store:{get:key=>contextTable.get(key),put:(key,value)=>contextTable.put(key,contextRowSchema.parse(value))},
-    transport:contextTransport,readConfig,readBinding:contextBinding,credentialState:source=>source==='calendar'?googleCalendarAuth.credentialState():null,
+    transport:contextTransport,readConfig,readBinding:contextBinding,credentialState:source=>source==='calendar'?calendarCredentials():useSuite(source)?googleSuiteAuth.credentialState(source):null,
     canRun:async()=>!disposed&&!lifecycle.signal.aborted&&!await service.isPaused(),
     ...(options.clock?{clock:options.clock}:{}),...(options.hostTimeZone?{hostTimeZone:options.hostTimeZone}:{}),
   });
@@ -227,7 +236,7 @@ export async function installCompanion(ctx,options={}){
     const contextClosing=context.close();contextRoute?.close();
     const contextTransportClosing=contextTransport.close();const googleAuthClosing=googleAuth.close();
     projectUpdateModel?.close();const updatesClosing=projectUpdates?.close();
-    const externalClosing=Promise.allSettled([updatesClosing,newsClosing,contextClosing,contextTransportClosing,googleAuthClosing,googleCalendarAuth.close(),flomoAuth.close(),didaAuth.close()]);
+    const externalClosing=Promise.allSettled([updatesClosing,newsClosing,contextClosing,contextTransportClosing,googleAuthClosing,googleCalendarAuth.close(),googleSuiteAuth.close(),flomoAuth.close(),didaAuth.close()]);
     if(timer!==undefined){timers.clearInterval(timer);timer=undefined;}
     await Promise.allSettled([...coordinates]);
     await Promise.allSettled([memory?.close(),followup?.close(),onboarding?.close(),welcomeGuard?.close()]);
@@ -296,7 +305,7 @@ export async function installCompanion(ctx,options={}){
     },
   });
   contextRoute=createContextRoute({
-    context,googleAuth,googleCalendarAuth,flomoAuth,didaAuth,readConnection:readSetup,isClosed:()=>disposed,
+    context,googleAuth,googleCalendarAuth,googleSuiteAuth,flomoAuth,didaAuth,readConnection:readSetup,isClosed:()=>disposed,
     canRun:async()=>!disposed&&!await service.isPaused(),
     resolveOwner:sessionId=>{const agent=ctx.get('agents')?.get?.(sessionId);const cwd=effectiveCwd(ctx,agent);return !disposed&&agent&&String(agent.id)===sessionId&&cwd?{sessionId,cwd}:null;},
     activateOwner:async sessionId=>{
@@ -597,7 +606,7 @@ export async function installCompanion(ctx,options={}){
   for(const project of await service.watchedProjects()){
     try{await followup.resume({root:project.root});}catch(error){noteError(error);}
   }
-  return{service,taskResults,memory,followup,onboarding,news,context,projectUpdates,googleCalendarAuth,flomoAuth,didaAuth,workbench,workbenchActions};
+  return{service,taskResults,memory,followup,onboarding,news,context,projectUpdates,googleCalendarAuth,googleSuiteAuth,flomoAuth,didaAuth,workbench,workbenchActions};
 }
 
 export async function apply(ctx,config){await installCompanion(ctx,{context:{config}});}

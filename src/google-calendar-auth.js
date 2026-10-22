@@ -75,8 +75,12 @@ export function createGoogleCalendarAuth({publisher,readConfig,saveCredentials,f
   if(req.method!=='GET'||url.pathname!=='/oauth2/callback'){respond(res,404);return;}
   if(req.headers.host!==flow.host||url.origin!==new URL(flow.redirectUri).origin){respond(res,400);return;}
   if(closed||pending!==flow||flow.used||now()>=flow.expiresAt||configKey(read())!==flow.configKey){respond(res,400);if(pending===flow&&!flow.used)void drop(flow);return;}
-  const states=url.searchParams.getAll('state'),codes=url.searchParams.getAll('code'),issuers=url.searchParams.getAll('iss');
-  if(states.length!==1||!same(states[0],flow.state)||codes.length!==1||!text(codes[0])||url.searchParams.has('error')||issuers.length>1||(issuers.length===1&&issuers[0]!=='https://accounts.google.com')){respond(res,400);return;}
+  const states=url.searchParams.getAll('state'),codes=url.searchParams.getAll('code'),issuers=url.searchParams.getAll('iss'),errors=url.searchParams.getAll('error');
+  if(states.length!==1||!same(states[0],flow.state)||issuers.length>1||(issuers.length===1&&issuers[0]!=='https://accounts.google.com')){respond(res,400);return;}
+  // Only a verified callback can end this authorization. A declined consent is
+  // terminal, so the next click can create a fresh link without waiting for TTL.
+  if(errors.length){if(errors.length!==1||codes.length||!text(errors[0],256)){respond(res,400);return;}flow.used=true;respond(res,400);void stop(flow);return;}
+  if(codes.length!==1||!text(codes[0])){respond(res,400);return;}
   flow.used=true;
   const flowGuard=async()=>{await guarded(flow.guard,flow.abort.signal);if(pending!==flow||now()>=flow.expiresAt)throw error();return true;};
   try{
