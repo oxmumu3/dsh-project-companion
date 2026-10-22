@@ -25,6 +25,7 @@ import {createGoogleCalendarAuth} from './src/google-calendar-auth.js';
 import {createGoogleSuiteAuth} from './src/google-suite-auth.js';
 import {createGoogleSuiteRest} from './src/google-suite-rest.js';
 import {createGoogleCalendarRest} from './src/google-calendar-rest.js';
+import {createDidaRest} from './src/dida-rest.js';
 import {createContextProvider} from './src/context-provider.js';
 import {createContextCredentialWriter} from './src/context-credential-writer.js';
 import {createContextAccountAuth} from './src/context-account-auth.js';
@@ -208,6 +209,10 @@ export async function installCompanion(ctx,options={}){
   const useSuite=source=>{const config=readConfig();return suiteSources.has(source)&&(!!config.googleSuiteOAuthCredentials||googleSuiteAuth.credentialState(source).configured||!config.googleClientId||!config.googleRefreshToken||!config.googleClientSecret);};
   const suiteTransport=options.context?.suiteTransport??createGoogleSuiteRest({getToken:(source,settings)=>googleSuiteAuth.getToken(source,settings),...(options.context?.fetch?{fetch:options.context.fetch}:{}),...(options.clock?{clock:options.clock}:{})});
   const calendarTransport=options.context?.calendarTransport??createGoogleCalendarRest({getToken:settings=>googleCalendarAuth.credentialState().configured?googleCalendarAuth.getToken(settings):googleSuiteAuth.getToken('calendar',settings),...(options.context?.fetch?{fetch:options.context.fetch}:{}),...(options.clock?{clock:options.clock}:{})});
+  // An ordinary saved OAuth connection always uses the read-only Open API.
+  // Invalid/expired OAuth never falls back to an older manual MCP token.
+  const useDidaRest=()=>{const config=readConfig();return Boolean(config.didaOAuthCredentials)||!config.didaToken;};
+  const didaTransport=options.context?.didaTransport??createDidaRest({getToken:settings=>didaAuth.getToken(settings),...(options.context?.fetch?{fetch:options.context.fetch}:{}),...(options.clock?{clock:options.clock}:{})});
   const mcpTransport=options.context?.transport??createContextTransport({flomoAuth,didaAuth,
     ...(options.context?.fetch?{fetch:options.context.fetch}:{}),...(options.clock?{clock:options.clock}:{}),
     tokenForSource:async(source,{signal})=>{
@@ -215,7 +220,7 @@ export async function installCompanion(ctx,options={}){
       return source==='dida'?config.didaToken:source==='flomo'?config.flomoToken:googleAuth.getToken({signal});
     },
   });
-  const contextTransport=createContextProvider({calendar:calendarTransport,suite:suiteTransport,useSuite,mcp:mcpTransport});
+  const contextTransport=createContextProvider({calendar:calendarTransport,suite:suiteTransport,useSuite,dida:didaTransport,useDidaRest,mcp:mcpTransport});
   const contextBinding=async sessionId=>{
     const setup=await readSetup();
     if(setup?.state==='bound'&&typeof setup.sessionId==='string'&&/^[a-f0-9]{64}$/.test(setup.bindingKey??''))return setup.sessionId===sessionId?{kind:'bound',bindingKey:setup.bindingKey}:{kind:'unbound'};

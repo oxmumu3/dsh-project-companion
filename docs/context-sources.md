@@ -1,6 +1,6 @@
 # 连接邮箱、日历、云盘、笔记和清单
 
-当前 `0.12.0-preview.2` 候选保留 Google 三件套普通连接入口，并修复 flomo/滴答的拒绝重试和慢换码等待状态。候选尚未安装或公开发布；日常 `0.12.0-preview.1` 的已验范围见下表。先登录，再启用要使用的来源，最后用自然语言查询。登录和状态刷新不会自动读取私人资料、写项目记忆或创建推送。
+当前 `0.12.0-preview.3` 已在日常 App 安装，原生界面确认启用、一个组件运行，尚未公开发布；原微信绑定与 Google 三来源保留。本人完成两家授权后，本版已通过原生会话读取滴答两项清单及 flomo 两条关键词结果，再恢复两家在日常 Dot 的启用状态。滴答使用官方只读 Open API，保留 `tasks:read`，未扩大至 MCP 要求的写权限。Google 有限读取在升级前的 `preview.1` 完成，范围见下表。滴答任务正文、Drive 正文、非空日程、长期令牌刷新和新版手机展示仍待验。先登录，再启用要使用的来源，最后用自然语言查询；登录和状态刷新不会自动读取私人资料、写项目记忆或创建推送。仓库迁移仍待接收，公开入口未核验。
 
 ## 普通使用
 
@@ -8,9 +8,9 @@
 2. 返回 Dot，授权状态会自动更新；如果关闭过页面，可以手动刷新。只同意部分权限时，页面只显示真正已获授权的来源。
 3. 启用需要的 Gmail、日历、Drive。可以说「查未来 24 小时的安排」「搜索关于项目的邮件」「在云盘找季度计划」。首次启用只核对读取合同，真实查询成功才证明 API 可以读取。
 4. 日历读取主日历，默认未来 24 小时、最多七天十项。邮件与文件搜索每次最多十项，不自动翻页；再明确选择想读的内容。文档与幻灯片取纯文本，表格读取指定范围，最多 200 行、26 列、2000 格。图片/PDF 等不支持的文件格式会明确说明，不能当作空文档。
-5. flomo、滴答清单分别点官方登录；flomo 需要 MAX。这两个真实账号的最终权限与私人读取仍待本人验收。
+5. flomo、滴答清单分别点官方登录；flomo 需要 MAX。本版已完成 flomo 两条关键词搜索及滴答两项清单的真实读取；滴答普通账号走只读 API，不增加原 MCP 要求的写权限。任务正文与其他操作的证据范围见验证记录。
 
-Google 仍为 **External / Testing**，仅登记的测试账号可用；授权可能在七天后失效，需要重新登录。当前已登记账号为 experts@finvo.ai。它不是已面向任意读者开放的正式接入。
+Google 仍为 **External / Testing**，仅登记的测试账号可用；授权可能在七天后失效，需要重新登录。当前已登记账号为 experts@finvo.ai。未登记的公开新用户不能直接登录，它不是已面向任意读者开放的正式接入。
 
 ## 三件套权限与数据去向
 
@@ -32,11 +32,12 @@ Google 仍为 **External / Testing**，仅登记的测试账号可用；授权�
 | 日历真实授权 | 本人已在官方页面同意；生产 OAuth 控制器在独立官方 Web Host 保存成功。 |
 | 日历真实读取 | primary 主日历，2026-10-22T07:50:17.056Z 至 2026-10-29T07:50:17.056Z，最多十项，返回零项。仅证明该窗口成功返回，不代表账号没有日程。 |
 | 冷启动刷新 | 重启同一独立宿主后，无新同意即可读同一窗口。 |
-| 日常 App | 0.12.0-preview.1 已安装并重开，官方管理页显示启用、一组件运行；Google 三件套主按钮可用。五个原微信/项目状态文件、其他插件依赖及配置核对保留，未代点 Google 同意。 |
+| 日常 App | 0.12.0-preview.3 已通过官方安装器升级并重开，官方管理页显示启用、一组件运行。安装后七个状态文件字节不变，cordis/patch/workspace 配置、其他插件依赖及启用列表保留；Google 三来源保留，flomo/滴答已恢复日常 Dot 启用，微信已连接，零待触发提醒、项目日报关闭。实读后五个状态文件仍字节不变，项目仅更新观察记录与会话ID，Context租约按临时启停及恢复而变化，计划未变。 |
 | 三件套新路径 | 本人在日常 App 完成三项只读同意。Gmail 搜索三封、读取一封限长正文；日历七天返回零项；Drive 搜索十个匹配项。Drive 文档正文、非空日程与手机展示仍未实测。 |
+| flomo / 滴答 | 本人已完成两家官方登录。preview.3 原生 personal_context 实读：滴答 projects limit2 返回两项来源并有裁剪提示；flomo 搜索 DeepSeek limit2 返回两条、无裁剪提示。本轮仅一次会话、该工具，无微信发送或新计划；临时会话断开两来源后，原生页面恢复日常 Dot 启用。滴答仅验证清单元数据，任务正文未验；flomo 未读取 AI 画像。 |
 | 公开可用 | Testing 状态未变，没有以本机测试代替公众授权审核或公开下载。 |
 
-日历独立宿主使用明确 fixture owner，真实微信桥接禁用，未发微信或创建计划。其私有授权没有迁入日常 App；日常 App 已另外完成本人三件套登录。非空事件呈现、真实撤销/清除与手机展示仍分别待验。完整证据见[验证记录](verification.md)。
+早期日历独立宿主使用明确 fixture owner，真实微信桥接禁用，未发微信或创建计划。其私有授权没有迁入日常 App；日常 App 已另外完成本人三件套登录。滴答任务正文、Drive 文档正文、非空事件呈现、长期令牌刷新、真实撤销/清除与手机展示仍分别待验；已验过一次日历冷启动刷新不等于长期可靠性通过。完整证据见[验证记录](verification.md)。
 
 ## 实现与官方协议
 
@@ -102,7 +103,7 @@ Google 刷新授权要求 `access_type=offline`，已同意的用户重新取得
 
 ## 滴答与 flomo
 
-- 滴答官方 MCP 固定使用 `https://mcp.dida365.com`，不猜测或追加 `/mcp` 路径。[官方 OAuth metadata](https://dida365.com/.well-known/oauth-authorization-server) 发布动态客户端注册与 S256 PKCE；[MCP 资源 metadata](https://mcp.dida365.com/.well-known/oauth-protected-resource)发布 `tasks:read` 与 `tasks:write`，Dot 只申请 `tasks:read`。[官方 Open API 授权文档](https://developer.dida365.com/docs/index.html#/openapi?id=authorization)也说明账号同意流程与上述权限。metadata 仅声明 `authorization_code`，因此 Dot 不猜测滴答支持刷新授权，过期后需重新连接。
+- 滴答普通 OAuth 从 preview.3 起使用[官方 Open API](https://developer.dida365.com/docs/openapi.md)的只读 GET，已用现有 tasks:read 在实际安装版读取两项清单。旧手填 Token 的官方 MCP 固定使用 `https://mcp.dida365.com`，不猜测或追加 `/mcp` 路径。[官方 OAuth metadata](https://dida365.com/.well-known/oauth-authorization-server) 发布动态客户端注册与 S256 PKCE；[MCP 资源 metadata](https://mcp.dida365.com/.well-known/oauth-protected-resource)发布 `tasks:read` 与 `tasks:write`，Dot 只申请 `tasks:read`。[官方 Open API 授权文档](https://developer.dida365.com/docs/index.html#/openapi?id=authorization)也说明账号同意流程与上述权限。metadata 仅声明 `authorization_code`，因此 Dot 不猜测滴答支持刷新授权，过期后需重新连接。
 - flomo 官方端点为 `https://flomoapp.com/mcp`。[官方自动授权教程](https://help.flomoapp.com/advance/mcp/connect-chatgpt-web.html)明确支持 OAuth 且无需个人 Token；[官方 OAuth metadata](https://flomoapp.com/.well-known/oauth-authorization-server)发布动态客户端注册、S256 PKCE 和刷新授权；[MCP 资源 metadata](https://flomoapp.com/.well-known/oauth-protected-resource)发布 `mcp` scope。flomo 当前没有公开更细的只读 OAuth scope，因此 Dot 的只读边界由下述工具白名单继续强制执行，不把账号授权范围描述成服务端只读许可。仍需 flomo MAX。
 - 默认连接由用户点击后才注册此客户端、生成一次性授权链接，再由用户亲自在官方页面登录与同意。Dot 不接收账号密码，不复用作者或其他客户端的令牌；页面挂载和状态刷新不会注册客户端、开始登录或查询账号。
 - 本机回调仅绑定 `127.0.0.1` 随机端口，授权有效期五分钟；校验原始 Host、回调路径、单值 state、可选 issuer 与 PKCE，授权码只交换一次。固定官方 HTTPS 端点拒绝重定向；HTTP、响应体与关闭取消均有上限。配置变化后的旧回调与旧刷新响应不能保存；关闭会中断请求并关闭回调监听。
@@ -115,9 +116,9 @@ Google 刷新授权要求 `access_type=offline`，已同意的用户重新取得
 
 ## 传输层与当前验证范围
 
-Google 普通连接走固定 REST，flomo/滴答及旧 Google 高级兼容走固定官方 MCP。所有来源都经过 exact-name 白名单、有界输入、owner/绑定/启用状态检查；资料内容不能改变工具权限。
+Google 普通连接与滴答普通 OAuth 走固定官方只读 REST；flomo、手填滴答 Token 及旧 Google 高级兼容走固定官方 MCP。所有来源都经过 exact-name 白名单、有界输入、owner/绑定/启用状态检查；资料内容不能改变工具权限。
 
-三件套的合成测试覆盖部分授权、无 scope、拒绝后重试、一次性回调、并发 CAS、刷新、暂停/换绑/关闭，以及 Gmail/Drive/Sheets 读取的超时、字节与条数边界。它验证代码控制流，不代表已经完成 Gmail/Drive 的真实用户同意或私人内容读取。日历另有本人真实授权、空窗口读取与冷启动刷新的证据。两个证据层分开记录。
+三件套的合成测试覆盖部分授权、无 scope、拒绝后重试、一次性回调、并发 CAS、刷新、暂停/换绑/关闭，以及 Gmail/Drive/Sheets 读取的超时、字节与条数边界。这些合成测试只验证代码控制流。本人另已完成 Gmail/日历/Drive 真实同意、邮件搜索及限长正文、日历空窗口、云盘文件名搜索；日历独立宿主也完成过冷启动刷新。Drive正文、非空日历与公众账号接入未由此证明，具体范围见上表。
 
 ## 可选复用路线与许可证
 
@@ -128,3 +129,7 @@ Google 普通连接走固定 REST，flomo/滴答及旧 Google 高级兼容走固
 - [PerryLink/dsh-ticktick](https://github.com/PerryLink/dsh-ticktick/tree/6c922556e66e9bd235a266ad82fef352b3f6339a)，Apache-2.0。参考了其公开协议接入方向，没有复制实现。当前 Dot 的 JSON/SSE 和会话实现为独立编写。
 
 官方文档链接是协议与服务出处，不表示本项目为官方插件、获得平台背书或取得第三方代码的版权。
+
+### 滴答普通登录的读取范围
+
+普通 OAuth 使用官方 Open API，保留 `tasks:read`。清单只取首批（最多10项），指定单个清单后读取其中任务（最多展示10条，响应上限1MiB），或者指定清单和任务读取一条。暂不支持跨全账号关键词搜索，不自动翻页或扫描其他清单。手填旧 token 的高级 MCP 路径保留；普通 OAuth 失败不会改用它。

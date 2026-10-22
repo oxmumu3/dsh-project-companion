@@ -11,7 +11,7 @@ const MAX_BYTES = 512 * 1024;
 const REQUEST_MS = 8000;
 const RUN_MS = 45000;
 const MAX_ARTICLE_TEXT = 24 * 1024;
-const USER_AGENT = 'DSH-Project-Companion/AI-Digest (+https://github.com/piggy00544/dsh-project-companion)';
+const USER_AGENT = 'DSH-Project-Companion/AI-Digest';
 const digest = value => createHash('sha256').update(value).digest('hex');
 const abortError = () => Object.assign(new Error('News fetch aborted'), { name: 'AbortError' });
 const timeoutError = () => Object.assign(new Error('News source timed out'), { name: 'TimeoutError' });

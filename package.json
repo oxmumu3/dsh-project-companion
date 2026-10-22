@@ -1,8 +1,8 @@
 {
   "name": "dsh-project-companion",
-  "version": "0.12.0-preview.2",
+  "version": "0.12.0-preview.3",
   "description": "DSH Dot: WeChat personal agent, project memory and proactive follow-up for DeepSeek Harness",
-  "author": "牛村木木山",
+  "author": "奥克斯木木山",
   "license": "MIT",
   "type": "module",
   "engines": {
@@ -82,13 +82,5 @@
         "@deepseek-ai/dsh-client-ui-conversation"
       ]
     }
-  },
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/piggy00544/dsh-project-companion.git"
-  },
-  "homepage": "https://github.com/piggy00544/dsh-project-companion",
-  "bugs": {
-    "url": "https://github.com/piggy00544/dsh-project-companion/issues"
   }
 }

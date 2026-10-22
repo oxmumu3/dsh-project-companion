@@ -19,6 +19,7 @@ const MESSAGES = Object.freeze({
   CONTEXT_SOURCE_INVALID: 'Unknown context source.',
   CONTEXT_ARGUMENTS_INVALID: 'Invalid context request.',
   CONTEXT_AUTH_REQUIRED: 'Connect this source in the settings first.',
+  CONTEXT_INSUFFICIENT_SCOPE: 'The context service requires additional permissions; the current read-only grant was not expanded.',
   CONTEXT_CREDENTIALS_CHANGED: 'Source credentials changed. Run the request again.',
   CONTEXT_REDIRECT: 'Context endpoint redirects are not allowed.',
   CONTEXT_HTTP_ERROR: 'The context service request failed.',
@@ -37,6 +38,21 @@ function failure(code) {
   return error;
 }
 function plain(value) { return value !== null && typeof value === 'object' && !Array.isArray(value); }
+export function insufficientScope(response) {
+  const header = response.headers.get('www-authenticate');
+  if (typeof header !== 'string' || header.length > 8192) return false;
+  const challenge = /^Bearer[ \t]+(.+)$/i.exec(header.trim());
+  if (!challenge) return false;
+  // Parse whole auth parameters, not descriptions or arbitrary response text.
+  const parameter = /([!#$%&'*+.^_\x60|~0-9A-Za-z-]+)[ \t]*=[ \t]*(?:"((?:[^"\\\r\n]|\\[\x20-\x7e])*)"|([!#$%&'*+.^_\x60|~0-9A-Za-z-]+))[ \t]*(?:,[ \t]*|$)/gy;
+  const errors = [];
+  while (parameter.lastIndex < challenge[1].length) {
+    const match = parameter.exec(challenge[1]);
+    if (!match) return false;
+    if (match[1].toLowerCase() === 'error') errors.push(match[2] ?? match[3]);
+  }
+  return errors.length === 1 && errors[0] === 'insufficient_scope';
+}
 function canonical(value) {
   try {
     const serialized = JSON.stringify(value);
@@ -173,7 +189,13 @@ export function createContextTransport(options = {}) {
     try { response = await bounded(fetchImpl(CONTEXT_ENDPOINTS[source], { method: 'POST', headers, body, redirect: 'manual', signal: operation.signal }), operation.signal); }
     catch (error) { if (operation.signal.aborted) throw abortError(operation.signal); throw failure('CONTEXT_HTTP_ERROR'); }
     if (response.status >= 300 && response.status < 400) { void response.body?.cancel().catch(() => {}); throw failure('CONTEXT_REDIRECT'); }
-    if (response.status === 401 || response.status === 403) { reset(state); void response.body?.cancel().catch(() => {}); throw failure('CONTEXT_AUTH_REQUIRED'); }
+    if (response.status === 401 || response.status === 403) {
+      const code = response.status === 401 ? 'CONTEXT_AUTH_REQUIRED'
+        : insufficientScope(response) ? 'CONTEXT_INSUFFICIENT_SCOPE' : 'CONTEXT_HTTP_ERROR';
+      reset(state);
+      void response.body?.cancel().catch(() => {});
+      throw failure(code);
+    }
     if (!response.ok) {
       if (response.status === 404 || response.status === 410) reset(state);
       void response.body?.cancel().catch(() => {});

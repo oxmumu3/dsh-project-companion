@@ -1,10 +1,10 @@
 # 安装 DSH Dot
 
-本页面向 `0.12.0-preview.2` 授权恢复修复候选，尚未安装或公开发布。日常 App 已验版本仍为 `0.12.0-preview.1`，Google三件套本人授权与有限读取属于该已装版本，范围见验证记录。它为已有官方 DeepSeek Harness 增加项目助理与微信入口，通过官方 Desktop CLI 或插件管理页面安装；不是完整一体机，也不是另一款微信版 App。
+本页面向 `0.12.0-preview.3`，已在日常 App 通过官方安装器升级并核验精确包、启用状态和一个运行组件，尚未公开发布。原微信绑定与 Google 三来源保留；本版滴答两项清单、flomo 两条关键词搜索已真实读取，随后恢复两家在日常 Dot 的启用状态。Google 本人授权与有限读取在 `preview.1` 完成。滴答任务正文、Drive 正文、非空日程、长期令牌刷新和新版手机体验仍待验。Google 仍为 External / Testing，未登记的公开新用户不能直接登录；flomo 需要 MAX。它为已有官方 DeepSeek Harness 增加项目助理与微信入口，通过官方 Desktop CLI 或插件管理页面安装；不是完整一体机，也不是另一款微信版 App。
 
 ## 取得同版本安装包
 
-打开[本项目 Releases](https://github.com/piggy00544/dsh-project-companion/releases)。只有实际出现 `v0.12.0-preview.2` 和对应资产后，才下载同版本 macOS 完整安装包或 companion tgz；当前没有该版本的公开下载。`v0.6.0-preview.1` 仅作历史归档，不适用本页的新界面与恢复流程。
+打开本项目 Releases（仓库迁移待接收，公开入口尚未核验）。只有实际出现 `v0.12.0-preview.3` 和对应资产后，才下载同版本 macOS 完整安装包或 companion tgz；当前没有该版本的公开下载。`v0.6.0-preview.1` 仅作历史归档，不适用本页的新界面与恢复流程。
 
 统一包配套 `dsh-wechat@0.11.1-dot.2` 维护版，保留 pan17/dsh-wechat 的 MIT 许可、版权和原配对目录；不导入作者账户或复制配对凭据。固定源码、差异与校验见[桥接来源说明](../bridge-maintenance/README.md)。
 
@@ -35,7 +35,7 @@
 
 ## 维护者本地候选与校验
 
-本轮候选目录为 Agent 工作区的 `output/dsh-dot-0.12.0-preview.2-candidate/`，须由本轮构建生成并校验后才可使用；目录名不代表已经安装，也不能拿旧 `preview.1` 替代本轮验收。旧候选保留，未发布的本地路径不是公众下载入口。
+本轮候选目录为 Agent 工作区的 `output/dsh-dot-0.12.0-preview.3-candidate/`，已完成构建、校验和日常 App 安装；证据见验证记录，不能仅凭目录名判断安装成功，也不能拿旧 `preview.1` 替代本轮验收。旧候选保留，未发布的本地路径不是公众下载入口。
 
 完整目录应包含 `Install.command`、`bundle-manifest.json`、安装脚本、配套两个 tgz、主项目与上游许可证。manifest 记录精确版本和 SHA256；安装器核对包名、版本、MIT 许可及 bundle 声明。
 
@@ -47,4 +47,4 @@ node scripts/install.mjs --bundle-dir . --dry-run
 
 确认计划后，在同一命令增加 `--install` 执行。没有独立 Node 时，双击入口使用官方 App 自带运行时。散装源码缺少 manifest 时不能当作完整安装包。
 
-已有版本的安装与手机记录见[验证记录](verification.md)，不能替代 `0.12.0-preview.2` 的精确包、宿主及手机验收。dry-run 仅核对安装计划，不证明运行中任务已经安全退出。新用户从零安装、扫码到首份简报的完整开箱仍待验证。
+本轮 `0.12.0-preview.3` 的精确包、宿主和有限读取证据见[验证记录](verification.md)；旧版手机记录不能替代新版手机验收。dry-run 仅核对安装计划，不证明运行中任务已经安全退出。新用户从零安装、扫码到首份简报的完整开箱仍待验证。

@@ -52,3 +52,36 @@ test('Calendar bundled capabilities enable an independent lease without claiming
 });
 test('service does not silently shorten a Calendar title already bounded by the projection',async()=>{const {createPersonalContext}=await api();let state;const title='长'.repeat(170);const s=createPersonalContext({store:{get:async()=>state,put:async(_k,v)=>state=v},readConfig:()=>({googleClientId:'legacy',googleClientSecret:'legacy',googleRefreshToken:'legacy'}),readBinding:async()=>({kind:'unbound'}),transport:{catalog:async()=>({tools:[{name:'list_events',inputSchema:{type:'object'}}]}),call:async()=>({value:{items:[{id:'event',summary:title,start:{date:'2026-10-20'},end:{date:'2026-10-21'}}]}})}});try{await s.act(owner,{action:'connect',source:'calendar',userRequested:true});const r=await s.act(owner,{action:'query',source:'calendar',operation:'upcoming',userRequested:true});assert.equal(r.items[0].title,title);assert.equal(r.truncated,false);}finally{await s.close();}});
 test('expired account authorization keeps a safe actionable login error without upstream private text',async()=>{const {createPersonalContext,contextErrorText}=await api();let state;const s=createPersonalContext({store:{get:async()=>state,put:async(_k,v)=>state=v},readConfig:()=>({googleClientId:'legacy',googleClientSecret:'legacy',googleRefreshToken:'legacy'}),readBinding:async()=>({kind:'unbound'}),transport:{catalog:async()=>({tools:[{name:'search_threads',inputSchema:{type:'object'}}]}),call:async()=>{throw Object.assign(Error('private refresh body'),{code:'CONTEXT_AUTH_REQUIRED'});}}});try{await s.act(owner,{action:'connect',source:'gmail',userRequested:true});await assert.rejects(s.act(owner,{action:'query',source:'gmail',operation:'search',query:'today',userRequested:true}),e=>e.code==='CONTEXT_AUTH_REQUIRED'&&!e.message.includes('private')&&/连接与设置.*登录/.test(contextErrorText(e)));}finally{await s.close();}});
+
+test('insufficient scope during connect or query survives the service boundary without prescribing repeated login or leaking provider text', async () => {
+  const { createPersonalContext, contextErrorText } = await api();
+  for (const stage of ['connect', 'query']) {
+    let state, calls = 0;
+    const rejectScope = () => { throw Object.assign(new Error('private-token Required scope: tasks:write'), { code: 'CONTEXT_INSUFFICIENT_SCOPE' }); };
+    const service = createPersonalContext({
+      store: { get: async () => state, put: async (_key, value) => { state = structuredClone(value); } },
+      readConfig: () => ({ didaToken: 'private-token' }), readBinding: async () => ({ kind: 'unbound' }),
+      transport: {
+        catalog: async () => { if (stage === 'connect') rejectScope(); return { tools: [{ name: 'list_projects', inputSchema: { type: 'object' } }] }; },
+        call: async () => { calls++; rejectScope(); },
+      },
+    });
+    try {
+      if (stage === 'query') await service.act(owner, { action: 'connect', source: 'dida', userRequested: true });
+      const input = stage === 'connect'
+        ? { action: 'connect', source: 'dida', userRequested: true }
+        : { action: 'query', source: 'dida', operation: 'projects', limit: 2, userRequested: true };
+      await assert.rejects(service.act(owner, input), error => {
+        assert.equal(error.code, 'CONTEXT_INSUFFICIENT_SCOPE');
+        const text = contextErrorText(error);
+        assert.match(text, /服务商.*额外权限/);
+        assert.match(text, /重复登录.*只读权限.*不能解决/);
+        assert.match(text, /未扩大权限/);
+        assert.doesNotMatch(String(error) + text, /private-token|tasks:write|Required scope/);
+        return true;
+      });
+      assert.equal(calls, stage === 'query' ? 1 : 0);
+      if (stage === 'connect') assert.equal(state, undefined);
+    } finally { await service.close(); }
+  }
+});

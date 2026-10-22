@@ -131,6 +131,74 @@ test('rejects redirect, unexpected content type, mismatched id, remote errors, a
   }
 });
 
+test('insufficient OAuth scope during initialization is distinct from expired authorization and never reads or echoes the rejection body', async () => {
+  const { createContextTransport, CONTEXT_ENDPOINTS } = await load();
+  for (const challenge of [
+    'Bearer error="insufficient_scope", error_description="Required scope: tasks:write private-token"',
+    'bearer realm="dida", error=insufficient_scope',
+    'Bearer error_description="private-token, do not echo", Error = "insufficient_scope"',
+  ]) {
+    let requests = 0, bodyReads = 0, canceled = 0;
+    const response = new Response('private-token: Required scope: tasks:write', { status: 403, headers: { 'WWW-Authenticate': challenge } });
+    response.body.getReader = () => { bodyReads++; throw new Error('response body must not be read'); };
+    response.body.cancel = async () => { canceled++; };
+    const t = createContextTransport({ tokenForSource: async () => 'private-token', fetch: async (url, init) => {
+      requests++;
+      assert.equal(url, CONTEXT_ENDPOINTS.dida);
+      const request = JSON.parse(init.body);
+      assert.equal(request.method, 'initialize');
+      assert.equal(JSON.stringify(request).includes('tasks:write'), false);
+      return response;
+    } });
+    try {
+      await assert.rejects(t.catalog('dida'), error => {
+        assert.equal(error.code, 'CONTEXT_INSUFFICIENT_SCOPE');
+        assert.doesNotMatch(String(error), /private-token|tasks:write/);
+        return true;
+      });
+      assert.equal(requests, 1, 'no automatic retry or scope escalation');
+      assert.equal(bodyReads, 0);
+      assert.equal(canceled, 1);
+    } finally { await t.close(); }
+  }
+});
+
+test('scope rejection after initialization keeps its classification and resets only the protocol session', async () => {
+  const { createContextTransport } = await load();
+  const remote = server(() => new Response('private-token', { status: 403, headers: { 'WWW-Authenticate': 'Bearer error="insufficient_scope"' } }));
+  const t = createContextTransport({ fetch: remote.fetch, tokenForSource: async () => 'private-token' });
+  try {
+    await assert.rejects(t.call('dida', 'list_projects', { limit: 2, offset: 0 }), code('CONTEXT_INSUFFICIENT_SCOPE'));
+    assert.equal(remote.requests.length, 3);
+    await assert.rejects(t.catalog('dida'), code('CONTEXT_INSUFFICIENT_SCOPE'));
+    assert.equal(remote.requests.filter(row => row.body.method === 'initialize').length, 2);
+  } finally { await t.close(); }
+});
+
+test('only a standard Bearer insufficient_scope error classifies a 403 as missing scope; 401 still requires authorization', async () => {
+  const { createContextTransport } = await load();
+  for (const [status, challenge, expected] of [
+    [401, 'Bearer error="insufficient_scope"', 'CONTEXT_AUTH_REQUIRED'],
+    [403, '', 'CONTEXT_HTTP_ERROR'],
+    [403, 'Bearer error="access_denied"', 'CONTEXT_HTTP_ERROR'],
+    [403, 'Basic error="insufficient_scope"', 'CONTEXT_HTTP_ERROR'],
+    [403, 'Bearer error_description="error=insufficient_scope"', 'CONTEXT_HTTP_ERROR'],
+    [403, 'Bearer error_description="private-token, error=insufficient_scope", error="invalid_token"', 'CONTEXT_HTTP_ERROR'],
+    [403, 'Bearer error="insufficient_scope_extra"', 'CONTEXT_HTTP_ERROR'],
+    [403, 'Bearer error="insufficient_scope", error="invalid_token"', 'CONTEXT_HTTP_ERROR'],
+  ]) {
+    let requests = 0;
+    const t = createContextTransport({ tokenForSource: async () => 'private-token', fetch: async () => {
+      requests++;
+      return new Response('{"error":"insufficient_scope","private":"private-token"}', { status, headers: { 'WWW-Authenticate': challenge } });
+    } });
+    try {
+      await assert.rejects(t.catalog('dida'), code(expected));
+      assert.equal(requests, 1);
+    } finally { await t.close(); }
+  }
+});
+
 test('credential changes reinitialize sessions between operations and fail closed within an operation', async () => {
   const { createContextTransport } = await load();
   let token = 'first';

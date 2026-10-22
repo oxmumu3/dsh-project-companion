@@ -124,6 +124,14 @@ function matchesSchema(value, schema, depth = 0) {
 export function validateContextCall(call, catalog) {
   if (!plain(call) || Object.keys(call).some(key => !['name', 'args'].includes(key)) || !READ_TOOLS.has(call.name) || !plain(call.args)) fail('CONTEXT_UNSUPPORTED_TOOL');
   if (Object.keys(call.args).some(key => !ARG_KEYS[call.name].includes(key))) fail('CONTEXT_SCHEMA_MISMATCH');
+  if (catalog?.unsupportedOperations !== undefined) {
+    // Bundled provider restrictions can only remove known operations, never grant tools.
+    const known = new Set(Object.values(OPERATION_INPUTS).flatMap(operations => Object.keys(operations)));
+    const denied = catalog.unsupportedOperations;
+    if (catalog.provenance !== 'bundled-contract' || !Array.isArray(denied) || denied.length > known.size || new Set(denied).size !== denied.length || denied.some(operation => !known.has(operation))) fail('CONTEXT_SCHEMA_MISMATCH');
+    const operation = { search: 'search', search_threads: 'search', search_files: 'search', memo_search: 'search', list_projects: 'projects', get_project_with_undone_tasks: 'tasks', list_events: 'upcoming' }[call.name] ?? 'read';
+    if (denied.includes(operation)) fail('CONTEXT_UNSUPPORTED_OPERATION');
+  }
   const tools = Array.isArray(catalog) ? catalog : catalog?.tools;
   const matching = Array.isArray(tools) ? tools.filter(tool => tool?.name === call.name) : [];
   if (matching.length !== 1 || !plain(matching[0].inputSchema) || !matchesSchema(call.args, matching[0].inputSchema)) fail('CONTEXT_SCHEMA_MISMATCH');

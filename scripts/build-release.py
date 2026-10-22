@@ -103,7 +103,7 @@ def package_audit(path, expected_name, expected_version):
     mit(files['package/LICENSE'], f'{expected_name}/LICENSE')
     vendor_files = 0
     if expected_name == 'dsh-project-companion':
-        for required in ['src/project-updates.js', 'src/project-update-model.js', 'src/project-memory.js', 'src/welcome-guard.js', 'src/wechat-recovery.js', 'src/installation.js', 'src/onboarding.js', 'src/client.js', 'src/news-service.js', 'src/news-model.js', 'src/news-feeds.js', 'src/context-config.js', 'src/context-google-auth.js', 'src/google-publisher.js', 'src/google-calendar-auth.js', 'src/google-calendar-rest.js', 'src/google-suite-auth.js', 'src/google-suite-rest.js', 'src/context-provider.js', 'src/news-topics.js', 'src/context-account-auth.js', 'src/context-transport.js', 'src/context-contracts.js', 'src/context-service.js', 'src/context-route.js', 'docs/context-sources.md', 'assets/news-feeds.json', 'docs/news.md', 'THIRD_PARTY_NOTICES.md', 'bridge-maintenance/README.md', 'bridge-maintenance/PROVENANCE.json']:
+        for required in ['src/project-updates.js', 'src/project-update-model.js', 'src/project-memory.js', 'src/welcome-guard.js', 'src/wechat-recovery.js', 'src/installation.js', 'src/onboarding.js', 'src/client.js', 'src/news-service.js', 'src/news-model.js', 'src/news-feeds.js', 'src/context-config.js', 'src/context-google-auth.js', 'src/google-publisher.js', 'src/google-calendar-auth.js', 'src/google-calendar-rest.js', 'src/google-suite-auth.js', 'src/google-suite-rest.js', 'src/context-provider.js', 'src/dida-rest.js', 'src/news-topics.js', 'src/context-account-auth.js', 'src/context-transport.js', 'src/context-contracts.js', 'src/context-service.js', 'src/context-route.js', 'docs/context-sources.md', 'assets/news-feeds.json', 'docs/news.md', 'THIRD_PARTY_NOTICES.md', 'bridge-maintenance/README.md', 'bridge-maintenance/PROVENANCE.json']:
             if f'package/{required}' not in files:
                 raise ValueError(f'Missing candidate component: {required}')
         for name in ['pan17-dsh-wechat', 'dsh-yolo', 'dsh-proactive']:
@@ -180,7 +180,11 @@ def main():
             # This copy lives at the kit root rather than inside docs/.
             # Keep source-doc links unchanged and rebase only its copied links.
             install_doc = (repo / 'docs/install.md').read_text(encoding='utf-8')
-            install_doc = install_doc.replace('](first-use.md)', '](https://github.com/piggy00544/dsh-project-companion/blob/main/docs/first-use.md)')
+            public_home = metadata.get('homepage', '')
+            if public_home == 'https://github.com/oxmumu3/dsh-project-companion':
+                install_doc = install_doc.replace('](first-use.md)', f']({public_home}/blob/main/docs/first-use.md)')
+            else:
+                install_doc = install_doc.replace('[首次使用](first-use.md)', '首次使用（正式仓库入口仍待核验）')
             install_doc = install_doc.replace('](../THIRD_PARTY_NOTICES.md)', '](THIRD_PARTY_NOTICES.md)')
             (stage / '安装说明.md').write_text(install_doc, encoding='utf-8')
             (stage / 'package.json').write_bytes(json_bytes({'private': True, 'type': 'module'}))
