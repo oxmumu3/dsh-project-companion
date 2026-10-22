@@ -118,7 +118,7 @@ export function createGoogleCalendarAuth({publisher,readConfig,saveCredentials,f
  function credentialState(){let config;try{config=read();const record=parseRecord(config[FIELD],client);return{configured:!closed&&Boolean(client),key:hash(['calendar',record.connectionId,record.clientId,record.profile,record.requestedScopes])};}catch{return{configured:false,key:hash(['calendar',client,config?.[FIELD]??''])};}}
  return{
   credentialState,
-  status(){const active=!closed&&pending&&!pending.used&&now()<pending.expiresAt;return{clientConfigured:Boolean(client),publisherConfigured:Boolean(client),refreshConfigured:credentialState().configured,authInProgress:Boolean(active),profile:'primary-events',...(active?{expiresAt:new Date(pending.expiresAt).toISOString()}:{})};},
+  status(){const active=!closed&&pending&&now()<pending.expiresAt;return{clientConfigured:Boolean(client),publisherConfigured:Boolean(client),refreshConfigured:credentialState().configured,authInProgress:Boolean(active),profile:'primary-events',...(active?{expiresAt:new Date(pending.expiresAt).toISOString()}:{})};},
   start(options){if(starting)return Promise.reject(error('Google 日历授权正在启动，请稍后重试。'));const call=track(startInner(options));starting=call;call.then(()=>{if(starting===call)starting=null;},()=>{if(starting===call)starting=null;});return call;},
   getToken:options=>track(getTokenInner(options)),
   async close(){closed=true;cache=null;for(const c of controllers)c.abort();if(pending)void drop(pending);await Promise.allSettled([...flights]);await Promise.allSettled([...servers]);},
