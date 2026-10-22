@@ -4,7 +4,7 @@
 
 ## 0.12.0-preview.3：对外预览发布范围（2026-10-22）
 
-本次按用户明确授权发布到 `oxmumu3/dsh-project-companion`；固定版本、macOS 统一安装包与校验文件见[发布页](https://github.com/oxmumu3/dsh-project-companion/releases/tag/v0.12.0-preview.3)，步骤见[安装说明](install.md)。发版只同步公开身份、说明与下载入口；构建须将运行文件逐项与下述已安装冻结包核对。独立源码审计覆盖自上一公开版之后的25个提交，未发现私人状态、用户令牌或私人正文；公开 Desktop OAuth 注册与业务支持信息单独标注。Google仍处于Testing，flomo需MAX。下文各历史阶段的“未发布”均指当时状态，不覆盖本次发布。
+本次按用户明确授权发布到 `oxmumu3/dsh-project-companion`；固定版本、macOS 统一安装包与校验文件见[发布页](https://github.com/oxmumu3/dsh-project-companion/releases/tag/v0.12.0-preview.3)，步骤见[安装说明](install.md)。发版只同步公开身份、说明与下载入口；构建须将运行文件逐项与下述已安装冻结包核对。独立源码审计覆盖自上一公开版之后的代码历史与本轮新增文档，未发现私人状态、用户令牌或私人正文；公开 Desktop OAuth 注册与业务支持信息单独标注。Google仍处于Testing，flomo需MAX。下文各历史阶段的“未发布”均指当时状态，不覆盖本次发布。
 
 ## 0.12.0-preview.3：已安装与有限读取验收（2026-10-22）
 
