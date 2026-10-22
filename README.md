@@ -4,7 +4,7 @@
 
 作者：奥克斯木木山 · [正式仓库](https://github.com/oxmumu3/dsh-project-companion)。社区开源项目，非 DeepSeek 或 OpenAI 官方产品。当前预览版 **`0.12.0-preview.3`** 已在日常官方 App 安装并核验启用、一个组件运行，发布入口见下方。保留普通 Google、flomo、滴答登录；滴答普通账号使用官方只读 Open API，仍只申请 `tasks:read`，不为适配 MCP 增加写权限。支持清单、指定清单任务和指定任务读取，不自动跨清单搜索。
 
-本版原生会话已真实读取滴答两项清单和 flomo 两条关键词搜索结果；原微信绑定、Google 三来源及两家在日常 Dot 的启用状态保留，未新增提醒或日报。此前 Google 邮件搜索与限长正文、主日历七天空窗、云盘文件名搜索通过。滴答任务正文、Drive 正文、非空日程、长期令牌刷新和新版手机体验仍待验。Google 仍为 External / Testing，未登记的公开新用户不能直接接入；flomo 需要 MAX。安装、授权、有限读取与手机证据分别见[验证记录](docs/verification.md)。
+本版原生会话已真实读取滴答两项清单和 flomo 两条关键词搜索结果；原微信绑定、Google 三来源及两家在日常 Dot 的启用状态保留，未新增提醒或日报。此前 Google 邮件搜索与限长正文、主日历七天空窗、云盘文件名搜索通过。滴答任务正文、Drive 正文、非空日程、长期令牌刷新和新版手机体验仍待验。Google 已切为 External / In production，不再要求逐个登记测试账号；当前权限尚未验证，有未验证应用提示与累计 100 个账号上限，陌生账号首次授权实测仍待完成；flomo 需要 MAX。安装、授权、有限读取与手机证据分别见[验证记录](docs/verification.md)。
 
 Google 点击登录保留，采用已核实的 Desktop 公共客户端、本机回调与 PKCE。应用注册与用户私人 token 的区别及开源依据见[桌面授权分发说明](docs/google-desktop-oauth.md)。
 
@@ -18,7 +18,7 @@ Google 点击登录保留，采用已核实的 Desktop 公共客户端、本机�
 (dsh_dot_dir="$(mktemp -d)" && cd "$dsh_dot_dir" && curl -fLO "https://github.com/oxmumu3/dsh-project-companion/releases/download/v0.12.0-preview.3/dsh-dot-0.12.0-preview.3-macos.zip" && curl -fLO "https://github.com/oxmumu3/dsh-project-companion/releases/download/v0.12.0-preview.3/dsh-dot-0.12.0-preview.3-macos.zip.sha256" && shasum -a 256 -c "dsh-dot-0.12.0-preview.3-macos.zip.sha256" && ditto -x -k "dsh-dot-0.12.0-preview.3-macos.zip" . && open "dsh-dot-0.12.0-preview.3-macos/Install.command")
 ```
 
-命令会下载、校验并打开安装入口；安装结束后打开 Harness。Google 目前仅限登记测试账号，flomo 需要 MAX，均为可选来源。
+命令会下载、校验并打开安装入口；安装结束后打开 Harness。Google 当前为受限公众预览，尚有未验证提示与累计 100 个账号上限，flomo 需要 MAX，均为可选来源。
 
 1. 准备受支持的官方 Harness，保存工作并正常退出。将同版本安装包解压，保留整个目录，再双击 `Install.command`。
 2. 打开 Harness，完成自己的模型登录与配置，确认微信桥接与项目助理均启用，从左侧打开「DSH Dot」。
@@ -80,7 +80,7 @@ Google 点击登录保留，采用已核实的 Desktop 公共客户端、本机�
 - 已排队或投递不确定的结果不自动重发；取消不能撤回已开始的回合或已交给通道的消息。通道报告发送不等于手机收到或已读。
 - 固定日报与按变化主动跟进是两种独立计划，同时开启可能分别汇报；只需要一种时请取消另一种。
 - 周期跟进频率为 30–1440 分钟，采用电脑时区的 23:00–08:00 免打扰。一次性检查为 30–300 秒、默认 60 秒；这次明确请求可在免打扰时段执行。
-- Google 使用本产品 Desktop OAuth 与固定只读 REST；当前 External / Testing，只允许已登记的测试账号，授权可能在七天后需要重新登录。普通三件套无需 Google MCP 预览资格；高级 MCP 兼容配置单独保留。flomo 需要 MAX。连接、启用与实际读取分别显示；登录不会自动读取资料或创建推送。
+- Google 使用本产品 Desktop OAuth 与固定只读 REST；当前 External / In production，无需测试白名单；敏感/受限权限尚未验证，有未验证提示和累计 100 个账号上限，新账号首次授权仍待实测。普通三件套无需 Google MCP 预览资格；高级 MCP 兼容配置单独保留。flomo 需要 MAX。连接、启用与实际读取分别显示；登录不会自动读取资料或创建推送。
 - Slack、Notion、云端 iCloud 和 iMessage 尚未接入。本机 iCloud Drive 项目属于本地读取，不代表电脑关机后仍能访问 Apple 云端。
 
 AI 资讯抓取只访问固定公开来源，候选标题、摘要及选中文章有界正文交给你配置的 Harness 模型；使用现有账户额度，通常每期两次模型调用。全文获取失败会标为 RSS 摘要依据，不把摘要当作事实已核实。默认不启用推送。

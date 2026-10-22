@@ -14,7 +14,7 @@
 
 也可以直接下载[完整 macOS 安装包](https://github.com/oxmumu3/dsh-project-companion/releases/download/v0.12.0-preview.3/dsh-dot-0.12.0-preview.3-macos.zip)，解压并双击 `Install.command`。完整目录须一起保留，不要只移出入口文件。校验文件：[ZIP SHA256](https://github.com/oxmumu3/dsh-project-companion/releases/download/v0.12.0-preview.3/dsh-dot-0.12.0-preview.3-macos.zip.sha256)；全部发布资产见[固定版本页面](https://github.com/oxmumu3/dsh-project-companion/releases/tag/v0.12.0-preview.3)。
 
-Google 三件套仍处于 External / Testing，仅登记的测试账号可登录；flomo 需要 MAX。两者都是可选来源，不影响本地项目和微信基本流程。私人来源按需读取，连接不会自动开启持续扫描或推送。完整能力与真实验收范围见[连接说明](https://github.com/oxmumu3/dsh-project-companion/blob/v0.12.0-preview.3/docs/context-sources.md)和[验证记录](https://github.com/oxmumu3/dsh-project-companion/blob/v0.12.0-preview.3/docs/verification.md)。
+Google 三件套已切为 External / In production，无需测试账号白名单；正式权限验证与陌生账号首次授权实测仍待完成，有未验证应用提示与累计 100 个账号上限；flomo 需要 MAX。两者都是可选来源，不影响本地项目和微信基本流程。私人来源按需读取，连接不会自动开启持续扫描或推送。完整能力与真实验收范围见[连接说明](https://github.com/oxmumu3/dsh-project-companion/blob/v0.12.0-preview.3/docs/context-sources.md)和[验证记录](https://github.com/oxmumu3/dsh-project-companion/blob/v0.12.0-preview.3/docs/verification.md)。
 
 ## 安装后
 

@@ -1,6 +1,6 @@
 # 快速开始
 
-本页面向已在日常 App 安装并核验运行的 `0.12.0-preview.3`，固定版本发布入口见[安装说明](install.md)。本版滴答两项清单、flomo 两条关键词搜索已真实读取；Google 三件套已有此前的有限读取记录。Google 仍为 External / Testing，仅登记测试账号可登录，未登记的公开新用户不能直接接入；flomo 需要 MAX。固定下载入口为[0.12.0-preview.3 发布页](https://github.com/oxmumu3/dsh-project-companion/releases/tag/v0.12.0-preview.3)。它是已有官方 Harness 的增强包，按[安装说明](install.md)完成安装与模型配置后，从左侧打开「DSH Dot」，沿用或建立微信会话，先选一个项目生成简报。完整动线见[首次使用](first-use.md)。
+本页面向已在日常 App 安装并核验运行的 `0.12.0-preview.3`，固定版本发布入口见[安装说明](install.md)。本版滴答两项清单、flomo 两条关键词搜索已真实读取；Google 三件套已有此前的有限读取记录。Google 已切为 External / In production，无需测试白名单；正式权限验证与新账号实测仍待完成，有未验证提示与累计 100 个账号上限；flomo 需要 MAX。固定下载入口为[0.12.0-preview.3 发布页](https://github.com/oxmumu3/dsh-project-companion/releases/tag/v0.12.0-preview.3)。它是已有官方 Harness 的增强包，按[安装说明](install.md)完成安装与模型配置后，从左侧打开「DSH Dot」，沿用或建立微信会话，先选一个项目生成简报。完整动线见[首次使用](first-use.md)。
 
 ## 在电脑上查看项目总览
 
@@ -47,7 +47,7 @@
 
 微信连续主动消息有 10 条交互窗口；正常发一条微信消息后恢复，不需记额外管理命令。通道发出与手机收到分别核对，请在手机上确认显示。
 
-个人资料连接是可选项，不影响先使用本地项目助理与公开 AI 资讯。flomo 搜索与滴答清单已在本版真实读取，flomo 需要 MAX；滴答普通账号只申请 `tasks:read`，不支持全账号关键词搜索或自动翻页。Google 三件套普通入口无需填写 Token 或开发者配置，但当前仍为仅登记测试账号可用的内测；日常 `0.12.0-preview.1` 已有本人授权与有限读取记录。滴答任务正文、Drive 正文、非空日程、长期令牌刷新仍未验，私人资料持续扫描和主动推送尚未实现。完整边界见[连接说明](context-sources.md)。Slack、Notion、云端 iCloud 和 iMessage 尚未接入。新用户开箱、长期运行与休眠重连仍待验证；旧版手机收件记录不代表本轮新包已通过。源码回归、真实模型与手机收件分别列在[验证记录](verification.md)，开发排障另见[开发命令](developer-commands.md)。
+个人资料连接是可选项，不影响先使用本地项目助理与公开 AI 资讯。flomo 搜索与滴答清单已在本版真实读取，flomo 需要 MAX；滴答普通账号只申请 `tasks:read`，不支持全账号关键词搜索或自动翻页。Google 三件套普通入口无需填写 Token 或开发者配置，当前为受限公众预览，无需测试白名单，但仍有未验证提示与累计 100 个账号上限；日常 `0.12.0-preview.1` 已有本人授权与有限读取记录。滴答任务正文、Drive 正文、非空日程、长期令牌刷新仍未验，私人资料持续扫描和主动推送尚未实现。完整边界见[连接说明](context-sources.md)。Slack、Notion、云端 iCloud 和 iMessage 尚未接入。新用户开箱、长期运行与休眠重连仍待验证；旧版手机收件记录不代表本轮新包已通过。源码回归、真实模型与手机收件分别列在[验证记录](verification.md)，开发排障另见[开发命令](developer-commands.md)。
 
 ## 微信恢复
 
