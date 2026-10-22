@@ -366,3 +366,26 @@ test('preparing a native draft locks local input so delayed readiness cannot era
  const h=await harness();let release;h.ctx.sessions={retain:()=>({binding:{sessionId:'dot-source'},ready:new Promise(resolve=>release=resolve),release(){}})};h.ctx.conversation={input:{requestDraftInitialization:()=> 'preserved'}};const retainOriginal=h.ctx.sessions.retain;h.ctx.sessions.retain=(...args)=>{const ref=retainOriginal(...args);ref.binding.ctx={get:()=>h.ctx.conversation};return ref;};
  h.render();await h.flush();let view=h.render();nodes(view,n=>n.type==='textarea')[0].props.onChange({target:{value:'Original input'}});view=h.render();const pending=button(view,'开始对话').props.onClick();view=h.render();const input=nodes(view,n=>n.type==='textarea')[0];assert.equal(input.props.disabled,true);input.props.onChange({target:{value:'New concurrent edit'}});assert.equal(nodes(h.render(),n=>n.type==='textarea')[0].props.value,'Original input');release();await pending;assert.equal(nodes(h.render(),n=>n.type==='textarea')[0].props.value,'Original input');h.dispose();
 });
+
+test('connection controls precede appearance and project-free questions have an explicit scope',async()=>{
+ const h=await harness({appearance:true});try{h.context.snapshot.projects=[];h.render();await h.flush();let view=h.render();
+  const selector=nodes(view,n=>n.type==='select'&&n.props['aria-label']==='这句话关联的项目')[0];assert.ok(selector);assert.match(text(selector),/不关联项目/);assert.equal(nodes(selector,n=>n.type==='option')[0].props.value,'');
+  button(view,'连接与设置').props.onClick();view=h.render();const sequence=nodes(view,n=>typeof n.type==='function'&&n.type.name==='ContextPanel'||n.type==='section'&&text(n).includes('界面外观'));
+  assert.equal(sequence[0].type.name,'ContextPanel');assert.equal(h.requests.length,1);assert.deepEqual(posts(h),[]);
+ }finally{h.dispose();}
+});
+test('reminder and daily shortcuts stage a project-free draft without sending or overwriting',async()=>{
+ for(const label of ['安排提醒','设置日报']){
+  const h=await harness();try{h.render();await h.flush();let view=h.render();const action=button(view,label);assert.ok(action);action.props.onClick();view=h.render();
+   const editor=nodes(view,n=>n.type==='textarea'&&n.props['aria-label']==='交代给 Dot 的事情')[0];assert.match(editor.props.value,label==='安排提醒'?/提醒/:/日报/);assert.equal(nodes(view,n=>n.type==='select'&&n.props['aria-label']==='这句话关联的项目')[0].props.value,'');assert.equal(h.opened.length,0);assert.deepEqual(posts(h),[]);assert.equal(h.requests.length,1);
+   editor.props.onChange({target:{value:'我的未发送草稿'}});button(h.render(),label).props.onClick();view=h.render();assert.equal(nodes(view,n=>n.type==='textarea'&&n.props['aria-label']==='交代给 Dot 的事情')[0].props.value,'我的未发送草稿');assert.match(text(view),/保留.*草稿/);assert.equal(h.requests.length,1);assert.deepEqual(posts(h),[]);
+  }finally{h.dispose();}
+ }
+});
+test('choosing no project survives a status refresh and project shortcuts preserve an existing draft',async()=>{
+ const h=await harness();try{h.render();await h.flush();let view=h.render();nodes(view,n=>n.type==='select'&&n.props['aria-label']==='这句话关联的项目')[0].props.onChange({target:{value:''}});
+  await button(h.render(),'刷新').props.onClick();view=h.render();assert.equal(nodes(view,n=>n.type==='select'&&n.props['aria-label']==='这句话关联的项目')[0].props.value,'');
+  nodes(view,n=>n.type==='textarea'&&n.props['aria-label']==='交代给 Dot 的事情')[0].props.onChange({target:{value:'保留这个草稿'}});button(h.render(),'和 Dot 接着聊').props.onClick();view=h.render();assert.equal(nodes(view,n=>n.type==='textarea'&&n.props['aria-label']==='交代给 Dot 的事情')[0].props.value,'保留这个草稿');assert.equal(nodes(view,n=>n.type==='select'&&n.props['aria-label']==='这句话关联的项目')[0].props.value,'');
+  button(view,'关注的项目').props.onClick();button(h.render(),'继续聊').props.onClick();view=h.render();button(view,'动态').props.onClick();view=h.render();assert.equal(nodes(view,n=>n.type==='textarea'&&n.props['aria-label']==='交代给 Dot 的事情')[0].props.value,'保留这个草稿');assert.equal(h.opened.length,0);assert.deepEqual(posts(h),[]);
+ }finally{h.dispose();}
+});

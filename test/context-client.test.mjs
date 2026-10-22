@@ -25,6 +25,7 @@ async function load(options = {}) {
     useEffect: (fn, deps) => { const frame = values, i = cursor++, old = frame[i]; if (!old || !deps || deps.some((x, j) => x !== old.deps[j])) { old?.cleanup?.(); frame[i] = { deps }; pending.push(() => { frame[i].cleanup = fn(); }); } },
   };
   const context = { window: { __ModuleLoader__: { load: d => { definition = d; } }, open: (...args) => { external.push(args); return null; } }, AbortController, AbortSignal, Response, URL, setInterval: fn => { intervals.set(++intervalId, fn); return intervalId; }, clearInterval: id => intervals.delete(id), fetch: async (url, options = {}) => { requests.push({ url, options }); return context.onFetch ? context.onFetch(url, options) : Response.json(context.snapshot); }, snapshot: snapshot() };
+  context.now=Date.now();context.Date=class extends Date{static now(){return context.now;}};
   vm.runInNewContext(source, context);
   const primitives = { Modal: 'modal', SettingsForm: 'native-form', SettingsSecretField: 'native-secret', SettingsValueField: 'native-value' };
   const module = definition.factory(name => name === 'react' ? React : primitives);
@@ -279,8 +280,8 @@ test('Google suite refuses invalid authorization origins and neither opens nor p
 });
 test('Google authorization polling is bounded by expiry and disappears on unmount',async()=>{
  const c=await load();try{c.render();await c.flush();const button=suiteButton(c.render());assert.ok(button);
-  c.context.onFetch=()=>Response.json({url:'https://accounts.google.com/o/oauth2/v2/auth?state=suite',expiresAt:new Date(Date.now()+25).toISOString()});
-  await button.props.onClick();c.render();await c.flush();assert.equal(c.intervals.size,1);await new Promise(resolve=>setTimeout(resolve,35));await c.tick();c.render();await c.flush();assert.equal(c.intervals.size,0);assert.match(text(c.render()),/过期/);assert.equal(c.requests.filter(r=>r.options.method==='POST').length,1);
+  c.context.onFetch=()=>Response.json({url:'https://accounts.google.com/o/oauth2/v2/auth?state=suite',expiresAt:new Date(c.context.now+240000).toISOString()});
+  await button.props.onClick();c.render();await c.flush();assert.equal(c.intervals.size,1);c.context.now+=240001;await c.tick();c.render();await c.flush();assert.equal(c.intervals.size,0);assert.match(text(c.render()),/过期/);assert.equal(c.requests.filter(r=>r.options.method==='POST').length,1);
  }finally{c.dispose();assert.equal(c.intervals.size,0);}
 });
 test('Suite with partial consent never labels an ungranted source as connected',async()=>{
