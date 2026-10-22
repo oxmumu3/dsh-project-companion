@@ -163,8 +163,14 @@ export function createContextAccountAuth({ source, readConfig, saveCredentials, 
     if (request.method !== 'GET' || url.pathname !== '/oauth2/callback') { respond(response, 404); return; }
     if (request.headers.host !== flow.host || url.origin !== new URL(flow.redirectUri).origin) { respond(response, 400); return; }
     if (closed || pending !== flow || flow.used || now() >= flow.expiresAt || key(read()) !== flow.configKey) { respond(response, 400); if (pending === flow && !flow.used) void dropFlow(flow); return; }
-    const state = url.searchParams.getAll('state'), code = url.searchParams.getAll('code'), issuer = url.searchParams.getAll('iss');
-    if (state.length !== 1 || !same(state[0], flow.state) || code.length !== 1 || !text(code[0]) || issuer.length > 1 || (issuer.length === 1 && issuer[0] !== provider.issuer) || url.searchParams.has('error')) { respond(response, 400); return; }
+    const state = url.searchParams.getAll('state'), code = url.searchParams.getAll('code'), issuer = url.searchParams.getAll('iss'), errors = url.searchParams.getAll('error');
+    if (state.length !== 1 || !same(state[0], flow.state) || issuer.length > 1 || (issuer.length === 1 && issuer[0] !== provider.issuer)) { respond(response, 400); return; }
+    // Only a verified, unambiguous denial may end the flow and unlock a fresh login.
+    if (errors.length) {
+      if (errors.length !== 1 || code.length || !text(errors[0], 256)) { respond(response, 400); return; }
+      flow.used = true; respond(response, 400); void stopServer(flow); return;
+    }
+    if (code.length !== 1 || !text(code[0])) { respond(response, 400); return; }
     flow.used = true;
     try {
       await authorizeMutation(flow.authorizeMutation, flow.abort.signal);
@@ -241,7 +247,8 @@ export function createContextAccountAuth({ source, readConfig, saveCredentials, 
     status() {
       let current = null;
       try { current = credentials(read()); } catch {}
-      const active = !closed && pending && !pending.used && now() < pending.expiresAt;
+      // Consuming the code is not completion: keep polling through exchange and save.
+      const active = !closed && pending && now() < pending.expiresAt;
       return { clientConfigured: true, refreshConfigured: Boolean(current && (current.expiresAt - 30000 > now() || (provider.refresh && current.refreshToken))), authInProgress: Boolean(active), ...(active ? { expiresAt: new Date(pending.expiresAt).toISOString() } : {}) };
     },
     start(options) {

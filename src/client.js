@@ -434,6 +434,7 @@ window.__ModuleLoader__.load({
           h('p',{className:'pc_muted'},'连接是可选的，本地项目和 AI 资讯可以直接使用。登录不会自动扫描资料或开启推送。'),
           error?h('p',{className:'pc_error',role:'alert'},error):null,
           notice?h('p',{className:'pc_connect_notice',role:'status'},notice):null,
+          authorization?h('p',{className:'pc_connect_notice',role:'status','data-context-auth-pending':true},`正在完成 ${authNames[authorization.source]} 授权，其他登录按钮暂时不可用。请先完成当前授权；完成或超时后，未成功的来源可重新连接。`):null,
           h('section',{className:'pc_card pc_google_connect','data-google-suite-connect':true},
             h('div',{className:'pc_connect_heading'},h('div',null,h('h3',null,'Google 三件套'),h('p',{className:'pc_muted'},'Gmail、Google 日历、Google Drive · 只读')),h('span',{className:'pc_connect_badge'},'内测')),
             h('p',null,'查看需要跟进的邮件、接下来的日程，以及云盘里的项目资料。由你在 Google 页面决定是否授权。'),

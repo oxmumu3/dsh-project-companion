@@ -275,3 +275,67 @@ test('owner revalidation inside the compliant writer blocks a late callback and 
     } finally { release?.(); await f.auth.close(); }
   }
 });
+
+for (const source of ['flomo', 'dida']) {
+  test(`${source} matching denial ends authorization and allows an immediate fresh retry`, async () => {
+    const f = fixture(source);
+    try {
+      const first = await f.auth.start(), denied = callback(first);
+      denied.searchParams.delete('code'); denied.searchParams.set('error', 'access_denied');
+      assert.equal((await fetch(denied)).status, 400);
+      assert.equal(f.auth.status().authInProgress, false);
+      assert.equal(f.requests.length, 1, 'denial must not exchange a code');
+      assert.equal(f.saved.length, 0);
+      const next = await f.auth.start();
+      assert.notEqual(next.url, first.url);
+      assert.equal(f.auth.status().authInProgress, true);
+    } finally { await f.auth.close(); }
+  });
+
+  test(`${source} unverified or ambiguous denial cannot cancel authorization`, async () => {
+    const f = fixture(source);
+    try {
+      const first = await f.auth.start();
+      for (const kind of ['wrong-state', 'duplicate-error', 'code-and-error', 'foreign-issuer']) {
+        const denied = callback(first);
+        denied.searchParams.set('error', 'access_denied');
+        if (kind !== 'code-and-error') denied.searchParams.delete('code');
+        if (kind === 'wrong-state') denied.searchParams.set('state', 'wrong');
+        if (kind === 'duplicate-error') denied.searchParams.append('error', 'another');
+        if (kind === 'foreign-issuer') denied.searchParams.set('iss', 'https://example.invalid');
+        assert.equal((await fetch(denied)).status, 400);
+        assert.equal(f.auth.status().authInProgress, true);
+      }
+      assert.equal(f.requests.length, 1);
+      assert.equal(f.saved.length, 0);
+    } finally { await f.auth.close(); }
+  });
+
+  for (const stage of ['token exchange', 'credential save']) {
+    test(`${source} stays in progress during a slow ${stage}`, async () => {
+      let enter, release, response;
+      const began = new Promise(resolve => { enter = resolve; });
+      const held = new Promise(resolve => { release = resolve; });
+      const options = stage === 'token exchange' ? {
+        fetch: async url => {
+          if (url.endsWith('/register')) return json({ client_id: 'fixture-client', token_endpoint_auth_method: 'none' });
+          enter(); await held;
+          return json(token({ scope: source === 'dida' ? 'tasks:read' : 'mcp' }));
+        },
+      } : { beforeSave: async () => { enter(); await held; } };
+      const f = fixture(source, options);
+      try {
+        response = fetch(callback(await f.auth.start()));
+        await began;
+        assert.equal(f.auth.status().authInProgress, true);
+        assert.equal(f.auth.status().refreshConfigured, false);
+        assert.equal(f.saved.length, 0);
+        release();
+        assert.equal((await response).status, 200);
+        assert.equal(f.auth.status().authInProgress, false);
+        assert.equal(f.auth.status().refreshConfigured, true);
+        assert.equal(f.saved.length, 1);
+      } finally { release(); await response?.catch(() => {}); await f.auth.close(); }
+    });
+  }
+}

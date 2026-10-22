@@ -309,3 +309,20 @@ test('Unmount aborts pending authorization status refresh and suppresses late up
   c.context.onFetch=(_url,o)=>{signal=o.signal;return new Promise(resolve=>{release=resolve;});};const pending=c.tick();await new Promise(resolve=>setImmediate(resolve));c.dispose();assert.equal(signal.aborted,true);assert.equal(c.intervals.size,0);release(Response.json(c.context.snapshot));await pending;assert.equal(c.external.length,1);assert.equal(c.requests.filter(r=>r.options.method==='POST').length,1);
  }finally{c.dispose();}
 });
+
+test('pending account login explains which provider holds the other login buttons and how to recover', async () => {
+  for (const source of ['flomo', 'dida']) {
+    const c = await load(), label = source === 'flomo' ? 'flomo' : '滴答清单';
+    c.context.snapshot[source + 'Auth'] = { clientConfigured: true, refreshConfigured: false, authInProgress: true, expiresAt: new Date(c.context.now + 240000).toISOString() };
+    try {
+      c.render(); await c.flush(); const view = c.render();
+      const notice = nodes(view, n => n.props['data-context-auth-pending'])[0];
+      assert.ok(notice, 'the connection page must explain its shared login lock');
+      assert.match(text(notice), new RegExp(`正在完成 ${label} 授权`));
+      assert.match(text(notice), /其他登录按钮暂时不可用/);
+      assert.match(text(notice), /完成或超时后.*重新连接/);
+      assert.equal(nodes(view, n => n.type === 'button' && text(n) === '连接 Google ')[0].props.disabled, true);
+      assert.equal(c.requests.filter(r => r.options.method === 'POST').length, 0);
+    } finally { c.dispose(); }
+  }
+});
