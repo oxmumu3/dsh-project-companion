@@ -1,13 +1,18 @@
 # 验证记录
 
-## 0.11.0-preview.3：独立 Google 应用登记（2026-10-22）
+## 0.11.0-preview.3：独立 Google 应用登记与真实日历授权（2026-10-22）
 
 - 在 `experts@finvo.ai` 账号新建独立 Google Cloud 项目 `dsh-dot`（DSH Dot）；控制台创建完成和项目编号回读一致。Finvo 原项目的配置、IAM、OAuth 客户端及账单未修改。
 - 仅为本轮启用 Google Calendar API；Google Auth Platform 展示名 `DSH Dot`，支持和开发者邮箱为该账号。受众保持 External / Testing，仅添加本人测试账号，单一 scope 为 `calendar.events.readonly`。敏感权限与测试模式不等于公开审核通过。
 - 新建 `DSH Dot Desktop`（Desktop app），按当前官方规则声明用于 AI agent。本人完成 Google API services user data policy 步骤；这不等于已同意 Dot 读取日历。仅把此新客户端的 Desktop 公共注册元数据接入候选源码，未复用其他应用、用户 access/refresh token 或 Web/服务账号凭据。
 - 两套 SDK 本轮各765项：764通过、0失败、1项可选桥接环境测试跳过（未设置 `DSH_WECHAT_BRIDGE_ROOT`）。SDK 0.2.0载体使用Cordis4.0.4/Schemastery3.18.4；0.2.1载体使用Cordis4.0.5/Schemastery3.18.5/zod4.4.3，明确不是重装并锁定全部依赖的分发验证。独立代码/证明状态审读无阻塞问题。
 - 实际候选 tgz 在全新隔离 Cordis SDK 宿主加载默认 publisher：原生 GET 显示 `clientConfigured:true`、`refreshConfigured:false`、来源未连接/未启用；显式原生授权操作生成单 scope、S256、本机回调链接，外网请求0，关闭后监听不可用。此处使用合成 owner/空配置，没有把用户测试令牌注入宿主。
-- 本地包审计核对Desktop元数据与新注册一致，未包含原始注册文件、个人配置或用户令牌；许可证及固定vendor完整性通过。没有在原 App 安装或重启，保留其现有排障现场；没有真实 Calendar OAuth 换码、私人读取、刷新、微信发送或手机验收。
+- 本地包审计核对Desktop元数据与新注册一致，未包含原始注册文件、个人配置或用户令牌；许可证及固定vendor完整性通过。以下真实账号验收使用该候选的独立官方 Web Host；原 App 未安装或重启，其排障现场和原 App/Host PID 均保持原样。
+- 精确 `0.11.0-preview.3` 候选在独立官方 Web Host 安装并运行，70 个运行文件一致。本人随后在 Google 官方页面完成日历同意并确认授权已保存；实际生产 OAuth、换码与原生 Settings 持久化通过。状态返回 `clientConfigured:true`、`refreshConfigured:true`、`authInProgress:false`；这一刻来源尚未启用、没有读取日历。原生授权入口依赖有效 bound owner，本次明确使用测试 owner 绑定夹具，真实微信桥接禁用；不能据此认定真实绑定已验收。
+- 明确启用 Calendar 后，经实际 `personal_context` 与固定 REST 只读查询 `primary`，范围为 2026-10-22T07:50:17.056Z 至 2026-10-29T07:50:17.056Z，最多 10 项；实际返回 0 项，`hasMore:false`、`truncated:false`。这证明该主日历时间窗的真实请求成功，未验证非空事件展示，也不能推断整个账号无日程。
+- 重启仅本次独立 Host，原生连接和启用状态保留，无需再次同意；重启后的首次同窗查询成功，验证持久化与 refresh 路径，而非沿用上一进程的 access token 缓存。原生凭据文件 0600、私有根目录 0700；未导出用户令牌或私人事件内容到公开证据/候选包，未复制私有配置到原 App。
+- 本轮没有模型调用、微信发送、新计划或日历写入。浏览器授权任务已结束，独立 Host 退出码 0，私有原生配置保留。脱敏证据：本地 `output/dsh-dot-google-calendar-live-2026-10-22/authorization-proof.json`、`first-read-proof.json`、`restart-state-proof.json`、`refresh-read-proof.json`、`runtime-proof.json`。
+- 仍待原安装环境升级及真实 owner/微信绑定验收、非空事件展示、真实停用/换绑/撤销/清除与手机收到/排版。Google 仍为 External / Testing，唯一测试用户 `experts@finvo.ai`；本轮单账号实测不代表公开分发已就绪，Gmail、Drive、Docs、Sheets、Slides 的高级 MCP 边界未扩大。
 
 
 ## 0.11.0-preview.2：有来源的项目变化卡与记忆稳定性（2026-10-21）
