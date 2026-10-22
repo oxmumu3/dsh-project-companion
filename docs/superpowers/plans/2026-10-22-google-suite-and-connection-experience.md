@@ -27,7 +27,7 @@
 - [x] Root：按官方文档核对 Gmail/Drive/Docs/Sheets/Slides GET 请求和只读 scope，在独立 Cloud 项目准备相关 API 与声明；保留 Testing 状态，不代点私人权限同意。
 - [x] Root：运行完整串行测试与 SDK 矩阵；交给独立 agent 做权限边界和 UX 审读，修复阻塞问题后再封包。
 - [x] Root：统一 README、install、first-use、context-sources、verification 与真实候选版本和能力状态。
-- [ ] Root：构建精确 candidate、许可证与运行文件审计，日常 App 安装后查组件运行与 UI。保存电脑证据和醒后唯一必要的 Google consent/手机验收事项。
+- [x] Root：构建精确 candidate、许可证与运行文件审计，日常 App 安装后查组件运行与 UI。保存电脑证据和醒后唯一必要的 Google consent/手机验收事项。
 
 ## 验收命令与结果口径
 
