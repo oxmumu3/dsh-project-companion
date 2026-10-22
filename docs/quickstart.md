@@ -1,6 +1,6 @@
 # 快速开始
 
-本页面向已在日常 App 安装并核验运行的 `0.12.0-preview.3`，尚未公开发布。本版滴答两项清单、flomo 两条关键词搜索已真实读取；Google 三件套已有此前的有限读取记录。Google 仍为 External / Testing，仅登记测试账号可登录，未登记的公开新用户不能直接接入；flomo 需要 MAX。只有 Releases（仓库迁移待接收，公开入口尚未核验）实际出现同版本资产后才下载；旧 `0.6.0-preview.1` 仅作历史归档。它是已有官方 Harness 的增强包，按[安装说明](install.md)完成安装与模型配置后，从左侧打开「DSH Dot」，沿用或建立微信会话，先选一个项目生成简报。完整动线见[首次使用](first-use.md)。
+本页面向已在日常 App 安装并核验运行的 `0.12.0-preview.3`，尚未公开发布。本版滴答两项清单、flomo 两条关键词搜索已真实读取；Google 三件套已有此前的有限读取记录。Google 仍为 External / Testing，仅登记测试账号可登录，未登记的公开新用户不能直接接入；flomo 需要 MAX。只有 [Releases](https://github.com/oxmumu3/dsh-project-companion/releases)实际出现同版本资产后才下载；当前公开最高预览版本仍为 `0.6.0-preview.1`。它是已有官方 Harness 的增强包，按[安装说明](install.md)完成安装与模型配置后，从左侧打开「DSH Dot」，沿用或建立微信会话，先选一个项目生成简报。完整动线见[首次使用](first-use.md)。
 
 ## 在电脑上查看项目总览
 

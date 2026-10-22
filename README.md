@@ -2,13 +2,13 @@
 
 给已有官方 DeepSeek Harness 加上项目助理：在微信里明确交办到对应项目，把本轮执行回复带回原对话，恢复缓存时避免重新执行。
 
-作者：奥克斯木木山。社区开源项目，非 DeepSeek 或 OpenAI 官方产品。当前预览版 **`0.12.0-preview.3`** 已在日常官方 App 安装并核验启用、一个组件运行，尚未公开发布。保留普通 Google、flomo、滴答登录；滴答普通账号使用官方只读 Open API，仍只申请 `tasks:read`，不为适配 MCP 增加写权限。支持清单、指定清单任务和指定任务读取，不自动跨清单搜索。
+作者：奥克斯木木山 · [正式仓库](https://github.com/oxmumu3/dsh-project-companion)。社区开源项目，非 DeepSeek 或 OpenAI 官方产品。当前预览版 **`0.12.0-preview.3`** 已在日常官方 App 安装并核验启用、一个组件运行，尚未公开发布。保留普通 Google、flomo、滴答登录；滴答普通账号使用官方只读 Open API，仍只申请 `tasks:read`，不为适配 MCP 增加写权限。支持清单、指定清单任务和指定任务读取，不自动跨清单搜索。
 
 本版原生会话已真实读取滴答两项清单和 flomo 两条关键词搜索结果；原微信绑定、Google 三来源及两家在日常 Dot 的启用状态保留，未新增提醒或日报。此前 Google 邮件搜索与限长正文、主日历七天空窗、云盘文件名搜索通过。滴答任务正文、Drive 正文、非空日程、长期令牌刷新和新版手机体验仍待验。Google 仍为 External / Testing，未登记的公开新用户不能直接接入；flomo 需要 MAX。安装、授权、有限读取与手机证据分别见[验证记录](docs/verification.md)。
 
 ## 安装
 
-查看 Releases（仓库迁移待接收，公开入口尚未核验）。仅当页面实际出现 `v0.12.0-preview.3` 及同版本资产后，再下载对应 macOS 完整安装包；当前没有该版本的公开下载。`v0.6.0-preview.1` 仅作历史归档，不能用它验证本页的新流程。
+查看 [Releases](https://github.com/oxmumu3/dsh-project-companion/releases)。仅当页面实际出现 `v0.12.0-preview.3` 及同版本资产后，再下载对应 macOS 完整安装包；当前没有该版本的公开下载。当前公开最高预览版本仍为 `v0.6.0-preview.1`，不能用它验证本页的新流程。
 
 1. 准备受支持的官方 Harness，保存工作并正常退出。将同版本安装包解压，保留整个目录，再双击 `Install.command`。
 2. 打开 Harness，完成自己的模型登录与配置，确认微信桥接与项目助理均启用，从左侧打开「DSH Dot」。

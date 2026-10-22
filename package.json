@@ -82,5 +82,13 @@
         "@deepseek-ai/dsh-client-ui-conversation"
       ]
     }
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/oxmumu3/dsh-project-companion.git"
+  },
+  "homepage": "https://github.com/oxmumu3/dsh-project-companion",
+  "bugs": {
+    "url": "https://github.com/oxmumu3/dsh-project-companion/issues"
   }
 }

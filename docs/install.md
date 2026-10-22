@@ -4,7 +4,7 @@
 
 ## 取得同版本安装包
 
-打开本项目 Releases（仓库迁移待接收，公开入口尚未核验）。只有实际出现 `v0.12.0-preview.3` 和对应资产后，才下载同版本 macOS 完整安装包或 companion tgz；当前没有该版本的公开下载。`v0.6.0-preview.1` 仅作历史归档，不适用本页的新界面与恢复流程。
+打开本项目 [Releases](https://github.com/oxmumu3/dsh-project-companion/releases)。只有实际出现 `v0.12.0-preview.3` 和对应资产后，才下载同版本 macOS 完整安装包或 companion tgz；当前没有该版本的公开下载。当前公开最高预览版本仍为 `v0.6.0-preview.1`，不适用本页的新界面与恢复流程。
 
 统一包配套 `dsh-wechat@0.11.1-dot.2` 维护版，保留 pan17/dsh-wechat 的 MIT 许可、版权和原配对目录；不导入作者账户或复制配对凭据。固定源码、差异与校验见[桥接来源说明](../bridge-maintenance/README.md)。
 

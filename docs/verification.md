@@ -10,7 +10,14 @@
 - 本人已完成 flomo/滴答官方同意后，实际安装版在未绑定微信的普通原生会话仅调用 `personal_context`，一个回合完成：16:54:54Z，滴答 projects limit2 返回2项来源引用，标注裁剪；16:55:02Z，flomo DeepSeek关键词搜索 limit2 返回2条，无裁剪标记。随后两来源从临时会话断开，原生 UI 恢复到日常 Dot。Google三来源保留，微信已连接，提醒0、项目日报关闭；无新计划或微信发送。脱敏证据：`output/dsh-dot-account-auth-finish-2026-10-22/preview3-live-read-proof.json`。
 - 真实读取后另作状态核对：五个状态文件仍字节不变；项目状态仅增加观察到的 events/sessionIds，计划及其他字段不变；Context租约因临时启用、断开和恢复日常 Dot 按预期变化。没有新建计划，不能将安装阶段的七文件不变扩称为读取全过程字节不变。证据：`output/dsh-dot-account-auth-finish-2026-10-22/preview3-state-preservation.json`。
 - 本轮滴答仅验证清单元数据，任务正文未验；flomo仅验证有限关键词搜索，未读取 AI 画像。Google 此前已验邮件搜索/限长正文、主日历七天空窗口和Drive文件名搜索，见下节；Drive正文、非空日历、长期令牌刷新/失效恢复及新版手机体验仍未验。Google仍为External / Testing，flomo仍需MAX，私人Context持续扫描与主动推送尚未实现。本版本未公开发布。
-- 正式仓库迁移已发起，待 oxmumu3 本人接收；迁移前管理员核对为零个 Release/资产，不能把旧文档中的历史版本当作当前可下载入口。当前材料已撤下旧账号入口，未把预期目标 URL 当成已可用。
+- 本人接受转移后，GitHub API 已核对正式归属 `oxmumu3/dsh-project-companion`，仓库 ID `1425286141` 与原仓库一致。仓库迁移与新版公开发布分别验收；迁移证据和当前 Release/资产清单见下节。
+
+## 2026-10-22：正式仓库迁移与身份候选
+
+- 本人接受 GitHub 转移后，API 回读 canonical `full_name` 为 `oxmumu3/dsh-project-companion`，仓库 ID `1425286141` 与 node ID 保持不变。1个分支、3个标签及全部 Git refs 的 commit SHA 均与转移前一致；MIT LICENSE blob SHA与0项issue/PR保持原状。旧仓库页、旧Releases页均301到新归属。
+- 迁移后实际列出3个历史Release、10个资产，版本为 `v0.4.0-preview.2`、`v0.5.0-preview.1`、`v0.6.0-preview.1`；当前公开最高预览版本仍为0.6，本地0.12未公开。此前 before.json 记录为0个Release，保留该观察但不把它当作完整资产基线；另取三次历史发版存档，现有10个资产的文件名、大小和SHA256均逐项匹配，旧版本页及旧下载入口均跳转新归属。独立比对证据为 `release-preservation-proof.json`。
+- 当前源码的README、安装说明、版本记录与包元数据已改用经核实的新仓库；历史版权、上游MIT及固定桥接来源保留真实署名。身份更新候选仅调整说明与包元数据，须以已安装preview.3 tgz作为runtime-reference核对，再另存新目录；不覆盖本机已验冻结包、不重装App、不改授权或微信状态。
+- 本次只确认转移并同步本地维护入口，没有git push或新Release。迁移详细证据在本地 `output/dsh-dot-public-identity-migration-2026-10-22/`。
 
 ## 0.12.0-preview.2：flomo / 滴答授权恢复与本机升级（2026-10-22，历史阶段）
 
