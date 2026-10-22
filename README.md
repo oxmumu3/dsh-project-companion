@@ -2,11 +2,11 @@
 
 给已有官方 DeepSeek Harness 加上项目助理：在微信里明确交办到对应项目，把本轮执行回复带回原对话，恢复缓存时避免重新执行。
 
-作者：牛村木木山。社区开源项目，非 DeepSeek 或 OpenAI 官方产品。正在准备 **`0.11.0-preview.2`**，尚未安装到本机或公开发布。本轮优先验收准确项目交办、单份执行回复与缓存恢复防重复；新增有来源的项目变化卡，真实模型质量与手机验收仍待完成。源码回归、宿主运行、通道发送与手机收到分别记录，见[验证记录](docs/verification.md)。
+作者：牛村木木山。社区开源项目，非 DeepSeek 或 OpenAI 官方产品。正在准备 **`0.11.0-preview.3`**，尚未安装到本机或公开发布。本轮为 Google 日历普通登录接入了专用 Desktop 应用注册信息，仍为 Testing；本人授权、真实读取和手机验收尚待完成。保留准确项目交办、单份执行回复、缓存恢复防重复与有来源的项目变化卡。源码回归、宿主运行、通道发送与手机收到分别记录，见[验证记录](docs/verification.md)。
 
 ## 安装
 
-[查看 Releases](https://github.com/piggy00544/dsh-project-companion/releases)。仅当页面实际出现 `v0.11.0-preview.2` 及同版本资产后，再下载对应 macOS 完整安装包；当前没有该版本的公开下载。`v0.6.0-preview.1` 仅作历史归档，不能用它验证本页的新流程。
+[查看 Releases](https://github.com/piggy00544/dsh-project-companion/releases)。仅当页面实际出现 `v0.11.0-preview.3` 及同版本资产后，再下载对应 macOS 完整安装包；当前没有该版本的公开下载。`v0.6.0-preview.1` 仅作历史归档，不能用它验证本页的新流程。
 
 1. 准备受支持的官方 Harness，保存工作并正常退出。将同版本安装包解压，保留整个目录，再双击 `Install.command`。
 2. 打开 Harness，完成自己的模型登录与配置，确认微信桥接与项目助理均启用，从左侧打开「DSH Dot」。

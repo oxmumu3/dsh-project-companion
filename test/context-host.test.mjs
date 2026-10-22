@@ -29,7 +29,7 @@ async function fixture(t,options={}){
   const config={didaToken:'synthetic-private-token',flomoToken:'',googleClientId:'',googleClientSecret:'',googleRefreshToken:''};
   const transport={catalog:async(source,{signal})=>{calls.push({type:'catalog',source});return options.catalog?.(source,{signal})??{tools:[{name:'list_projects',inputSchema:{type:'object',properties:{limit:{type:'integer'},offset:{type:'integer'}}}}],fetchedAt:'2026-10-19T12:00:00Z'};},call:async(source,name,args,{signal})=>{calls.push({type:'call',source,name,args});return options.call?.(source,name,args,{signal})??{value:{structuredContent:{projects:[{id:'p1',name:'当前事项'}]}},fetchedAt:'2026-10-19T12:00:00Z'};},close:async()=>closed.push('transport')};
   const googleAuth={status:()=>({clientConfigured:false,refreshConfigured:false,authInProgress:false}),start:async()=>{calls.push({type:'google_authorize'});return{url:'https://accounts.google.com/o/oauth2/v2/auth?state=synthetic',expiresAt:'2026-10-19T12:05:00Z'};},getToken:async()=>{throw new Error('must not access Google');},close:async()=>closed.push('googleAuth')};
-  const plugin=await ctx.plugin({name:'synthetic-context-host',inject:['tools','commands','storageDomain','sessions','systemPrompt'],async apply(scope){adapter=await installCompanion(scope,{clock:()=>new Date('2026-10-19T12:00:00Z'),readSetup:async()=>connection,readNativeRoute:options.readNativeRoute??(async()=>({kind:'unbound'})),readBinding:async()=>null,context:{readConfig:()=>({...config}),transport,googleAuth,...(options.flomoAuth?{flomoAuth:options.flomoAuth}:{}),...(options.didaAuth?{didaAuth:options.didaAuth}:{}),...(options.googleCalendarAuth?{googleCalendarAuth:options.googleCalendarAuth}:{}),...(options.calendarTransport?{calendarTransport:options.calendarTransport}:{})},timers:{setInterval(){throw new Error('context must not start timers');},clearInterval(){}}});}});
+  const plugin=await ctx.plugin({name:'synthetic-context-host',inject:['tools','commands','storageDomain','sessions','systemPrompt'],async apply(scope){adapter=await installCompanion(scope,{clock:()=>new Date('2026-10-19T12:00:00Z'),readSetup:async()=>connection,readNativeRoute:options.readNativeRoute??(async()=>({kind:'unbound'})),readBinding:async()=>null,context:{readConfig:()=>({...config}),googlePublisher:options.googlePublisher??null,fetch:options.contextFetch??(async()=>{throw new Error('Synthetic context host must not contact real services');}),transport,googleAuth,...(options.flomoAuth?{flomoAuth:options.flomoAuth}:{}),...(options.didaAuth?{didaAuth:options.didaAuth}:{}),...(options.googleCalendarAuth?{googleCalendarAuth:options.googleCalendarAuth}:{}),...(options.calendarTransport?{calendarTransport:options.calendarTransport}:{})},timers:{setInterval(){throw new Error('context must not start timers');},clearInterval(){}}});}});
   let number=0;
   const tool=async args=>{const response=await ctx.tools.execute({callId:'context-test-'+(++number),name:'personal_context',arguments:args,agent,signal:new AbortController().signal});assert.equal(response.isError,false,JSON.stringify(response));return response.value;};
   const project=async args=>{const response=await ctx.tools.execute({callId:'context-project-'+(++number),name:'project_companion',arguments:args,agent,signal:new AbortController().signal});assert.equal(response.isError,false,JSON.stringify(response));return response.value;};
@@ -145,10 +145,55 @@ test('native account authorizations return sanitized first-party links only on e
 });
 
 test('ordinary Calendar preparation is passive and cannot use the legacy Google authorization',async t=>{
- const h=await fixture(t);const snapshot=await h.get();assert.equal(snapshot.value.googleCalendarAuth.clientConfigured,false);assert.equal(snapshot.value.sources.find(row=>row.id==='calendar').configured,false);assert.equal((await h.post({action:'google_calendar_authorize'})).status,400);assert.equal(h.calls.length,0);
+ const h=await fixture(t,{googlePublisher:null});const snapshot=await h.get();assert.equal(snapshot.value.googleCalendarAuth.clientConfigured,false);assert.equal(snapshot.value.sources.find(row=>row.id==='calendar').configured,false);assert.equal((await h.post({action:'google_calendar_authorize'})).status,400);assert.equal(h.calls.length,0);
 });
 test('Calendar native authorization is owner gated and separate from advanced MCP; only explicit query reaches REST',async t=>{
  let guard,connected=true;const events=[];const auth={status:()=>({clientConfigured:true,refreshConfigured:connected,authInProgress:false}),credentialState:()=>({configured:connected,key:'c'.repeat(64)}),start:async o=>{guard=o.authorizeMutation;assert.equal(await guard(),true);events.push('authorize');return{url:'https://accounts.google.com/o/oauth2/v2/auth?state=calendar',expiresAt:'2026-10-19T12:05:00Z'};},getToken:async()=>{throw Error('injected REST handles token');},close:async()=>events.push('auth close')};
  const calendar={catalog:async()=>{events.push('catalog');return{provenance:'bundled-contract',tools:[{name:'list_events',inputSchema:{type:'object'}}]};},call:async()=>{events.push('read');return{value:{items:[]},coverage:{source:'calendar',calendarId:'primary',from:'2026-10-19T12:00:00Z',to:'2026-10-20T12:00:00Z',returned:0,hasMore:false}};},close:async()=>events.push('rest close')};
  const h=await fixture(t,{googleCalendarAuth:auth,calendarTransport:calendar});assert.deepEqual(events,[]);assert.equal((await h.post({action:'google_calendar_authorize'})).status,200);assert.deepEqual(events,['authorize']);assert.equal((await h.post({action:'google_calendar_authorize',source:'calendar'})).status,400);const c=await h.tool({action:'connect',source:'calendar',userRequested:true});assert.match(c.text,/尚未验证/);assert.equal(events.includes('read'),false);const r=await h.tool({action:'query',source:'calendar',operation:'upcoming',userRequested:true});assert.match(r.text,/主日历/);assert.deepEqual(h.calls,[]);h.setConnection({state:'bound',sessionId:'other',bindingKey:'b'.repeat(64)});await assert.rejects(guard());assert.equal((await h.tool({action:'query',source:'calendar',operation:'upcoming',userRequested:true})).status,'blocked');await h.close();assert.ok(events.includes('auth close'));assert.ok(events.includes('rest close'));
+});
+
+test('registered Calendar publisher stays passive until explicit owner login and cannot read without user authorization',async t=>{
+  const requests=[];
+  const publisher={kind:'desktop',clientId:'synthetic-registration.apps.googleusercontent.com',clientSecret:'synthetic-public-desktop'};
+  const h=await fixture(t,{googlePublisher:publisher,contextFetch:async(url,init)=>{requests.push({url,method:init?.method});throw new Error('Synthetic host must not contact Google');}});
+  assert.equal(requests.length,0,'install must not fetch metadata, tokens or private Calendar data');
+  assert.equal(h.adapter.googleCalendarAuth.status().clientConfigured,true,'publisher metadata reaches the real controller');
+  const first=await h.get();
+  assert.equal(first.status,200);
+  assert.deepEqual(first.value.googleCalendarAuth,{clientConfigured:true,refreshConfigured:false,authInProgress:false});
+  const row=first.value.sources.find(source=>source.id==='calendar');
+  assert.equal(row.configured,false,'registered app is not a user account connection');
+  assert.equal(row.enabled,false);
+  assert.equal(requests.length,0,'GET is a local status projection');
+  assert.deepEqual(h.calls,[]);
+  assert.doesNotMatch(JSON.stringify(first.value),/synthetic-registration|synthetic-public-desktop/);
+  assert.equal((await h.post({action:'connect',source:'calendar'})).status,400);
+  assert.equal((await h.tool({action:'query',source:'calendar',operation:'upcoming',userRequested:true})).status,'blocked');
+  assert.equal(requests.length,0,'missing user authorization cannot fetch or refresh tokens');
+  const started=await h.post({action:'google_calendar_authorize'});
+  assert.equal(started.status,200);
+  const url=new URL(started.value.url),redirect=new URL(url.searchParams.get('redirect_uri'));
+  assert.equal(url.origin+url.pathname,'https://accounts.google.com/o/oauth2/v2/auth');
+  assert.equal(url.searchParams.get('client_id'),publisher.clientId);
+  assert.deepEqual(url.searchParams.get('scope').split(' '),['https://www.googleapis.com/auth/calendar.events.readonly']);
+  assert.equal(url.searchParams.get('include_granted_scopes'),null);
+  assert.equal(url.searchParams.get('code_challenge_method'),'S256');
+  assert.equal(redirect.hostname,'127.0.0.1');
+  assert.equal(redirect.pathname,'/oauth2/callback');
+  assert.ok(Number(redirect.port)>0);
+  assert.doesNotMatch(JSON.stringify(started.value),/synthetic-public-desktop|access_token|refresh_token/);
+  assert.equal(h.adapter.googleCalendarAuth.status().authInProgress,true);
+  const waiting=await h.get();
+  assert.equal(waiting.value.googleCalendarAuth.refreshConfigured,false);
+  assert.equal(waiting.value.sources.find(source=>source.id==='calendar').configured,false);
+  assert.equal((await h.post({action:'connect',source:'calendar'})).status,400);
+  assert.equal((await h.tool({action:'query',source:'calendar',operation:'upcoming',userRequested:true})).status,'blocked');
+  assert.deepEqual(requests,[],'generating a link is not a token exchange or Calendar read');
+  assert.deepEqual(h.calls,[],'ordinary Calendar never calls the legacy Google/MCP stub');
+  await h.close();
+  assert.equal(h.adapter.googleCalendarAuth.status().authInProgress,false);
+  await assert.rejects(h.adapter.googleCalendarAuth.start({authorizeMutation:async()=>true}),/已关闭/);
+  await assert.rejects(fetch(redirect),/fetch failed/);
+  assert.deepEqual(requests,[]);
 });

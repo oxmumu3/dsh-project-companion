@@ -1,5 +1,15 @@
 # 验证记录
 
+## 0.11.0-preview.3：独立 Google 应用登记（2026-10-22）
+
+- 在 `experts@finvo.ai` 账号新建独立 Google Cloud 项目 `dsh-dot`（DSH Dot）；控制台创建完成和项目编号回读一致。Finvo 原项目的配置、IAM、OAuth 客户端及账单未修改。
+- 仅为本轮启用 Google Calendar API；Google Auth Platform 展示名 `DSH Dot`，支持和开发者邮箱为该账号。受众保持 External / Testing，仅添加本人测试账号，单一 scope 为 `calendar.events.readonly`。敏感权限与测试模式不等于公开审核通过。
+- 新建 `DSH Dot Desktop`（Desktop app），按当前官方规则声明用于 AI agent。本人完成 Google API services user data policy 步骤；这不等于已同意 Dot 读取日历。仅把此新客户端的 Desktop 公共注册元数据接入候选源码，未复用其他应用、用户 access/refresh token 或 Web/服务账号凭据。
+- 两套 SDK 本轮各765项：764通过、0失败、1项可选桥接环境测试跳过（未设置 `DSH_WECHAT_BRIDGE_ROOT`）。SDK 0.2.0载体使用Cordis4.0.4/Schemastery3.18.4；0.2.1载体使用Cordis4.0.5/Schemastery3.18.5/zod4.4.3，明确不是重装并锁定全部依赖的分发验证。独立代码/证明状态审读无阻塞问题。
+- 实际候选 tgz 在全新隔离 Cordis SDK 宿主加载默认 publisher：原生 GET 显示 `clientConfigured:true`、`refreshConfigured:false`、来源未连接/未启用；显式原生授权操作生成单 scope、S256、本机回调链接，外网请求0，关闭后监听不可用。此处使用合成 owner/空配置，没有把用户测试令牌注入宿主。
+- 本地包审计核对Desktop元数据与新注册一致，未包含原始注册文件、个人配置或用户令牌；许可证及固定vendor完整性通过。没有在原 App 安装或重启，保留其现有排障现场；没有真实 Calendar OAuth 换码、私人读取、刷新、微信发送或手机验收。
+
+
 ## 0.11.0-preview.2：有来源的项目变化卡与记忆稳定性（2026-10-21）
 
 这是新的本地候选，尚未升级原 App、公开发布或通过新版手机验收。原 App 的另一项调试现场保留，使用独立官方 Web Host 验证；不退出、重载或更新原 App，不操作微信客户端。

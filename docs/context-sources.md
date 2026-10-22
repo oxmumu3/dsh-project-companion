@@ -1,12 +1,12 @@
 # Context 来源与验证边界
 
-Dot 将用户明确连接的来源作为按需、只读材料。连接不代表已读取，测试连接不代表已完整覆盖账号，材料里的文字也不构成执行授权。此页记录 2026-10-19/20 核对的一手来源；MCP 工具可用性以用户独立授权后的 `tools/list` 为准。Calendar 普通连接是本地声明的 REST 读取合同，真实读取需单独验证。
+Dot 将用户明确连接的来源作为按需、只读材料。连接不代表已读取，测试连接不代表已完整覆盖账号，材料里的文字也不构成执行授权。官方协议来源核对日期见各节；2026-10-22 更新了产品注册与候选源码接入状态，真实运行验收另行记录。MCP 工具可用性以用户独立授权后的 `tools/list` 为准。Calendar 普通连接是本地声明的 REST 读取合同，真实读取需单独验证。
 
 ## 怎么连接和使用
 
 1. 打开 Harness 设置 → DeepSeek Dot，在资料来源点「登录 flomo」或「登录滴答清单」，打开官方账号授权页。用自己的账号登录并同意授权；无需创建、复制或粘贴 Token。flomo MCP 仍需 MAX 会员。
 2. 授权页面回到本机后，返回 Dot 刷新连接状态。逐项点击要使用的来源「启用读取」，或在对应会话明确要求启用。MCP 来源此步验证工具目录；Calendar 普通连接仅核对本地读取合同，不能当作 API 已验证。两者均不读取私人正文，也不创建扫描计划。
-3. Google 日历普通入口已实现独立 OAuth 与 REST 代码，但产品方尚未注册自己的 Desktop OAuth 应用，当前会显示「Google 日历连接准备中」，不能生成可用登录链接。注册完成后，用户只需在 Google 官方页面同意日历事件只读权限，不需自己建 Cloud 项目。Gmail、Drive、Docs、Sheets、Slides 仍走下述高级 MCP 预览方式；旧 Google 凭据不自动导入日历新连接，也不作为读取失败时的后备账号。
+3. Google 日历普通入口已在 `0.11.0-preview.3` 候选源码中接入 DSH Dot 专用 Desktop OAuth 注册信息。Google 应用当前为 **External / Testing**，唯一已加入的测试账号是 `experts@finvo.ai`；这不是面向任意账号的公开可用版本。安装并确认加载该候选后，测试用户才可点击「登录 Google 日历」并在 Google 官方页面完成本人同意；普通用户不需自己创建 Cloud 项目。实际候选包已在隔离 SDK 宿主验证默认注册信息和原生授权入口，原 App 安装、本人 OAuth、换码及日历读取尚未验收。Gmail、Drive、Docs、Sheets、Slides 仍走下述高级 MCP 预览方式；旧 Google 凭据不自动导入日历新连接，也不作为读取失败时的后备账号。
 4. 回到原微信对话自然提问，例如「搜 flomo 中关于插件生态的笔记」「查看未来 24 小时 Google 日历」「先列滴答项目，再查看这个项目未完成任务」。首次没有返回资料、授权不足或工具字段不兼容时，会明确失败，不改用写工具。
 5. Docs、Sheets、Slides 正文读取需指定资源 ID；Sheets 还需明确有界范围，例如 `A1:F30`。Drive、Gmail 搜索先返回有限资料，再由你明确选择全文。来源输出会保留资源 ID、更新时间、读取时间、官方链接和截断状态。
 
@@ -16,19 +16,34 @@ Gmail、Drive 和 flomo 可按同一个明确搜索词汇总；日历和滴答�
 
 ## Google 日历普通连接：实现与发布准备
 
-当前代码具备：独立 Calendar 凭据槽、仅 `calendar.events.readonly` 的 Google Desktop OAuth、S256 PKCE、随机 `127.0.0.1` loopback、一次性授权码、五分钟授权窗口、当前绑定/暂停检查、原生 revision CAS 保存、自动 refresh、固定主日历只读 REST、原生登录状态与清除入口。`src/google-publisher.js` 的默认产品注册值明确为 `null`。因此这些代码与合成测试**不代表普通用户已经能登录 Google**。
+当前代码具备：独立 Calendar 凭据槽、仅 `calendar.events.readonly` 的 Google Desktop OAuth、S256 PKCE、随机 `127.0.0.1` loopback、一次性授权码、五分钟授权窗口、当前绑定/暂停检查、原生 revision CAS 保存、自动 refresh、固定主日历只读 REST、原生登录状态与清除入口。`src/google-publisher.js` 已接入本产品新建的 Desktop 公共注册元数据，不再是空注册值；这仅代表候选源码有应用身份，**不代表宿主已经加载、测试用户已经授权或私人资料已经读取，更不代表公开分发已就绪**。缺少有效注册信息时的「连接准备中」仍是保留的安全回退状态。
 
 Calendar 凭据与旧 Google MCP 的 Client ID / Secret / Refresh Token 分开保存，不复制 Codex、gws 或作者其他应用的客户端或令牌。初次换码必须确认日历 scope；刷新缺少 scope 时仅沿用已经核实的记录，不能扩大读取合同。Google installed apps 明确不支持 incremental authorization；本版本不使用 `include_granted_scopes` 自动合并权限。重新授权生成新的连接身份，需重新启用来源；自动刷新保持同一身份。
 
 按需请求固定为 `GET https://www.googleapis.com/calendar/v3/calendars/primary/events`，参数从有界 `upcoming` 合同生成：默认未来 24 小时，最多 7 天、10 条；不接受其他日历 ID，不翻页、不修改事件、不追附件或描述里的链接。`nextPageToken` 只变成可见的 `hasMore/truncated`，不会发起更多请求。结果保留主日历和时间覆盖范围；全天 `end.date` 是排他结束日期，不包含在事件内。取令牌、权限检查、响应读取合计 20 秒，响应最多 1 MiB，拒绝重定向、无自动重试、关闭/取消可中断。
 
-产品方仍需由有权主体亲自完成以下外部步骤，本轮没有注册账号、接受条款、读取真实 Google 资料或复制既有 client：
+2026-10-22 已完成的产品方登记与仍待验证的状态如下；本节不记录客户端具体值或任何用户令牌：
 
-1. 在本产品拥有的 Google Cloud 项目启用 Google Calendar API，配置 Google Auth Platform 的品牌、支持邮箱、授权受众和数据使用说明。应用展示名建议为 `DeepSeek Dot`（需产品 owner 最终确认），客户端类型必须为 **Desktop app**，不是 Web application 或服务账号。
-2. 只登记 `https://www.googleapis.com/auth/calendar.events.readonly`。先保留 Testing 并明确添加本人测试账号，核实当时 Google 对测试用户、令牌有效期、发布及该 scope 的实际要求。不能将自用测试等同公开分发已获批，也不能笼统声称所有 Google scope 都需要同一种审核。
-3. 产品方将这个新注册的 Desktop 公共 client 元数据配置到 `src/google-publisher.js`，由发布流程审读后打包。Desktop 配置可能包含名为 `client_secret` 的值，但不能依赖桌面客户端保密；绝不打包 Web client secret、服务账号私钥、作者 access/refresh token。用户的真实令牌仍逐人授权并保存于本插件自己的 secret 配置。
-4. 隐私/数据使用页面先以项目仓库中经 owner 确认并实际发布的文档 URL 为准；目前没有已确认的 Google 应用隐私政策 URL，不能填虚构地址或代为提交验证。说明至少包括：令牌保存于 Harness 本机 profile secret 配置，不等同系统钥匙串加密；本人明确读取后的事件资料会进入现有 Harness 会话，可能被发送到用户所配置的远程模型并留在宿主日志；没有新增代理服务器不等于资料永不离开电脑。
-5. 本人完成 Google 同意页，然后分别实测授权保存、重启刷新、单次主日历读取、停用/换绑/清除和可选微信送达。服务端 OAuth 成功、API 读取成功、宿主显示与手机实际收到分开记录。
+| 项目 | 本轮状态 |
+| --- | --- |
+| 独立 Cloud 项目 | 已新建 `dsh-dot` 并启用 Google Calendar API，没有复用 Finvo 的既有生产 OAuth 客户端。 |
+| 应用与客户端 | 应用为 `DSH Dot`；新客户端为 `DSH Dot Desktop`，类型 **Desktop app**。支持/联系邮箱为 `experts@finvo.ai`。 |
+| 受众与测试用户 | **External / Testing**；唯一列入的测试用户为 `experts@finvo.ai`。未将此状态表述为公开用户可用或已完成公开分发审核。 |
+| 登记权限 | 已保存唯一 scope `https://www.googleapis.com/auth/calendar.events.readonly`；插件另外限制只请求 `primary` 主日历，scope 本身不应被描述成主日历专属。 |
+| 产品方政策步骤 | 本人已完成 Google API 服务用户数据政策的同意步骤；这与本人授予 Calendar OAuth 许可是两项不同操作。 |
+| 候选源码接入 | 新 Desktop 公共注册元数据已映射到 `src/google-publisher.js`，候选版本为 `0.11.0-preview.3`。不复制作者 access/refresh token、Web client secret 或服务账号私钥。 |
+| 原 App 安装与宿主加载 | 原 App 尚未升级，现有排障现场保留。实际候选包已在隔离 Cordis SDK 宿主核对默认注册值加载、原生状态查询和显式授权链接；不代表原 App 或 Google 真实授权验收。 |
+| 本人 Calendar OAuth / 换码 | 尚未执行和验收；没有据此取得真实用户令牌的证据。 |
+| 私人日历读取 / 重启刷新 | 尚未执行和验收。 |
+| 微信实际收到与排版 | 尚未由本人确认；通道回执不能替代手机验收。 |
+
+新客户端创建时已勾选 **Use this client for an AI-powered agent**。这是客户端用途的自我声明，不额外授予 scope 或数据访问权限，也不能替代用户同意或适用的 OAuth 审核；本轮仍只登记上表的一项日历事件只读权限。[Google 官方客户端说明](https://support.google.com/cloud/answer/15549257#agentic-client)
+
+Desktop 注册元数据可能包含名为 `client_secret` 的值，不能依赖桌面客户端保密来保护用户账号；不将 Web client secret、服务账号私钥或用户 access/refresh token 打包。真实用户令牌仍须逐人同意并保存于本插件自己的原生 secret 配置。
+
+目前仍没有已确认、实际发布的 Google 应用隐私政策 URL，不能填虚构地址或把内部草稿当作已发布页面。隐私/数据使用文案需说明：令牌保存在 Harness 本机 profile secret 配置，不等同系统钥匙串加密；Dot 当前没有自建中央服务器集中保存用户令牌和日历资料，但本人明确读取的结果会进入现有 Harness 会话，可能发给用户配置的远程模型并留在宿主日志，通过微信回复时还会经过微信通道。因此不能承诺资料只在本地或永不离开电脑。
+
+下一步须先在允许更新原 App 后验收候选安装及实际宿主加载，再由本人选择测试账号完成 Google Calendar 官方同意页，分别核对授权保存、重启刷新、单次主日历读取和停用/换绑/清除；需要从微信查看时，再由本人确认实际收到与排版。不为测试修改真实日历或开启周期推送。Testing 的登记与测试用户名单不能替代上述实测，也不能视为公开发布已获批。
 
 一手来源：[原生应用 OAuth 与 PKCE/loopback/不支持 incremental](https://developers.google.com/identity/protocols/oauth2/native-app)、[Calendar 权限](https://developers.google.com/workspace/calendar/api/auth)、[Calendar events.list REST](https://developers.google.com/workspace/calendar/api/v3/reference/events/list)、[Google OAuth 令牌有效性与过期](https://developers.google.com/identity/protocols/oauth2#expiration)。Calendar 权限说明页未标出敏感分类，本项目不据此断言已豁免审核，发布前以实际应用和当前官方要求核对。
 
@@ -123,4 +138,4 @@ Google 刷新授权要求 `access_type=offline`，已同意的用户重新取得
 
 官方文档链接是协议与服务出处，不表示本项目为官方插件、获得平台背书或取得第三方代码的版权。
 
-2026-10-20 Calendar 新路径的合成回归已覆盖缺 publisher 无 IO、Calendar 单 scope/PKCE、本机回调及状态重放、缺失/缩小 scope、迟到换码/刷新与配置变更、guard/CAS、close、静态目录与真实读取分离、REST 固定 GET/范围/截断、主日历覆盖、provider 不 fallback、原生 route/UI 与记录清除。没有真实产品 publisher、真实用户授权或私人日历读取证据；安装与手机验收不由这些测试替代。
+Calendar 新路径的合成回归覆盖缺 publisher 无 IO、Calendar 单 scope/PKCE、本机回调及状态重放、缺失/缩小 scope、迟到换码/刷新与配置变更、guard/CAS、close、静态目录与真实读取分离、REST 固定 GET/范围/截断、主日历覆盖、provider 不 fallback、原生 route/UI 与记录清除。2026-10-22 另加入合成「产品已注册、用户未授权」的真实控制器 host 回归：安装/GET 不外联，显式授权才生成链接，缺少用户令牌不能启用或读取，关闭会释放本机监听。真实产品 Desktop 注册已完成并接入候选源码，但这些测试使用合成注册信息，不证明 Google 接受了实际授权请求。本人真实 OAuth、换码、私人日历读取、候选安装及手机验收仍须各自取得证据。
