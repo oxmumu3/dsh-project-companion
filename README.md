@@ -6,6 +6,8 @@
 
 本版原生会话已真实读取滴答两项清单和 flomo 两条关键词搜索结果；原微信绑定、Google 三来源及两家在日常 Dot 的启用状态保留，未新增提醒或日报。此前 Google 邮件搜索与限长正文、主日历七天空窗、云盘文件名搜索通过。滴答任务正文、Drive 正文、非空日程、长期令牌刷新和新版手机体验仍待验。Google 仍为 External / Testing，未登记的公开新用户不能直接接入；flomo 需要 MAX。安装、授权、有限读取与手机证据分别见[验证记录](docs/verification.md)。
 
+Google 点击登录保留，采用已核实的 Desktop 公共客户端、本机回调与 PKCE。应用注册与用户私人 token 的区别及开源依据见[桌面授权分发说明](docs/google-desktop-oauth.md)。
+
 ## 安装
 
 [下载 0.12.0-preview.3 macOS 完整包](https://github.com/oxmumu3/dsh-project-companion/releases/download/v0.12.0-preview.3/dsh-dot-0.12.0-preview.3-macos.zip) · [固定版本发布页](https://github.com/oxmumu3/dsh-project-companion/releases/tag/v0.12.0-preview.3) · [安装说明](docs/install.md)。

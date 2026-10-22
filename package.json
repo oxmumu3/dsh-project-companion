@@ -37,7 +37,8 @@
     "docs/context-sources.md",
     "docs/roadmap.md",
     "docs/wechat-queue-2026-10-19.md",
-    "bridge-maintenance/"
+    "bridge-maintenance/",
+    "docs/google-desktop-oauth.md"
   ],
   "scripts": {
     "test": "node --max-old-space-size=128 --test --test-concurrency=1 test/*.test.mjs",

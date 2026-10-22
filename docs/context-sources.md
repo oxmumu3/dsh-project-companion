@@ -12,6 +12,8 @@
 
 Google 仍为 **External / Testing**，仅登记的测试账号可用；授权可能在七天后失效，需要重新登录。当前已登记账号为 experts@finvo.ai。未登记的公开新用户不能直接登录，它不是已面向任意读者开放的正式接入。
 
+桌面应用注册随源码分发的依据、用户 token 的边界和公众审核限制见[Google 桌面登录与公开分发说明](google-desktop-oauth.md)。
+
 ## 三件套权限与数据去向
 
 普通连接申请三项只读 scope：`gmail.readonly`、`calendar.events.readonly`、`drive.readonly`。Docs/Sheets/Slides 的有限读取复用 Drive 权限，不另外申请写权限。Google 的 scope 范围比一次查询范围广，Dot 在代码里继续限制请求数量、文件/时间范围和只读操作。
