@@ -7,7 +7,7 @@ window.__ModuleLoader__.load({
     const h=React.createElement;
     const endpoint='/api/project_companion/onboarding';
     const inject=['slots','uiWorkspace','configForms','layout','sessions'];
-    const css=`.pc_setup{display:flex;flex-direction:column;gap:18px;padding:0 24px 24px;line-height:1.6}.pc_setup h2,.pc_setup h3,.pc_setup p{margin:0}.pc_setup h2{font-size:21px;font-weight:600}.pc_setup h3{font-size:15px;font-weight:600}.pc_setup .pc_card{border:1px solid var(--dsw-alias-border-l3,rgba(128,128,128,.25));border-radius:12px;padding:16px;display:flex;flex-direction:column;gap:10px}.pc_setup .pc_muted{font-size:12px;color:var(--dsw-alias-label-secondary,#888)}.pc_setup .pc_actions{display:flex;gap:10px;flex-wrap:wrap}.pc_setup button{border:1px solid var(--dsw-alias-border-l3,rgba(128,128,128,.4));border-radius:8px;background:transparent;color:inherit;font:inherit;font-size:13px;padding:8px 14px;cursor:pointer}.pc_setup button:disabled{opacity:.5;cursor:default}.pc_setup button.pc_primary{background:var(--dsw-alias-state-business-primary,#4d6bfe);border-color:transparent;color:white}.pc_setup button:focus-visible,.pc_setup input:focus-visible{outline:2px solid var(--dsw-alias-state-business-primary,#4d6bfe);outline-offset:3px}.pc_setup label{display:flex;gap:10px;align-items:flex-start;font-size:14px}.pc_setup input{margin-top:5px}.pc_setup .pc_brief{white-space:pre-wrap;font-size:13px;overflow-wrap:anywhere}.pc_setup .pc_error{color:var(--dsw-alias-state-error-primary,#b91c1c);font-size:13px}.pc_setup img{width:200px;height:200px;max-width:100%;align-self:center}.pc_setup_modal{width:min(620px,100%);max-height:90vh;overflow-y:auto;padding:24px 0 0}.pc_setup_modal .pc_setup{padding-top:0}@media(max-width:560px){.pc_setup{padding:0 16px 20px}.pc_setup .pc_actions button{flex:1}}`;
+    const css=`.pc_setup{display:flex;flex-direction:column;gap:18px;padding:0 24px 24px;line-height:1.6}.pc_setup h2,.pc_setup h3,.pc_setup p{margin:0}.pc_setup h2{font-size:21px;font-weight:600}.pc_setup h3{font-size:15px;font-weight:600}.pc_setup .pc_card{border:1px solid var(--dsw-alias-border-l3,rgba(128,128,128,.25));border-radius:12px;padding:16px;display:flex;flex-direction:column;gap:10px}.pc_setup .pc_muted{font-size:12px;color:var(--dsw-alias-label-secondary,#888)}.pc_setup .pc_actions{display:flex;gap:10px;flex-wrap:wrap}.pc_setup button{border:1px solid var(--dsw-alias-border-l3,rgba(128,128,128,.4));border-radius:8px;background:transparent;color:inherit;font:inherit;font-size:13px;padding:8px 14px;cursor:pointer}.pc_setup button:disabled{opacity:.5;cursor:default}.pc_setup button.pc_primary{background:var(--dsw-alias-state-business-primary,#4d6bfe);border-color:transparent;color:white}.pc_setup button:focus-visible,.pc_setup input:focus-visible{outline:2px solid var(--dsw-alias-state-business-primary,#4d6bfe);outline-offset:3px}.pc_setup label{display:flex;gap:10px;align-items:flex-start;font-size:14px}.pc_setup input{margin-top:5px}.pc_setup .pc_brief{white-space:pre-wrap;font-size:13px;overflow-wrap:anywhere}.pc_setup .pc_error{color:var(--dsw-alias-state-error-primary,#b91c1c);font-size:13px}.pc_setup img{width:200px;height:200px;max-width:100%;align-self:center}.pc_setup .pc_connect_heading{display:flex;justify-content:space-between;align-items:flex-start;gap:16px}.pc_setup .pc_connect_heading h2{margin-bottom:4px}.pc_setup .pc_connect_row{display:flex;justify-content:space-between;align-items:center;gap:16px;padding:16px 0;border-top:1px solid var(--dsw-alias-border-l3,rgba(128,128,128,.2))}.pc_setup .pc_connect_row>div{min-width:0}.pc_setup .pc_connect_row button{flex-shrink:0}.pc_setup .pc_connect_status{font-size:12px;margin-top:4px}.pc_setup .pc_connect_badge{font-size:11px;padding:3px 8px;border:1px solid var(--dsw-alias-border-l3,rgba(128,128,128,.2));border-radius:20px;white-space:nowrap}.pc_setup .pc_google_connect{background:var(--dsw-alias-bg-layer-2,transparent)}.pc_setup .pc_connect_help{font-size:13px;border-top:1px solid var(--dsw-alias-border-l3,rgba(128,128,128,.2));padding-top:12px}.pc_setup .pc_connect_help summary{cursor:pointer}.pc_setup .pc_connect_help p{margin:10px 0}.pc_setup .pc_connect_authorizing,.pc_setup .pc_connect_notice{padding:12px 14px;background:var(--dsw-alias-interactive-bg-hover,rgba(128,128,128,.07));border-radius:8px;font-size:13px;overflow-wrap:anywhere}.pc_setup .pc_connect_authorizing a{color:var(--dsw-alias-state-business-primary,#4176e6);display:inline-block;margin-top:8px}.pc_setup_modal{width:min(620px,100%);max-height:90vh;overflow-y:auto;padding:24px 0 0}.pc_setup_modal .pc_setup{padding-top:0}@media(max-width:560px){.pc_setup .pc_connect_heading,.pc_setup .pc_connect_row{align-items:flex-start;flex-direction:column;gap:8px}.pc_setup .pc_connect_row{padding:14px 0}.pc_setup{padding:0 16px 20px}.pc_setup .pc_actions button{flex:1}}`;
 
     // Public ui-theme token pairs form one disposable layer. The font token is
     // presented after persistent font variables, so removing this layer restores
@@ -343,104 +343,117 @@ window.__ModuleLoader__.load({
             const value=staged?drafts[field]??'':secret?'':typeof view.value?.[field]==='string'?view.value[field]:'';
             return h('div',{key:field},secret?h(SettingsSecretField,{id:`pc-credential-${field}`,label,hint:field==='googleRefreshToken'?'通常由 Google 授权自动保存；空白保留已有值，不会回显令牌。':'仅输入新值以替换；留空保留已有凭据，不会回显旧值。',text:value,disabled:blocked,onEdit:text=>stage(field,text),configured:configured(field)===true,stateLabel:staged&&drafts[field]===null?'保存后清除':configured(field)?'已配置，不回显':'尚未确认配置'}):h(SettingsValueField,{id:`pc-credential-${field}`,label,hint:'使用你自己创建的 Desktop OAuth 应用，Google 密钥不要发进聊天。',text:value,overridden:Object.hasOwn(view.user??{},field)||staged,invalid:false,overriddenLabel:'自定义值',resetLabel:'清除',invalidLabel:'请检查输入',disabled:blocked,onEdit:text=>stage(field,text),onReset:()=>stage(field,null)}),
               secret?h('button',{type:'button',disabled:blocked,onClick:()=>stage(field,null)},`清除 ${label}`):null);
-          }),h('div',null,h('p',{className:'pc_muted'},'Google 日历授权记录由本人登录后自动保存，不在此显示或手填。清除后须重新授权并启用来源。'),h('button',{type:'button',disabled:blocked,onClick:()=>stage('googleCalendarOAuthCredentials',null)},drafts.googleCalendarOAuthCredentials===null?'保存后清除 Google 日历授权':'清除 Google 日历授权')));
+          }),h('div',null,h('p',{className:'pc_muted'},'Google 授权记录由本人登录后自动保存，不在此显示或手填。清除本机记录后须重新授权并启用来源。'),...[['googleSuiteOAuthCredentials','Google 三件套'],['googleCalendarOAuthCredentials','Google 日历']].map(([field,label])=>h('button',{type:'button',key:field,disabled:blocked,onClick:()=>stage(field,null)},drafts[field]===null?`保存后清除 ${label}授权`:`清除 ${label}授权`))));
       }
       function ContextPanel(){
         const contextEndpoint='/api/project_companion/context';
         const sourceNames={gmail:'Gmail',calendar:'Google 日历',drive:'Google Drive',docs:'Google Docs',sheets:'Google Sheets',slides:'Google Slides',dida:'滴答清单',flomo:'flomo'};
-        const sourceIds=Object.keys(sourceNames);
-        const [snapshot,setSnapshot]=React.useState(null);
-        const [busy,setBusy]=React.useState(false);
-        const [error,setError]=React.useState('');
-        const [authorization,setAuthorization]=React.useState(null);
-        const active=React.useRef(false);
-        const inFlight=React.useRef(false);
-        const latest=React.useRef(null);
-        const controllers=React.useRef(new Set());
-        const invalidate=()=>{
-          latest.current=null;
-          if(active.current){setSnapshot(null);setAuthorization(null);}
+        const sourceIds=Object.keys(sourceNames),googleIds=['gmail','calendar','drive'];
+        const [snapshot,setSnapshot]=React.useState(null),[busy,setBusy]=React.useState(false),[error,setError]=React.useState('');
+        const [authorization,setAuthorization]=React.useState(null),[remaining,setRemaining]=React.useState(0),[notice,setNotice]=React.useState('');
+        const active=React.useRef(false),inFlight=React.useRef(false),latest=React.useRef(null),authRef=React.useRef(null),controllers=React.useRef(new Set());
+        const authNames={google:'Google 高级只读',googleCalendar:'Google 日历',googleSuite:'Google',flomo:'flomo',dida:'滴答清单'};
+        const clearAuthorization=()=>{authRef.current=null;if(active.current)setAuthorization(null);};
+        const invalidate=()=>{latest.current=null;if(active.current){setSnapshot(null);clearAuthorization();}};
+        const authStatus=a=>{
+          if(!a||typeof a!=='object'||Array.isArray(a)||!['clientConfigured','refreshConfigured','authInProgress'].every(k=>typeof a[k]==='boolean'))return null;
+          return{clientConfigured:a.clientConfigured,refreshConfigured:a.refreshConfigured,authInProgress:a.authInProgress,...(typeof a.expiresAt==='string'&&a.expiresAt.length<=40&&Number.isFinite(Date.parse(a.expiresAt))?{expiresAt:a.expiresAt}:{})};
         };
+        const rememberAuthorization=value=>{authRef.current=value;setAuthorization(value);setRemaining(Math.max(0,Math.ceil((value.deadline-Date.now())/1000)));};
         const accept=value=>{
-          if(!value||!Array.isArray(value.sources)||value.sources.length!==sourceIds.length||!value.googleAuth||typeof value.googleAuth!=='object'||Array.isArray(value.googleAuth)||!['clientConfigured','refreshConfigured','authInProgress'].every(key=>typeof value.googleAuth[key]==='boolean'))throw new Error('invalid context status');
+          if(!value||!Array.isArray(value.sources)||value.sources.length!==sourceIds.length||!authStatus(value.googleAuth))throw new Error('invalid context status');
           const rows=sourceIds.map(id=>{
-            const matches=value.sources.filter(row=>row?.id===id);
-            if(matches.length!==1)throw new Error('invalid context source');
-            const row=matches[0];
-            if(typeof row.configured!=='boolean'||typeof row.enabled!=='boolean')throw new Error('invalid context access');
+            const matches=value.sources.filter(row=>row?.id===id);if(matches.length!==1)throw new Error('invalid context source');
+            const row=matches[0];if(typeof row.configured!=='boolean'||typeof row.enabled!=='boolean')throw new Error('invalid context access');
             return{id,name:sourceNames[id],configured:row.configured,enabled:row.enabled,status:row.status??row.state,lastReadAt:typeof row.lastReadAt==='string'&&row.lastReadAt.length<=80&&Number.isFinite(Date.parse(row.lastReadAt))?row.lastReadAt:null};
           });
-          const state={sources:rows,googleAuth:{clientConfigured:value.googleAuth.clientConfigured===true,refreshConfigured:value.googleAuth.refreshConfigured===true,authInProgress:value.googleAuth.authInProgress===true}};
-          for(const field of ['flomoAuth','didaAuth','googleCalendarAuth']){const a=value[field];state[field]=a&&['clientConfigured','refreshConfigured','authInProgress'].every(k=>typeof a[k]==='boolean')?{clientConfigured:a.clientConfigured,refreshConfigured:a.refreshConfigured,authInProgress:a.authInProgress}:null;}
-          if(active.current){latest.current=state;setSnapshot(state);setAuthorization(current=>{if(!current)return null;const status=state[current.source+'Auth'];return !status||status.refreshConfigured||!status.authInProgress?null:current;});}
+          const state={sources:rows,googleAuth:authStatus(value.googleAuth)};
+          for(const field of ['flomoAuth','didaAuth','googleCalendarAuth','googleSuiteAuth'])state[field]=authStatus(value[field]);
+          if(state.googleSuiteAuth){const granted=value.googleSuiteAuth.grantedSources;if(!Array.isArray(granted)||granted.some(id=>!googleIds.includes(id))||new Set(granted).size!==granted.length)throw new Error('invalid Google service grants');state.googleSuiteAuth.grantedSources=[...granted];}
+          if(active.current){
+            latest.current=state;setSnapshot(state);
+            const current=authRef.current;
+            if(current){const status=state[current.source+'Auth'];if(!status||!status.authInProgress){clearAuthorization();setNotice(status?.refreshConfigured?`${authNames[current.source]} 授权已保存。选择下方来源并启用，就可以开始询问；尚未读取资料。`:'授权流程已结束，尚未确认保存。可以重新连接。');}}
+            else{const entry=Object.entries(authNames).find(([source])=>state[source+'Auth']?.authInProgress&&state[source+'Auth']?.expiresAt);if(entry){const[source]=entry,expiresAt=state[source+'Auth'].expiresAt,deadline=Math.min(Date.parse(expiresAt),Date.now()+300000);if(deadline>Date.now())rememberAuthorization({source,url:null,expiresAt,deadline});}}
+          }
           return state;
         };
         const request=async body=>{
           const controller=new AbortController();controllers.current.add(controller);
-          try{
-            const response=await fetch(contextEndpoint,{method:body?'POST':'GET',credentials:'same-origin',redirect:'error',cache:'no-store',signal:AbortSignal.any([controller.signal,AbortSignal.timeout(25000)]),...(body?{headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}:{})});
-            if(!response.ok)throw new Error('context operation failed');
-            return await response.json();
-          }finally{controllers.current.delete(controller);}
+          try{const response=await fetch(contextEndpoint,{method:body?'POST':'GET',credentials:'same-origin',redirect:'error',cache:'no-store',signal:AbortSignal.any([controller.signal,AbortSignal.timeout(25000)]),...(body?{headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}:{})});if(!response.ok)throw new Error('context operation failed');return await response.json();}
+          finally{controllers.current.delete(controller);}
         };
-        const refresh=async()=>{
-          if(!active.current||inFlight.current)return;
-          inFlight.current=true;setBusy(true);setError('');
+        const refresh=async(quiet=false)=>{
+          if(!active.current||inFlight.current)return;inFlight.current=true;if(!quiet){setBusy(true);setError('');}
           try{const value=await request();if(active.current)accept(value);}
           catch{if(active.current){invalidate();setError('资料来源状态暂不可用，请刷新状态后重试。');}}
-          finally{inFlight.current=false;if(active.current)setBusy(false);}
+          finally{inFlight.current=false;if(active.current&&!quiet)setBusy(false);}
         };
+        React.useEffect(()=>{active.current=true;void refresh();return()=>{active.current=false;authRef.current=null;for(const controller of controllers.current)controller.abort();controllers.current.clear();};},[]);
+        // Observe only sanitized authorization state while this one flow is active.
+        // No background source queries, retrying POSTs, or permanent polling.
         React.useEffect(()=>{
-          active.current=true;void refresh();
-          return()=>{active.current=false;for(const controller of controllers.current)controller.abort();controllers.current.clear();};
-        },[]);
+          if(!authorization)return;
+          const timer=setInterval(async()=>{
+            const current=authRef.current;if(!active.current||!current)return;
+            const seconds=Math.max(0,Math.ceil((current.deadline-Date.now())/1000));setRemaining(seconds);
+            if(!seconds){clearAuthorization();setNotice('授权链接已过期。点击重新连接即可再试，已有连接会保留。');return;}
+            await refresh(true);
+          },2000);
+          return()=>clearInterval(timer);
+        },[authorization?.source,authorization?.deadline]);
         const mutate=async(action,source)=>{
           if(!active.current||inFlight.current||!latest.current)return;
-          const authSource={google_authorize:'google',google_calendar_authorize:'googleCalendar',flomo_authorize:'flomo',dida_authorize:'dida'}[action];
+          const authSource={google_authorize:'google',google_calendar_authorize:'googleCalendar',google_suite_authorize:'googleSuite',flomo_authorize:'flomo',dida_authorize:'dida'}[action];
           if(authSource){
-            if((authSource==='google'||authSource==='googleCalendar')?!latest.current[authSource+'Auth']?.clientConfigured:!latest.current[authSource+'Auth'])return;
-          }else{
-            const row=latest.current.sources.find(item=>item.id===source);
-            if(!row||(action==='connect'&&(!row.configured||row.enabled))||(action==='disconnect'&&!row.enabled))return;
-          }
-          inFlight.current=true;setBusy(true);setError('');
-          if(authSource)setAuthorization(null);
+            if(authRef.current)return;
+            if(authSource.startsWith('google')?!latest.current[authSource+'Auth']?.clientConfigured:!latest.current[authSource+'Auth'])return;
+          }else{const row=latest.current.sources.find(item=>item.id===source);if(!row||(action==='connect'&&(!row.configured||row.enabled))||(action==='disconnect'&&!row.enabled))return;}
+          inFlight.current=true;setBusy(true);setError('');setNotice('');
           try{
-            const value=await request({action,...(source?{source}:{})});
-            if(!active.current)return;
+            const value=await request({action,...(source?{source}:{})});if(!active.current)return;
             if(authSource){
-              const url=new URL(value?.url),target={google:['https://accounts.google.com','/o/oauth2/v2/auth'],googleCalendar:['https://accounts.google.com','/o/oauth2/v2/auth'],flomo:['https://flomoapp.com','/integration/grant'],dida:['https://dida365.com','/oauth/authorize']}[authSource];
-              if(url.origin!==target[0]||url.pathname!==target[1]||url.username||url.password||url.hash||typeof value.expiresAt!=='string'||!Number.isFinite(Date.parse(value.expiresAt)))throw new Error('invalid authorization link');
-              setAuthorization({source:authSource,url:url.toString(),expiresAt:value.expiresAt});
+              const url=new URL(value?.url),target={google:['https://accounts.google.com','/o/oauth2/v2/auth'],googleCalendar:['https://accounts.google.com','/o/oauth2/v2/auth'],googleSuite:['https://accounts.google.com','/o/oauth2/v2/auth'],flomo:['https://flomoapp.com','/integration/grant'],dida:['https://dida365.com','/oauth/authorize']}[authSource];
+              if(url.origin!==target[0]||url.pathname!==target[1]||url.username||url.password||url.hash||typeof value.expiresAt!=='string'||!Number.isFinite(Date.parse(value.expiresAt))||Date.parse(value.expiresAt)<=Date.now())throw new Error('invalid authorization link');
+              rememberAuthorization({source:authSource,url:url.toString(),expiresAt:value.expiresAt,deadline:Math.min(Date.parse(value.expiresAt),Date.now()+300000)});
+              // The official Desktop forwards http(s) window.open to the system browser.
+              // Web hosts may block it; always retain the validated click-only link.
+              try{window.open?.(url.toString(),'_blank','noopener,noreferrer');}catch{}
             }else accept(value);
-          }catch{if(active.current){invalidate();setError('操作结果暂不确定，请刷新状态核对；不会自动重试。');}}
+          }catch{if(active.current){invalidate();setError('操作结果暂不确定，请刷新状态核对后重试；不会重复提交。');}}
           finally{inFlight.current=false;if(active.current)setBusy(false);}
         };
         const rows=snapshot?.sources??sourceIds.map(id=>({id,name:sourceNames[id],configured:false,enabled:false,lastReadAt:null}));
-        const google=snapshot?.googleAuth;
-        const statusText=row=>!snapshot?'状态未确认':!row.configured?'待账号授权':!row.enabled?'已配置，当前对话尚未启用':row.lastReadAt?'当前对话已启用':'当前对话已启用；本次启动暂无读取记录';
-        return h('div',{className:'pc_setup','data-context-panel':true},
-          h('h2',null,'个人资料来源'),
-          h('p',{className:'pc_muted'},'这些连接是可选项。本地项目助理和公开 AI 资讯无需连接这些账号，可以先直接使用。'),
-          h('p',null,'按需连接你自己的邮箱、日历、文档、任务和笔记。启用来源不代表已经读取或验证私人资料；只有你明确查询时才读取资料，不会自动扫描、写入项目记忆或建立推送计划。'),
-          h('section',{className:'pc_card'},h('h3',null,'登录连接你的账户'),
-            h('p',{className:'pc_muted'},'flomo 和滴答清单可直接前往官方页面登录授权，无需自己查找或粘贴 Token。登录完成后刷新状态，再选择要启用的只读来源。'),
-            h('div',{className:'pc_actions'},...['flomo','dida'].map(source=>h('button',{type:'button',key:source,disabled:busy||!snapshot?.[source+'Auth'],onClick:()=>mutate(source+'_authorize')},'登录 '+sourceNames[source]+' 授权')),
-              h('button',{type:'button',disabled:busy,onClick:refresh},'刷新资料来源状态')),
-            ...['flomo','dida'].map(source=>h('p',{key:source,className:'pc_muted'},sourceNames[source]+'：'+(snapshot?.[source+'Auth']?.refreshConfigured?'登录凭据已保存，可启用只读来源。':snapshot?.[source+'Auth']?.authInProgress?'正在等待你完成官方授权。':'尚未完成登录授权。'))),
-            authorization?h('p',null,h('a',{href:authorization.url,target:'_blank',rel:'noopener noreferrer'},'打开 '+(authorization.source==='google'?'Google 高级只读':authorization.source==='googleCalendar'?'Google 日历':sourceNames[authorization.source])+'授权页'),h('span',{className:'pc_muted'},` · 链接有效至 ${authorization.expiresAt}；请本人完成登录，之后刷新状态。`)):null),
-          h('section',{className:'pc_card','data-google-calendar-connect':true},h('h3',null,'Google 日历 · 普通连接'),h('p',{className:'pc_muted'},'首版仅连接主日历，按需读取未来 24 小时、最多 7 天和 10 条安排。仅请求日历事件只读权限，登录不会自动查询或开启推送。'),h('button',{type:'button',disabled:busy||!snapshot?.googleCalendarAuth?.clientConfigured,onClick:()=>mutate('google_calendar_authorize')},'登录 Google 日历'),h('p',{role:'status'},!snapshot?.googleCalendarAuth?'Google 日历连接状态待确认。':!snapshot.googleCalendarAuth.clientConfigured?'Google 日历连接准备中：产品方尚未配置 Google 应用，当前不能生成可用登录链接。':snapshot.googleCalendarAuth.refreshConfigured?'Google 日历授权已保存，可启用来源；登录过程没有读取日历。':snapshot.googleCalendarAuth.authInProgress?'正在等待你完成 Google 日历授权。':'尚未完成 Google 日历授权。')) ,
-          h('details',{className:'pc_card','data-context-advanced':true},h('summary',null,'高级连接设置 · Google 与兼容凭据'),
-            h('h3',null,'Google Workspace（开发者预览）'),
-            h('p',{className:'pc_muted'},'Google 当前仍要求官方 MCP Developer Preview 资格、已启用对应服务的 Cloud 项目及 Desktop Client ID / Client Secret。这里保留 Gmail、Drive、Docs、Sheets、Slides 的开发者连接方式；Google 日历使用上方独立授权和 REST，不回退到这里。'),
-            h('p',{className:'pc_muted'},'下方原生插件配置只供高级兼容：旧 flomo MCP Token、滴答 API 口令仍可使用；令牌请勿发进聊天。官方 OAuth 登录不需要手填这些字段。'),
-            h(CredentialForm,{sources:snapshot?.sources,googleAuth:google,onSaved:refresh}),
-            h('p',{role:'status'},!google?'Google 状态未确认':google.refreshConfigured?'Google 账号凭据已保存；各资料来源仍需分别启用。':google.authInProgress?'Google 授权正在等待确认，完成后请刷新状态。':google.clientConfigured?'Google Desktop 应用已配置，尚未完成账号授权。':'请先在插件配置填写 Google Desktop 应用信息。'),
-            h('div',{className:'pc_actions'},h('button',{type:'button',disabled:busy||!google?.clientConfigured,onClick:()=>mutate('google_authorize')},'连接 Google 账号'))),
-          rows.map(row=>h('section',{className:'pc_card',key:row.id,'data-context-source':row.id},h('h3',null,row.name),h('p',{role:'status'},statusText(row)),row.enabled&&row.lastReadAt?h('p',{className:'pc_muted'},`上次读取：${row.lastReadAt}。此时间不代表资料已全部读取或持续监控。`):null,
-            h('div',{className:'pc_actions'},h('button',{type:'button',disabled:busy||!snapshot||(!row.enabled&&!row.configured),onClick:()=>mutate(row.enabled?'disconnect':'connect',row.id)},row.enabled?'停止此来源':'启用只读来源')))),
+        const rowFor=id=>rows.find(row=>row.id===id),google=snapshot?.googleAuth,suite=snapshot?.googleSuiteAuth,pending=Boolean(authorization);
+        const statusText=row=>!snapshot?'状态未确认':!row.configured?'待账号授权':!row.enabled?'已授权，尚未启用':row.lastReadAt?'当前对话已启用':'当前对话已启用；本次启动暂无读取记录';
+        const sourceRow=(id,description)=>{const row=rowFor(id);return h('div',{className:'pc_connect_row',key:id,'data-context-source':id},h('div',null,h('h3',null,row.name),description?h('p',{className:'pc_muted'},description):null,h('p',{className:'pc_connect_status',role:'status'},statusText(row)),row.enabled&&row.lastReadAt?h('p',{className:'pc_muted'},`上次读取：${row.lastReadAt}`):null),h('button',{type:'button',disabled:busy||!snapshot||(!row.enabled&&!row.configured),onClick:()=>mutate(row.enabled?'disconnect':'connect',id)},row.enabled?'停止此来源':row.configured?'启用只读来源':'等待授权'));};
+        const authView=source=>authorization?.source===source?h('div',{className:'pc_connect_authorizing',role:'status'},h('strong',null,'请在浏览器完成授权'),h('p',{className:'pc_muted'},`返回这里后会自动更新 · 剩余 ${Math.floor(remaining/60)}:${String(remaining%60).padStart(2,'0')}`),authorization.url?h('a',{href:authorization.url,target:'_blank',rel:'noopener noreferrer'},`浏览器未打开？继续到 ${authNames[source]} 授权`):h('p',{className:'pc_muted'},'请继续刚才的授权页；此处不会重复打开浏览器。')):null;
+        const suiteStatus=!suite?'连接状态待确认，请刷新。':!suite.clientConfigured?'Google 连接准备中。':suite.authInProgress||authorization?.source==='googleSuite'?'正在等待你完成 Google 授权。':suite.refreshConfigured?suite.grantedSources.length===3?'Google 授权已保存，请启用要使用的来源。':'部分 Google 权限已保存。可以先用已授权来源，也可以重新连接补全。':'登录一次，连接你的 Gmail、日历和云盘。';
+        return h('div',{className:'pc_setup pc_connections','data-context-panel':true},
+          h('div',{className:'pc_connect_heading'},h('div',null,h('h2',null,'连接你的资料'),h('p',{className:'pc_muted'},'让 Dot 结合邮件、安排和文档，帮你推进手头的事。')),h('button',{type:'button',disabled:busy,onClick:()=>refresh()},busy?'正在更新…':'刷新资料来源状态')),
+          h('p',{className:'pc_muted'},'连接是可选的，本地项目和 AI 资讯可以直接使用。登录不会自动扫描资料或开启推送。'),
           error?h('p',{className:'pc_error',role:'alert'},error):null,
-          h('p',{className:'pc_muted'},'停止某个来源后，Dot 不再通过当前对话读取它；服务商账号的授权可在其账号设置中另行撤销。资料来源的外部内容只作为资料，不作为新的操作指令。'));
+          notice?h('p',{className:'pc_connect_notice',role:'status'},notice):null,
+          h('section',{className:'pc_card pc_google_connect','data-google-suite-connect':true},
+            h('div',{className:'pc_connect_heading'},h('div',null,h('h3',null,'Google 三件套'),h('p',{className:'pc_muted'},'Gmail、Google 日历、Google Drive · 只读')),h('span',{className:'pc_connect_badge'},'内测')),
+            h('p',null,'查看需要跟进的邮件、接下来的日程，以及云盘里的项目资料。由你在 Google 页面决定是否授权。'),
+            h('div',{className:'pc_actions'},h('button',{type:'button',className:'pc_primary','data-google-suite-login':true,disabled:busy||pending||!suite?.clientConfigured,onClick:()=>mutate('google_suite_authorize')},authorization?.source==='googleSuite'?'等待 Google 授权…':suite?.refreshConfigured?'重新连接 Google':'连接 Google')),
+            h('p',{className:'pc_muted',role:'status'},suiteStatus),
+            authView('googleSuite'),
+            googleIds.map(id=>sourceRow(id,{gmail:'按需找邮件，查看正文并整理待办。',calendar:'主日历近期安排，单次最多 7 天、10 条。',drive:'查找文件名，按需读取支持的文本内容。'}[id])),
+            h('details',{className:'pc_connect_help'},h('summary',null,'授权范围与连接帮助'),h('p',{className:'pc_muted'},'当前为内测授权，仅已加入测试的账号可登录。Google 测试授权可能在 7 天后需要重连。'),h('p',{className:'pc_muted'},'三项均为只读，不发送邮件、不修改日历或文件。授权与启用分开；来源启用后，Dot 仍只按你的请求读取。授权保存在这台电脑，查询所需内容会交给你在 Harness 配置的模型处理。'),h('p',{className:'pc_muted'},'Drive 支持文件名搜索、纯文本和 Google 文档／演示的文本读取；表格按指定范围读取。PDF、图片和其他二进制文件暂不读取全文。'),snapshot?.googleCalendarAuth?.refreshConfigured?h('p',{className:'pc_muted'},'你之前单独连接的日历继续使用，不会被新的三件套授权覆盖。'):null),
+            h('details',{'data-google-calendar-connect':true,className:'pc_connect_help'},h('summary',null,'只连接 Google 日历'),h('p',{className:'pc_muted'},'仅请求主日历事件只读权限。登录不会自动查询或开启推送。'),h('button',{type:'button',disabled:busy||pending||!snapshot?.googleCalendarAuth?.clientConfigured,onClick:()=>mutate('google_calendar_authorize')},'登录 Google 日历'),h('p',{className:'pc_muted',role:'status'},!snapshot?.googleCalendarAuth?'Google 日历连接状态待确认。':!snapshot.googleCalendarAuth.clientConfigured?'Google 日历连接准备中。':snapshot.googleCalendarAuth.refreshConfigured?'单独日历授权已保存。':snapshot.googleCalendarAuth.authInProgress?'正在等待日历授权。':'尚未单独连接日历。'),authView('googleCalendar'))),
+          h('section',{className:'pc_card'},h('h3',null,'任务与笔记'),h('p',{className:'pc_muted'},'直接在官方页面登录授权，返回后自动更新连接状态。'),
+            ...['flomo','dida'].map(source=>h('div',{key:source},h('div',{className:'pc_actions'},h('button',{type:'button',disabled:busy||pending||!snapshot?.[source+'Auth'],onClick:()=>mutate(source+'_authorize')},'登录 '+sourceNames[source]+' 授权')),authView(source),sourceRow(source,source==='flomo'?'找回笔记里的想法和背景。':'查看任务与截止时间，梳理下一步。')))),
+          h('details',{className:'pc_card','data-context-advanced':true},h('summary',null,'高级连接设置与兼容凭据'),
+            h('h3',null,'文档工具与兼容接口'),h('p',{className:'pc_muted'},'按需启用 Docs、Sheets、Slides 的独立读取工具。可用状态以各来源为准，不必为了连接 Google 三件套填写下方配置。'),
+            ...['docs','sheets','slides'].map(id=>sourceRow(id)),
+            h('h3',null,'开发者 MCP 连接'),h('p',{className:'pc_muted'},'这是旧 Google MCP Developer Preview 的兼容入口，需要相应资格和自己的 Desktop 应用。普通 Google 登录请使用上方按钮。'),
+            h('p',{className:'pc_muted'},'下方原生插件配置仅供高级兼容。令牌不要发进聊天；日常登录不需要手填这些字段。'),
+            h(CredentialForm,{sources:snapshot?.sources,googleAuth:google,onSaved:()=>refresh()}),
+            h('p',{className:'pc_muted',role:'status'},!google?'兼容连接状态未确认':google.refreshConfigured?'兼容账号凭据已保存。':google.authInProgress?'正在等待兼容账号授权。':google.clientConfigured?'自定义 Desktop 应用已配置。':'尚未配置自定义 Desktop 应用。'),
+            h('button',{type:'button',disabled:busy||pending||!google?.clientConfigured,onClick:()=>mutate('google_authorize')},'连接 Google 账号（高级）'),authView('google')),
+          h('p',{className:'pc_muted'},'停止来源后，Dot 不再通过当前对话读取它。需要彻底撤销授权，可前往对应服务的账号设置。读取记录不代表持续监控或内容完整。'));
       }
       const dotPanel='project-companion-dot';
       const workbenchEndpoint='/api/project_companion/workbench';

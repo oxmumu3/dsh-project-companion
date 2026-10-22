@@ -5,7 +5,7 @@ import vm from 'node:vm';
 
 const endpoint = '/api/project_companion/context';
 const ids = ['gmail', 'calendar', 'drive', 'docs', 'sheets', 'slides', 'dida', 'flomo'];
-const snapshot = () => ({ sources: ids.map(id => ({ id, name: id, configured: id === 'flomo', enabled: false, status: id === 'flomo' ? 'disabled' : 'needs_authorization', lastReadAt: null })), googleAuth: { clientConfigured: true, refreshConfigured: false, authInProgress: false } });
+const snapshot = () => ({ sources: ids.map(id => ({ id, name: id, configured: id === 'flomo', enabled: false, status: id === 'flomo' ? 'disabled' : 'needs_authorization', lastReadAt: null })), googleAuth: { clientConfigured: true, refreshConfigured: false, authInProgress: false }, googleSuiteAuth: { clientConfigured: true, refreshConfigured: false, authInProgress: false, grantedSources: [] } });
 const nodes = (tree, predicate) => {
   const found = [];
   const visit = node => { if (!node || typeof node !== 'object') return; if (predicate(node)) found.push(node); for (const child of node.children ?? []) visit(child); };
@@ -15,6 +15,7 @@ const text = tree => { let out = ''; const visit = node => { if (typeof node ===
 
 async function load(options = {}) {
   const source = await readFile(new URL('../src/client.js', import.meta.url), 'utf8');
+  const intervals = new Map(), external = []; let intervalId = 0;
   const registrations = [], effects = [], requests = [], opened = [], configRequests = [], configNames = [], configListeners = new Set();
   let definition, values = [], cursor = 0, pending = [];
   const React = {
@@ -23,7 +24,7 @@ async function load(options = {}) {
     useRef: initial => { const i = cursor++; if (!(i in values)) values[i] = { current: initial }; return values[i]; },
     useEffect: (fn, deps) => { const frame = values, i = cursor++, old = frame[i]; if (!old || !deps || deps.some((x, j) => x !== old.deps[j])) { old?.cleanup?.(); frame[i] = { deps }; pending.push(() => { frame[i].cleanup = fn(); }); } },
   };
-  const context = { window: { __ModuleLoader__: { load: d => { definition = d; } } }, AbortController, AbortSignal, Response, URL, setInterval: () => { throw new Error('Context panel must not poll or schedule'); }, clearInterval() {}, fetch: async (url, options = {}) => { requests.push({ url, options }); return context.onFetch ? context.onFetch(url, options) : Response.json(context.snapshot); }, snapshot: snapshot() };
+  const context = { window: { __ModuleLoader__: { load: d => { definition = d; } }, open: (...args) => { external.push(args); return null; } }, AbortController, AbortSignal, Response, URL, setInterval: fn => { intervals.set(++intervalId, fn); return intervalId; }, clearInterval: id => intervals.delete(id), fetch: async (url, options = {}) => { requests.push({ url, options }); return context.onFetch ? context.onFetch(url, options) : Response.json(context.snapshot); }, snapshot: snapshot() };
   vm.runInNewContext(source, context);
   const primitives = { Modal: 'modal', SettingsForm: 'native-form', SettingsSecretField: 'native-secret', SettingsValueField: 'native-value' };
   const module = definition.factory(name => name === 'react' ? React : primitives);
@@ -37,7 +38,8 @@ async function load(options = {}) {
   pending = []; values = [];
   const panelValues = values, credentialValues = [];
   return {
-    context, requests, opened, registrations, configRequests, configNames,
+    context, requests, opened, registrations, configRequests, configNames, intervals, external,
+    tick: async () => { for (const fn of [...intervals.values()]) await fn(); await new Promise(resolve => setImmediate(resolve)); },
     render: () => { values = panelValues; cursor = 0; return panel.type(panel.props); },
     renderCredentials: tree => { const component = nodes(tree, n => typeof n.type === 'function' && n.type.name === 'CredentialForm')[0]; assert.ok(component, 'Dot panel must expose its native credential form'); values = credentialValues; cursor = 0; return component.type(component.props); },
     flush: async () => { const work = pending; pending = []; work.forEach(fn => fn()); await new Promise(resolve => setImmediate(resolve)); },
@@ -243,3 +245,66 @@ test('Calendar login uses its own action and first-party link, without legacy cr
 });
 
 test('Calendar record can only be cleared via an explicit revision-CAS native form save',async()=>{const c=await load({native:true});try{c.render();await c.flush();const panel=c.render();let view=c.renderCredentials(panel);await c.flush();assert.equal(nodes(view,n=>n.type==='native-secret'&&n.props.id.endsWith('googleCalendarOAuthCredentials')).length,0);await nodes(view,n=>n.type==='button'&&text(n).includes('清除 Google 日历授权'))[0].props.onClick();assert.equal(c.configRequests.length,0);view=c.renderCredentials(panel);await nodes(view,n=>n.type==='native-form')[0].props.onSave();assert.deepEqual(c.configRequests,[{ops:[{op:'unset',path:['googleCalendarOAuthCredentials']}],revision:7}]);}finally{c.dispose();}});
+
+
+const suiteButton = view => nodes(view, n => n.type === 'button' && n.props['data-google-suite-login'])[0];
+const suiteState = () => ({clientConfigured:true,refreshConfigured:false,authInProgress:false,grantedSources:[]});
+test('Google suite is the primary ordinary path with three clear services and no idle polling', async () => {
+ const c = await load();
+ try { c.render(); await c.flush(); const view=c.render(); const suite=nodes(view,n=>n.props['data-google-suite-connect'])[0];
+  assert.ok(suite,'one ordinary suite block'); assert.match(text(suite),/Gmail/); assert.match(text(suite),/日历/); assert.match(text(suite),/Drive/);
+  assert.equal(nodes(suite,n=>n.props['data-context-source']).length,3); assert.equal(suiteButton(view).props.disabled,false);
+  assert.match(text(suite),/只读/); assert.match(text(suite),/内测/); assert.doesNotMatch(text(suite),/Client ID|Client Secret|Refresh Token/);
+  assert.equal(c.intervals.size,0); assert.equal(c.external.length,0); assert.equal(c.requests.length,1);
+ } finally {c.dispose();}
+});
+test('Google suite opens only its validated URL once and polls sanitized status until saved without enabling sources',async()=>{
+ const c=await load();
+ try{c.render();await c.flush();const initial=c.render(),button=suiteButton(initial);assert.ok(button);
+  const expiry=new Date(Date.now()+240000).toISOString(); c.context.onFetch=(_url,o)=>o.method==='POST'?Response.json({url:'https://accounts.google.com/o/oauth2/v2/auth?state=suite',expiresAt:expiry}):Response.json(c.context.snapshot);
+  await button.props.onClick();c.render();await c.flush();
+  assert.deepEqual(JSON.parse(c.requests[1].options.body),{action:'google_suite_authorize'});
+  assert.deepEqual(c.external,[['https://accounts.google.com/o/oauth2/v2/auth?state=suite','_blank','noopener,noreferrer']]);assert.equal(c.intervals.size,1);
+  await suiteButton(c.render()).props.onClick();assert.equal(c.requests.filter(r=>r.options.method==='POST').length,1);assert.equal(c.external.length,1);
+  c.context.snapshot.googleSuiteAuth={...suiteState(),refreshConfigured:true,grantedSources:['gmail','calendar','drive']};
+  await c.tick();c.render();await c.flush();assert.equal(c.intervals.size,0);
+  assert.match(text(c.render()),/授权已保存/);assert.ok(c.requests.every(r=>!String(r.options.body??'').includes('connect')));assert.equal(c.requests.filter(r=>r.options.method==='POST').length,1);
+ }finally{c.dispose();}
+});
+test('Google suite refuses invalid authorization origins and neither opens nor polls',async()=>{
+ const c=await load();try{c.render();await c.flush();const button=suiteButton(c.render());assert.ok(button);
+  c.context.onFetch=()=>Response.json({url:'https://evil.example/login?secret=fixture',expiresAt:new Date(Date.now()+240000).toISOString()});
+  await button.props.onClick();c.render();await c.flush();assert.equal(c.external.length,0);assert.equal(c.intervals.size,0);assert.equal(nodes(c.render(),n=>n.type==='a').length,0);assert.doesNotMatch(text(c.render()),/evil|secret=fixture/);
+ }finally{c.dispose();}
+});
+test('Google authorization polling is bounded by expiry and disappears on unmount',async()=>{
+ const c=await load();try{c.render();await c.flush();const button=suiteButton(c.render());assert.ok(button);
+  c.context.onFetch=()=>Response.json({url:'https://accounts.google.com/o/oauth2/v2/auth?state=suite',expiresAt:new Date(Date.now()+25).toISOString()});
+  await button.props.onClick();c.render();await c.flush();assert.equal(c.intervals.size,1);await new Promise(resolve=>setTimeout(resolve,35));await c.tick();c.render();await c.flush();assert.equal(c.intervals.size,0);assert.match(text(c.render()),/过期/);assert.equal(c.requests.filter(r=>r.options.method==='POST').length,1);
+ }finally{c.dispose();assert.equal(c.intervals.size,0);}
+});
+test('Suite with partial consent never labels an ungranted source as connected',async()=>{
+ const c=await load();c.context.snapshot.googleSuiteAuth={...suiteState(),refreshConfigured:true,grantedSources:['calendar']};c.context.snapshot.sources.find(s=>s.id==='calendar').configured=true;
+ try{c.render();await c.flush();const view=c.render();assert.match(text(view),/部分/);const gmail=nodes(view,n=>n.props['data-context-source']==='gmail')[0];assert.match(text(gmail),/待账号授权/);assert.equal(nodes(gmail,n=>n.type==='button')[0].props.disabled,true);assert.equal(c.requests.length,1);assert.equal(c.intervals.size,0);
+ }finally{c.dispose();}
+});
+
+
+test('Suite authorization can be cleared only by explicit native revision-fenced save',async()=>{
+ const c=await load({native:true});try{c.render();await c.flush();const panel=c.render();let view=c.renderCredentials(panel);await c.flush();
+  assert.equal(nodes(view,n=>n.type==='native-secret'&&n.props.id.endsWith('googleSuiteOAuthCredentials')).length,0);
+  const clear=nodes(view,n=>n.type==='button'&&text(n).includes('清除 Google 三件套授权'))[0];assert.ok(clear);await clear.props.onClick();assert.equal(c.configRequests.length,0);
+  view=c.renderCredentials(panel);await nodes(view,n=>n.type==='native-form')[0].props.onSave();assert.deepEqual(c.configRequests,[{ops:[{op:'unset',path:['googleSuiteOAuthCredentials']}],revision:7}]);
+ }finally{c.dispose();}
+});
+test('Reauthorization keeps waiting while an older saved grant still exists',async()=>{
+ const c=await load();c.context.snapshot.googleSuiteAuth={...suiteState(),refreshConfigured:true,grantedSources:['calendar']};
+ try{c.render();await c.flush();const expiry=new Date(Date.now()+240000).toISOString();c.context.onFetch=(_url,o)=>o.method==='POST'?Response.json({url:'https://accounts.google.com/o/oauth2/v2/auth?state=suite',expiresAt:expiry}):Response.json(c.context.snapshot);
+  await suiteButton(c.render()).props.onClick();c.render();await c.flush();c.context.snapshot.googleSuiteAuth={...c.context.snapshot.googleSuiteAuth,authInProgress:true,expiresAt:expiry};await c.tick();c.render();await c.flush();assert.equal(c.intervals.size,1);assert.equal(nodes(c.render(),n=>n.type==='a').length,1);assert.match(text(c.render()),/等待你完成 Google 授权/);
+ }finally{c.dispose();assert.equal(c.intervals.size,0);}
+});
+test('Unmount aborts pending authorization status refresh and suppresses late updates',async()=>{
+ const c=await load();let release,signal;try{c.render();await c.flush();c.context.onFetch=()=>Response.json({url:'https://accounts.google.com/o/oauth2/v2/auth?state=suite',expiresAt:new Date(Date.now()+240000).toISOString()});await suiteButton(c.render()).props.onClick();c.render();await c.flush();
+  c.context.onFetch=(_url,o)=>{signal=o.signal;return new Promise(resolve=>{release=resolve;});};const pending=c.tick();await new Promise(resolve=>setImmediate(resolve));c.dispose();assert.equal(signal.aborted,true);assert.equal(c.intervals.size,0);release(Response.json(c.context.snapshot));await pending;assert.equal(c.external.length,1);assert.equal(c.requests.filter(r=>r.options.method==='POST').length,1);
+ }finally{c.dispose();}
+});
