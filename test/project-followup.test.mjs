@@ -58,6 +58,34 @@ test('no plan or timer is created at construction or a first read-only status',a
   await assert.rejects(access(join(h.root,'.dsh')));
 });
 
+test('passive inspection confirms absence without creating files or activating a source',async t=>{
+  const h=await harness(t);assert.equal(typeof h.adapter.inspect,'function');
+  assert.deepEqual(await h.adapter.inspect({...h.args,expectedBinding:{sessionId:h.owner.id,bindingKey:'d'.repeat(64)}}),{followup:null,once:null});
+  assert.deepEqual(h.schedulers,[]);assert.deepEqual(h.resumes,[]);assert.deepEqual(h.messages,[]);
+  await assert.rejects(access(join(h.root,'.dsh')));
+});
+
+test('passive cold inspection does not cache, rewrite or restart stored plans, and rejects a different owner or pairing',async t=>{
+  const h=await harness(t);await h.adapter.configure(h.args);await h.adapter.checkOnce({...h.args,delaySeconds:60,delivery:'wechat'});await h.drain();await h.reopen();
+  const files=['.dsh/dot-followup/scope.json','.dsh/dot-followup/alarms.json','.dsh/dot-checks/'+createHash('sha256').update(h.owner.id).digest('hex')+'/scope.json'];
+  const before=await Promise.all(files.map(file=>readFile(join(h.root,file),'utf8')));const count=h.schedulers.length;
+  const args={...h.args,expectedBinding:{sessionId:h.owner.id,bindingKey:'d'.repeat(64)}};
+  assert.equal(typeof h.adapter.inspect,'function');const value=await h.adapter.inspect(args);
+  assert.equal(value.followup.enabled,true);assert.equal(value.followup.running,false);assert.equal(value.once.status,'blocked');
+  await assert.rejects(h.adapter.inspect({...args,sessionId:'another-owner'}));
+  h.setBinding({...binding,userHash:'c'.repeat(64)});await assert.rejects(h.adapter.inspect(args));h.setBinding(binding);
+  await h.reopen();assert.deepEqual(await Promise.all(files.map(file=>readFile(join(h.root,file),'utf8'))),before);
+  assert.equal(h.schedulers.length,count);assert.deepEqual(h.resumes,[]);assert.deepEqual(h.messages,[]);
+});
+
+test('passive inspection rejects binding replacement during a read and requires the expected UI binding',async t=>{
+  let reads=0;const h=await harness(t,{readConnection:async()=>({state:'bound',sessionId:'session-original',bindingKey:(++reads===1?'d':'e').repeat(64)})});
+  assert.equal(typeof h.adapter.inspect,'function');
+  await assert.rejects(h.adapter.inspect({...h.args,expectedBinding:{sessionId:h.owner.id,bindingKey:'d'.repeat(64)}}));
+  await assert.rejects(h.adapter.inspect(h.args));
+  assert.equal(h.schedulers.length,0);await assert.rejects(access(join(h.root,'.dsh')));
+});
+
 test('an explicit cadence persists one original-session alarm and cancel only removes that plan',async t=>{
   const h=await harness(t);const s=await h.adapter.configure(h.args);await h.drain();
   assert.equal(s.enabled,true);assert.equal(s.everyMinutes,30);assert.equal(h.schedulers.length,1);

@@ -2,11 +2,17 @@
 
 给已有官方 DeepSeek Harness 加上项目助理：在微信里明确交办到对应项目，把本轮执行回复带回原对话，恢复缓存时避免重新执行。
 
-作者：奥克斯木木山 · [正式仓库](https://github.com/oxmumu3/dsh-project-companion)。社区开源项目，非 DeepSeek 或 OpenAI 官方产品。本版 **`0.12.0-preview.4`** 面向 macOS 上已有的官方 Harness，包含 Dot 和配套微信桥接。日常 App 仍为 `0.12.0-preview.3`，本版隔离 Host 验收与日常升级分别记录。
+作者：奥克斯木木山 · [正式仓库](https://github.com/oxmumu3/dsh-project-companion)。社区开源项目，非 DeepSeek 或 OpenAI 官方产品。当前公开版 **`0.12.0-preview.4`** 面向 macOS 上已有的官方 Harness，包含 Dot 和配套微信桥接。日常 App 仍为 `0.12.0-preview.3`，本版隔离 Host 验收与日常升级分别记录。
 
-本版为普通 Google 三件套、单独日历登录增加授权前的数据用途说明，以及 macOS Keychain 密钥 + AES-256-GCM 本机凭据存储；已有普通 Google 明文记录仅在明确查询前受控迁移。flomo 与滴答保留官方登录入口，滴答普通账号继续只申请 `tasks:read`。
+已公开的 preview4 为普通 Google 三件套、单独日历登录增加授权前的数据用途说明，以及 macOS Keychain 密钥 + AES-256-GCM 本机凭据存储；已有普通 Google 明文记录仅在明确查询前受控迁移。flomo 与滴答保留官方登录入口，滴答普通账号继续只申请 `tasks:read`。
 
 **Google 当前是受限公众预览**：已切到 External / In production，不再逐个登记测试账号；权限尚未验证，可能出现未验证应用提示，并受累计 100 个账号上限及账号策略限制。2026-10-23 已用本人确认的另一 Google 账号，在本版隔离官方 Host 重启后完成 Gmail、非空主日历、Drive 各一项有界读取；这不代表所有账号均已可用。日常 App 本版升级、新用户完整开箱与新版手机体验仍待验收。flomo 需要 MAX。具体实测范围见[验证记录](docs/verification.md)，Google 状态与存储边界见[连接说明](docs/context-sources.md)。
+
+## V2 体验改版候选
+
+当前开发候选为 `0.13.0-preview.1`，基于已公开的 preview4。工作台按「今日 / 项目 / 记忆 / 连接」整理，保留自然语言入口，展示真实执行回复、来源与跟进时间；首次连接微信仍是主入口。下方公开下载链接仍为已发布的 `0.12.0-preview.4`，不包含本次未发布的 V2 界面。
+
+草稿通过官方接口带入 Dot 会话，由本人发送；网页本身不模拟模型理解或自动执行。来源授权、启用、读取与主动计划分别显示。原型中的私人资料周期整理、任意页内 AI 规划尚未接入，不以卡片宣称已支持。实现与验收进展见 [V2 实施记录](docs/dot-v2-implementation.md)。
 
 ## 安装
 

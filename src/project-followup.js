@@ -89,7 +89,7 @@ export function createProjectFollowup(options={}){
     const temporary=join(entry.dir,`scope.json.tmp.${randomUUID()}`);
     await writeFile(temporary,JSON.stringify(entry.meta)+'\n',{mode:0o600,flag:'wx'});await rename(temporary,join(entry.dir,'scope.json'));
   }
-  async function load(root){
+  async function load(root,{cache=true}={}){
     const path=await safe(root);
     if(scopes.has(root)){const entry=scopes.get(root);owned(entry);return entry;}
     if(!path.exists)return null;
@@ -97,7 +97,7 @@ export function createProjectFollowup(options={}){
       try{await lstat(join(path.dir,'alarms.json'));throw new Error('Follow-up store has no ownership metadata');}catch(e){if(absent(e))return null;throw e;}
     }throw error;}
     verifyMeta(meta,root);const loaded=await ProactiveStore.load(path.dir);if(loaded.corrupt)throw new Error('Corrupt scoped follow-up store');
-    const entry={root,dir:path.dir,store:loaded.store,meta,enabled:meta.enabled,scheduler:null,driver:null};owned(entry);scopes.set(root,entry);return entry;
+    const entry={root,dir:path.dir,store:loaded.store,meta,enabled:meta.enabled,scheduler:null,driver:null};owned(entry);if(cache)scopes.set(root,entry);return entry;
   }
   function checkOwner(entry,sessionId,{optional=false}={}){
     if(sessionId===undefined&&optional)return;
@@ -136,7 +136,7 @@ export function createProjectFollowup(options={}){
     if(entry.meta.status==='cancelled')return;
     entry.blocked=reason;entry.enabled=false;entry.meta.enabled=false;entry.meta.status='blocked';entry.scheduler?.stop();await persistMeta(entry);
   }
-  async function loadOnce(root,sessionId){
+  async function loadOnce(root,sessionId,{cache=true}={}){
     requireSession(sessionId);const path=await safe(root,{sessionId});const key=onceKey(root,sessionId);
     if(ones.has(key)){const entry=ones.get(key);owned(entry);return entry;}
     if(!path.exists)return null;
@@ -144,7 +144,7 @@ export function createProjectFollowup(options={}){
     if(!meta||meta.version!==1||meta.kind!=='once'||meta.root!==root||meta.sessionId!==sessionId||!['native','wechat'].includes(meta.delivery)||typeof meta.alarmId!=='string'||!meta.alarmId.startsWith('alarm_')||!(meta.delaySeconds===null||Number.isSafeInteger(meta.delaySeconds)&&meta.delaySeconds>=30&&meta.delaySeconds<=300)||typeof meta.projectLabel!=='string'||meta.projectLabel.length>80||typeof meta.enabled!=='boolean'||!['queued','completed','failed','cancelled','blocked'].includes(meta.status)||typeof meta.dueAt!=='string'||!Number.isFinite(Date.parse(meta.dueAt))||new Date(meta.dueAt).toISOString()!==meta.dueAt||(meta.delivery==='wechat'?!validBinding(meta.binding):meta.binding!==null))throw new Error('Invalid one-off scoped ownership metadata');
     if(meta.lastReviewedAt!==null&&(typeof meta.lastReviewedAt!=='string'||!Number.isFinite(Date.parse(meta.lastReviewedAt))||new Date(meta.lastReviewedAt).toISOString()!==meta.lastReviewedAt))throw new Error('Invalid one-off source-review watermark');
     const loaded=await ProactiveStore.load(path.dir);if(loaded.corrupt)throw new Error('Corrupt scoped one-off store');
-    const entry={once:true,root,dir:path.dir,meta,enabled:meta.enabled,store:loaded.store,scheduler:null,driver:null};owned(entry);ones.set(key,entry);return entry;
+    const entry={once:true,root,dir:path.dir,meta,enabled:meta.enabled,store:loaded.store,scheduler:null,driver:null};owned(entry);if(cache)ones.set(key,entry);return entry;
   }
 
   function activeEntry(execution){
@@ -250,6 +250,23 @@ export function createProjectFollowup(options={}){
   }
 
   const adapter={
+    inspect(input){
+      // Capture identifiers before queueing; callers may hold mutable objects.
+      const {root,sessionId}=input??{},expected=clone(input?.expectedBinding);
+      return queued(async()=>{
+        requireSession(sessionId);
+        if(expected?.sessionId!==sessionId||!hash(expected?.bindingKey))throw new Error('Expected original UI binding is required');
+        const confirm=async()=>{requireOpen();const current=await options.readConnection?.();requireOpen();if(current?.state!=='bound'||current.sessionId!==sessionId||current.bindingKey!==expected.bindingKey)throw new Error('Original UI binding changed during inspection');};
+        await confirm();const binding=clone(await options.readBinding?.(sessionId));
+        if(!validBinding(binding))throw new Error('Original follow-up binding unavailable');
+        // Cold loads remain local to this read and cannot join close() persistence.
+        const recurring=await load(root,{cache:false}),once=await loadOnce(root,sessionId,{cache:false});
+        for(const entry of [recurring,once])if(entry){checkOwner(entry,sessionId);if(entry.once&&entry.meta.delivery!=='wechat'||!sameBinding(entry.meta.binding,binding))throw new Error('Follow-up belongs to another original binding');}
+        const result={followup:recurring?clone(view(recurring)):null,once:once?clone(view(once)):null};
+        if(!await authorizes(root)||!sameBinding(binding,await options.readBinding?.(sessionId)))throw new Error('Follow-up scope changed during inspection');
+        await confirm();return result;
+      });
+    },
     checkOnce(args){
       const requestKey=onceKey(args.root,args.sessionId),live=ones.get(requestKey);
       const before=intent(requestKey),version=before+(live?.enabled&&live.scheduler?0:1);if(!guarded(args))intents.set(requestKey,version);

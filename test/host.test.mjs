@@ -904,11 +904,16 @@ test('native memory correction and forgetting use current project IDs and render
 });
 
 test('workbench actions register on official owner transport and use real scoped memory/followup services',async t=>{
-  const routes=[];const h=await openHost(t,{connection:{fetch:{register:r=>{routes.push(r);return()=>{};}}},readSetup:async()=>({state:'bound',sessionId:'synthetic-owner',bindingKey:'a'.repeat(64)})});
+  let currentBinding=null;
+  const routes=[];const h=await openHost(t,{connection:{fetch:{register:r=>{routes.push(r);return()=>{};}}},readSetup:async()=>({state:'bound',sessionId:'synthetic-owner',bindingKey:'a'.repeat(64)}),readBinding:async sessionId=>{assert.equal(sessionId,'synthetic-owner');return currentBinding;}});
   await h.tool({action:'watch',project:'synthetic-project'});const saved=await h.tool({action:'remember',project:'synthetic-project',memoryKind:'goal',memoryText:'Old UI goal',sourceKind:'user',userRequested:true});
   const view=await h.adapter.workbench.snapshot();const projectId=view.projects[0].id;const route=routes.find(r=>r.path==='/api/project_companion/workbench/actions');assert.ok(route);assert.deepEqual(route.methods,['POST']);
   const post=body=>route.fetch(new Request('http://localhost/api/project_companion/workbench/actions',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}));
   const response=await post({action:'memory_update',projectId,id:saved.receipt.id,text:'Corrected from project drawer',userRequested:true});assert.equal(response.status,200);assert.equal((await response.json()).receipt.status,'revised');
+  // Setup state alone cannot establish the exact stored return pairing.
+  assert.equal(view.projects[0].followup.available,false);
+  assert.equal((await post({action:'followup_status',projectId})).status,400);
+  currentBinding=priorBinding;
   const status=await post({action:'followup_status',projectId});assert.equal(status.status,200);const value=await status.json();assert.equal(value.followup.enabled,false);assert.equal(value.once.enabled,false);
   assert.equal(h.sent.length,0);assert.equal(h.accepted.length,0);assert.equal(h.timers().active,false);
 });

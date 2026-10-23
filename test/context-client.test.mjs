@@ -36,6 +36,7 @@ async function load(options = {}) {
   const section = registrations.find(r => r.spec.name === 'settings.section').component({});
   const panel = nodes(section, n => typeof n.type === 'function' && n.type.name === 'ContextPanel')[0];
   assert.ok(panel, 'settings must contain an independent ContextPanel');
+  Object.assign(panel.props,options.panelProps??{});
   pending = []; values = [];
   const panelValues = values, credentialValues = [];
   return {
@@ -333,4 +334,24 @@ test('pending account login explains which provider holds the other login button
       assert.equal(c.requests.filter(r => r.options.method === 'POST').length, 0);
     } finally { c.dispose(); }
   }
+});
+
+test('source mutations carry the captured owner binding revision without leaking credentials',async()=>{
+  const c=await load();c.context.snapshot.bindingRevision='opaque-owner-revision';
+  try{c.render();await c.flush();const row=nodes(c.render(),n=>n.props['data-context-source']==='flomo')[0];await nodes(row,n=>n.type==='button')[0].props.onClick();assert.deepEqual(JSON.parse(c.requests.at(-1).options.body),{action:'connect',source:'flomo',expectedBindingRevision:'opaque-owner-revision'});assert.doesNotMatch(c.requests.at(-1).options.body,/bindingKey|token|secret|query/);
+  }finally{c.dispose();}
+});
+
+test('first-value questions only stage a bounded native-conversation draft after source enablement',async()=>{
+  const drafts=[],c=await load({panelProps:{bound:true,bindingRevision:'rev-current',onFirstValue:prompt=>drafts.push(prompt)}});c.context.snapshot.bindingRevision='rev-current';
+  try{c.render();await c.flush();let view=c.render();const area=nodes(view,n=>n.props['data-context-first-value'])[0];assert.ok(area);assert.match(text(area),/网页不会自行查询/);assert.equal(nodes(area,n=>n.type==='button'&&text(n).includes('看看近期安排'))[0].props.disabled,true);
+    c.context.snapshot.sources.find(row=>row.id==='calendar').enabled=true;c.context.snapshot.sources.find(row=>row.id==='calendar').configured=true;
+    await nodes(view,n=>n.type==='button'&&text(n).includes('刷新资料来源状态'))[0].props.onClick();view=c.render();const before=c.requests.length;const start=nodes(view,n=>n.type==='button'&&text(n).includes('看看近期安排'))[0];assert.equal(start.props.disabled,false);start.props.onClick();assert.equal(drafts.length,1);assert.match(drafts[0],/未来三天.*最多十条.*不要创建或修改日程/);assert.equal(c.requests.length,before);assert.equal(c.requests.some(row=>row.options.method==='POST'),false);assert.match(text(view),/累计 100 个授权账号上限/);
+  }finally{c.dispose();}
+});
+
+test('a first-value draft cannot cross a changed connection binding',async()=>{
+  const drafts=[],c=await load({panelProps:{bound:true,bindingRevision:'old-workbench',onFirstValue:prompt=>drafts.push(prompt)}});c.context.snapshot.bindingRevision='new-context';c.context.snapshot.sources.find(row=>row.id==='flomo').enabled=true;
+  try{c.render();await c.flush();nodes(c.render(),n=>n.type==='button'&&text(n).includes('找回笔记背景'))[0].props.onClick();assert.equal(drafts.length,0);assert.match(text(c.render()),/来源与工作台的绑定不同/);assert.equal(c.requests.length,1);
+  }finally{c.dispose();}
 });

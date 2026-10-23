@@ -1,3 +1,4 @@
+import {bindingRevision,matchesBindingRevision} from './workbench-scope.js';
 const bound = value => value?.state === 'bound' && typeof value.sessionId === 'string' && value.sessionId.length > 0 && value.sessionId.length <= 200 && /^[a-f0-9]{64}$/.test(value.bindingKey ?? '');
 const same = (left, right) => bound(left) && bound(right) && left.sessionId === right.sessionId && left.bindingKey === right.bindingKey;
 const invalid = () => { throw new Error('Context 操作未完成，请刷新连接状态。'); };
@@ -29,20 +30,22 @@ export function createContextRoute({context,googleAuth,googleCalendarAuth,google
     const owner=bound(current)?{sessionId:current.sessionId}:null;
     const value=await context.snapshot(owner);
     open();
-    return{sources:value.sources,googleAuth:authStatus(),...(googleCalendarAuth?{googleCalendarAuth:authStatus(googleCalendarAuth)}:{}),...(googleSuiteAuth?{googleSuiteAuth:{...authStatus(googleSuiteAuth),grantedSources:['gmail','calendar','drive'].filter(source=>googleSuiteAuth.status?.().grantedSources?.includes(source))}}:{}),...(flomoAuth?{flomoAuth:authStatus(flomoAuth)}:{}),...(didaAuth?{didaAuth:authStatus(didaAuth)}:{})};
+    const after=await connection();
+    if(bindingRevision(current)!==bindingRevision(after))invalid();
+    return{bindingRevision:bindingRevision(current),sources:value.sources,googleAuth:authStatus(),...(googleCalendarAuth?{googleCalendarAuth:authStatus(googleCalendarAuth)}:{}),...(googleSuiteAuth?{googleSuiteAuth:{...authStatus(googleSuiteAuth),grantedSources:['gmail','calendar','drive'].filter(source=>googleSuiteAuth.status?.().grantedSources?.includes(source))}}:{}),...(flomoAuth?{flomoAuth:authStatus(flomoAuth)}:{}),...(didaAuth?{didaAuth:authStatus(didaAuth)}:{})};
   }
   return{
     snapshot,
     async action(input){
       open();
       if(!input||typeof input!=='object'||Array.isArray(input))invalid();
-      const keys=Object.keys(input);
+      const keys=Object.keys(input).filter(key=>key!=='expectedBindingRevision');
       if(['google_authorize','google_calendar_authorize','google_suite_authorize','flomo_authorize','dida_authorize'].includes(input.action)){
         if(keys.length!==1||!await canRun())invalid();
       }else if(!['connect','disconnect'].includes(input.action)||keys.length!==2||!keys.includes('source')||!sourceIds.has(input.source))invalid();
       if(input.action==='connect'&&!await canRun())invalid();
       const expected=await connection();
-      if(!bound(expected))invalid();
+      if(!bound(expected)||!matchesBindingRevision(input,expected))invalid();
       const owner=await readyOwner(expected);
       if(['google_authorize','google_calendar_authorize','google_suite_authorize','flomo_authorize','dida_authorize'].includes(input.action)){
         if(!await canRun())invalid();
@@ -53,7 +56,7 @@ export function createContextRoute({context,googleAuth,googleCalendarAuth,google
         await check(expected);
         return{url:value.url,expiresAt:value.expiresAt};
       }
-      await context.act(owner,{action:input.action,source:input.source,userRequested:true});
+      await context.act(owner,{action:input.action,source:input.source,userRequested:true,expectedBinding:{sessionId:expected.sessionId,bindingKey:expected.bindingKey},authorizeMutation:async()=>{await check(expected);return true;}});
       await check(expected);
       return snapshot();
     },

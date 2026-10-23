@@ -1,9 +1,12 @@
+import {matchesBindingRevision} from './workbench-scope.js';
 import {createHash} from 'node:crypto';
 import {isAbsolute,resolve,parse} from 'node:path';
 
 const identity=value=>typeof value==='string'&&/^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/.test(value);
 const bound=value=>value?.state==='bound'&&identity(value.sessionId)&&/^[a-f0-9]{64}$/.test(value.bindingKey??'');
 const same=(a,b)=>bound(a)&&bound(b)&&a.sessionId===b.sessionId&&a.bindingKey===b.bindingKey;
+const validReturnBinding=value=>value&&/^[a-f0-9]{64}$/.test(value.userHash??'')&&(value.botHash===undefined||/^[a-f0-9]{64}$/.test(value.botHash));
+const sameReturnBinding=(a,b)=>validReturnBinding(a)&&validReturnBinding(b)&&a.userHash===b.userHash&&(a.botHash??null)===(b.botHash??null);
 const projectKey=root=>`project_${createHash('sha256').update(root).digest('hex').slice(0,24)}`;
 const timestamp=value=>typeof value==='string'&&value.length<=40&&Number.isFinite(Date.parse(value))?new Date(value).toISOString():null;
 const explicitTime=value=>typeof value==='string'&&/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?(?:Z|[+-]\d{2}:\d{2})$/.test(value)&&timestamp(value);
@@ -16,7 +19,7 @@ const unavailable=()=>{throw new Error('工作台操作未完成，请刷新后�
 const rootValid=root=>typeof root==='string'&&isAbsolute(root)&&root===resolve(root)&&root!==parse(root).root&&root.length<=4096;
 
 /** Explicit owner-authenticated controls. It owns no scheduler, store or model. */
-export function createWorkbenchActions({service,memory,followup,taskResults,readConnection,resolveOwner,activateOwner,isClosed=()=>false,clock=()=>new Date()}={}){
+export function createWorkbenchActions({service,memory,followup,taskResults,readBinding,readConnection,resolveOwner,activateOwner,isClosed=()=>false,clock=()=>new Date()}={}){
   let closed=false;
   const open=()=>{if(closed||isClosed())unavailable();};
   const now=()=>{const value=clock();const epoch=value instanceof Date?value.getTime():Number(value);if(!Number.isFinite(epoch))unavailable();return epoch;};
@@ -53,7 +56,7 @@ export function createWorkbenchActions({service,memory,followup,taskResults,read
   function validate(input){
     if(!input||typeof input!=='object'||Array.isArray(input))unavailable();
     const fields={task_detail:['action','id'],memory_detail:['action','projectId','id'],followup_status:['action','projectId'],followup_configure:['action','projectId','everyMinutes','userRequested'],followup_cancel:['action','projectId','userRequested'],check_once:['action','projectId','delaySeconds','dueAt','userRequested'],cancel_once:['action','projectId','userRequested'],memory_update:['action','projectId','id','text','userRequested'],memory_forget:['action','projectId','id','userRequested']}[input.action];
-    if(!fields||Object.keys(input).some(key=>!fields.includes(key)))unavailable();
+    if(!fields||Object.keys(input).some(key=>key!=='expectedBindingRevision'&&!fields.includes(key)))unavailable();
     const write=!['task_detail','memory_detail','followup_status'].includes(input.action);
     if(write&&input.userRequested!==true)unavailable();
     if(input.action!=='task_detail'&&!/^project_[a-f0-9]{24}$/.test(input.projectId??''))unavailable();
@@ -101,13 +104,17 @@ export function createWorkbenchActions({service,memory,followup,taskResults,read
   }
   return{
     async action(input){
-      open();input=structuredClone(input);const write=validate(input),expected=await connection();if(!bound(expected))unavailable();
+      open();input=structuredClone(input);const write=validate(input),expected=await connection();if(!bound(expected)||!matchesBindingRevision(input,expected))unavailable();
       let authorized=await scope(expected,input.projectId);
       if(write){await readyOwner(expected,input.projectId);authorized=await scope(expected,input.projectId);}
       const clean=cleaner(authorized.roots,expected),base={action:input.action,...(input.projectId?{projectId:input.projectId}:{})};
       if(input.action==='task_detail'){
-        if(typeof taskResults?.status!=='function')unavailable();
-        const result=await taskResults.status(expected.sessionId,{id:input.id});await scope(expected);
+        if(typeof taskResults?.inspect!=='function'||typeof readBinding!=='function')unavailable();
+        const originalBinding=structuredClone(await readBinding(expected.sessionId));await scope(expected);
+        if(!validReturnBinding(originalBinding))unavailable();
+        const result=await taskResults.inspect(expected.sessionId,{id:input.id,expectedBinding:originalBinding});await scope(expected);
+        if(!sameReturnBinding(originalBinding,await readBinding(expected.sessionId)))unavailable();await scope(expected);
+        const clean=cleaner([...authorized.roots,originalBinding.userHash,...(originalBinding.botHash?[originalBinding.botHash]:[])],expected);
         if(!Array.isArray(result?.jobs)||result.jobs.length>10)unavailable();
         const jobs=result.jobs.filter(row=>row?.id===input.id).map(row=>{
           if(!identity(row.id)||!JOB_STATES.has(row.status)||!timestamp(row.createdAt)||typeof row.projectLabel!=='string'||typeof row.task!=='string'||typeof row.reply!=='string')unavailable();
@@ -135,9 +142,9 @@ export function createWorkbenchActions({service,memory,followup,taskResults,read
       }
       const authorizeMutation=async()=>{await scope(expected,input.projectId);return true;};
       if(input.action==='followup_status'){
-        const recurring=await followup.status(args);await scope(expected,input.projectId);
-        const once=await followup.onceStatus(args);await scope(expected,input.projectId);
-        return{...base,followup:plan(recurring,{clean}),once:plan(once,{once:true,clean}),limitations:[...limitations]};
+        if(typeof followup?.inspect!=='function')unavailable();
+        const value=await followup.inspect({...args,expectedBinding:{sessionId:expected.sessionId,bindingKey:expected.bindingKey}});await scope(expected,input.projectId);
+        return{...base,followup:plan(value?.followup===null?{enabled:false,running:false}:value?.followup,{clean}),once:plan(value?.once===null?{enabled:false,running:false}:value?.once,{once:true,clean}),limitations:[...limitations]};
       }
       if(input.action==='memory_update'||input.action==='memory_forget'){
         const update=input.action==='memory_update',method=update?'revise':'forget';if(typeof memory?.[method]!=='function')unavailable();

@@ -1,6 +1,7 @@
 import {createHash} from 'node:crypto';
 import {isAbsolute} from 'node:path';
 import {readProjectFiles,PROJECT_FILES,validateRepository} from './sources.js';
+import {bindingRevision} from './workbench-scope.js';
 
 const CONNECTION_STATES=new Set(['missing','unknown','waiting-qr','scanned','awaiting-message','bound','failed']);
 const JOB_STATES=new Set(['prepared','admitted','running','not_admitted','unknown','discarded','mixed','completed','blocked','aborted','error','max-tokens','interrupted','forked','no_text','expired']);
@@ -8,6 +9,9 @@ const DELIVERY_STATES=new Set(['pending','blocked','dispatching','queued','repor
 const REMINDER_STATES=new Set(['scheduled','enqueued','expired','cancelled']);
 const MEMORY_KINDS=new Set(['goal','decision','blocker','next_step','context']);
 const emptyOverview=()=>({available:false,goals:[],blockers:[],nextSteps:[],recent:[]});
+const emptyFollowup=()=>({available:false,followup:null,once:null});
+const validReturnBinding=value=>value&&/^[a-f0-9]{64}$/.test(value.userHash??'')&&(value.botHash===undefined||/^[a-f0-9]{64}$/.test(value.botHash));
+const sameReturnBinding=(a,b)=>validReturnBinding(a)&&validReturnBinding(b)&&a.userHash===b.userHash&&(a.botHash??null)===(b.botHash??null);
 const identity=value=>typeof value==='string'&&/^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/.test(value);
 const bound=value=>value?.state==='bound'&&identity(value.sessionId)&&/^[a-f0-9]{64}$/.test(value.bindingKey??'');
 const same=(a,b)=>bound(a)&&bound(b)&&a.sessionId===b.sessionId&&a.bindingKey===b.bindingKey;
@@ -25,7 +29,7 @@ const limitations=[
 ];
 
 /** A passive projection of existing state. It owns no store, agent or scheduler. */
-export function createWorkbench({service,taskResults,memory,readState=async()=>null,readConnection=async()=>({state:'unknown'}),readProject=readProjectFiles,clock=()=>new Date(),hostTimeZone=()=>Intl.DateTimeFormat().resolvedOptions().timeZone,isClosed=()=>false}={}){
+export function createWorkbench({service,taskResults,memory,followup,readBinding,readState=async()=>null,readConnection=async()=>({state:'unknown'}),readProject=readProjectFiles,clock=()=>new Date(),hostTimeZone=()=>Intl.DateTimeFormat().resolvedOptions().timeZone,isClosed=()=>false}={}){
   let closed=false;
   const open=()=>{if(closed||isClosed())throw new Error('项目工作台已关闭。');};
   const connection=async()=>{open();try{const value=await readConnection();open();if(!CONNECTION_STATES.has(value?.state)||(value.state==='bound'&&!bound(value)))return{state:'unknown'};return bound(value)?{state:'bound',sessionId:value.sessionId,bindingKey:value.bindingKey}:{state:value.state};}catch(error){open();return{state:'unknown'};}};
@@ -67,6 +71,15 @@ export function createWorkbench({service,taskResults,memory,readState=async()=>n
       rows.sort((a,b)=>Date.parse(b.at)-Date.parse(a.at));
       return{available:true,goals:rows.filter(row=>row.kind==='goal').slice(0,3),blockers:rows.filter(row=>row.kind==='blocker').slice(0,3),nextSteps:rows.filter(row=>row.kind==='next_step').slice(0,3),recent:rows.slice(0,4)};
     };
+    const planOf=(value,once=false)=>{
+      if(value===null)return null;
+      if(!value||typeof value.enabled!=='boolean'||typeof value.running!=='boolean'||(once?!['queued','running','completed','failed','cancelled','blocked'].includes(value.status)||value.delivery!=='wechat':!Number.isSafeInteger(value.everyMinutes)||value.everyMinutes<30||value.everyMinutes>1440))throw new Error('Follow-up projection unavailable');
+      const result={enabled:value.enabled,running:value.running,delivery:'wechat',...(once?{status:value.status}:{everyMinutes:value.everyMinutes})};
+      for(const key of ['nextDueAt','lastReviewedAt','lastRunAt'])if(value[key]!==undefined&&value[key]!==null){if(!at(value[key]))throw new Error('Invalid follow-up time');result[key]=at(value[key]);}
+      if(value.runCount!==undefined){if(!Number.isSafeInteger(value.runCount)||value.runCount<0)throw new Error('Invalid follow-up count');result.runCount=value.runCount;}
+      if(value.blocked)result.blocked='原跟进当前不可运行，请打开安排核对。';
+      return result;
+    };
     const projects=await Promise.all(watched.map(async project=>{
       const root=project.root;
       let files;
@@ -75,6 +88,14 @@ export function createWorkbench({service,taskResults,memory,readState=async()=>n
       let overview=emptyOverview();
       if(typeof memory?.inspect==='function'){
         try{overview=overviewOf(await memory.inspect({root,sessionId:'workbench-view'}));}catch{open();}
+      }
+      open();
+      let plans=emptyFollowup();
+      if(availability.projects&&bound(expected)&&typeof followup?.inspect==='function'&&same(expected,await connection())){
+        try{
+          const value=await followup.inspect({root,sessionId:expected.sessionId,expectedBinding:{sessionId:expected.sessionId,bindingKey:expected.bindingKey}});open();
+          plans={available:true,followup:planOf(value?.followup),once:planOf(value?.once,true)};
+        }catch{open();}
       }
       open();
       const sources=[];
@@ -87,23 +108,39 @@ export function createWorkbench({service,taskResults,memory,readState=async()=>n
       }
       let github;try{github=validateRepository(project.github);}catch{}
       const watchedAt=at(project.watchedAt);
-      return{id:publicId(root),label:clean(project.label,80)||'已关注项目',sessionIds:[...new Set(list(project.sessionIds,30).filter(identity))],...(github?{github}:{}),...(watchedAt?{watchedAt}:{}),overview,sources,
+      return{id:publicId(root),label:clean(project.label,80)||'已关注项目',sessionIds:[...new Set(list(project.sessionIds,30).filter(identity))],...(github?{github}:{}),...(watchedAt?{watchedAt}:{}),overview,followup:plans,sources,
         events:list(project.events,30).slice(-5).filter(event=>['user','assistant','error'].includes(event?.kind)&&at(event.at)).map(event=>({kind:event.kind,text:clean(event.text,500),at:at(event.at),truncated:event.truncated===true||(typeof event.text==='string'&&event.text.length>500)}))};
     }));
     open();
     let current=await connection(),jobs=[];
-    if(bound(expected)&&same(expected,current)&&typeof taskResults?.status==='function'){
+    if(bound(expected)&&same(expected,current)&&typeof taskResults?.inspect==='function'&&typeof readBinding==='function'){
       try{
-        const result=await taskResults.status(expected.sessionId);
+        const originalBinding=structuredClone(await readBinding(expected.sessionId));open();
+        if(!validReturnBinding(originalBinding)||!same(expected,await connection()))throw new Error('Original task binding unavailable');
+        hidden.push(originalBinding.userHash,...(originalBinding.botHash?[originalBinding.botHash]:[]));
+        const result=await taskResults.inspect(expected.sessionId,{expectedBinding:originalBinding});
         open();
         if(!Array.isArray(result?.jobs)||result.jobs.length>10||result.jobs.some(job=>!identity(job?.id)||!at(job.createdAt)||!JOB_STATES.has(job.status)||typeof job.task!=='string'||typeof job.projectLabel!=='string'))throw new Error('交办状态格式不可用。');
         jobs=list(result?.jobs,10).filter(job=>identity(job?.id)&&at(job.createdAt)).map(job=>({id:job.id,projectLabel:clean(job.projectLabel,80),task:clean(job.task,160),status:JOB_STATES.has(job.status)?job.status:'unknown',createdAt:at(job.createdAt),
           ...(at(job.finishedAt)?{finishedAt:at(job.finishedAt)}:{}),...(job.delivery?{delivery:{status:DELIVERY_STATES.has(job.delivery.status)?job.delivery.status:'uncertain',detail:clean(job.delivery.detail,160)}}:{})}));
         availability.jobs=true;
+        const latest=jobs.filter(job=>job.status==='completed').sort((a,b)=>Date.parse(b.finishedAt??b.createdAt)-Date.parse(a.finishedAt??a.createdAt))[0];
+        if(latest){
+          latest.result={available:false,text:'',truncated:false};
+          try{
+            if(!same(expected,await connection()))throw new Error('Original binding changed');
+            const detail=await taskResults.inspect(expected.sessionId,{id:latest.id,expectedBinding:originalBinding});open();
+            const row=detail?.jobs?.[0];
+            if(!Array.isArray(detail?.jobs)||detail.jobs.length!==1||row.id!==latest.id||row.status!=='completed'||typeof row.reply!=='string'||row.reply.length>8000||typeof row.replyTruncated!=='boolean')throw new Error('Task result unavailable');
+            const full=clean(row.reply,8000),text=clean(row.reply,600);
+            latest.result={available:true,text,truncated:row.replyTruncated||full.length>text.length};
+          }catch{open();}
+        }
+        if(!sameReturnBinding(originalBinding,await readBinding(expected.sessionId)))throw new Error('Original task binding changed');
       }catch(error){open();availability.jobs=false;jobs=[];issues.push('当前绑定会话的交办状态暂不可用。');}
       current=await connection();
     }
-    if(bound(expected)&&!same(expected,current)){jobs=[];availability.jobs=false;current={state:'unknown'};issues.push('读取时原绑定已变化，已丢弃交办内容；请刷新核对。');}
+    if(bound(expected)&&!same(expected,current)){jobs=[];availability.jobs=false;for(const project of projects)project.followup=emptyFollowup();current={state:'unknown'};issues.push('读取时原绑定已变化，已丢弃交办和跟进内容；请刷新核对。');}
     // An initially unbound snapshot never adopts a newly bound session midway.
     if(!bound(expected))current={state:expected.state};
     const outbox=list(state?.outbox,100);
@@ -114,7 +151,7 @@ export function createWorkbench({service,taskResults,memory,readState=async()=>n
     const daily=state?.daily;
     let zone='unknown';try{const value=typeof hostTimeZone==='function'?hostTimeZone():hostTimeZone;if(typeof value==='string'&&value.length<=100){new Intl.DateTimeFormat('en',{timeZone:value});zone=value;}}catch{}
     open();
-    return{version:1,generatedAt:clock().toISOString(),hostTimeZone:zone,paused:typeof state?.paused==='boolean'?state.paused:null,availability,
+    return{version:1,generatedAt:clock().toISOString(),hostTimeZone:zone,paused:typeof state?.paused==='boolean'?state.paused:null,availability,bindingRevision:bindingRevision(current),
       connection:{state:current.state,...(bound(current)?{sessionId:current.sessionId}:{})},projects,jobs,reminders:reminders.slice(0,20),daily:daily?{time:daily.time,timeZone:daily.timeZone,enabled:daily.enabled===true}:null,
       counts:{projects:projects.length,activeReminders:reminders.length},limitations:issues};
   }

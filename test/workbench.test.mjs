@@ -14,6 +14,7 @@ import SessionStore from '@deepseek-ai/dsh-session';
 
 const now='2026-10-19T15:00:00.000Z';
 const binding={state:'bound',sessionId:'source-session',bindingKey:'a'.repeat(64)};
+const returnBinding={userHash:'c'.repeat(64),botHash:'d'.repeat(64)};
 const project={id:'p_one',root:'/synthetic/watched-project',label:'当前项目',sessionIds:['project-session'],github:'owner/repo',watchedAt:now,events:[{kind:'assistant',text:'助手记录，仍待核对',at:now,sessionId:'project-session',id:'event-1'}]};
 const deferred=()=>{let resolve;const promise=new Promise(done=>resolve=done);return{promise,resolve};};
 const memoryRow=(kind,index=0,extra={})=>({id:`memory-${index}`,kind,text:`已有${kind}记录 ${index}`,at:now,source:{kind:'assistant',reference:'session:recorded-session#turn7'},verified:true,sessionId:'PRIVATE MEMORY SESSION',fingerprint:'PRIVATE FINGERPRINT',...extra});
@@ -25,7 +26,8 @@ async function fixture(options={}){
     service:{watchedProjects:async()=>{calls.push('projects');return options.projects??[structuredClone(project)];}},
     readState:async()=>{calls.push('state');return options.state??{paused:false,reminders:[],daily:null,outbox:[]};},
     readConnection:async()=>{calls.push('connection');return connection;},
-    taskResults:{status:async sessionId=>{calls.push(['jobs',sessionId]);return options.jobs?.(sessionId)??{jobs:[]};}},
+    taskResults:{inspect:async(sessionId,args)=>{calls.push([args?.id?'detail':'jobs',sessionId,args]);return options.jobs?.(sessionId,args)??{jobs:[]};},status:()=>{throw new Error('GET must not load recovery status');}},
+    readBinding:async sessionId=>{calls.push(['binding',sessionId]);return returnBinding;},
     readProject:async root=>{calls.push(['files',root]);return options.readProject?.(root)??[{path:'README.md',status:'ok',text:'来源正文',modifiedAt:now,truncated:false}];},
     clock:()=>new Date(now),hostTimeZone:()=> 'America/Mexico_City',...options.dependencies,
   });
@@ -88,11 +90,12 @@ test('closing while files are pending prevents starting a later memory inspectio
 test('bound jobs use only the verified source session and whitelist every output field',async()=>{
   const f=await fixture({jobs:async()=>({jobs:[{id:'job-1',projectLabel:'当前项目',task:'检查README',status:'completed',createdAt:now,finishedAt:now,reply:'DO NOT EXPORT REPLY',targetSessionId:'private-target',projectRoot:project.root,returnBinding:{userHash:'private-user'},delivery:{status:'reported_sent',detail:'通道报告已发',text:'DO NOT EXPORT DELIVERY'}}]})});
   const value=await f.adapter.snapshot();
-  assert.deepEqual(f.calls.filter(item=>Array.isArray(item)&&item[0]==='jobs'),[['jobs','source-session']]);
+  assert.deepEqual(f.calls.filter(item=>Array.isArray(item)&&item[0]==='jobs'),[['jobs','source-session',{expectedBinding:returnBinding}]]);
   assert.deepEqual(value.connection,{state:'bound',sessionId:'source-session'});
   assert.equal(value.jobs[0].status,'completed');assert.equal(value.jobs[0].delivery.status,'reported_sent');
   for(const secret of [project.root,binding.bindingKey,'DO NOT EXPORT','private-target','private-user','bindingKey','projectRoot'])assert.equal(JSON.stringify(value).includes(secret),false,secret);
-  assert.deepEqual(Object.keys(value.jobs[0]).sort(),['id','projectLabel','task','status','createdAt','finishedAt','delivery'].sort());
+  assert.deepEqual(Object.keys(value.jobs[0]).sort(),['id','projectLabel','task','status','createdAt','finishedAt','delivery','result'].sort());
+  assert.equal(value.jobs[0].result.available,false);
 });
 
 test('binding replacement while jobs are being read discards their content and marks connection unknown',async()=>{
@@ -100,6 +103,48 @@ test('binding replacement while jobs are being read discards their content and m
   const f=await fixture({jobs:async()=>{entered.resolve();await gate.promise;return{jobs:[{id:'job-1',task:'PRIVATE OLD BINDING',projectLabel:'旧项目',status:'running',createdAt:now}]};}});
   const pending=f.adapter.snapshot();await entered.promise;f.setConnection({...binding,bindingKey:'b'.repeat(64)});gate.resolve();
   const value=await pending;assert.deepEqual(value.jobs,[]);assert.deepEqual(value.connection,{state:'unknown'});assert.equal(JSON.stringify(value).includes('PRIVATE OLD'),false);
+});
+
+test('latest completed reply is inspected once, redacted, bounded and keeps truncation evidence',async()=>{
+  const rows=[{id:'old',projectLabel:'项目',task:'旧交办',status:'completed',createdAt:now,finishedAt:now},{id:'latest',projectLabel:'项目',task:'新交办',status:'completed',createdAt:now,finishedAt:'2026-10-19T15:01:00Z'},{id:'interrupted',projectLabel:'项目',task:'中断',status:'interrupted',createdAt:now}];
+  const f=await fixture({jobs:async(_id,args)=>args.id?{jobs:[{...rows[1],reply:`${project.root} ${binding.bindingKey} api_key=private-token `+'字'.repeat(900),replyTruncated:false}]}:{jobs:rows}});
+  const value=await f.adapter.snapshot();
+  assert.equal(Object.hasOwn(value.jobs[0],'result'),false);assert.equal(Object.hasOwn(value.jobs[2],'result'),false);
+  assert.equal(value.jobs[1].result.available,true);assert.equal(value.jobs[1].result.truncated,true);assert.ok(value.jobs[1].result.text.length<=600);
+  assert.deepEqual(f.calls.filter(row=>row[0]==='detail'),[['detail','source-session',{id:'latest',expectedBinding:returnBinding}]]);
+  for(const secret of [project.root,binding.bindingKey,'private-token'])assert.equal(JSON.stringify(value.jobs).includes(secret),false);
+  assert.match(value.bindingRevision,/^[a-f0-9]{64}$/);assert.notEqual(value.bindingRevision,binding.bindingKey);
+});
+
+test('reply read failure or mismatched detail keeps jobs available and does not claim a missing result',async()=>{
+  for(const detail of [async()=>{throw new Error('PRIVATE');},async()=>({jobs:[]}),async()=>({jobs:[{id:'other',reply:'PRIVATE',replyTruncated:false}]})]){
+    const f=await fixture({jobs:async(_id,args)=>args.id?detail():{jobs:[{id:'job',projectLabel:'项目',task:'交办',status:'completed',createdAt:now}]}});
+    const value=await f.adapter.snapshot();assert.equal(value.availability.jobs,true);assert.deepEqual(value.jobs[0].result,{available:false,text:'',truncated:false});
+  }
+});
+
+test('passive followup projection is bounded to watched projects and exact binding with isolated availability',async()=>{
+  const calls=[];const second={...project,root:'/synthetic/second'};
+  const followup={inspect:async args=>{calls.push(args);if(args.root===second.root)throw new Error('PRIVATE OWNER');return{followup:{enabled:true,running:false,everyMinutes:45,nextDueAt:now,sessionId:binding.sessionId,alarmId:'alarm-private',blocked:'PRIVATE error'},once:{enabled:true,running:true,status:'running',delivery:'wechat',nextDueAt:now,originSessionId:binding.sessionId}};},status:()=>{throw new Error('must not load');},onceStatus:()=>{throw new Error('must not load');}};
+  const f=await fixture({projects:[project,second],dependencies:{followup}});const value=await f.adapter.snapshot();
+  assert.deepEqual(calls.map(row=>row.root),[project.root,second.root]);for(const args of calls)assert.deepEqual(args,{root:args.root,sessionId:binding.sessionId,expectedBinding:{sessionId:binding.sessionId,bindingKey:binding.bindingKey}});
+  assert.equal(value.projects[0].followup.available,true);assert.equal(value.projects[0].followup.followup.everyMinutes,45);assert.equal(value.projects[0].followup.once.status,'running');
+  assert.deepEqual(value.projects[1].followup,{available:false,followup:null,once:null});assert.equal(JSON.stringify(value).includes('PRIVATE'),false);assert.equal(JSON.stringify(value).includes('alarm-private'),false);
+});
+
+test('unbound, unsupported or malformed followups are unavailable while confirmed absence is explicit',async()=>{
+  const missing={available:false,followup:null,once:null};
+  for(const dependencies of [{},{followup:{status:()=>{throw new Error('must not load');}}},{followup:{inspect:async()=>({followup:{enabled:true},once:null})}}]){
+    const f=await fixture({dependencies});assert.deepEqual((await f.adapter.snapshot()).projects[0].followup,missing);
+  }
+  const noRead=await fixture({connection:{state:'missing'},dependencies:{followup:{inspect:()=>{throw new Error('must not inspect');}}}});const unbound=await noRead.adapter.snapshot();assert.deepEqual(unbound.projects[0].followup,missing);assert.equal(unbound.bindingRevision,null);
+  const absent=await fixture({dependencies:{followup:{inspect:async()=>({followup:null,once:null})}}});assert.deepEqual((await absent.adapter.snapshot()).projects[0].followup,{...missing,available:true});
+});
+
+test('binding replacement during followup inspection discards all binding-scoped content',async()=>{
+  const gate=deferred(),entered=deferred();const f=await fixture({dependencies:{followup:{inspect:async()=>{entered.resolve();await gate.promise;return{followup:{enabled:true,running:true,everyMinutes:30},once:null};}}}});
+  const pending=f.adapter.snapshot();await entered.promise;f.setConnection({...binding,bindingKey:'b'.repeat(64)});gate.resolve();const value=await pending;
+  assert.deepEqual(value.projects[0].followup,{available:false,followup:null,once:null});assert.deepEqual(value.jobs,[]);assert.equal(value.bindingRevision,null);
 });
 
 test('an in-place binding mutation cannot change the expected identity captured before a job read',async()=>{
@@ -120,7 +165,7 @@ test('state display is passive and bounds reminders, schedules and counts withou
 test('each independent read failure marks only its availability false without exposing private errors',async()=>{
   for(const section of ['projects','plans','jobs']){
     const fail=async()=>{throw new Error('PRIVATE INTERNAL FAILURE /secret/root');};
-    const dependencies=section==='projects'?{service:{watchedProjects:fail}}:section==='plans'?{readState:fail}:{taskResults:{status:fail}};
+    const dependencies=section==='projects'?{service:{watchedProjects:fail}}:section==='plans'?{readState:fail}:{taskResults:{inspect:fail}};
     const f=await fixture({dependencies});const value=await f.adapter.snapshot();
     assert.deepEqual(value.availability,{projects:section!=='projects',plans:section!=='plans',jobs:section!=='jobs'},section);
     if(section==='plans')assert.equal(value.paused,null);
@@ -129,7 +174,7 @@ test('each independent read failure marks only its availability false without ex
 });
 
 test('malformed successful reads and absent state remain unavailable rather than claiming empty confirmed state',async()=>{
-  const f=await fixture({dependencies:{service:{watchedProjects:async()=>({projects:[]})},readState:async()=>null,taskResults:{status:async()=>({jobs:null})}}});
+  const f=await fixture({dependencies:{service:{watchedProjects:async()=>({projects:[]})},readState:async()=>null,taskResults:{inspect:async()=>({jobs:null})}}});
   const value=await f.adapter.snapshot();assert.deepEqual(value.availability,{projects:false,plans:false,jobs:false});assert.equal(value.paused,null);
   const bad=await fixture({dependencies:{readState:async()=>({paused:false,reminders:'bad',outbox:[],daily:null})}});
   assert.equal((await bad.adapter.snapshot()).availability.plans,false);
