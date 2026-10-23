@@ -1,6 +1,6 @@
 # Google 桌面登录与公开分发说明
 
-适用版本：`0.12.0-preview.4`。资料核对日期：2026-10-22。
+适用版本：`0.12.0-preview.4`。状态更新：2026-10-23；官方分发依据核对日期：2026-10-22。日常 App 未从 preview.3 升级，本版隔离 Host 验收另行记录。
 
 DSH Dot 保留“连接 Google → 浏览器登录并同意 → 回到本机”的体验。应用使用独立 Google Cloud 项目中的 **Desktop app 公共客户端**；不要求普通使用者自己申请 OAuth client 或复制 token，也不通过项目维护者的服务器中转用户的 Google 授权。
 
@@ -62,13 +62,13 @@ GitHub 的 [push protection 官方流程](https://docs.github.com/en/code-securi
 
 ## 本地保存与模型处理边界
 
-此前 `0.12.0-preview.3` 的授权记录按原实现保存在 Harness 本机 profile，没有应用层静态加密保证。本版为普通“连接 Google 三件套”和“只连接 Google 日历”增加安全存储；日常 App 仍运行此前版本，本版安装与真实迁移验收须单独记录。
+此前 `0.12.0-preview.3` 的授权记录按原实现保存在 Harness 本机 profile，没有应用层静态加密保证。本版为普通“连接 Google 三件套”和“只连接 Google 日历”增加安全存储；日常 App 仍运行此前版本；本版已安装在隔离官方 Host 并完成另一账号授权后的重启读取，日常安装与旧明文真实迁移仍须单独验收。
 
 本版路径将这两种授权的 OAuth JSON 用 AES-256-GCM 加密，在 profile 中只保存密文封装及 Keychain 引用。每次保存产生独立的随机密钥，由 macOS Keychain 保存；访问令牌仅在授权控制器内存中缓存。密文与 Harness 配置位置、插件实例及授权种类绑定。普通登录不需要使用者复制密钥或 token；Keychain 无法读取或密文无法验证时，读取失败并要求重连，不回退到明文保存。
 
 已有普通 Google 明文记录只在用户明确查询、即将使用该授权获取 Google 令牌前，经过当前 owner/绑定检查与原生 revision CAS 后迁移；重新点击登录可以用新授权替换旧记录，不先迁移旧记录。单纯查看状态或刷新页面不会迁移、写配置或查询 Google。插件启动可以只读取当前两个加密记录对应的自有 Keychain 项以准备内存状态，不会遍历钥匙串。当前实现限定 macOS；其他平台不以明文降级来冒充相同安全保证。实现见 [`google-token-vault.js`](../src/google-token-vault.js)。
 
-该补强**不覆盖手工填写的高级 `googleRefreshToken` 兼容入口，也不覆盖 flomo、滴答、Harness 会话或历史备份**。不能据此宣称所有凭据和资料都已静态加密。既有明文备份也不会被新连接自动改写。对本版包的本机安装、真实 Keychain 迁移、重启恢复和新用户开箱，需要各自留下验收记录；具体状态见[公众接入准备](google-public-onboarding.md)。
+该补强**不覆盖手工填写的高级 `googleRefreshToken` 兼容入口，也不覆盖 flomo、滴答、Harness 会话或历史备份**。不能据此宣称所有凭据和资料都已静态加密。既有明文备份也不会被新连接自动改写。本版隔离官方 Host 的安装及另一账号授权后重启读取已有记录；日常 App 升级、旧明文真实迁移、完整新用户开箱仍需各自验收；具体状态见[公众接入准备](google-public-onboarding.md)。
 
 读取的资料可能进入用户本机 Harness 会话、宿主记录及所配置的模型上下文；通过微信回答还会经过微信桥接和微信通道。如果使用云模型，相关内容会离开电脑。Google 授权令牌不汇总到维护者的 Google 账号，也不经维护者的 Finvo 服务器，但不能把这点写成“所有私人资料永不出电脑”。连接本身不会自动开启持续扫描、日报或定时推送。
 
@@ -76,9 +76,9 @@ GitHub 的 [push protection 官方流程](https://docs.github.com/en/code-securi
 
 ## 预览版可用范围与公开验证
 
-2026-10-22 本轮控制台已回读为 **External / In production**，显示累计 1 位用户、生命周期 100 位用户上限及需要验证。Google 登录已退出 Testing 的测试名单制，非名单账号可以尝试发起本人授权，但仍可能看到未验证提示或受到组织管理员、账号保护政策及累计 cap 限制。陌生账号的真实授权与三项读取尚未验收，不能宣传“所有读者安装后都已经可用”。具体状态见[公众接入准备](google-public-onboarding.md)及 [Google Audience 说明](https://support.google.com/cloud/answer/15549945?hl=en)。
+2026-10-22 最近一次控制台回读为 **External / In production**，显示累计 1 位用户、生命周期 100 位用户上限及需要验证；后续读取没有重新核对 Cloud 名单或新的累计数。Google 登录已退出 Testing 的测试名单制，非名单账号可以尝试发起本人授权，但仍可能看到未验证提示或受到组织管理员、账号保护政策及累计 cap 限制。2026-10-23 本人确认使用另一 Google 账号完成授权；本版隔离官方 Host 重启后，Gmail 近七天搜索、primary 日历未来 24 小时和 Drive 文件名搜索各 limit1 均返回一项，日历为非空结果。该身份区别仅来自本人确认，没有追加 email/sub scope 或独立身份请求，也未核对是否处于 Cloud 测试名单。Gmail 未读完整正文或附件，Drive 未读正文；未调用模型、发送微信或建计划。此单账号结果不能宣传为“所有读者安装后都已经可用”。具体状态见[公众接入准备](google-public-onboarding.md)及 [Google Audience 说明](https://support.google.com/cloud/answer/15549945?hl=en)。
 
-发布 GitHub 安装包、切换 In production、完成品牌或 scope 验证，以及真实新用户授权是不同结果。目前没有确认 Google 品牌和三项 scope 验证已通过。Search Console 已确认项目 URL-prefix 所有权，品牌校验仍等待这项新验证同步；Google 提示可能需 24 小时，scope 验证入口当前不可提交，尚未提交 scope 审核。这不是“24 小时后必定通过”的承诺。先前本人测试账号的有限读取仍只证明当时的验收范围；切换受众不把这些历史测试变成新用户证明，也不证明旧 Testing 授权已经获得新的长期有效期。
+发布 GitHub 安装包、切换 In production、完成品牌或 scope 验证，以及真实新用户授权是不同结果。目前没有确认 Google 品牌和三项 scope 验证已通过。Search Console 已确认项目 URL-prefix 所有权，品牌校验仍等待这项新验证同步；Google 提示可能需 24 小时，scope 验证入口当前不可提交，尚未提交 scope 审核。这不是“24 小时后必定通过”的承诺。先前本人测试账号的有限读取仍只证明当时的验收范围；本版另一账号的有界实读另行记录。切换受众和本次重启读取都不证明任意账号可用、长期可靠，或旧 Testing 授权已获得新的长期有效期。
 
 `gmail.readonly` 和全盘 `drive.readonly` 属于受限权限，分别见 [Gmail scope 分类](https://developers.google.com/workspace/gmail/api/auth/scopes) 与 [Drive scope 分类](https://developers.google.com/workspace/drive/api/guides/api-specific-auth)。[Google 受限权限验证说明](https://developers.google.com/identity/protocols/oauth2/production-readiness/restricted-scope-verification) 对通过第三方服务器访问或传输受限数据规定了额外评估要求。Dot 可以把内容交给配置的云模型，不能仅凭“桌面插件”身份推定符合纯本机数据处理的豁免。
 

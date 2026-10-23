@@ -5,7 +5,7 @@
 - 普通 Google 三件套、单独日历的点击登录新增 macOS Keychain 密钥 + AES-256-GCM 本机存储；已有普通明文授权仅在明确查询前经过 guard 和原生 CAS 迁移，状态刷新不写配置。高级手填凭据、会话和备份不在该保证范围。
 - 授权按钮前增加资料用途说明、隐私链接和明确同意文案，说明配置模型与微信的数据路径。
 - 修复安全存储取消、迟到宿主写入及未知配置读取时的密钥保留竞态；单独日历缺少密钥时，不静默改用三件套账号。
-- Google 受众已切为 External / In production，退出测试白名单制；仍有未验证应用提示、累计 100 个账号上限，陌生账号实测未完成。Search Console 项目 URL-prefix 已验证；品牌校验等待新所有权同步，Google 提示可能需 24 小时，scope 验证入口尚不可提交，未把材料准备当作已提交或已通过。
+- Google 受众已切为 External / In production，退出测试白名单制；仍有未验证应用提示、累计 100 个账号上限。2026-10-23 本人确认的另一 Google 账号已在本版隔离官方 Host 重启后完成三项各 limit1 真实读取：Gmail 近七天搜索元数据、primary 日历未来 24 小时的非空结果、Drive 文件名搜索元数据；不读完整邮件、附件或 Drive 正文。Cloud 名单与新的累计数未回读，不推广为任意账号通过。Search Console 项目 URL-prefix 已验证；品牌校验等待新所有权同步，Google 提示可能需 24 小时，scope 验证入口尚不可提交，未把材料准备当作已提交或已通过。
 - 源码双 SDK 回归、独立复审及隔离官方 Host 检查记录见[验证记录](docs/verification.md)。日常 App 仍为此前 `0.12.0-preview.3`，未把旧版本本人读取或旧手机收件改写为本版验收。
 
 [固定版本与安装资产](https://github.com/oxmumu3/dsh-project-companion/releases/tag/v0.12.0-preview.4) · [安装说明](docs/install.md)。

@@ -1,6 +1,26 @@
 # 验证记录
 
-## 0.12.0-preview.4 · Google 公众接入候选（2026-10-22）
+## 0.12.0-preview.4 · 本人确认的另一 Google 账号有界读取（2026-10-23）
+
+本版已安装到隔离官方 Host，并在本人完成授权后重启。日常 App 仍为 `0.12.0-preview.3`；本节仅记录授权后有界读取，不证明日常升级、公开 Release 资产、完整新用户开箱、微信收件或模型质量。
+
+- 本人确认授权使用的是另一 Google 账号。该身份区别来自本人直接确认，不是独立账号身份校验；没有追加 email/sub scope 或请求身份接口，也没有回读 Google Cloud 测试名单及新的累计用户数。最近一次 Cloud 回读仍是 2026-10-22 的 External / In production、1 / 100 和 requires verification，不将旧计数推断为本轮之后的计数。
+- 2026-10-23 06:34:42–44Z，在已安装本版的隔离官方 Host 重启后，按已确认范围调用原生 `personal_context`，三来源各 `limit1`，均成功并标注裁剪：
+
+| 来源 | 实际范围与返回 | 未覆盖 |
+| --- | --- | --- |
+| Gmail | `newer_than:7d` 搜索返回一项元数据，可能含最多 1200 字符的 snippet | 未读取完整邮件正文、附件或后续页 |
+| Calendar | `primary`，2026-10-23T06:34:43.361Z 至 2026-10-24T06:34:43.361Z，返回一项、`hasMore:true` | 不代表该窗口只有一项，不覆盖全部日历、日常 App 或手机呈现 |
+| Drive | 文件名含小写 a 的首页搜索，返回一项元数据 | 未读文档正文、后续页或全盘扫描 |
+
+- 逐项断开临时来源启用关系后，前后都保留既有一项目、零计划、零提醒、零 outbox；原绑定 owner 仍禁用。本轮没有调用模型、发送微信或创建计划，Host 正常退出，未把私人正文保存进探针证据。
+- 首次 runner 错将前置条件硬设为零项目，因此在发出查询前失败；未把失败改写为通过。核对既有一项目后，将基线改为保留该项目再重跑，以上成功轮次前后状态相同。首次失败及诊断证据继续保留。
+- 脱敏证据：本地 `output/dsh-dot-google-public-onboarding-2026-10-22/human-consent-native-proof.json`（本人确认与授权状态）和 `output/dsh-dot-google-public-onboarding-2026-10-22/bounded-read-preparation/evidence.json`（`PASS_BOUNDED_REAL_READS`、时间、数量、范围与状态保留）。不公开私人 token、邮件/事件标题、文件名或来源 ID。
+- 本版重启后的三项有限读取已通过，但不证明所有公众账号、长期刷新/撤权、旧明文真实迁移、日常 App 升级、持续监测、微信或模型链路。Google 正式品牌和 scope 审核仍未完成；最近控制台要求 Search Console 新所有权等待可能 24 小时同步，scope 入口 disabled、尚未提交，累计 100 位用户 cap 仍未解除。
+
+## 0.12.0-preview.4 · Google 公众接入初始候选（2026-10-22，历史阶段）
+
+本节记录初始候选阶段；2026-10-23 另一账号有界读取的后续结果见文首，不回写为本阶段已实读。
 
 普通 Google 两种点击登录增加 Keychain 随机密钥与 AES-256-GCM 本机封装、明确查询前旧记录迁移、授权前数据披露/隐私链接及肯定同意。独立审读覆盖取消后迟到提交、暂时不可读配置、Calendar 跨账号回退及启动卸载，相关90项通过；隐私链接独立29项通过。
 
@@ -8,7 +28,7 @@
 
 最终75个运行文件已在新建0700隔离官方Host安装核对；未认证接口401，原生Google入口exact3只读scope、S256、state与loopback回调通过；无私人同意、私人读取、模型调用、微信发送或新计划。最终客户端界面已显示真实隐私链接、模型/微信披露与启用的同意按钮。合成macOSKeychain随机密钥写入、读取、删除闭环通过，不涉及用户授权令牌。
 
-Google专用项目已切 External/In production，累计1/100、仍需verification；无需测试白名单不等于完成公众验收。SearchConsole项目URL-prefix HTML所有权通过；OAuth品牌校验要求等待24h同步，scope验证入口disabled，尚未提交。新账号本人真实授权与三项读取仍待完成。日常App仍preview3，另有AI分身任务处理，保留现场未退出；本候选不借用旧安装或手机收件作为新版证明。本段记录候选验收，不证明已有公开Release或新账号成功。
+Google专用项目已切 External/In production，累计1/100、仍需verification；无需测试白名单不等于完成公众验收。SearchConsole项目URL-prefix HTML所有权通过；OAuth品牌校验要求等待24h同步，scope验证入口disabled，尚未提交。本阶段新账号本人真实授权与三项读取当时仍待完成，后续结果见文首。日常App仍preview3，另有AI分身任务处理，保留现场未退出；本候选不借用旧安装或手机收件作为新版证明。本段记录候选验收，不证明已有公开Release或新账号成功。
 
 本轮脱敏证据位于本地 output/dsh-dot-google-public-onboarding-2026-10-22/，包括矩阵基础与增量、独立审读、最终Host/UI、合成Keychain及Google生产受众/待同步证明；不将私人profile或授权值装入公开包。
 

@@ -14,7 +14,7 @@
 
 也可以直接下载[完整 macOS 安装包](https://github.com/oxmumu3/dsh-project-companion/releases/download/v0.12.0-preview.4/dsh-dot-0.12.0-preview.4-macos.zip)，解压并双击 `Install.command`。完整目录须一起保留，不要只移出入口文件。校验文件：[ZIP SHA256](https://github.com/oxmumu3/dsh-project-companion/releases/download/v0.12.0-preview.4/dsh-dot-0.12.0-preview.4-macos.zip.sha256)；全部发布资产见[固定版本页面](https://github.com/oxmumu3/dsh-project-companion/releases/tag/v0.12.0-preview.4)。
 
-Google 三件套已切为 External / In production，无需测试账号白名单；正式权限验证与陌生账号首次授权实测仍待完成，有未验证应用提示与累计 100 个账号上限；flomo 需要 MAX。两者都是可选来源，不影响本地项目和微信基本流程。私人来源按需读取，连接不会自动开启持续扫描或推送。完整能力与真实验收范围见[连接说明](https://github.com/oxmumu3/dsh-project-companion/blob/v0.12.0-preview.4/docs/context-sources.md)和[验证记录](https://github.com/oxmumu3/dsh-project-companion/blob/v0.12.0-preview.4/docs/verification.md)。
+Google 三件套已切为 External / In production，无需测试账号白名单；正式权限验证仍待完成，有未验证应用提示与累计 100 个账号上限。2026-10-23 本人确认的另一账号已在本版隔离官方 Host 重启后完成 Gmail、非空主日历、Drive 各一项有界读取；未独立核对账号名单，不代表任意账号均可用。flomo 需要 MAX。两者都是可选来源，不影响本地项目和微信基本流程。私人来源按需读取，连接不会自动开启持续扫描或推送。完整能力与真实验收范围见[连接说明](https://github.com/oxmumu3/dsh-project-companion/blob/v0.12.0-preview.4/docs/context-sources.md)和[验证记录](https://github.com/oxmumu3/dsh-project-companion/blob/v0.12.0-preview.4/docs/verification.md)。
 
 ## 安装后
 
@@ -42,4 +42,4 @@ Google 三件套已切为 External / In production，无需测试账号白名单
 
 完整目录包含 `Install.command`、`bundle-manifest.json`、安装脚本、两个固定 tgz 和完整许可证。原始桥接来源与固定差异见[桥接来源说明](https://github.com/oxmumu3/dsh-project-companion/blob/v0.12.0-preview.4/bridge-maintenance/README.md)。有 Node 时可在完整目录运行 `node scripts/install.mjs --bundle-dir . --dry-run`；显式安装加 `--install`。没有独立 Node 时，入口使用官方 App 自带运行时。
 
-本版新增 Google 授权前的数据用途说明，以及普通三件套、单独日历的 Keychain 密钥 + AES-256-GCM 存储。旧普通授权只在明确查询前迁移，状态刷新不写配置；高级手填凭据、会话和历史备份不在该补强范围。源码回归、独立审读与隔离官方 Host 检查见验证记录。日常 App 仍运行此前 `0.12.0-preview.3`，其本人有限读取不能作为本版升级、新用户开箱或手机验收证明；长期运行、滴答任务正文、Drive 文档正文和非空日程仍分别待验。
+本版新增 Google 授权前的数据用途说明，以及普通三件套、单独日历的 Keychain 密钥 + AES-256-GCM 存储。旧普通授权只在明确查询前迁移，状态刷新不写配置；高级手填凭据、会话和历史备份不在该补强范围。源码回归、独立审读及本版隔离官方 Host 的另一账号三项有界实读见验证记录。日常 App 仍运行此前 `0.12.0-preview.3`，历史读取不能作为本版日常升级、新用户完整开箱或手机验收证明；长期运行、滴答任务正文、Drive 文档正文和非空日程的日常 App／手机呈现仍分别待验。
