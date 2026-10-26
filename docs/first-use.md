@@ -1,6 +1,6 @@
 # 第一次使用 DSH Dot
 
-这是奥克斯木木山制作的社区项目助理，为已有官方 DeepSeek Harness 增加项目与微信流程，非官方产品。本页面向 `0.12.0-preview.4`，安装入口见[安装说明](install.md)。本版增加 Google 授权前用途说明和普通点击登录的加密存储。Google 已切为 External / In production，无需测试白名单，但正式权限验证仍待完成，有未验证提示与累计 100 个账号上限；本人确认的另一账号已在本版隔离 Host 重启后完成三项各一项读取，不代表任意账号可用；flomo 需要 MAX。历史有限读取与本版源码、宿主、手机验收分别见[验证记录](verification.md)。
+这是牛村木木山制作的社区项目助理，为已有官方 DeepSeek Harness 增加项目与微信流程，非官方产品。本页面向 `0.12.0-preview.4`，安装入口见[安装说明](install.md)。本版增加 Google 授权前用途说明和普通点击登录的加密存储。Google 已切为 External / In production，无需测试白名单，但正式权限验证仍待完成，有未验证提示与累计 100 个账号上限；本人确认的另一账号已在本版隔离 Host 重启后完成三项各一项读取，不代表任意账号可用；flomo 需要 MAX。历史有限读取与本版源码、宿主、手机验收分别见[验证记录](verification.md)。
 
 1. 先按[安装说明](install.md)准备受支持的官方 Harness。从[0.12.0-preview.4 发布页](https://github.com/oxmumu3/dsh-project-companion/releases/tag/v0.12.0-preview.4)下载同版本完整包。解压完整目录，保存工作并正常退出 Harness，再双击 `Install.command`。没有 Harness 时入口只指引安装官方应用，不会自动装好一整套；模型登录与配置由你本人完成。
 2. 打开 Harness，从左侧打开「DSH Dot」，首次使用时主按钮是「连接微信」。全新或空白会话按宿主规则显示首次引导；已有工作对话不会被抢走。

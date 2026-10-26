@@ -46,7 +46,7 @@ async function harness(t,options={}){
   const optionsForAdapter={ctx,clock:()=>now,hostTimeZone:()=> 'America/Mexico_City',authorizeRoot:async r=>allow&&authorizedRoots.has(r),canRun:async()=>allowedRun,readBinding:async sessionId=>options.readBinding?options.readBinding(sessionId):currentBinding,readConnection:async()=>options.readConnection?options.readConnection():{state:'bound',sessionId:owner.id,bindingKey:'d'.repeat(64)},readNativeRoute:async sessionId=>options.readNativeRoute?options.readNativeRoute(sessionId):(currentBinding===null?{kind:'unbound'}:{kind:'bound',binding:currentBinding}),createScheduler:deps=>{const scheduler=new ProactiveScheduler(deps);schedulers.push(scheduler);return scheduler;}};
   let adapter=createProjectFollowup(optionsForAdapter);
   const args={root,sessionId:owner.id,everyMinutes:30,projectLabel:'测试项目'};
-  const drain=async()=>{for(const s of schedulers)await s.driveChain;};
+  const drain=async()=>{let chains;do{chains=schedulers.map(s=>s.driveChain);await Promise.all(chains);}while(schedulers.some((s,i)=>s.driveChain!==chains[i]));};
   const tick=async()=>{for(const s of schedulers)s.requestDrive();await drain();};
   t.after(async()=>{await adapter.close();await owner.scopeDispose();await ctx.fiber.dispose();await rm(temp,{recursive:true,force:true});});
   return{root,temp,ctx,agents,owner,schedulers,messages,mounts,resumes,tools,args,drain,tick,get adapter(){return adapter;},transportRuns:()=>transportRuns,authorize:r=>authorizedRoots.add(r),advance:minutes=>{now=new Date(now.getTime()+minutes*60000);},advanceSeconds:seconds=>{now=new Date(now.getTime()+seconds*1000);},setBinding:b=>{currentBinding=b;},deny:()=>{allow=false;},pause:()=>{allowedRun=false;},unpause:()=>{allowedRun=true;},reopen:async()=>{await adapter.close();adapter=createProjectFollowup(optionsForAdapter);return adapter;}};
@@ -56,6 +56,34 @@ test('no plan or timer is created at construction or a first read-only status',a
   const h=await harness(t);assert.equal(h.schedulers.length,0);
   const s=await h.adapter.status(h.args);assert.equal(s.enabled,false);assert.equal(h.schedulers.length,0);
   await assert.rejects(access(join(h.root,'.dsh')));
+});
+
+test('passive inspection confirms absence without creating files or activating a source',async t=>{
+  const h=await harness(t);assert.equal(typeof h.adapter.inspect,'function');
+  assert.deepEqual(await h.adapter.inspect({...h.args,expectedBinding:{sessionId:h.owner.id,bindingKey:'d'.repeat(64)}}),{followup:null,once:null});
+  assert.deepEqual(h.schedulers,[]);assert.deepEqual(h.resumes,[]);assert.deepEqual(h.messages,[]);
+  await assert.rejects(access(join(h.root,'.dsh')));
+});
+
+test('passive cold inspection does not cache, rewrite or restart stored plans, and rejects a different owner or pairing',async t=>{
+  const h=await harness(t);await h.adapter.configure(h.args);await h.adapter.checkOnce({...h.args,delaySeconds:60,delivery:'wechat'});await h.drain();await h.reopen();
+  const files=['.dsh/dot-followup/scope.json','.dsh/dot-followup/alarms.json','.dsh/dot-checks/'+createHash('sha256').update(h.owner.id).digest('hex')+'/scope.json'];
+  const before=await Promise.all(files.map(file=>readFile(join(h.root,file),'utf8')));const count=h.schedulers.length;
+  const args={...h.args,expectedBinding:{sessionId:h.owner.id,bindingKey:'d'.repeat(64)}};
+  assert.equal(typeof h.adapter.inspect,'function');const value=await h.adapter.inspect(args);
+  assert.equal(value.followup.enabled,true);assert.equal(value.followup.running,false);assert.equal(value.once.status,'blocked');
+  await assert.rejects(h.adapter.inspect({...args,sessionId:'another-owner'}));
+  h.setBinding({...binding,userHash:'c'.repeat(64)});await assert.rejects(h.adapter.inspect(args));h.setBinding(binding);
+  await h.reopen();assert.deepEqual(await Promise.all(files.map(file=>readFile(join(h.root,file),'utf8'))),before);
+  assert.equal(h.schedulers.length,count);assert.deepEqual(h.resumes,[]);assert.deepEqual(h.messages,[]);
+});
+
+test('passive inspection rejects binding replacement during a read and requires the expected UI binding',async t=>{
+  let reads=0;const h=await harness(t,{readConnection:async()=>({state:'bound',sessionId:'session-original',bindingKey:(++reads===1?'d':'e').repeat(64)})});
+  assert.equal(typeof h.adapter.inspect,'function');
+  await assert.rejects(h.adapter.inspect({...h.args,expectedBinding:{sessionId:h.owner.id,bindingKey:'d'.repeat(64)}}));
+  await assert.rejects(h.adapter.inspect(h.args));
+  assert.equal(h.schedulers.length,0);await assert.rejects(access(join(h.root,'.dsh')));
 });
 
 test('an explicit cadence persists one original-session alarm and cancel only removes that plan',async t=>{
@@ -235,7 +263,7 @@ test('cancelling an active wake still permits its reclaim tool to end silently',
 });
 
 test('autonomous wake denies the reserved code transport before any PTC execution',async t=>{
-  const mode=process.env.DSH_TEST_SDK_VERSION==='0.2.1-rc.2'?'ptc':'both';
+  const mode=process.env.DSH_TEST_SDK_VERSION==='0.2.0-rc.2'?'both':'ptc';
   let result;const h=await harness(t,{mode,onWake:async({agent,ctx})=>{
     result=await ctx.tools.execute({callId:'autonomous-code-transport',name:'run_code',arguments:{code:'return "must not execute";',description:'Synthetic code transport deny regression'},agent,signal:new AbortController().signal});
   }});
@@ -395,7 +423,7 @@ test('one-off requested checks run inside quiet hours while existing recurring a
 
 test('a native once enforces read-only tools and checks its route again before source reads',async t=>{
   let changedResult;const outcomes=[];
-  const mode=process.env.DSH_TEST_SDK_VERSION==='0.2.1-rc.2'?'ptc':'both';
+  const mode=process.env.DSH_TEST_SDK_VERSION==='0.2.0-rc.2'?'both':'ptc';
   const h=await harness(t,{mode,onWake:async({agent,ctx})=>{
     for(const [name,args] of [['send_wechat',{}],['bash',{}],['project_companion',{action:'coordinate',project:h.root}],['project_companion',{action:'remember',project:h.root}],['run_code',{code:'return \"denied\";',description:'deny one-off code'}]]){
       outcomes.push(await ctx.tools.execute({callId:'once-deny-'+outcomes.length,name,arguments:args,agent,signal:new AbortController().signal}));

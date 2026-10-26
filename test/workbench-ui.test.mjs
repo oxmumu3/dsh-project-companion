@@ -104,7 +104,7 @@ test('missing or empty structured memory stays explicit without inventing goals 
 
 test('desktop appearance controls apply and restore only after explicit clicks, with no task request',async()=>{
   const h=await harness({appearance:true});h.render();await h.flush();let view=h.render();
-  assert.equal(button(view,'启用 Dot 外观'),undefined);button(view,'连接与设置').props.onClick();view=h.render();
+  assert.equal(button(view,'启用 Dot 外观'),undefined);button(view,'连接').props.onClick();view=h.render();
   assert.equal(h.themeLayers.length,0);const enable=button(view,'启用 Dot 外观');assert.ok(enable);assert.equal(enable.props.disabled,false);
   await enable.props.onClick();view=h.render();assert.equal(h.themeLayers.filter(x=>x.active).length,1);assert.ok(button(view,'恢复原生外观'));
   await button(view,'恢复原生外观').props.onClick();assert.equal(h.themeLayers.filter(x=>x.active).length,0);assert.equal(h.requests.length,1);assert.equal(h.opened.length,0);h.dispose();
@@ -118,9 +118,9 @@ test('known native session titles aid explicit choice and missing cache stays un
 
 test('unbound empty snapshot remains usable and never invents a connection or dispatch',async()=>{
   const h=await harness();h.context.snapshot={...sample(),connection:{state:'awaiting-message'},projects:[],jobs:[],reminders:[],counts:{projects:0,activeReminders:0}};
-  h.render();await h.flush();let view=h.render();assert.match(text(view),/先连接，再选一个项目/);assert.ok(button(view,'关注的项目'));assert.ok(button(view,'连接与设置'));
+  h.render();await h.flush();let view=h.render();assert.match(text(view),/先连接，再选一个项目/);assert.ok(button(view,'项目'));assert.ok(button(view,'连接'));
   assert.match(text(view),/微信尚未确认连接/);assert.equal(button(view,'打开 Dot 会话'),undefined);
-  button(view,'关注的项目').props.onClick();view=h.render();assert.match(text(view),/还没有关注项目/);
+  button(view,'项目').props.onClick();view=h.render();assert.match(text(view),/还没有关注项目/);
   assert.equal(h.opened.length,0);assert.equal(h.requests.length,1);assert.deepEqual(posts(h),[]);h.dispose();
 });
 
@@ -163,7 +163,7 @@ test('more active reminders than the visible window are labelled rather than cal
 
 test('first-use home puts WeChat connection in primary position without dispatching on mount',async()=>{
  const h=await harness();h.context.snapshot={...sample(),connection:{state:'awaiting-message'},projects:[],jobs:[],reminders:[]};h.render();await h.flush();const view=h.render();
- assert.match(text(view),/把 Dot 接到微信里/);const connect=button(view,'连接微信');assert.ok(connect);assert.equal(connect.props.className,'pc_dot_primary');assert.ok(button(view,'先在电脑试用'));assert.equal(h.requests.length,1);assert.equal(h.opened.length,0);h.dispose();
+ assert.match(text(view),/把 Dot 接到微信里/);const connect=button(view,'连接微信');assert.ok(connect);assert.equal(connect.props.className,'pc_dot_primary');assert.ok(button(view,'先在电脑了解'));assert.equal(h.requests.length,1);assert.equal(h.opened.length,0);h.dispose();
 });
 
 test('home natural-language entry preserves input when native preparation is unavailable',async()=>{
@@ -179,7 +179,7 @@ test('project quick chat prepares its own native prompt without erasing a differ
   button(h.render(),'公开项目 A').props.onClick();await button(h.render(),'和 Dot 聊这个项目').props.onClick();
   assert.equal(prepared.length,1);assert.match(prepared[0].prompt,/关于项目「公开项目 A」.*请结合这个项目的最新资料/s);assert.equal(prepared[0].clearPreviousDraft,false);
   assert.equal(nodes(h.render(),n=>n.type==='textarea'&&n.props['aria-label']==='交代给 Dot 的事情')[0].props.value,'另一个尚未发送的具体问题');
-  assert.deepEqual(h.opened,['dot-source']);assert.deepEqual(h.panels,[null]);assert.equal(releases,1);assert.equal(h.requests.length,1);assert.deepEqual(actionPosts(h),[]);h.dispose();
+  assert.deepEqual(h.opened,['dot-source']);assert.deepEqual(h.panels,[null]);assert.equal(releases,1);assert.equal(h.requests.length,2);assert.deepEqual(actionPosts(h),[]);h.dispose();
 });
 
 test('follow-up requires a separate review and explicit confirmation before POST mutation',async()=>{
@@ -216,7 +216,7 @@ test('cancelling a correction preserves the original note and save writes only t
   const editor=nodes(view,n=>n.type==='textarea'&&n.props['aria-label']==='纠正项目记忆')[0];assert.equal(editor.props.maxLength,4000);assert.equal(editor.props.value,row.text);
   editor.props.onChange({target:{value:'   '}});assert.equal(button(h.render(),'保存纠正').props.disabled,true);assert.deepEqual(posts(h),[]);
   editor.props.onChange({target:{value:'字'.repeat(2001)}});assert.equal(button(h.render(),'保存纠正').props.disabled,true);assert.deepEqual(posts(h),[]);
-  editor.props.onChange({target:{value:'尚未保存的纠正'}});drawer(h.render()).props.onClose();assert.deepEqual(posts(h),[]);
+  editor.props.onChange({target:{value:'尚未保存的纠正'}});drawer(h.render()).props.onClose();assert.match(text(drawer(h.render())),/这次修改还没保存/);button(h.render(),'放弃修改并离开').props.onClick();assert.deepEqual(posts(h),[]);
   view=await openMemory(h);assert.equal(nodes(view,n=>n.type==='textarea'&&n.props['aria-label']==='纠正项目记忆')[0].props.value,row.text,'cancel must not replace the stored source note');
   nodes(view,n=>n.type==='textarea'&&n.props['aria-label']==='纠正项目记忆')[0].props.onChange({target:{value:'  用户明确纠正后的目标  '}});
   await button(h.render(),'保存纠正').props.onClick();view=h.render();
@@ -323,7 +323,7 @@ test('task continuation with duplicate or unwatched labels preserves the draft a
     nodes(h.render(),n=>n.type==='textarea'&&n.props['aria-label']==='交代给 Dot 的事情')[0].props.onChange({target:{value:'已有的未发送草稿'}});
     button(h.render(),'和 Dot 接着聊').props.onClick();view=h.render();assert.match(text(view),/项目范围需要你核对.*选择对应项目/);
     assert.equal(nodes(view,n=>n.type==='textarea'&&n.props['aria-label']==='交代给 Dot 的事情').length,0,'ambiguous task scope must open project selection');
-    button(view,'动态').props.onClick();view=h.render();assert.equal(nodes(view,n=>n.type==='textarea'&&n.props['aria-label']==='交代给 Dot 的事情')[0].props.value,'已有的未发送草稿');
+    button(view,'今天').props.onClick();view=h.render();assert.equal(nodes(view,n=>n.type==='textarea'&&n.props['aria-label']==='交代给 Dot 的事情')[0].props.value,'已有的未发送草稿');
     assert.equal(nodes(view,n=>n.type==='select'&&n.props['aria-label']==='这句话关联的项目')[0].props.value,'p2');assert.equal(h.requests.length,1);assert.deepEqual(actionPosts(h),[]);assert.equal(h.opened.length,0);h.dispose();
   }
 });
@@ -370,7 +370,7 @@ test('preparing a native draft locks local input so delayed readiness cannot era
 test('connection controls precede appearance and project-free questions have an explicit scope',async()=>{
  const h=await harness({appearance:true});try{h.context.snapshot.projects=[];h.render();await h.flush();let view=h.render();
   const selector=nodes(view,n=>n.type==='select'&&n.props['aria-label']==='这句话关联的项目')[0];assert.ok(selector);assert.match(text(selector),/不关联项目/);assert.equal(nodes(selector,n=>n.type==='option')[0].props.value,'');
-  button(view,'连接与设置').props.onClick();view=h.render();const sequence=nodes(view,n=>typeof n.type==='function'&&n.type.name==='ContextPanel'||n.type==='section'&&text(n).includes('界面外观'));
+  button(view,'连接').props.onClick();view=h.render();const sequence=nodes(view,n=>typeof n.type==='function'&&n.type.name==='ContextPanel'||n.type==='section'&&text(n).includes('界面外观'));
   assert.equal(sequence[0].type.name,'ContextPanel');assert.equal(h.requests.length,1);assert.deepEqual(posts(h),[]);
  }finally{h.dispose();}
 });
@@ -386,6 +386,128 @@ test('choosing no project survives a status refresh and project shortcuts preser
  const h=await harness();try{h.render();await h.flush();let view=h.render();nodes(view,n=>n.type==='select'&&n.props['aria-label']==='这句话关联的项目')[0].props.onChange({target:{value:''}});
   await button(h.render(),'刷新').props.onClick();view=h.render();assert.equal(nodes(view,n=>n.type==='select'&&n.props['aria-label']==='这句话关联的项目')[0].props.value,'');
   nodes(view,n=>n.type==='textarea'&&n.props['aria-label']==='交代给 Dot 的事情')[0].props.onChange({target:{value:'保留这个草稿'}});button(h.render(),'和 Dot 接着聊').props.onClick();view=h.render();assert.equal(nodes(view,n=>n.type==='textarea'&&n.props['aria-label']==='交代给 Dot 的事情')[0].props.value,'保留这个草稿');assert.equal(nodes(view,n=>n.type==='select'&&n.props['aria-label']==='这句话关联的项目')[0].props.value,'');
-  button(view,'关注的项目').props.onClick();button(h.render(),'继续聊').props.onClick();view=h.render();button(view,'动态').props.onClick();view=h.render();assert.equal(nodes(view,n=>n.type==='textarea'&&n.props['aria-label']==='交代给 Dot 的事情')[0].props.value,'保留这个草稿');assert.equal(h.opened.length,0);assert.deepEqual(posts(h),[]);
+  button(view,'项目').props.onClick();button(h.render(),'继续聊').props.onClick();view=h.render();button(view,'今天').props.onClick();view=h.render();assert.equal(nodes(view,n=>n.type==='textarea'&&n.props['aria-label']==='交代给 Dot 的事情')[0].props.value,'保留这个草稿');assert.equal(h.opened.length,0);assert.deepEqual(posts(h),[]);
  }finally{h.dispose();}
+});
+
+test('V2 navigation preserves a conversation draft and its scope while inspecting another project',async()=>{
+  const h=await harness();try{h.render();await h.flush();let view=h.render();
+    for(const name of ['今天','项目','记忆','连接'])assert.ok(nodes(view,n=>n.type==='button'&&text(n)===name).length);
+    nodes(view,n=>n.type==='select'&&n.props['aria-label']==='这句话关联的项目')[0].props.onChange({target:{value:'p1'}});
+    nodes(h.render(),n=>n.type==='textarea'&&n.props['aria-label']==='交代给 Dot 的事情')[0].props.onChange({target:{value:'只属于项目 A 的未发送问题'}});
+    button(h.render(),'公开项目 B').props.onClick();drawer(h.render()).props.onClose();button(h.render(),'记忆').props.onClick();button(h.render(),'今天').props.onClick();view=h.render();
+    assert.equal(nodes(view,n=>n.type==='textarea')[0].props.value,'只属于项目 A 的未发送问题');assert.equal(nodes(view,n=>n.type==='select'&&n.props['aria-label']==='这句话关联的项目')[0].props.value,'p1');
+    assert.equal(h.requests.length,1);assert.deepEqual(actionPosts(h),[]);
+  }finally{h.dispose();}
+});
+
+test('scoped memory page has source provenance and never mixes another project into the editor',async()=>{
+  const h=await harness(),row=memoryRow('scope-a','context','项目 A 的背景');seedMemory(h,row);h.context.snapshot.projects[1].overview={available:true,goals:[],blockers:[],nextSteps:[],recent:[memoryRow('scope-b','context','项目 B 的另一份背景')]};
+  h.context.onFetch=(url)=>url===endpoint?Response.json(h.context.snapshot):memoryDetail(row);
+  try{h.render();await h.flush();button(h.render(),'记忆').props.onClick();let view=h.render();assert.match(text(view),/项目 A 的背景/);assert.doesNotMatch(text(view),/项目 B 的另一份背景/);assert.match(text(view),/不是跨项目的个人画像/);assert.ok(button(view,'查看项目来源'));
+    await button(view,'纠正或忘记').props.onClick();view=h.render();assert.match(text(drawer(view)),/只修改「公开项目 A」/);assert.equal(memoryReads(h)[0].body.projectId,'p1');assert.equal(memoryReads(h)[0].body.id,'scope-a');
+  }finally{h.dispose();}
+});
+
+test('dirty memory close offers continue, keep and discard; only explicit save writes',async()=>{
+  const h=await harness(),row=memoryRow('kept','context','原始背景');seedMemory(h,row);h.context.onFetch=url=>url===endpoint?Response.json(h.context.snapshot):memoryDetail(row);
+  try{h.render();await h.flush();let view=await openMemory(h);nodes(view,n=>n.type==='textarea'&&n.props['aria-label']==='纠正项目记忆')[0].props.onChange({target:{value:'保留的纠正草稿'}});
+    drawer(h.render()).props.onClose();view=h.render();assert.ok(button(view,'继续编辑'));assert.ok(button(view,'保留草稿并离开'));assert.ok(button(view,'放弃修改并离开'));assert.equal(posts(h).length,0);
+    button(view,'继续编辑').props.onClick();assert.equal(nodes(drawer(h.render()),n=>n.type==='textarea')[0].props.value,'保留的纠正草稿');
+    drawer(h.render()).props.onClose();button(h.render(),'保留草稿并离开').props.onClick();assert.equal(drawer(h.render()),undefined);
+    view=await openMemory(h);assert.equal(nodes(drawer(view),n=>n.type==='textarea')[0].props.value,'保留的纠正草稿');assert.equal(memoryReads(h).length,2,'resume rechecks the exact original record');
+    drawer(h.render()).props.onClose();button(h.render(),'放弃修改并离开').props.onClick();view=await openMemory(h);assert.equal(nodes(drawer(view),n=>n.type==='textarea')[0].props.value,row.text);assert.equal(posts(h).length,0);
+  }finally{h.dispose();}
+});
+
+test('switching pages uses the same dirty-memory policy and retained drafts reject changed source text',async()=>{
+  const h=await harness(),row=memoryRow('conflict','context','原始背景');seedMemory(h,row);let current=row;h.context.onFetch=url=>url===endpoint?Response.json(h.context.snapshot):memoryDetail(current);
+  try{h.render();await h.flush();let view=await openMemory(h);nodes(drawer(view),n=>n.type==='textarea')[0].props.onChange({target:{value:'旧版原文上的修改'}});button(h.render(),'项目').props.onClick();assert.match(text(drawer(h.render())),/这次修改还没保存/);
+    button(h.render(),'保留草稿并离开').props.onClick();view=h.render();assert.match(text(view),/每件事的背景/);assert.equal(drawer(view),undefined);
+    current={...row,text:'另一个入口已纠正的当前原文'};button(view,'今天').props.onClick();view=await openMemory(h);assert.equal(nodes(drawer(view),n=>n.type==='textarea')[0].props.value,current.text);assert.match(text(view),/原文已变化.*旧草稿未套用/);assert.match(text(nodes(view,n=>n.props['data-dot-conflict-draft'])[0]),/旧版原文上的修改/);assert.equal(posts(h).length,0);button(view,'使用保留草稿继续修改').props.onClick();assert.equal(nodes(drawer(h.render()),n=>n.type==='textarea')[0].props.value,'旧版原文上的修改');assert.equal(posts(h).length,0);
+  }finally{h.dispose();}
+});
+
+test('follow-up drafts stay with their project and discard never schedules anything',async()=>{
+  const h=await harness();h.context.onFetch=(url,options)=>url===endpoint?Response.json(h.context.snapshot):Response.json({action:'followup_status',projectId:JSON.parse(options.body).projectId,followup:null,once:null});
+  try{h.render();await h.flush();button(h.render(),'公开项目 A').props.onClick();await button(h.render(),'查看或安排跟进').props.onClick();nodes(drawer(h.render()),n=>n.type==='select'&&n.props.value==='once')[0].props.onChange({target:{value:'repeat'}});nodes(drawer(h.render()),n=>n.type==='select'&&n.props.value===60)[0].props.onChange({target:{value:'180'}});
+    drawer(h.render()).props.onClose();button(h.render(),'保留草稿并离开').props.onClick();button(h.render(),'公开项目 B').props.onClick();await button(h.render(),'查看或安排跟进').props.onClick();assert.ok(nodes(drawer(h.render()),n=>n.type==='select'&&n.props.value==='once').length);drawer(h.render()).props.onClose();
+    button(h.render(),'公开项目 A').props.onClick();await button(h.render(),'查看或安排跟进').props.onClick();assert.ok(nodes(drawer(h.render()),n=>n.type==='select'&&n.props.value==='repeat').length);assert.ok(nodes(drawer(h.render()),n=>n.type==='select'&&n.props.value===180).length);
+    drawer(h.render()).props.onClose();button(h.render(),'放弃修改并离开').props.onClick();assert.equal(actionPosts(h).filter(r=>r.body.action!=='followup_status').length,0);
+  }finally{h.dispose();}
+});
+
+test('every scoped action uses its opening binding revision; rebinding closes drafts before further writes',async()=>{
+  const h=await harness(),row=memoryRow('binding-memory','context','绑定一的背景');seedMemory(h,row);h.context.snapshot.bindingRevision='scope-revision-one';let writes=0;
+  h.context.onFetch=(url,options)=>{if(url===endpoint)return Response.json(h.context.snapshot);const body=JSON.parse(options.body);assert.equal(body.expectedBindingRevision,'scope-revision-one');if(body.action==='memory_detail')return memoryDetail(row);writes++;return Response.json({error:'绑定已变化，请重新打开。'},{status:409});};
+  try{h.render();await h.flush();let view=await openMemory(h);nodes(drawer(view),n=>n.type==='textarea')[0].props.onChange({target:{value:'不可交给新绑定的纠正'}});await button(h.render(),'保存纠正').props.onClick();assert.equal(writes,1);assert.match(text(h.render()),/绑定已变化/);
+    h.context.snapshot={...h.context.snapshot,bindingRevision:'scope-revision-two'};await button(h.render(),'刷新').props.onClick();view=h.render();assert.equal(drawer(view),undefined);assert.match(text(view),/绑定已变化.*旧范围的草稿已关闭/);assert.equal(writes,1);
+  }finally{h.dispose();}
+});
+
+test('late follow-up status after closing cannot reopen a drawer or populate a later project',async()=>{
+  const h=await harness();let complete;h.context.onFetch=url=>url===endpoint?Response.json(h.context.snapshot):new Promise(resolve=>{complete=resolve;});
+  try{h.render();await h.flush();button(h.render(),'公开项目 A').props.onClick();const pending=button(h.render(),'查看或安排跟进').props.onClick();drawer(h.render()).props.onClose();complete(Response.json({action:'followup_status',projectId:'p1',followup:{enabled:true,everyMinutes:180},once:null}));await pending;assert.equal(drawer(h.render()),undefined);assert.equal(actionPosts(h).length,1);
+  }finally{h.dispose();}
+});
+
+test('passive result and upcoming projection show scope, truncation, cold-runner and full-history evidence',async()=>{
+  const h=await harness();h.context.snapshot.projects[0].followup={available:true,followup:{enabled:true,running:false,everyMinutes:180,nextDueAt:'2026-10-23T20:00:00Z'},once:null};h.context.snapshot.projects[1].followup={available:true,followup:null,once:null};h.context.snapshot.jobs[0].result={available:true,text:'真实缓存原回复 <script>不会运行</script>',truncated:true};
+  try{h.render();await h.flush();const view=h.render();assert.match(text(view),/真实缓存原回复 <script>不会运行<\/script>/);assert.match(text(view),/此处为摘录/);assert.match(text(view),/已保存，运行器未启动/);assert.ok(button(view,'打开完整会话历史'));assert.ok(nodes(view,n=>n.type==='details'&&n.props['data-dot-history']).length);assert.equal(nodes(view,n=>n.type==='script'||n.props.dangerouslySetInnerHTML).length,0);assert.equal(h.requests.length,1);assert.deepEqual(actionPosts(h),[]);
+  }finally{h.dispose();}
+});
+
+test('native draft navigation unmount and remount retains unsent local text without browser persistence',async()=>{
+  const h=await harness();try{h.render();await h.flush();nodes(h.render(),n=>n.type==='textarea'&&n.props['aria-label']==='交代给 Dot 的事情')[0].props.onChange({target:{value:'回来继续这个问题'}});h.unmount();h.render();await h.flush();assert.equal(nodes(h.render(),n=>n.type==='textarea'&&n.props['aria-label']==='交代给 Dot 的事情')[0].props.value,'回来继续这个问题');assert.doesNotMatch(h.source,/localStorage|sessionStorage/);
+  }finally{h.dispose();}
+});
+
+test('native prefill rechecks the binding after delayed retain readiness and preserves stale local input',async()=>{
+  const h=await harness();h.context.snapshot.bindingRevision='before-rebind';let ready,prepared=0;const binding={sessionId:'dot-source',ctx:{get:()=>({input:{requestDraftInitialization:()=>{prepared++;return'applied';}}})}};h.ctx.sessions={retain:()=>({binding,ready:new Promise(resolve=>{ready=resolve;}),release(){}})};
+  try{h.render();await h.flush();nodes(h.render(),n=>n.type==='textarea')[0].props.onChange({target:{value:'只属于旧绑定的问题'}});const pending=button(h.render(),'开始对话').props.onClick();h.context.snapshot={...h.context.snapshot,bindingRevision:'after-rebind'};ready();await pending;const view=h.render();assert.equal(prepared,0);assert.equal(h.opened.length,0);assert.match(text(view),/绑定或项目范围已变化/);assert.equal(nodes(view,n=>n.type==='textarea')[0].props.value,'只属于旧绑定的问题');assert.equal(h.requests.length,2);
+  }finally{h.dispose();}
+});
+
+test('superseded follow-up receipts cannot be reported as saved, and queued once does not imply a cold runner',async()=>{
+  const h=await harness();h.context.snapshot.projects[0].followup={available:true,followup:null,once:{enabled:true,running:false,status:'queued',nextDueAt:'2026-10-23T20:00:00Z'}};h.context.onFetch=(url,options)=>url===endpoint?Response.json(h.context.snapshot):Response.json({action:JSON.parse(options.body).action,projectId:'p1',followup:{enabled:false,running:false},once:null});
+  try{h.render();await h.flush();assert.match(text(h.render()),/等待到期/);assert.doesNotMatch(text(h.render()),/运行器未启动/);button(h.render(),'公开项目 A').props.onClick();await button(h.render(),'查看或安排跟进').props.onClick();nodes(drawer(h.render()),n=>n.type==='select'&&n.props.value==='once')[0].props.onChange({target:{value:'repeat'}});button(h.render(),'核对安排').props.onClick();await button(h.render(),'确认跟进').props.onClick();assert.match(text(h.render()),/安排结果需核对/);assert.doesNotMatch(text(h.render()),/已为.*保存跟进安排/);assert.equal(actionPosts(h).filter(row=>row.body.action==='followup_configure').length,1);
+  }finally{h.dispose();}
+});
+
+test('continuing two same-title results carries the chosen stable task ID into distinct drafts',async()=>{
+  const h=await harness();h.context.snapshot.jobs.push({...h.context.snapshot.jobs[0],id:'j2'});
+  try{h.render();await h.flush();let view=h.render();const history=nodes(view,n=>n.props['data-dot-history'])[0],cards=nodes(history,n=>n.props['data-dot-job']);assert.equal(cards.length,2);button(cards.find(n=>n.props['data-dot-job']==='j1'),'和 Dot 接着聊').props.onClick();view=h.render();assert.match(nodes(view,n=>n.type==='textarea')[0].props.value,/交办记录 ID：j1.*已有交办结果.*不重新提交或重做任务/);nodes(view,n=>n.type==='textarea')[0].props.onChange({target:{value:''}});view=h.render();button(nodes(view,n=>n.props['data-dot-job']==='j2')[0],'和 Dot 接着聊').props.onClick();assert.match(nodes(h.render(),n=>n.type==='textarea')[0].props.value,/交办记录 ID：j2/);assert.deepEqual(actionPosts(h),[]);
+  }finally{h.dispose();}
+});
+
+test('opening native conversation also resolves unsaved memory through the same keep/discard policy',async()=>{
+  const h=await harness(),row=memoryRow('native-exit','context','原始背景');seedMemory(h,row);h.context.onFetch=url=>url===endpoint?Response.json(h.context.snapshot):memoryDetail(row);
+  try{h.render();await h.flush();let view=await openMemory(h);nodes(drawer(view),n=>n.type==='textarea')[0].props.onChange({target:{value:'离开前的草稿'}});await button(h.render(),'打开 Dot 会话').props.onClick();assert.deepEqual(h.opened,[]);assert.match(text(drawer(h.render())),/这次修改还没保存/);button(h.render(),'保留草稿并离开').props.onClick();assert.deepEqual(h.opened,['dot-source']);assert.equal(posts(h).length,0);
+  }finally{h.dispose();}
+});
+
+test('a cancellation receipt that still reports enabled cannot claim the plan was closed',async()=>{
+  const h=await harness();h.context.onFetch=(url,options)=>url===endpoint?Response.json(h.context.snapshot):Response.json({action:JSON.parse(options.body).action,projectId:'p1',followup:{enabled:true,running:true,everyMinutes:60},once:null});
+  try{h.render();await h.flush();button(h.render(),'公开项目 A').props.onClick();await button(h.render(),'查看或安排跟进').props.onClick();await button(h.render(),'关闭这项跟进').props.onClick();assert.match(text(h.render()),/关闭结果需核对/);assert.doesNotMatch(text(h.render()),/已关闭「/);assert.equal(actionPosts(h).filter(r=>r.body.action==='followup_cancel').length,1);
+  }finally{h.dispose();}
+});
+
+test('applied home draft clears before native open synchronously unmounts the workbench',async()=>{
+  const h=await harness();let applied=0,opened=0;const binding={sessionId:'dot-source',ctx:{get:()=>({input:{requestDraftInitialization:()=>{applied++;return'applied';}}})}};h.ctx.sessions={retain:()=>({binding,ready:Promise.resolve(),release(){}})};h.ctx.uiWorkspace.openSession=()=>{opened++;h.unmount();};
+  try{h.render();await h.flush();nodes(h.render(),n=>n.type==='textarea')[0].props.onChange({target:{value:'成功交接后不应再次出现'}});await button(h.render(),'开始对话').props.onClick();assert.equal(applied,1);assert.equal(opened,1);h.render();await h.flush();assert.equal(nodes(h.render(),n=>n.type==='textarea')[0].props.value,'');
+  }finally{h.dispose();}
+});
+
+test('native handoff preserves local home draft for preserved, blocked and navigation failure outcomes',async()=>{
+  for(const outcome of ['preserved','blocked','navigation-failed']){
+    const h=await harness(),binding={sessionId:'dot-source',ctx:{get:()=>({input:{requestDraftInitialization:()=>outcome==='navigation-failed'?'applied':outcome}})}};h.ctx.sessions={retain:()=>({binding,ready:Promise.resolve(),release(){}})};if(outcome==='navigation-failed')h.ctx.uiWorkspace.openSession=()=>{throw new Error('navigation failed');};
+    try{h.render();await h.flush();nodes(h.render(),n=>n.type==='textarea')[0].props.onChange({target:{value:'尚未成功完成交接的输入'}});await button(h.render(),'开始对话').props.onClick();h.unmount();h.render();await h.flush();assert.equal(nodes(h.render(),n=>n.type==='textarea')[0].props.value,'尚未成功完成交接的输入',outcome);
+    }finally{h.dispose();}
+  }
+});
+
+test('applied project shortcut cannot clear a different home draft when native open unmounts',async()=>{
+  const h=await harness(),binding={sessionId:'dot-source',ctx:{get:()=>({input:{requestDraftInitialization:()=>'applied'}})}};h.ctx.sessions={retain:()=>({binding,ready:Promise.resolve(),release(){}})};h.ctx.uiWorkspace.openSession=()=>h.unmount();
+  try{h.render();await h.flush();nodes(h.render(),n=>n.type==='textarea')[0].props.onChange({target:{value:'另一个首页问题仍然保留'}});button(h.render(),'公开项目 A').props.onClick();await button(h.render(),'和 Dot 聊这个项目').props.onClick();h.render();await h.flush();assert.equal(nodes(h.render(),n=>n.type==='textarea')[0].props.value,'另一个首页问题仍然保留');
+  }finally{h.dispose();}
 });

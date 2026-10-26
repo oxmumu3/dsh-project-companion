@@ -1,33 +1,18 @@
 # DSH Dot · DSH Project Companion
 
-给已有官方 DeepSeek Harness 加上项目助理：在微信里明确交办到对应项目，把本轮执行回复带回原对话，恢复缓存时避免重新执行。
+给 DeepSeek Harness 加上个人项目助理：通过现有微信通路交办项目任务、记住项目上下文、安排提醒，并把执行回复带回原对话。作者：牛村木木山；社区开源项目，非 DeepSeek 或 OpenAI 官方产品。
 
-作者：奥克斯木木山 · [正式仓库](https://github.com/oxmumu3/dsh-project-companion)。社区开源项目，非 DeepSeek 或 OpenAI 官方产品。本版 **`0.12.0-preview.4`** 面向 macOS 上已有的官方 Harness，包含 Dot 和配套微信桥接。日常 App 仍为 `0.12.0-preview.3`，本版隔离 Host 验收与日常升级分别记录。
+当前预发布版 **0.13.0-preview.2** 修复 Harness 0.2.1-rc.3 更新后的插件兼容检查，保留已安装 V2 的工作台和服务。支持范围为明确验过的 0.2.0-rc.2、0.2.1-rc.2 与 0.2.1-rc.3。本轮官方 rc.3 SDK 全量合成回归通过，真实手机投递与新账号授权没有重新验收，见[验证记录](docs/verification.md)。
 
-本版为普通 Google 三件套、单独日历登录增加授权前的数据用途说明，以及 macOS Keychain 密钥 + AES-256-GCM 本机凭据存储；已有普通 Google 明文记录仅在明确查询前受控迁移。flomo 与滴答保留官方登录入口，滴答普通账号继续只申请 `tasks:read`。
+## 在 Harness 中升级
 
-**Google 当前是受限公众预览**：已切到 External / In production，不再逐个登记测试账号；权限尚未验证，可能出现未验证应用提示，并受累计 100 个账号上限及账号策略限制。2026-10-23 已用本人确认的另一 Google 账号，在本版隔离官方 Host 重启后完成 Gmail、非空主日历、Drive 各一项有界读取；这不代表所有账号均已可用。日常 App 本版升级、新用户完整开箱与新版手机体验仍待验收。flomo 需要 MAX。具体实测范围见[验证记录](docs/verification.md)，Google 状态与存储边界见[连接说明](docs/context-sources.md)。
+在 Harness 新建会话，粘贴：
 
-## 安装
+> 请使用官方插件管理工具安装并启用 DSH Dot：https://github.com/oxmumu3/dsh-project-companion/releases/download/v0.13.0-preview.2/dsh-project-companion-0.13.0-preview.2.tgz 。保留已有微信绑定、来源授权、项目记忆、提醒及其他插件；不要重启正在运行任务的 Harness。安装后核对 DSH Dot 组件正常运行。
 
-[下载 0.12.0-preview.4 macOS 完整包](https://github.com/oxmumu3/dsh-project-companion/releases/download/v0.12.0-preview.4/dsh-dot-0.12.0-preview.4-macos.zip) · [固定版本发布页](https://github.com/oxmumu3/dsh-project-companion/releases/tag/v0.12.0-preview.4) · [安装说明](docs/install.md)。
+[固定版本发布页](https://github.com/oxmumu3/dsh-project-companion/releases/tag/v0.13.0-preview.2) · [安装说明](docs/install.md)。本次原生包只升级项目助理；微信桥接独立更新，首次使用微信需安装与当前宿主兼容的桥接并由本人扫码。历史 0.12 完整 macOS ZIP 只保留其原先宿主范围，不能用来覆盖 rc.3。
 
-先保存并正常退出 Harness，把下面一行粘贴到 macOS「终端」：
-
-```sh
-(dsh_dot_dir="$(mktemp -d)" && cd "$dsh_dot_dir" && curl -fLO "https://github.com/oxmumu3/dsh-project-companion/releases/download/v0.12.0-preview.4/dsh-dot-0.12.0-preview.4-macos.zip" && curl -fLO "https://github.com/oxmumu3/dsh-project-companion/releases/download/v0.12.0-preview.4/dsh-dot-0.12.0-preview.4-macos.zip.sha256" && shasum -a 256 -c "dsh-dot-0.12.0-preview.4-macos.zip.sha256" && ditto -x -k "dsh-dot-0.12.0-preview.4-macos.zip" . && open "dsh-dot-0.12.0-preview.4-macos/Install.command")
-```
-
-命令会下载、校验并打开安装入口；安装结束后打开 Harness。Google 当前为受限公众预览，尚有未验证提示与累计 100 个账号上限，flomo 需要 MAX，均为可选来源。
-
-1. 准备受支持的官方 Harness，保存工作并正常退出。将同版本安装包解压，保留整个目录，再双击 `Install.command`。
-2. 打开 Harness，完成自己的模型登录与配置，确认微信桥接与项目助理均启用，从左侧打开「DSH Dot」。
-3. 已有微信连接直接沿用。首次连接时扫码确认，再从微信发一句「你好」建立会话。
-4. 先选择一个已在 Harness 添加的项目，预览资料，生成首份只读简报，再在手机实际看见后确认收件。
-
-这是插件增强包，需要官方 **DSH `0.2.0-rc.2` 或 `0.2.1-rc.2`**。缺少 Harness 时，脚本仅指引你去官方 Releases 安装应用，再返回继续；它不是完整一体机，也不是另一款微信版 App。安装仍可能联网下载依赖。入口未签名、公证；遇到 macOS 安全拦截时先停止核对，不绕过安全检查。Windows 整合安装尚未验证。
-
-本版统一包使用保留上游 MIT 许可的 `dsh-wechat@0.11.1-dot.2`：允许从已审计的 `0.11.0` 或 `0.11.1-dot.1` 升级，已是 `0.11.1-dot.2` 时保留，沿用原绑定；其他版本停止，不降级或重置配对。通过官方插件页面手动添加时也须使用该发布的配套文件。完整步骤与维护者说明见[安装说明](docs/install.md)和[首次使用](docs/first-use.md)。
+Google 仍是受限公众预览，敏感权限未验证，可能有未验证提示、累计 100 个账号上限及账号策略限制；flomo 需要 MAX。连接和授权不自动读取资料或创建推送。[连接说明](docs/context-sources.md)。
 
 ## 能做什么
 

@@ -347,14 +347,14 @@ export async function installCompanion(ctx,options={}){
     },
   });
   workbench=createWorkbench({
-    service,taskResults,memory,readConnection:readSetup,isClosed:()=>disposed,
+    service,taskResults,memory,followup,readBinding,readConnection:readSetup,isClosed:()=>disposed,
     // Read the existing table directly: GET must not require or resume a live
     // owner, normalize recovery state, or create a second state store.
     readState:()=>table.get('profile'),
     ...(options.clock?{clock:options.clock}:{}),...(options.hostTimeZone?{hostTimeZone:options.hostTimeZone}:{}),
   });
   workbenchActions=createWorkbenchActions({
-    service,memory,followup,taskResults,readConnection:readSetup,isClosed:()=>disposed,
+    service,memory,followup,taskResults,readBinding,readConnection:readSetup,isClosed:()=>disposed,
     resolveOwner:sessionId=>{const agent=ctx.get('agents',false)?.get(sessionId),cwd=effectiveCwd(ctx,agent);return !disposed&&agent&&String(agent.id)===sessionId&&cwd?{sessionId,cwd}:null;},
     activateOwner:async sessionId=>{const controller=ctx.get('sessionController',false);if(disposed||typeof controller?.resolveAgent!=='function')throw new Error('请先打开原 Dot 微信会话。');const value=await controller.resolveAgent(sessionId);if(disposed||value?.error||String(value?.agent?.id)!==sessionId)throw new Error('原 Dot 会话暂不能恢复。');},
     ...(options.clock?{clock:options.clock}:{}),

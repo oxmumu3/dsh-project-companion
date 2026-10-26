@@ -1,6 +1,6 @@
 # Third-party components and acknowledgements
 
-DSH Project Companion / DeepSeek专属Dot is a community project by 奥克斯木木山. It is not an official DeepSeek or upstream-author product. Our own MIT LICENSE does not replace the notices below.
+DSH Project Companion / DeepSeek专属Dot is a community project by 牛村木木山. It is not an official DeepSeek or upstream-author product. Our own MIT LICENSE does not replace the notices below.
 
 ## pan17/dsh-wechat — separate runtime plugin
 
@@ -9,7 +9,7 @@ DSH Project Companion / DeepSeek专属Dot is a community project by 奥克斯木
 - DSH Dot maintenance release: 0.11.1-dot.2, based on upstream source tag v0.11.0 at `218537511681be7637589f5ae0eab84f80267dc8`; locally reviewed source commit `19c3f40c85bcdd49525a09d07007978e61521f83`. This is a local maintained fork, not an upstream publication or endorsement.
 - Copyright (c) 2026 dsh-wechat contributors. MIT; full text: `third-party-licenses/pan17-dsh-wechat.txt`.
 - Reuse: separately installed WeChat login, message transport, approvals and session integration. Companion invokes its registered `send_wechat` tool, public local binding status and the maintenance version's synchronous transport-recovery admission hook. We do not claim original authorship of this transport.
-- Maintenance by DSH Dot / 奥克斯木木山: conservative known-unsent queue retry, preserved message budgets, timeout/receipt correctness, redacted diagnostics and pre-enqueue transport-only recovery. Original LICENSE bytes and contributor copyright remain unchanged. The source delta, exact archive/source hashes, tests and rebuild instructions are shipped in `bridge-maintenance/`; the complete bridge runtime is a separate pinned package in the installer kit. Phone delivery is not inferred from a send wrapper or local tests.
+- Maintenance by DSH Dot / 牛村木木山: conservative known-unsent queue retry, preserved message budgets, timeout/receipt correctness, redacted diagnostics and pre-enqueue transport-only recovery. Original LICENSE bytes and contributor copyright remain unchanged. The source delta, exact archive/source hashes, tests and rebuild instructions are shipped in `bridge-maintenance/`; the complete bridge runtime is a separate pinned package in the installer kit. Phone delivery is not inferred from a send wrapper or local tests.
 
 ## hanshanyike/dsh-yolo — selected library modules
 

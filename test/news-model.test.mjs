@@ -204,7 +204,7 @@ test('default selection is refreshed per call and missing host capability is a b
 
 test('the official SDK adapter and llm waterfall accept the sessionless request contract', async t => {
   const require = createRequire(import.meta.url);
-  assert.equal(require('@deepseek-ai/dsh-llm/package.json').version, process.env.DSH_TEST_SDK_VERSION ?? '0.2.0-rc.2');
+  assert.equal(require('@deepseek-ai/dsh-llm/package.json').version, process.env.DSH_TEST_SDK_VERSION ?? '0.2.1-rc.3');
   const ctx = new Context();
   t.after(() => ctx.fiber.dispose());
   await ctx.plugin(LlmRuntime);

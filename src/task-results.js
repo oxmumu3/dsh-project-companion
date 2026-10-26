@@ -325,6 +325,22 @@ export function createTaskResults({store,clock = () => new Date(),send = async (
     const text=['## 最近交办状态','交办回复由独立回传流程交给桥接；本查询不补发，也不刷新或检查桥接队列。queued 只记录交给通道时排队，不能说明当前仍有缓存或手机收到。',...jobs.map(job=>`${job.projectLabel}：${statusNames[job.status]}。${job.delivery?` ${deliveryNames[job.delivery.status]}。`:''}${id&&job.reply?`\n${bounded(job.reply,2500)}`:''}`),...(!jobs.length?['没有找到属于当前会话的交办记录。']:[]),'执行回复仍待验收；通道报告发送不代表手机送达或已读。'].join('\n\n');
     return {jobs,text:bounded(text,MOBILE_LIMIT)};
   });
+  // Passive UI reads must not invoke load(): its cold recovery intentionally
+  // rewrites unfinished executions and dispatches. Never adopt cold state here.
+  const inspect = async (originSessionId,{id,expectedBinding} = {}) => {
+    const owner=identity.parse(originSessionId),selected=id===undefined?undefined:identity.parse(id);
+    const binding=bindingSchema.parse(copy(expectedBinding));
+    return serial(async()=>{
+      if(closing||storageFailed)throw new Error('Task result inspection unavailable');
+      const snapshot=taskResultsRowSchema.parse(copy(state??await store.get('profile')??freshState()));
+      if(closing)throw new Error('Task result inspection closed');
+      const owned=snapshot.jobs.filter(job=>job.originSessionId===owner&&(selected===undefined||job.id===selected)&&job.returnBinding?.userHash===binding.userHash&&(job.returnBinding?.botHash??null)===(binding.botHash??null));
+      return{jobs:owned.slice(-10).map(job=>({id:job.id,projectLabel:job.projectLabel,task:line(job.task,160),status:job.status,
+        createdAt:job.createdAt,expiresAt:job.expiresAt,finishedAt:job.finishedAt,turn:job.turn,
+        delivery:job.delivery?{status:job.delivery.status,detail:deliveryNames[job.delivery.status]}:null,
+        ...(selected===undefined?{}:{reply:job.status==='completed'?job.reply:'',replyTruncated:job.status==='completed'&&job.replyTruncated})}))};
+    });
+  };
   // Routing evidence is separate from delivery or acceptance. Never expose the
   // task/reply here, and never fall back past a newer uncertain admission.
   const trustedLastTarget = scope => serial(async()=>{
@@ -350,5 +366,5 @@ export function createTaskResults({store,clock = () => new Date(),send = async (
     closePromise ??= serial(async()=>{await load();directClaims.clear();});
     return closePromise;
   };
-  return {ready,prepare,admitted,notAdmitted,claimed,discarded,observe,status,trustedLastTarget,tick,needsTimer,close};
+  return {ready,prepare,admitted,notAdmitted,claimed,discarded,observe,status,inspect,trustedLastTarget,tick,needsTimer,close};
 }

@@ -7,6 +7,7 @@ import {join} from 'node:path';
 
 const now='2026-10-19T15:00:00.000Z';
 const binding={state:'bound',sessionId:'original-owner',bindingKey:'a'.repeat(64)};
+const returnBinding={userHash:'c'.repeat(64),botHash:'d'.repeat(64)};
 const project={root:'/synthetic/watched-project',label:'已关注项目',sessionIds:['project-session']};
 const projectId=`project_${createHash('sha256').update(project.root).digest('hex').slice(0,24)}`;
 const deferred=()=>{let resolve;const promise=new Promise(done=>resolve=done);return{promise,resolve};};
@@ -15,22 +16,22 @@ async function fixture(extra={}){
   const {createWorkbenchActions}=await api();let connection={...binding},projects=[{...project}],paused=false,live=true;
   const calls=[];
   const recorded=args=>{const {authorizeMutation,expectedBinding,...visible}=args;return visible;};
-  const followup={status:async args=>{calls.push(['status',args]);return{enabled:true,running:true,everyMinutes:30,nextDueAt:'2026-10-19T15:30:00.000Z',sessionId:binding.sessionId,bindingKey:binding.bindingKey};},onceStatus:async args=>{calls.push(['onceStatus',args]);return{enabled:false,running:false};}};
+  const followup={inspect:async args=>{calls.push(['inspect',args]);return{followup:{enabled:true,running:true,everyMinutes:30,nextDueAt:'2026-10-19T15:30:00.000Z',sessionId:binding.sessionId,bindingKey:binding.bindingKey},once:null};},status:()=>{throw new Error('must not load status');},onceStatus:()=>{throw new Error('must not load once status');}};
   for(const method of ['configure','cancel','checkOnce','cancelOnce'])followup[method]=async args=>{calls.push([method,recorded(args)]);return{enabled:!method.startsWith('cancel'),running:false,delivery:'wechat',nextDueAt:now};};
-  const adapter=createWorkbenchActions({service:{watchedProjects:async()=>projects,isPaused:async()=>paused},memory:{revise:async args=>{calls.push(['revise',recorded(args)]);return{entry:{id:args.id,kind:'context',text:args.text,at:now,source:{kind:'user',reference:'session:original-owner'},private:'never export'}};},forget:async args=>{calls.push(['forget',recorded(args)]);return{forgotten:true};}},followup,taskResults:{status:async(sessionId,args)=>{calls.push(['task',sessionId,args]);return{jobs:[{id:args.id,projectLabel:'项目',task:'检查',status:'completed',createdAt:now,reply:`正文 ${project.root} ${binding.bindingKey} api_key=secret`,replyTruncated:false,finishedAt:now,delivery:{status:'reported_sent',detail:'通道报告已发',text:'PRIVATE'},projectRoot:project.root,returnBinding:{userHash:binding.bindingKey},targetSessionId:'PRIVATE'}]};}},readConnection:async()=>connection,resolveOwner:sessionId=>live?{sessionId,cwd:'/synthetic/dot'}:null,activateOwner:async sessionId=>{calls.push(['activate',sessionId]);live=true;},clock:()=>new Date(now),...extra});
+  const adapter=createWorkbenchActions({service:{watchedProjects:async()=>projects,isPaused:async()=>paused},memory:{revise:async args=>{calls.push(['revise',recorded(args)]);return{entry:{id:args.id,kind:'context',text:args.text,at:now,source:{kind:'user',reference:'session:original-owner'},private:'never export'}};},forget:async args=>{calls.push(['forget',recorded(args)]);return{forgotten:true};}},readBinding:async()=>returnBinding,followup,taskResults:{inspect:async(sessionId,args)=>{calls.push(['task',sessionId,args]);return{jobs:[{id:args.id,projectLabel:'项目',task:'检查',status:'completed',createdAt:now,reply:`正文 ${project.root} ${binding.bindingKey} api_key=secret`,replyTruncated:false,finishedAt:now,delivery:{status:'reported_sent',detail:'通道报告已发',text:'PRIVATE'},projectRoot:project.root,returnBinding:{userHash:binding.bindingKey},targetSessionId:'PRIVATE'}]};}},readConnection:async()=>connection,resolveOwner:sessionId=>live?{sessionId,cwd:'/synthetic/dot'}:null,activateOwner:async sessionId=>{calls.push(['activate',sessionId]);live=true;},clock:()=>new Date(now),...extra});
   return{adapter,calls,setBinding:value=>{connection=value;},unwatch:()=>{projects=[];},pause:()=>{paused=true;},cold:()=>{live=false;},followup};
 }
 
 test('detail reads only the requested original-owner job and exports bounded safe fields',async()=>{
   const f=await fixture();f.cold();const value=await f.adapter.action({action:'task_detail',id:'job-1'});
-  assert.deepEqual(f.calls,[['task','original-owner',{id:'job-1'}]]);assert.equal(value.jobs[0].replyTruncated,false);assert.match(value.jobs[0].reply,/正文/);assert.equal(value.jobs[0].delivery.status,'reported_sent');
+  assert.deepEqual(f.calls,[['task','original-owner',{id:'job-1',expectedBinding:returnBinding}]]);assert.equal(value.jobs[0].replyTruncated,false);assert.match(value.jobs[0].reply,/正文/);assert.equal(value.jobs[0].delivery.status,'reported_sent');
   for(const secret of [project.root,binding.bindingKey,'secret','PRIVATE','projectRoot','returnBinding','targetSessionId'])assert.equal(JSON.stringify(value).includes(secret),false,secret);
   assert.ok(value.limitations.some(text=>text.includes('手机')));
 });
 
 test('deliberate followup status is passive, exact-owner scoped and includes the real next due time',async()=>{
   const f=await fixture();f.cold();const value=await f.adapter.action({action:'followup_status',projectId});
-  assert.deepEqual(f.calls,[['status',{root:project.root,sessionId:'original-owner'}],['onceStatus',{root:project.root,sessionId:'original-owner'}]]);
+  assert.deepEqual(f.calls,[['inspect',{root:project.root,sessionId:'original-owner',expectedBinding:{sessionId:'original-owner',bindingKey:binding.bindingKey}}]]);
   assert.equal(value.followup.nextDueAt,'2026-10-19T15:30:00.000Z');assert.equal(value.followup.delivery,'wechat');assert.equal(value.followup.everyMinutes,30);
   assert.equal(JSON.stringify(value).includes('sessionId'),false);assert.equal(JSON.stringify(value).includes(binding.bindingKey),false);
 });
@@ -157,14 +158,14 @@ for(const [action,method] of [['memory_update','revise'],['memory_forget','forge
 
 test('an in-place changed binding cannot expose old-owner detail after an awaited read',async()=>{
   const gate=deferred(),entered=deferred(),mutable={...binding};
-  const f=await fixture({readConnection:async()=>mutable,taskResults:{status:async()=>{entered.resolve();await gate.promise;return{jobs:[{id:'job-1',status:'completed',task:'PRIVATE',projectLabel:'PRIVATE',createdAt:now,reply:'PRIVATE'}]};}}});
+  const f=await fixture({readConnection:async()=>mutable,taskResults:{inspect:async()=>{entered.resolve();await gate.promise;return{jobs:[{id:'job-1',status:'completed',task:'PRIVATE',projectLabel:'PRIVATE',createdAt:now,reply:'PRIVATE'}]};}}});
   const pending=f.adapter.action({action:'task_detail',id:'job-1'});await entered.promise;mutable.bindingKey='b'.repeat(64);gate.resolve();await assert.rejects(pending);
 });
 
 test('a caller cannot change a validated operation while binding reads are pending',async()=>{
   const gate=deferred(),entered=deferred();let first=true;
   const f=await fixture({readConnection:async()=>{if(first){first=false;entered.resolve();await gate.promise;}return binding;}});
-  const input={action:'task_detail',id:'job-safe'},pending=f.adapter.action(input);await entered.promise;input.id='job-replaced';gate.resolve();await pending;assert.deepEqual(f.calls,[['task','original-owner',{id:'job-safe'}]]);
+  const input={action:'task_detail',id:'job-safe'},pending=f.adapter.action(input);await entered.promise;input.id='job-replaced';gate.resolve();await pending;assert.deepEqual(f.calls,[['task','original-owner',{id:'job-safe',expectedBinding:returnBinding}]]);
 });
 
 test('negative or mismatched memory receipts cannot become a success claim',async()=>{

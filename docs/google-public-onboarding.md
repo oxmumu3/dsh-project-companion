@@ -4,7 +4,7 @@
 
 本文件用于核对公众 Google 登录与审核材料，不代表 Google 已经批准应用。2026-10-22 最近一次控制台回读专用 `dsh-dot` 项目为 External / In production，显示累计 1 位用户、生命周期 100 位用户 cap 及需要验证；之后没有回读名单或新的累计数。Google Search Console 已确认项目 URL-prefix 所有权；这不等于拥有整个 GitHub 平台域名。2026-10-23 已有本人确认的另一 Google 账号授权后，在本版隔离官方 Host 重启完成三项有界读取的证据；账号区别仅来自本人确认，未追加 email/sub scope 或独立身份请求，也未核对 Cloud 测试名单。品牌和三项 scope 验证仍未通过，单账号成功不代表所有公众账号可用。品牌校验仍等待新完成的站点所有权验证同步；Google 提示可能需 24 小时，scope 验证入口当前不可提交，尚未提交 scope 审核。这不表示等待时间结束即自动通过，也不能据此宣传任意读者安装后已经可用。
 
-维护者为奥克斯木木山，正式代码归属为 [oxmumu3/dsh-project-companion](https://github.com/oxmumu3/dsh-project-companion)。对外首页和隐私说明使用独立的 Dot 页面，不改 Finvo 既有网站、应用注册、IAM 或账单配置。
+维护者为牛村木木山，正式代码归属为 [oxmumu3/dsh-project-companion](https://github.com/oxmumu3/dsh-project-companion)。对外首页和隐私说明使用独立的 Dot 页面，不改 Finvo 既有网站、应用注册、IAM 或账单配置。
 
 ## 完成标准
 

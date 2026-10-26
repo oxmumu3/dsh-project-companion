@@ -12,7 +12,7 @@
 
 ## v0.12.0-preview.3 · 预览发布
 
-Google 三件套、flomo、滴答均有本人授权及有限读取证据；滴答改用官方只读 Open API，保持 tasks:read。正式仓库已迁至 oxmumu3，署名奥克斯木木山。源码、两套 SDK 兼容回归和本机验收范围见[验证记录](docs/verification.md)。[固定版本与安装资产](https://github.com/oxmumu3/dsh-project-companion/releases/tag/v0.12.0-preview.3)。该版本发布当时 Google 仍为受限内测，flomo需MAX；私人Context主动订阅尚未实现。
+Google 三件套、flomo、滴答均有本人授权及有限读取证据；滴答改用官方只读 Open API，保持 tasks:read。正式仓库已迁至 oxmumu3，署名牛村木木山。源码、两套 SDK 兼容回归和本机验收范围见[验证记录](docs/verification.md)。[固定版本与安装资产](https://github.com/oxmumu3/dsh-project-companion/releases/tag/v0.12.0-preview.3)。该版本发布当时 Google 仍为受限内测，flomo需MAX；私人Context主动订阅尚未实现。
 
 以下为各历史阶段快照；当时的“公开下载”记录不证明之后版本的发布或验收。仓库迁移核验时的公开最高版本为 v0.6.0-preview.1，随后发布记录见上文。
 

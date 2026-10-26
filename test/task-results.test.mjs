@@ -36,6 +36,31 @@ const reply = (service, text, extra = {}) => service.observe({sessionId:'target-
 const end = (service, reason = {kind:'completed'}, extra = {}) => service.observe({sessionId:'target-session',type:'turn/end',turn:12,reason,...extra});
 const jobStatus = async (f, id) => (await f.service.status('origin-session', {id})).jobs[0];
 
+test('passive inspect never recovers, expires, writes or sends cold task state and scopes the original pairing',async()=>{
+  const f=await fixture();const id=await running(f);await reply(f.service,'unfinished fragment');
+  const saved=f.persisted(),before=structuredClone(saved);let writes=0,sends=0;
+  const {createTaskResults}=await api();
+  const cold=createTaskResults({store:{get:async()=>saved,put:async()=>{writes++;}},send:async()=>{sends++;},clock:()=>new Date('2026-10-19T00:00:00Z')});
+  assert.equal(typeof cold.inspect,'function');
+  const value=await cold.inspect('origin-session',{id,expectedBinding:binding});
+  assert.equal(value.jobs[0].status,'running');assert.equal(value.jobs[0].reply,'');
+  assert.deepEqual((await cold.inspect('origin-session',{expectedBinding:{...binding,userHash:'c'.repeat(64)}})).jobs,[]);
+  assert.deepEqual((await cold.inspect('other-origin',{expectedBinding:binding})).jobs,[]);
+  await assert.rejects(cold.inspect('origin-session',{}));
+  assert.equal(writes,0);assert.equal(sends,0);assert.deepEqual(saved,before);
+});
+
+test('passive inspect only returns stored completed replies for selected ids and keeps truncation evidence',async()=>{
+  const f=await fixture();const id=await running(f);await reply(f.service,'字'.repeat(9000));await end(f.service);
+  const writes=f.writes.length,sends=f.sends.length;
+  assert.equal(typeof f.service.inspect,'function');
+  assert.equal(Object.hasOwn((await f.service.inspect('origin-session',{expectedBinding:binding})).jobs[0],'reply'),false);
+  const selected=(await f.service.inspect('origin-session',{id,expectedBinding:binding})).jobs[0];
+  assert.equal(selected.reply.length,8000);assert.equal(selected.replyTruncated,true);
+  assert.equal(f.writes.length,writes);assert.equal(f.sends.length,sends);
+  await f.service.close();await assert.rejects(f.service.inspect('origin-session',{expectedBinding:binding}));
+});
+
 const trustedScope = (overrides = {}) => ({originSessionId:'origin-session',projectRoot:'/synthetic/public-project',returnBinding:binding,...overrides});
 test('trusted continuation returns only an exact completed target scoped to origin, project and original binding', async()=>{
   const f=await fixture();const id=await running(f);await reply(f.service,'SYNTHETIC result body never exposed by target selection');await end(f.service);
