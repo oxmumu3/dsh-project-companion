@@ -124,11 +124,11 @@ function cancellable(promise, signal) {
 }
 
 /** One native adapter call; no Agent or durable transcript is created. */
-export async function runNewsModel({ llm, selection, system, data, signal, maxTokens, onUsage = () => {} }) {
+export async function runNewsModel({ llm, selection, system, data, signal, maxTokens, onUsage = () => {}, preparePolicy }) {
   if (!llm || typeof llm.prepareCall !== 'function' || !record(selection) || typeof selection.provider !== 'string' || !selection.provider.trim() || typeof selection.model !== 'string' || !selection.model.trim()) fail('MODEL_UNAVAILABLE');
   const config = { provider: selection.provider, model: selection.model,
     ...(typeof selection.reasoningEffort === 'string' && selection.reasoningEffort ? { reasoningEffort: selection.reasoningEffort } : {}), maxTokens };
-  const prepared = await cancellable(Promise.resolve().then(() => llm.prepareCall(config, signal)), signal);
+  const prepared = await cancellable(Promise.resolve().then(() => llm.prepareCall(config, signal, preparePolicy)), signal);
   if (!prepared || !record(prepared.config) || typeof prepared.stream !== 'function') fail('MODEL_UNAVAILABLE');
   const iterable = prepared.stream({ ...prepared.config, system, messages: [{ role: 'user', content: [{ type: 'text', text: data }] }], tools: [], signal });
   const iterator = iterable?.[Symbol.asyncIterator]?.();

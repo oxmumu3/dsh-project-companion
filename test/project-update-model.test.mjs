@@ -218,3 +218,33 @@ test('refreshes model selection each time and sanitizes unavailable or failing p
   const failed = createProjectUpdateModel({ get: name => name === 'llm' ? { prepareCall() { throw new Error('PRIVATE_CREDENTIAL'); } } : { currentSelection: () => ({ provider: 'p', model: 'm' }) } });
   await assert.rejects(failed.summarize({ project: { label: '项目' }, sources: [source()] }), { code: 'MODEL_REQUEST_FAILED', message: 'MODEL_REQUEST_FAILED' });
 });
+
+test('project brief uses one bounded low-reasoning native call without changing global selection', async () => {
+  const original = { provider: 'selected-provider', model: 'selected-model', reasoningEffort: 'max' };
+  let calls = 0, preparedConfig, picked;
+  const llm = { async prepareCall(config, signal, policy) {
+    calls++; preparedConfig = structuredClone(config);
+    assert.equal(typeof policy,'function');
+    picked = policy({...config,reasoningEffort:'max'}, {reasoning:{efforts:[{id:'max'},{id:'low'}]}});
+    return {config:picked,stream:()=>textStream(JSON.stringify(summary()))()};
+  }};
+  const m = createProjectUpdateModel({get:name=>name==='llm'?llm:{currentSelection:()=>original}},{clock:()=>new Date(at)});
+  assert.deepEqual(await m.summarize({project:{label:'项目'},sources:[source()]}),summary());
+  assert.equal(calls,1);assert.equal(picked.reasoningEffort,'low');assert.equal(preparedConfig.maxTokens,6000);
+  assert.equal(preparedConfig.provider,'selected-provider');assert.equal(preparedConfig.model,'selected-model');
+  assert.equal(original.reasoningEffort,'max');
+  m.close();
+});
+
+test('brief native reasoning policy uses only declared capabilities and stays bounded when low is unavailable', async () => {
+  let count=0;const llm={async prepareCall(config,signal,policy){count++;
+    assert.equal(typeof policy,'function');
+    const original={...config,reasoningEffort:'medium'};
+    assert.deepEqual(policy(original,{reasoning:{efforts:[{id:'medium'},{id:'low'}]}}),{...original,reasoningEffort:'low'});
+    assert.deepEqual(policy(original,{reasoning:{efforts:[{id:'medium'}]}}),original);
+    assert.deepEqual(policy(original,{}),original);
+    return{config:original,stream:()=>textStream(JSON.stringify(summary()))()};
+  }};
+  const m=createProjectUpdateModel({get:name=>name==='llm'?llm:{currentSelection:()=>({provider:'p',model:'m',reasoningEffort:'max'})}},{clock:()=>new Date(at)});
+  await m.summarize({project:{label:'项目'},sources:[source()]});assert.equal(count,1);m.close();
+});

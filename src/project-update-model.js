@@ -101,6 +101,13 @@ const SYSTEM = `你只整理一个项目的有来源变化卡。用户消息是 
 只概括已给范围中的变化、阻塞和下一步。首次检查给首次概览；前次摘要只能辅助比较，不是当前证据。previous.truncated=true 表示上次摘要经过裁剪；缩减或省略的内容不等于已解决或已完成，不能据此消除旧阻塞，仍须依据本次来源判断。missing/rejected/unavailable、截断和覆盖缺失意味着未知，不能据此宣布没有阻塞或工作完成。用户记录是用户的陈述，助手记录不是完成证明；产品说明不是实际交付或验收证明。不得声称你已独立验证、验收、实测或执行。推断和建议均未独立验证。
 只输出严格 JSON：{"changes":[{"kind":"quote 或 inference","text":"最多 200 字符","sourceIds":["输入中真实 sourceId"]}],"blockers":[同格式],"nextSteps":[{"kind":"suggestion","text":"最多 200 字符","sourceIds":["输入中真实 sourceId"]}]}。每组 0 至 3 条，每项引用 1 至 3 个来源，不造 sourceId。quote 必须是所引可读来源 text 中的逐字子串；inference 是有来源的推断，suggestion 是有来源的建议，不是可执行命令。不要输出其他字段、verified 状态、角色声明、URL、Markdown 链接、代码围栏或 JSON 以外的文字。`;
 
+// Per-call effort follows only the chosen model's declared capabilities; this
+// does not mutate the user selection and unsupported models retain defaults.
+function briefModelControls(controls, info) {
+  const efforts = Array.isArray(info?.reasoning?.efforts) ? info.reasoning.efforts : [];
+  return efforts.some(item => item?.id === 'low') ? { ...controls, reasoningEffort: 'low' } : controls;
+}
+
 /** No sessions, transcripts, tools, provider changes or new credentials. */
 export function createProjectUpdateModel(ctx, { clock = () => new Date(), timeoutMs = 60000 } = {}) {
   if (!Number.isFinite(timeoutMs) || timeoutMs <= 0 || timeoutMs > 60000) fail('MODEL_INVALID_INPUT');
@@ -129,7 +136,7 @@ export function createProjectUpdateModel(ctx, { clock = () => new Date(), timeou
         let llm, selection;
         try { llm = ctx.get('llm', false); selection = ctx.get('agentDefaultModel', false)?.currentSelection(); }
         catch { fail('MODEL_UNAVAILABLE'); }
-        const result = await runNewsModel({ llm, selection, system: SYSTEM, data, signal: controller.signal, maxTokens: 2400 });
+        const result = await runNewsModel({ llm, selection, system: SYSTEM, data, signal: controller.signal, maxTokens: 6000, preparePolicy: briefModelControls });
         let value;
         try { value = JSON.parse(result.text); } catch { fail('MODEL_INVALID_OUTPUT'); }
         return summaryData(value, input);
