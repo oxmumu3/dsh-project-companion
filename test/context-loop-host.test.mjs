@@ -96,12 +96,12 @@ test('native live configuration enables the shared Family reminder only when exp
  assert.equal((await invoke('config-off')).status,'blocked');enabled=true;assert.equal((await invoke('config-on')).status,'scheduled');enabled=false;assert.equal((await invoke('config-off-again')).status,'blocked');assert.equal(calls,1);
 });
 
-test('brief returns a safe actionable model-service failure without private exception data',async t=>{
+test('brief returns scoped excerpts on model failure without private exception data',async t=>{
  const h=await fixture(t,{contextLoop:{summarize:async()=>{throw Object.assign(Error('PRIVATE_MODEL_SECRET'),{code:'MODEL_UNAVAILABLE'});}}});
  await h.tool({action:'connect',source:'flomo',userRequested:true});
  const root=h.agent.session.header.cwd;await h.project({action:'watch',project:root});
  const result=await h.project({action:'context_brief',project:root,objective:'整理项目简报',queries:[{source:'flomo',operation:'search',query:'DeepSeek',limit:2}],userRequested:true});
- assert.equal(result.code,'LOOP_MODEL_UNAVAILABLE',JSON.stringify(result));assert.match(result.text,/整理服务/);assert.doesNotMatch(JSON.stringify(result),/PRIVATE_MODEL_SECRET/);
+ assert.equal(result.status,'partial',JSON.stringify(result));assert.equal(result.modelDiagnostic,'MODEL_UNAVAILABLE');assert.match(result.text,/原文摘录/);assert.ok(!result.loopId);assert.doesNotMatch(JSON.stringify(result),/PRIVATE_MODEL_SECRET/);
 });
 
 test('Family Owner scoped brief does not admit project handoff until a turn guard is available',async t=>{
