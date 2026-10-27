@@ -520,7 +520,7 @@ export async function installCompanion(ctx,options={}){
       // Name presence in hypothetical, quoted or incidental prose is not
       // authority to read a project selected by a model.
       const exact=aliases(project).some(name=>{const escaped=name.replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
-        const patterns={context_brief:'^(?:请|帮我)?(?:生成|整理|查看)\\s*'+escaped+'\\s*(?:的)?项目简报$',context_handoff:'^(?:请)?(?:把|将)(?:刚才|上一份|上次|简报)?第[一二两三四五六七八九1-9]项(?:交给|派给)\\s*'+escaped+'$',coordinate:'^(?:请)?只读检查\\s*'+escaped+'\\s*(?:的)?\\s*README(?:\\.md)?\\s*(?:第[一1]行|首行)$'};
+        const patterns={context_brief:'^(?:请|帮我)?(?:生成|整理|查看)\\s*'+escaped+'\\s*(?:的)?项目简报$',context_handoff:'^(?:请)?(?:把|将)(?:刚才|上一份|上次|简报)?第[一二两三四五六七八九1-9]项(?:交给|派给)\\s*'+escaped+'$',coordinate:'^(?:(?:请)?只读检查\\s*'+escaped+'\\s*(?:的)?\\s*README(?:\\.md)?\\s*(?:第[一1]行|首行)|(?:请)?(?:把|将)(?:这个|该|这项)?任务(?:交给|派给)\\s*'+escaped+'\\s*[:：]\\s*只读检查\\s*README(?:\\.md)?\\s*(?:第[一1]行|首行))$'};
         const pattern=patterns[args.action];return pattern&&namedClauses.some(clause=>new RegExp(pattern,'iu').test(clause.trim()));});
       if(!exact)throw new Error('请明确指定项目及要查看的内容；本次未读取或派发。');
     }

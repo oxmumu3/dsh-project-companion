@@ -95,6 +95,23 @@ test('real Family Owner WeChat admission + Cordis bridge + native Dot brief, han
  changeRegistryBeforeSend=true;const raced=await tool(familyAgent,'project_companion',{action:'coordinate',project:targetRoot,task:'只读检查 README.md 第一行',userRequested:true});assert.equal(raced.accepted,true,JSON.stringify(raced));
  for(let n=0;n<100&&registryRows.some(row=>row.workspaceId==='target');n++)await new Promise(resolve=>setTimeout(resolve,10));assert.equal(sent.length,2,'last dispatch guard must suppress a removed project');
  changeRegistryBeforeSend=false;registryRows.push({workspaceId:'target',title:'Synthetic project',path:targetRoot});
+ await family.receive('owner',{id:'natural-request-handoff',peerId:'synthetic-peer-owner',text:'把这个任务交给 Synthetic project：只读检查 README.md 第一行，不要修改文件。完成后把结果回给我。'});await family.settled();
+ const normal=await tool(familyAgent,'project_companion',{action:'coordinate',project:targetRoot,task:'只读检查 README.md 第一行',userRequested:true});
+ assert.equal(normal.accepted,true,JSON.stringify(normal));
+ for(let n=0;n<100&&sent.length<3;n++)await new Promise(resolve=>setTimeout(resolve,10));
+ assert.equal(sent.length,3);assert.equal(admissions.length,0,'must not dispatch into an unrestricted native session');
+ for(const [i,text] of [
+   '如果把这个任务交给 Synthetic project：只读检查 README.md 第一行，会怎样？',
+   '把这个任务交给 Synthetic project：只读检查 README.md 第一行。不要读取第一行。',
+   '把这个任务交给 Synthetic project：只读检查 README.md 第一行并修改文件。',
+   '把这个任务交给 Synthetic project：只读检查 README.md 第一行。接着读取 secret.md。',
+   '把这个任务交给 Synthetic project：只读检查 README.md 第一行，并且读取第二行。',
+ ].entries()){
+  await family.receive('owner',{id:'natural-request-deny-'+i,peerId:'synthetic-peer-owner',text});await family.settled();
+  const denied=await tool(familyAgent,'project_companion',{action:'coordinate',project:targetRoot,task:'只读检查 README.md 第一行',userRequested:true});
+  assert.equal(denied.accepted,false,JSON.stringify({text,denied}));
+ }
+ assert.equal(sent.length,3,'rejected requests must not send results');assert.equal(admissions.length,0);
  const readCount=reads.length;
  await family.receive('owner',{id:'second-owner-message',peerId:'synthetic-peer-owner',text:'两分钟后检查一次刚才那份简报，不要设周期计划。'});await family.settled();
  const next=await tool(familyAgent,'project_companion',{action:'check_once',project:targetRoot,loopId:brief.loopId,delaySeconds:120,userRequested:true});
