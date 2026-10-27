@@ -373,7 +373,7 @@ export async function installCompanion(ctx,options={}){
       return getFamilyBridge()?.readOwnerDelivery({sessionId:scope.familySessionId,bindingRevision:scope.bindingRevision,requestId});
     },
   };
-  followup=createProjectFollowup({ctx,invalidateLoop:()=>contextLoop?.suspend(),authorizeRoot,readBinding,readConnection:readSetup,readNativeRoute,familyRoute,pauseState:()=>service.isPaused(),canRun:async({root})=>await authorizeRoot(root)&&!await service.isPaused(),...(options.clock?{clock:options.clock}:{}),...(options.hostTimeZone?{hostTimeZone:options.hostTimeZone}:{})});
+  followup=createProjectFollowup({ctx,invalidateLoop:()=>contextLoop?.suspend(),authorizeRoot,readBinding,readConnection:readSetup,readNativeRoute,familyRoute,pauseState:()=>service.isPaused(),canRun:async({root})=>await authorizeRoot(root)&&!await service.isPaused(),...(options.clock?{clock:options.clock}:{}),...(options.hostTimeZone?{hostTimeZone:options.hostTimeZone}:{}),...(options.followup?.createScheduler?{createScheduler:options.followup.createScheduler}:{})});
   projectUpdateModel=createProjectUpdateModel(ctx,{...(options.clock?{clock:options.clock}:{})});
   const updateOwner=(caller)=>{const agent=ctx.get('agents',false)?.get(caller.sessionId);return !disposed&&!lifecycle.signal.aborted&&agent&&String(agent.id)===caller.sessionId&&effectiveCwd(ctx,agent)===caller.cwd;};
   const readUpdateScope=async(caller,root)=>{
@@ -667,11 +667,12 @@ export async function installCompanion(ctx,options={}){
     if(!sessionId.startsWith('family_owner_')&&!familyDelegate.matchesSession(sessionId))return run();
     if(!familyEnabled())throw new Error('Family Owner 委托未启用。');
     const call={sessionId,callId:execution.callId,signal:execution.signal};
+    const protectedWake=args.action==='context_check'&&typeof args.loopId==='string'&&followup.activeLoop(execution)===args.loopId;
     let scope;
     // A wake may continue the captured authority only while the exact
     // protected follow-up is active; ordinary native calls need a real
     // inbound Family WeChat tool call.
-    if(args.action==='context_check'&&args.loopId&&followup.activeLoop(execution)===args.loopId)scope=familyDelegate.scopeFor(sessionId);
+    if(protectedWake)scope=familyDelegate.scopeFor(sessionId);
     else{
       if(familyDelegate.isUnpaired()){
         const leases=context.delegationLeases();
@@ -682,10 +683,10 @@ export async function installCompanion(ctx,options={}){
       scope=await familyDelegate.resolve(call);
     }
     if(!scope)throw new Error('家庭 Owner 身份或资料委托不可用。');
-    if(!(args.action==='context_check'&&args.loopId&&followup.activeLoop(execution)===args.loopId))scope={...scope,callId:execution.callId};
+    if(!protectedWake)scope={...scope,callId:execution.callId};
     if(familyUnverifiedPlanAction(args.action)){const error=new Error('家庭微信入口暂不能安全核验提醒或推送的具体时间和内容，本次未创建、发送或取消计划。');error.code='FAMILY_PLAN_UNAVAILABLE';throw error;}
-    if(!familyActionAllowed(args)){const error=new Error('家庭微信入口暂不支持这项操作，本次未读取资料或更改计划。');error.code='FAMILY_ACTION_UNAVAILABLE';throw error;}
-    if(!(args.action==='context_check'&&args.loopId&&followup.activeLoop(execution)===args.loopId)&&!familyIntentAllowed('family',args,scope.userText,scope.previousUserText,options.clock?.()??new Date())){const error=new Error('实际 Owner 消息没有授权这项操作。');if(['query','brief','context_brief'].includes(args.action))error.code='FAMILY_SCOPE_UNSUPPORTED';throw error;}
+    if(!protectedWake&&!familyActionAllowed(args)){const error=new Error('家庭微信入口暂不支持这项操作，本次未读取资料或更改计划。');error.code='FAMILY_ACTION_UNAVAILABLE';throw error;}
+    if(!protectedWake&&!familyIntentAllowed('family',args,scope.userText,scope.previousUserText,options.clock?.()??new Date())){const error=new Error('实际 Owner 消息没有授权这项操作。');if(['query','brief','context_brief'].includes(args.action))error.code='FAMILY_SCOPE_UNSUPPORTED';throw error;}
     // Family work never runs inside an unrestricted existing project session.
     // Only the separately guarded read-only executor can receive the task.
     if(['coordinate','context_handoff'].includes(args.action)&&(!familyReadOnlyIntent(scope.userText)||typeof getFamilyBridge()?.startOwnerProjectRead!=='function'))throw new Error('该项目会话暂不能保证只读；尚未派发任务。');

@@ -473,19 +473,23 @@ export function createProjectFollowup(options={}){
         requireSession(sessionId);
         const entry=await loadOnce(root,sessionId);if(!entry)return{status:'absent',enabled:false,running:false};
         if(entry.meta.delivery!=='family'||!entry.enabled||entry.scheduler)return view(entry);
+        // A persisted future deadline is needed by the outer recovery timer;
+        // view() otherwise hides it while the scheduler is not running. Once
+        // the deadline passes, an unstarted wake expires even if offline.
+        if(!entry.meta.familyInflight&&Date.parse(entry.meta.dueAt)<=now()){await blockOnce(entry,'One-off check expired while the app was unavailable; no catch-up');return view(entry);}
+        const pending=reason=>({...view(entry),nextDueAt:entry.meta.dueAt,recoveryPending:true,blocked:reason});
         const scope=familyScope(entry);
-        if(!scope)return{...view(entry),recoveryPending:true,blocked:'Family Owner route is unavailable; no wake was started'};
+        if(!scope){if(entry.meta.familyInflight&&Date.parse(entry.meta.dueAt)<=now()){await blockOnce(entry,'Previous Family wake outcome is unknown; no automatic replay');return view(entry);}return pending('Family Owner route is unavailable; no wake was started');}
         if(entry.meta.familyInflight){
           let receipt;try{receipt=await options.familyRoute?.readDelivery?.({scope,requestId:entry.meta.familyInflight});}catch{receipt={status:'uncertain'};}
-          if(options.familyRoute?.isCurrent?.(scope)!==true)return{...view(entry),recoveryPending:true,blocked:'Family Owner route changed during recovery'};
+          if(options.familyRoute?.isCurrent?.(scope)!==true){if(Date.parse(entry.meta.dueAt)<=now()){await blockOnce(entry,'Previous Family wake outcome is unknown; no automatic replay');return view(entry);}return pending('Family Owner route changed during recovery');}
           if(receipt?.status==='accepted'){
             entry.meta.familyCompleted=entry.meta.familyInflight;delete entry.meta.familyInflight;
             entry.meta.status='completed';entry.meta.enabled=false;entry.enabled=false;entry.store.removeAlarm(entry.meta.alarmId);await entry.store.persist();await persistMeta(entry);return view(entry);
           }
           await blockOnce(entry,'Previous Family wake outcome is unknown; no automatic replay');return view(entry);
         }
-        if(Date.parse(entry.meta.dueAt)<=now()){await blockOnce(entry,'One-off check expired while the app was unavailable; no catch-up');return view(entry);}
-        if(!await routeAllowed(entry)||options.familyRoute?.isCurrent?.(scope)!==true)return{...view(entry),recoveryPending:true,blocked:'Family authorization is unavailable; no wake was started'};
+        if(!await routeAllowed(entry)||options.familyRoute?.isCurrent?.(scope)!==true)return pending('Family authorization is unavailable; no wake was started');
         await start(entry);return view(entry);
       });
     },

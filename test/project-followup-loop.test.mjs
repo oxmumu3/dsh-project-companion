@@ -200,7 +200,20 @@ test('offline family recovery does not rewrite an existing future plan',async t=
  await h.adapter.checkOnce({...h.args,delivery:'family',delaySeconds:60});await h.drain();await h.reopen();
  const folder=join(h.root,'.dsh/dot-checks',(await import('node:crypto')).createHash('sha256').update(h.owner.id).digest('hex'));
  const before=await readFile(join(folder,'scope.json'),'utf8');f.state.current=false;
- const recovered=await h.adapter.recoverFamilyOnce(h.args);assert.equal(recovered.recoveryPending,true);assert.equal(await readFile(join(folder,'scope.json'),'utf8'),before);assert.equal(h.schedulers.length,1);
+ const recovered=await h.adapter.recoverFamilyOnce(h.args);assert.equal(recovered.recoveryPending,true);assert.equal(recovered.nextDueAt,JSON.parse(before).dueAt,'the caller needs the persisted deadline to retry while offline');assert.equal(await readFile(join(folder,'scope.json'),'utf8'),before);assert.equal(h.schedulers.length,1);
+ f.state.current=true;const reconnected=await h.adapter.recoverFamilyOnce(h.args);assert.equal(reconnected.status,'queued');assert.equal(h.schedulers.length,2);
+});
+test('a one-off that expires while Family remains offline is blocked without a catch-up wake',async t=>{
+ const f=familyFixture(),h=await harness(t,{familyRoute:f.route,ownerOutside:true});
+ await h.adapter.checkOnce({...h.args,delivery:'family',delaySeconds:60});await h.drain();await h.reopen();f.state.current=false;
+ const pending=await h.adapter.recoverFamilyOnce(h.args);assert.equal(pending.recoveryPending,true);await h.tick(120);
+ const expired=await h.adapter.recoverFamilyOnce(h.args);assert.equal(expired.status,'blocked');assert.equal(expired.recoveryPending,undefined);assert.equal(h.messages.length,0);assert.equal(f.deliveries.length,0);
+});
+test('an inflight receipt that stays offline until its deadline becomes unknown and is never replayed',async t=>{
+ const f=familyFixture(),h=await harness(t,{familyRoute:f.route,ownerOutside:true});await h.adapter.checkOnce({...h.args,delivery:'family',delaySeconds:60});await h.drain();await h.reopen();
+ const scopeFile=join(h.root,'.dsh/dot-checks',(await import('node:crypto')).createHash('sha256').update(h.owner.id).digest('hex'),'scope.json');const saved=JSON.parse(await readFile(scopeFile,'utf8'));saved.familyInflight='family-followup-'+'3'.repeat(64);await writeFile(scopeFile,JSON.stringify(saved));f.state.current=false;
+ assert.equal((await h.adapter.recoverFamilyOnce(h.args)).recoveryPending,true);await h.tick(120);
+ const expired=await h.adapter.recoverFamilyOnce(h.args);assert.equal(expired.status,'blocked');assert.equal(expired.recoveryPending,undefined);f.state.current=true;assert.equal((await h.adapter.recoverFamilyOnce(h.args)).status,'blocked');assert.equal(h.messages.length,0);assert.equal(f.deliveries.length,0);
 });
 
 test('revoked original lease keeps a future family plan stopped after restart',async t=>{
