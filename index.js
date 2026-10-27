@@ -1,4 +1,4 @@
-import {randomUUID} from 'node:crypto';
+import {randomUUID,createHash} from 'node:crypto';
 import {resolve} from 'node:path';
 import {z} from 'zod';
 import {defineTool} from '@deepseek-ai/dsh-tools';
@@ -34,6 +34,10 @@ import {secureGoogleAuth} from './src/google-secure-auth.js';
 import {createContextAccountAuth} from './src/context-account-auth.js';
 import {createContextTransport} from './src/context-transport.js';
 import {createPersonalContext,contextRowSchema,CONTEXT_SOURCES,contextErrorText} from './src/context-service.js';
+import {createFamilyOwnerDelegation} from './src/family-owner-delegation.js';
+import {createFamilyContextAdapter} from './src/family-context-adapter.js';
+import {familyIntentAllowed,familyReadOnlyIntent,familySelectedItemAllowed,familyUnverifiedPlanAction,familyActionAllowed} from './src/family-intent.js';
+import {createFamilyReadAdapter} from './src/family-read-adapter.js';
 import {createContextRoute,registerContextRoute} from './src/context-route.js';
 import {createWorkbench,registerWorkbenchRoute} from './src/workbench.js';
 import {createWorkbenchActions,registerWorkbenchActionsRoute} from './src/workbench-actions.js';
@@ -45,15 +49,16 @@ export const inject=['tools','commands','storageDomain','sessions','systemPrompt
 const short=z.string().max(500);
 const timestamp=z.string().datetime();
 const identity=z.string().min(1).max(200);
+const returnBindingSchema=z.object({userHash:z.string().regex(/^[a-f0-9]{64}$/),botHash:z.string().regex(/^[a-f0-9]{64}$/).optional()}).strict();
 const outboxStatus=z.enum(['pending','blocked','dispatching','queued','reported_sent','failed','uncertain','expired','cancelled']);
 const storedRow=z.object({
   id:z.literal('profile'),version:z.literal(1),paused:z.boolean(),
   projects:z.array(z.object({id:identity,root:z.string().max(4096),label:z.string().max(80),sessionIds:z.array(identity).max(30),github:z.string().max(150).nullable(),watchedAt:timestamp,
     events:z.array(z.object({id:z.string().max(100),sessionId:identity,kind:z.enum(['user','assistant','error']),text:short,at:timestamp,truncated:z.boolean().optional()}).strict()).max(30),
   }).strict()).max(5),
-  daily:z.object({time:z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/),timeZone:z.string().max(100),sessionId:identity,enabled:z.boolean(),lastDate:z.string().nullable()}).strict().nullable(),
-  reminders:z.array(z.object({id:identity,title:z.string().max(200),dueAt:timestamp,sessionId:identity,status:z.enum(['scheduled','enqueued','expired','cancelled']),outboxId:identity.optional()}).strict()).max(100),
-  outbox:z.array(z.object({id:identity,kind:z.enum(['daily','reminder']),sessionId:identity,text:z.string().max(3200),createdAt:timestamp,expiresAt:timestamp,status:outboxStatus,detail:z.string().max(300)}).strict()).max(100),
+  daily:z.object({time:z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/),timeZone:z.string().max(100),sessionId:identity,enabled:z.boolean(),lastDate:z.string().nullable(),expectedBinding:returnBindingSchema.optional()}).strict().nullable(),
+  reminders:z.array(z.object({id:identity,title:z.string().max(200),dueAt:timestamp,sessionId:identity,status:z.enum(['scheduled','enqueued','expired','cancelled']),outboxId:identity.optional(),expectedBinding:returnBindingSchema.optional()}).strict()).max(100),
+  outbox:z.array(z.object({id:identity,kind:z.enum(['daily','reminder']),sessionId:identity,text:z.string().max(3200),createdAt:timestamp,expiresAt:timestamp,status:outboxStatus,detail:z.string().max(300),expectedBinding:returnBindingSchema.optional()}).strict()).max(100),
 }).strict();
 const domainSpec=defineDomain({name:'project_companion',version:1,tables:{state:domainTable(storedRow)}});
 const taskResultsDomainSpec=defineDomain({name:'project_companion_task_results',version:1,tables:{state:domainTable(taskResultsRowSchema)}});
@@ -61,6 +66,11 @@ const onboardingRow=z.object({id:z.literal('profile'),version:z.literal(1),compl
 const projectUpdatesDomainSpec=defineDomain({name:'project_companion_updates',version:1,tables:{state:domainTable(projectUpdateRowSchema)}});
 const contextLoopDomainSpec=defineDomain({name:'project_companion_context_loop',version:1,tables:{state:domainTable(contextLoopRowSchema)}});
 const contextDomainSpec=defineDomain({name:'project_companion_context',version:1,tables:{state:domainTable(contextRowSchema)}});
+const familyDelegationRow=z.union([
+  z.object({id:z.literal('profile'),version:z.literal(1),disabled:z.literal(true)}).strict(),
+  z.object({id:z.literal('profile'),version:z.literal(1),familySessionId:identity,bindingRevision:z.string().regex(/^[a-f0-9]{64}$/),originSessionId:identity,originBindingKey:z.string().regex(/^[a-f0-9]{64}$/),leaseFingerprint:z.string().regex(/^[a-f0-9]{64}$/)}).strict(),
+]);
+const familyDelegationDomainSpec=defineDomain({name:'project_companion_family_delegate',version:1,tables:{state:domainTable(familyDelegationRow)}});
 const newsDomainSpec=defineDomain({name:'project_companion_news',version:1,tables:{state:domainTable(newsRowSchema)}});
 const onboardingDomainSpec=defineDomain({name:'project_companion_onboarding',version:1,tables:{state:domainTable(onboardingRow)}});
 
@@ -98,19 +108,33 @@ export async function installCompanion(ctx,options={}){
   const newsTable=newsDomain.table('state');
   const contextDomain=await ctx.storageDomain.open(contextDomainSpec);
   const contextTable=contextDomain.table('state');
+  const familyDomain=await ctx.storageDomain.open(familyDelegationDomainSpec);
+  const familyTable=familyDomain.table('state');
   const projectUpdatesDomain=await ctx.storageDomain.open(projectUpdatesDomainSpec);
   const projectUpdatesTable=projectUpdatesDomain.table('state');
   const contextLoopDomain=await ctx.storageDomain.open(contextLoopDomainSpec);
   const contextLoopTable=contextLoopDomain.table('state');
   let timer;
+  let familyRecoveryPending=false,familyRecoveryRunning=false;
   let disposed=false;
   const coordinates=new Set();
   let lastRuntimeError='';
-  let memory,followup,onboarding,welcomeGuard,contextRoute,workbench,workbenchActions,projectUpdates,projectUpdateModel,contextLoop;
+  let memory,followup,onboarding,welcomeGuard,contextRoute,workbench,workbenchActions,projectUpdates,projectUpdateModel,contextLoop,context,familyDelegate,familyContext;
   const lifecycle=new AbortController();
   const timers=options.timers??globalThis;
-  const readBinding=options.readBinding??(sessionId=>readWechatBinding(ctx,sessionId,{...(options.fetch?{fetch:options.fetch}:{})}));
-  const readNativeRoute=options.readNativeRoute??(sessionId=>readWechatRoute(ctx,sessionId,{...(options.fetch?{fetch:options.fetch}:{})}));
+  const legacyReadBinding=options.readBinding??(sessionId=>readWechatBinding(ctx,sessionId,{...(options.fetch?{fetch:options.fetch}:{})}));
+  const legacyReadNativeRoute=options.readNativeRoute??(sessionId=>readWechatRoute(ctx,sessionId,{...(options.fetch?{fetch:options.fetch}:{})}));
+  const familyBinding=scope=>({userHash:scope.bindingRevision,botHash:createHash('sha256').update('family-dot:'+scope.bindingRevision).digest('hex')});
+  const familyEnabled=()=>{const v=options.family?.enabled??options.context?.config?.familyOwnerDelegation;return (v&&typeof v.get==='function'?v.get():v)===true;};
+  const getFamilyBridge=()=>familyEnabled()?ctx.get('familyDotBridge',false):null;
+  const readBinding=async sessionId=>{
+    if(typeof sessionId==='string'&&(sessionId.startsWith('family_owner_')||familyDelegate?.matchesSession(sessionId))){const scope=familyDelegate?.scopeFor(sessionId);return scope&&await familyDelegate.recheck(scope)?familyBinding(scope):null;}
+    return legacyReadBinding(sessionId);
+  };
+  const readNativeRoute=async sessionId=>{
+    if(typeof sessionId==='string'&&(sessionId.startsWith('family_owner_')||familyDelegate?.matchesSession(sessionId))){const scope=familyDelegate?.scopeFor(sessionId);return scope&&await familyDelegate.recheck(scope)?{kind:'bound',binding:familyBinding(scope)}:{kind:'unknown'};}
+    return legacyReadNativeRoute(sessionId);
+  };
   const readSetup=options.readSetup??(()=>readWechatSetup(ctx,{...(options.fetch?{fetch:options.fetch}:{})}));
   const recoveryGuard=createWechatRecoveryGuard({ctx});
   const taskResults=createTaskResults({
@@ -119,6 +143,13 @@ export async function installCompanion(ctx,options={}){
     ...(options.hostTimeZone?{hostTimeZone:options.hostTimeZone}:{}),
     async send(item){
       if(disposed||!item.expectedBinding)return{status:'blocked',detail:'Original WeChat binding unavailable; no fallback route'};
+      const familyScope=familyDelegate?.scopeFor(item.sessionId);
+      if(!familyScope&&(familyDelegate?.matchesSession(item.sessionId)||item.sessionId.startsWith('family_owner_')))return{status:'blocked',detail:'Original Family Owner route changed; not dispatched'};
+      if(familyScope){
+        const binding=familyBinding(familyScope);
+        if(binding.userHash!==item.expectedBinding.userHash||binding.botHash!==(item.expectedBinding.botHash??null)||!await familyDelegate.recheck(familyScope)||typeof item.authorize!=='function')return{status:'blocked',detail:'Family Owner or source grant changed; not dispatched'};
+        try{const result=await getFamilyBridge()?.sendOwner({sessionId:item.sessionId,bindingRevision:familyScope.bindingRevision,text:item.text,requestId:item.requestId,authorize:()=>familyDelegate.current(familyScope)&&item.authorize()});return{status:result?.status==='accepted'?'reported_sent':result?.status==='failed'?'failed':'uncertain',detail:'Family route report only; phone receipt unverified'};}catch{return{status:'uncertain',detail:'Family send outcome unknown; no automatic retry'};}
+      }
       let current;try{current=await readBinding(item.sessionId);}catch{return{status:'blocked',detail:'WeChat binding check unavailable'};}
       if(!current||current.userHash!==item.expectedBinding.userHash||(current.botHash??null)!==(item.expectedBinding.botHash??null))return{status:'blocked',detail:'Original WeChat binding changed or is no longer single-user'};
       // The public status check and tool dispatch are not atomic; this preview is single-user only.
@@ -143,7 +174,14 @@ export async function installCompanion(ctx,options={}){
     discover:()=>discover(ctx),
     ...(options.clock?{clock:options.clock}:{}),
     ...(options.hostTimeZone?{hostTimeZone:options.hostTimeZone}:{}),
-    async send(item){
+    async send(item,{authorize}={}){
+      const familyScope=familyDelegate?.scopeFor(item.sessionId);
+      if(!familyScope&&(familyDelegate?.matchesSession(item.sessionId)||item.sessionId.startsWith('family_owner_')))return{status:'blocked',detail:'Original Family Owner route changed; not dispatched'};
+      if(familyScope){
+        const binding=familyBinding(familyScope);
+        if(!item.expectedBinding||binding.userHash!==item.expectedBinding.userHash||binding.botHash!==(item.expectedBinding.botHash??null)||!await familyDelegate.recheck(familyScope)||typeof authorize!=='function')return{status:'blocked',detail:'Family Owner or source grant changed; not dispatched'};
+        try{const result=await getFamilyBridge()?.sendOwner({sessionId:item.sessionId,bindingRevision:familyScope.bindingRevision,text:item.text,requestId:'service-'+item.id,authorize:()=>familyDelegate.current(familyScope)&&authorize()});return{status:result?.status==='accepted'?'reported_sent':result?.status==='failed'?'failed':'uncertain',detail:'Family route report only; phone receipt unverified'};}catch{return{status:'uncertain',detail:'Family send outcome unknown; no automatic retry'};}
+      }
       const agent=ctx.get('agents')?.get?.(item.sessionId);
       if(!agent||String(agent.id)!==item.sessionId||!effectiveCwd(ctx,agent))return{status:'blocked',detail:'Bound session has no live agent; use the real session to rebind daily. No automatic resume.'};
       if(!ctx.tools.get('send_wechat',agent))return{status:'blocked',detail:'send_wechat unavailable; enable both WeChat and companion bundles'};
@@ -164,6 +202,9 @@ export async function installCompanion(ctx,options={}){
   // News uses the user's configured host model, never an auxiliary session or copied key.
   const newsModel=options.news?.model??createNewsModel(ctx);
   const newsBinding=async sessionId=>{
+    const familyScope=familyDelegate?.scopeFor(sessionId);
+    if(familyScope)return await familyDelegate.recheck(familyScope)?{bound:true,bindingKey:familyScope.bindingRevision}:{bound:false};
+    if(familyDelegate?.matchesSession(sessionId)||sessionId.startsWith('family_owner_'))return{bound:false};
     const connection=await readSetup();
     return connection.state==='bound'&&connection.sessionId===sessionId
       ?{bound:true,bindingKey:connection.bindingKey}:{bound:false};
@@ -181,6 +222,12 @@ export async function installCompanion(ctx,options={}){
     async send(item){
       // The domain has already persisted dispatching. Never retry an ambiguous side effect.
       if(disposed||lifecycle.signal.aborted||item.signal?.aborted||await service.isPaused())return{status:'failed',detail:'News paused or stopped; not dispatched'};
+      const familyScope=familyDelegate?.scopeFor(item.sessionId);
+      if(!familyScope&&(familyDelegate?.matchesSession(item.sessionId)||item.sessionId.startsWith('family_owner_')))return{status:'failed',detail:'Family Owner route changed; not dispatched'};
+      if(familyScope){
+        if(item.bindingKey!==familyScope.bindingRevision||typeof item.authorize!=='function'||!await familyDelegate.recheck(familyScope))return{status:'failed',detail:'Family Owner or source grant changed; not dispatched'};
+        try{const result=await getFamilyBridge()?.sendOwner({sessionId:item.sessionId,bindingRevision:familyScope.bindingRevision,text:item.text,requestId:item.requestId,authorize:()=>familyDelegate.current(familyScope)&&item.authorize()});return{status:result?.status==='accepted'?'reported_sent':result?.status==='failed'?'failed':'uncertain',detail:'Family route report only; phone receipt unverified'};}catch{return{status:'uncertain',detail:'Family send outcome unknown; no automatic retry'};}
+      }
       // Read the route last: a slow pause-state lookup must not stale this binding.
       const current=await newsBinding(item.sessionId);
       if(disposed||lifecycle.signal.aborted||item.signal?.aborted||!current.bound||current.bindingKey!==item.bindingKey)return{status:'failed',detail:'Original news route no longer available; not dispatched'};
@@ -239,33 +286,36 @@ export async function installCompanion(ctx,options={}){
   });
   const contextTransport=createContextProvider({calendar:calendarTransport,suite:suiteTransport,useSuite,dida:didaTransport,useDidaRest,mcp:mcpTransport});
   const contextBinding=async sessionId=>{
+    const delegated=await familyContext?.bindingOverride(sessionId);if(delegated)return delegated;
     const setup=await readSetup();
     if(setup?.state==='bound'&&typeof setup.sessionId==='string'&&/^[a-f0-9]{64}$/.test(setup.bindingKey??''))return setup.sessionId===sessionId?{kind:'bound',bindingKey:setup.bindingKey}:{kind:'unbound'};
     const route=await readNativeRoute(sessionId);
     return route?.kind==='unbound'?{kind:'unbound'}:{kind:'unknown'};
   };
-  const context=createPersonalContext({
+  context=createPersonalContext({
     store:{get:key=>contextTable.get(key),put:(key,value)=>contextTable.put(key,contextRowSchema.parse(value))},
     onInvalidate:()=>contextLoop?.suspend(),transport:contextTransport,readConfig,readBinding:contextBinding,credentialState:source=>source==='calendar'?calendarCredentials():useSuite(source)?googleSuiteAuth.credentialState(source):null,
     canRun:async()=>!disposed&&!lifecycle.signal.aborted&&!await service.isPaused(),
     ...(options.clock?{clock:options.clock}:{}),...(options.hostTimeZone?{hostTimeZone:options.hostTimeZone}:{}),
   });
+  familyDelegate=createFamilyOwnerDelegation({store:{get:key=>familyTable.get(key),put:(key,value)=>familyTable.put(key,familyDelegationRow.parse(value))},getBridge:getFamilyBridge,readGrantedLeases:async()=>context.delegationLeases(),readGrantedLeasesSync:()=>context.delegationLeases(),readLegacySetup:readSetup});
+  familyContext=createFamilyContextAdapter({delegation:familyDelegate,context});
   ctx.effect(()=>async()=>{
     disposed=true;
     lifecycle.abort();
-    workbench?.close();workbenchActions?.close();recoveryGuard.close();
+    workbench?.close();workbenchActions?.close();recoveryGuard.close();const familyClosing=familyDelegate.close();
     const newsClosing=news.close();newsModel.close?.();
     const contextClosing=context.close();contextRoute?.close();
     const contextTransportClosing=contextTransport.close();const googleAuthClosing=googleAuth.close();
     projectUpdateModel?.close();const updatesClosing=projectUpdates?.close();const loopClosing=contextLoop?.close();
-    const externalClosing=Promise.allSettled([loopClosing,updatesClosing,newsClosing,contextClosing,contextTransportClosing,googleAuthClosing,googleCalendarAuth.close(),googleSuiteAuth.close(),flomoAuth.close(),didaAuth.close(),googleTokenVault?.close()]);
+    const externalClosing=Promise.allSettled([loopClosing,updatesClosing,newsClosing,contextClosing,contextTransportClosing,googleAuthClosing,familyClosing,googleCalendarAuth.close(),googleSuiteAuth.close(),flomoAuth.close(),didaAuth.close(),googleTokenVault?.close()]);
     if(timer!==undefined){timers.clearInterval(timer);timer=undefined;}
     await Promise.allSettled([...coordinates]);
     await Promise.allSettled([memory?.close(),followup?.close(),onboarding?.close(),welcomeGuard?.close()]);
     // A failed news store must not prevent cleanup of unrelated services.
     await externalClosing;
     try{await taskResults.close();}
-    finally{try{await service.ready();}finally{await Promise.allSettled([taskDomain.close(),onboardingDomain.close(),newsDomain.close(),contextDomain.close(),projectUpdatesDomain.close(),contextLoopDomain.close(),domain.close()]);}}
+    finally{try{await service.ready();}finally{await Promise.allSettled([taskDomain.close(),onboardingDomain.close(),newsDomain.close(),contextDomain.close(),familyDomain.close(),projectUpdatesDomain.close(),contextLoopDomain.close(),domain.close()]);}}
   });
   // Cordis emits disposal before waiting for an asynchronous apply to settle.
   // Abort startup at that boundary; normal effect cleanup alone runs too late.
@@ -280,11 +330,50 @@ export async function installCompanion(ctx,options={}){
       if(disposed||lifecycle.signal.aborted)return;
     }
   }
-  await service.ready();await taskResults.ready();await news.ready();await context.ready();
+  await service.ready();await taskResults.ready();await news.ready();await context.ready();await familyDelegate.ready();
   const noteError=error=>{lastRuntimeError=String(error?.message??error).slice(0,200);};
   const authorizeRoot=async root=>(await service.coordinationTarget(root))?.root===root;
+  const familyRead=createFamilyReadAdapter({getBridge:getFamilyBridge,isCurrent:scope=>familyDelegate.current(scope),authorizeRoot,recheck:scope=>familyDelegate.recheck(scope)});
   memory=createProjectMemory({authorizeRoot,...(options.clock?{clock:options.clock}:{}),...(options.hostTimeZone?{hostTimeZone:options.hostTimeZone}:{})});
-  followup=createProjectFollowup({ctx,invalidateLoop:()=>contextLoop?.suspend(),authorizeRoot,readBinding,readConnection:readSetup,readNativeRoute,canRun:async({root})=>await authorizeRoot(root)&&!await service.isPaused(),...(options.clock?{clock:options.clock}:{}),...(options.hostTimeZone?{hostTimeZone:options.hostTimeZone}:{})});
+  const familyRoute={
+    getScope:sessionId=>familyDelegate.scopeFor(sessionId),
+    isCurrent:scope=>familyDelegate.current(scope),
+    routeState:request=>familyDelegate.routeState(request),
+    resolveWorkspace(root){
+      if(typeof root!=='string'||!root.startsWith('/')||resolve(root)!==root)return null;
+      try{const rows=ctx.get('workspaceRegistry',false)?.list?.();if(!Array.isArray(rows))return null;const matches=rows.filter(row=>row?.path===root&&typeof row.id==='string'&&row.id);return matches.length===1&&rows.filter(row=>row?.id===matches[0].id).length===1?{workspaceId:matches[0].id,path:root}:null;}catch{return null;}
+    },
+    async recheck(scope,{root,loopId}={}){
+      if(!await familyDelegate.recheck(scope)||root&&!await authorizeRoot(root)||await service.isPaused())return false;
+      if(loopId){try{
+        const agent=ctx.get('agents',false)?.get(scope.familySessionId);
+        if(agent){const caller=owner(ctx,agent);const result=await familyContext.run(scope,()=>contextLoop.inspect(caller,{project:root}));return result.loopId===loopId&&familyDelegate.current(scope);}
+        // A cold, exact Owner session may be resumed only after the persisted
+        // loop and the original leased sources have been independently checked.
+        // This is not a private-source query and cannot create a new session.
+        const parsed=contextLoopRowSchema.safeParse(await contextLoopTable.get('profile'));
+        if(!parsed.success)return false;
+        const rows=parsed.data.loops.filter(loop=>loop.id===loopId&&loop.originSessionId===scope.familySessionId&&loop.projectRoot===root);
+        if(rows.length!==1)return false;
+        const loop=rows[0],expected=createHash('sha256').update('family-loop:'+scope.bindingRevision+':'+scope.leaseFingerprint).digest('hex');
+        if(loop.bindingKey!==expected||!Array.isArray(loop.queries)||!loop.queries.length)return false;
+        const sources=[...new Set(loop.queries.map(q=>q.source))];
+        const caller={sessionId:scope.familySessionId,cwd:root};
+        const currentGrant=await familyContext.run(scope,()=>familyContext.authorization(caller,sources));
+        return currentGrant===loop.grant&&familyDelegate.current(scope)&&await authorizeRoot(root)&&!await service.isPaused();
+      }catch{return false;}}
+      return familyDelegate.current(scope);
+    },
+    async send({scope,text,requestId,authorize}){
+      if(!await familyDelegate.recheck(scope)||typeof authorize!=='function'||authorize()!==true)throw new Error('Family authorization changed');
+      return getFamilyBridge()?.sendOwner({sessionId:scope.familySessionId,bindingRevision:scope.bindingRevision,text,requestId,authorize:()=>familyDelegate.current(scope)&&authorize()});
+    },
+    async readDelivery({scope,requestId}){
+      if(!await familyDelegate.recheck(scope))throw new Error('Family authorization changed');
+      return getFamilyBridge()?.readOwnerDelivery({sessionId:scope.familySessionId,bindingRevision:scope.bindingRevision,requestId});
+    },
+  };
+  followup=createProjectFollowup({ctx,invalidateLoop:()=>contextLoop?.suspend(),authorizeRoot,readBinding,readConnection:readSetup,readNativeRoute,familyRoute,pauseState:()=>service.isPaused(),canRun:async({root})=>await authorizeRoot(root)&&!await service.isPaused(),...(options.clock?{clock:options.clock}:{}),...(options.hostTimeZone?{hostTimeZone:options.hostTimeZone}:{})});
   projectUpdateModel=createProjectUpdateModel(ctx,{...(options.clock?{clock:options.clock}:{})});
   const updateOwner=(caller)=>{const agent=ctx.get('agents',false)?.get(caller.sessionId);return !disposed&&!lifecycle.signal.aborted&&agent&&String(agent.id)===caller.sessionId&&effectiveCwd(ctx,agent)===caller.cwd;};
   const readUpdateScope=async(caller,root)=>{
@@ -292,8 +381,9 @@ export async function installCompanion(ctx,options={}){
       const target=await service.coordinationTarget(root);if(!target||target.root!==root)return null;
       // Binding is the last asynchronous authority read; never migrate another
       // session's binding or mistake an unknown route for a native session.
-      const connection=await readSetup();let bindingKey;
-      if(connection?.state==='bound'&&connection.sessionId===caller.sessionId&&/^[a-f0-9]{64}$/.test(connection.bindingKey??''))bindingKey=connection.bindingKey;
+      const delegated=familyContext.activeScope();const connection=await readSetup();let bindingKey;
+      if(delegated&&delegated.familySessionId===caller.sessionId&&await familyDelegate.recheck(delegated))bindingKey=createHash('sha256').update('family-loop:'+delegated.bindingRevision+':'+delegated.leaseFingerprint).digest('hex');
+      else if(connection?.state==='bound'&&connection.sessionId===caller.sessionId&&/^[a-f0-9]{64}$/.test(connection.bindingKey??''))bindingKey=connection.bindingKey;
       else{const route=await readNativeRoute(caller.sessionId);if(route?.kind!=='unbound')return null;bindingKey=null;}
       if(!updateOwner(caller)||!service.canReadProjectUpdate({projectId:target.id,projectRoot:root}))return null;
       return{projectId:target.id,projectRoot:root,label:target.label,bindingKey};
@@ -312,20 +402,30 @@ export async function installCompanion(ctx,options={}){
     store:{get:key=>contextLoopTable.get(key),put:(key,value)=>contextLoopTable.put(key,contextLoopRowSchema.parse(value))},
     readScope:readUpdateScope,
     authorizeSync:(caller,scope)=>updateOwner(caller)&&service.canReadProjectUpdate(scope),
-    authorization:(caller,sources)=>context.authorization(caller,sources),
-    authorizationSync:(caller,sources,grant)=>context.assertAuthorization(caller,sources,grant),
-    readQuery:(caller,query,{signal})=>context.act(caller,{...query,action:'query',userRequested:true,signal}),
+    authorization:(caller,sources)=>familyContext.authorization(caller,sources),
+    authorizationSync:(caller,sources,grant)=>familyContext.assertAuthorization(caller,sources,grant),
+    readQuery:(caller,query,{signal})=>familyContext.act(caller,{...query,action:'query',userRequested:true,signal}),
     readProject:(root,caller)=>service.fixedProjectAnalysis(root,caller),
     readMemory:(root,caller)=>memory.inspect({root,sessionId:caller.sessionId}),
     summarize:options.contextLoop?.summarize??(input=>projectUpdateModel.summarize(input)),
     coordinate:async(caller,args,meta)=>{
       if(!updateOwner(caller))throw new Error('CONTEXT_LOOP_SCOPE_CHANGED');
+      const scope=familyContext.activeScope();
+      if(scope){
+        const project=await service.coordinationTarget(args.project);
+        if(!project||project.root!==args.project)return{status:'blocked',accepted:false};
+        const workspace=familyRoute.resolveWorkspace(project.root);if(!workspace)return{status:'blocked',accepted:false,text:'项目注册信息不可确认，本次未派发。'};
+        const workspaceCurrent=()=>familyRoute.resolveWorkspace(project.root)?.workspaceId===workspace.workspaceId;
+        return familyRead.start({scope,root:project.root,requestId:meta.callId,reference:args.task,authorizeAdmission:meta.authorizeAdmission,authorizeAdmissionSync:meta.authorizeAdmissionSync,authorizeDelivery:()=>workspaceCurrent()&&familyDelegate.current(scope)&&service.canReadProjectUpdate({projectId:project.id,projectRoot:project.root})&&typeof meta.authorizeDelivery==='function'&&meta.authorizeDelivery()});
+      }
       const agent=ctx.get('agents',false)?.get(caller.sessionId);
       const work=coordinate(agent,{...args,action:'coordinate',userRequested:true},meta.signal,{callId:meta.callId,authorizeAdmission:meta.authorizeAdmission,authorizeAdmissionSync:meta.authorizeAdmissionSync});
       coordinates.add(work);try{return await work;}finally{coordinates.delete(work);syncTimer();}
     },
     readJob:async(caller,id)=>{
       if(!updateOwner(caller))throw new Error('CONTEXT_LOOP_SCOPE_CHANGED');
+      const scope=familyContext.activeScope();
+      if(scope&&id.startsWith('family-read-'))return familyRead.read({scope,id});
       const binding=await readBinding(caller.sessionId);if(!binding)return null;
       const result=await taskResults.inspect(caller.sessionId,{id,expectedBinding:binding});
       const row=result.jobs[0];if(!row)return null;
@@ -400,6 +500,28 @@ export async function installCompanion(ctx,options={}){
     const caller=owner(ctx,agent);
     const project=await service.coordinationTarget(args.project??caller.cwd);
     if(!project)throw new Error('项目尚未关注。请先告诉我关注哪个已知项目，再保存记忆或设置跟进。');
+    const scope=familyContext.activeScope();
+    if(scope&&!(args.action==='context_check'&&!scope.userText)){
+      const text=scope.userText??'';
+      const trusted=/(?:刚才|继续|上一|那份|上次)/.test(text)&&typeof scope.previousUserText==='string'?scope.previousUserText+'。'+text:text;
+      const watched=await service.watchedProjects();let registry;
+      try{registry=ctx.get('workspaceRegistry',false)?.list?.();}catch{}
+      if(!Array.isArray(registry))throw new Error('无法确认项目名称，本次未读取。');
+      const aliases=row=>[row.label,row.root?.split('/').at(-1),...registry.filter(r=>r.path===row.root).map(r=>r.title)].filter(name=>typeof name==='string'&&name.trim().length>=2).map(name=>name.trim());
+      const mentioned=name=>{const escaped=name.replace(/[.*+?^${}()|[\]\\]/g,'\\$&');return new RegExp('(?<![A-Za-z0-9_])'+escaped+'(?![A-Za-z0-9_])','iu').test(trusted);};
+      const matches=watched.filter(row=>aliases(row).some(mentioned));
+      if(matches.length!==1||matches[0].root!==project.root)throw new Error('未能从你的消息唯一确认目标项目，本次未读取或派发。');
+      const namedClauses=trusted.split(/[，,。；;！？!?\n]/u).filter(clause=>aliases(project).some(name=>{const escaped=name.replace(/[.*+?^${}()|[\]\\]/g,'\\$&');return new RegExp('(?<![A-Za-z0-9_])'+escaped+'(?![A-Za-z0-9_])','iu').test(clause);}));
+      if(!namedClauses.length||namedClauses.some(clause=>/不要|不用|无需|别|禁止|不准|不得|不许|不能|如果|假设|假如|是否|能否|能不能/.test(clause)))throw new Error('项目范围含否定或假设，本次未读取或派发。');
+      if(/如果|假设|假如|(?:不要|不用|无需|别|禁止|不准|不得|不许|不能|不).{0,12}(?:读取|查看|检查|读|看|查)/.test(text))throw new Error('项目范围含否定或假设，本次未读取或派发。');
+      // Accept only complete project phrases for the currently supported flow.
+      // Name presence in hypothetical, quoted or incidental prose is not
+      // authority to read a project selected by a model.
+      const exact=aliases(project).some(name=>{const escaped=name.replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
+        const patterns={context_brief:'^(?:请|帮我)?(?:生成|整理|查看)\\s*'+escaped+'\\s*(?:的)?项目简报$',context_handoff:'^(?:请)?(?:把|将)(?:刚才|上一份|上次|简报)?第[一二两三四五六七八九1-9]项(?:交给|派给)\\s*'+escaped+'$',coordinate:'^(?:请)?只读检查\\s*'+escaped+'\\s*(?:的)?\\s*README(?:\\.md)?\\s*(?:第[一1]行|首行)$'};
+        const pattern=patterns[args.action];return pattern&&namedClauses.some(clause=>new RegExp(pattern,'iu').test(clause.trim()));});
+      if(!exact)throw new Error('请明确指定项目及要查看的内容；本次未读取或派发。');
+    }
     return{project,caller};
   }
   async function memoryOrFollowup(agent,args){
@@ -436,7 +558,9 @@ export async function installCompanion(ctx,options={}){
         if(await service.isPaused())throw new Error('项目助理已暂停，未创建单次检查。请先明确恢复助理。');
         const route=await readNativeRoute(caller.sessionId);
         if(!route||!['bound','unbound'].includes(route.kind))throw new Error('无法确认当前回复通道，未创建检查；稍后核对连接状态。');
-        const plan=await followup.checkOnce({...input,...(loop?{loopId:loop.loopId}:{}),projectLabel:project.label,...(args.dueAt?{dueAt:args.dueAt}:{delaySeconds:args.delaySeconds??60}),delivery:route.kind==='bound'?'wechat':'native'});
+        const familyScope=familyContext.activeScope();
+        if(familyScope&&!loop)throw new Error('请先整理需要跟进的资料简报，再安排一次检查。');
+        const plan=await followup.checkOnce({...input,...(loop?{loopId:loop.loopId}:{}),projectLabel:project.label,...(args.dueAt?{dueAt:args.dueAt}:{delaySeconds:args.delaySeconds??60}),delivery:familyScope?'family':route.kind==='bound'?'wechat':'native'});
         if(!['queued','running'].includes(plan.status))return{...plan,text:'本次检查未进入等待或运行状态，请按实际检查状态核对；没有创建周期计划。'};
         return{...plan,text:`已安排只读检查「${project.label}」一次，结果回到当前对话；检查结束后不再重复。${loop?'只读取这份简报已选的个人资料范围和项目状态':'只读取记忆和项目资料'}，不修改文件或派工；有值得告知的新情况时只回一份结果。设置确认后立即结束本轮，稍后用户主动问起时再查状态。`};
       }
@@ -449,7 +573,9 @@ export async function installCompanion(ctx,options={}){
       if(args.action==='configure_followup'){
         if(args.userRequested!==true)throw new Error('只有用户明确要求并指定跟进频率才可开启主动跟进；安装或查询不会创建计划。');
         if(await service.isPaused())throw new Error('项目助理已暂停，未创建跟进计划。请先明确恢复助理，再设置跟进频率。');
-        const plan=await followup.configure({...input,...(loop?{loopId:loop.loopId}:{}),everyMinutes:args.everyMinutes,projectLabel:project.label});
+        const familyScope=familyContext.activeScope();
+        if(familyScope&&!loop)throw new Error('请先整理需要跟进的资料简报，再设置跟进。');
+        const plan=await followup.configure({...input,...(loop?{loopId:loop.loopId}:{}),everyMinutes:args.everyMinutes,projectLabel:project.label,...(familyScope?{delivery:'family'}:{})});
         return{...plan,text:plan.blocked?`计划已保存，但暂不能启动：${plan.blocked}`:`已安排每${plan.everyMinutes}分钟只读核对「${project.label}」的新变化，遵守免打扰和消息预算；没有值得告知的变化时保持安静。电脑与DSH需在线；本次设置不是送达或长期可靠性的证明。`};
       }
       if(args.action==='cancel_followup'){const plan=await followup.cancel(input);return{...plan,text:'这个项目的主动跟进已关闭。已开始的检查或已交给微信的消息可能无法撤回；其他项目和原有提醒不变。'};}
@@ -460,8 +586,28 @@ export async function installCompanion(ctx,options={}){
   }
   function syncTimer(){
     if(disposed)return;
-    if((service.needsTimer()||taskResults.needsTimer()||news.needsTimer())&&timer===undefined){timer=timers.setInterval(async()=>{try{await service.tick();await taskResults.tick();await news.tick();}catch(error){noteError(error);}finally{syncTimer();}},15000);timer?.unref?.();}
-    else if(!service.needsTimer()&&!taskResults.needsTimer()&&!news.needsTimer()&&timer!==undefined){timers.clearInterval(timer);timer=undefined;}
+    if((service.needsTimer()||taskResults.needsTimer()||news.needsTimer()||familyRecoveryPending)&&timer===undefined){timer=timers.setInterval(async()=>{try{await service.tick();await taskResults.tick();await news.tick();if(familyRecoveryPending)await recoverFamilyPlans();}catch(error){noteError(error);}finally{syncTimer();}},15000);timer?.unref?.();}
+    else if(!service.needsTimer()&&!taskResults.needsTimer()&&!news.needsTimer()&&!familyRecoveryPending&&timer!==undefined){timers.clearInterval(timer);timer=undefined;}
+  }
+  async function recoverFamilyPlans(){
+    if(disposed||familyRecoveryRunning)return;
+    familyRecoveryRunning=true;
+    try{
+      familyRecoveryPending=false;
+      const sessionId=familyEnabled()?familyDelegate.registeredSessionId():null;if(!sessionId)return;
+      if(await service.isPaused()){familyRecoveryPending=true;return;}
+      // Only already-watched roots and this exact previously paired Owner
+      // session are inspected. No plan or source query is created here.
+      for(const project of await service.watchedProjects()){
+        const once=await followup.recoverFamilyOnce({root:project.root,sessionId});
+        if(once.recoveryPending&&Date.parse(once.nextDueAt??'')>(options.clock?.()??new Date()).getTime())familyRecoveryPending=true;
+        const recurring=await followup.status({root:project.root});
+        if(recurring.enabled&&recurring.sessionId===sessionId&&!recurring.running){
+          const result=await followup.resume({root:project.root,sessionId});
+          if(result.enabled&&!result.running)familyRecoveryPending=true;
+        }
+      }
+    }catch(error){noteError(error);}finally{familyRecoveryRunning=false;syncTimer();}
   }
   async function act(agent,input){
     if(input.action==='pause'){news.suspend?.();context.suspend();projectUpdates.suspend();contextLoop.suspend();}
@@ -474,7 +620,8 @@ export async function installCompanion(ctx,options={}){
       if(plan.enabled&&origin)await followup.cancel({root:project.root,sessionId:origin});
       await followup.cancelOnceForProject({root:project.root});
     }
-    const result=await service.act(owner(ctx,agent),input);
+    const familyScope=familyContext.activeScope();
+    const result=await service.act(owner(ctx,agent),familyScope&&['configure_daily','remind'].includes(input.action)?{...input,expectedBinding:familyBinding(familyScope)}:input);
     if(input.action==='status'){
       result.followups=[];
       for(const project of await service.watchedProjects()){
@@ -514,6 +661,36 @@ export async function installCompanion(ctx,options={}){
     return{text:`accepted: project ${project.id}; session ${target.id}; message ${message.id}。已交给目标会话，不是任务完成证明。`,accepted:true,projectId:project.id,sessionId:String(target.id),messageId:String(message.id)};
   }
   const coordinate=createCoordinator({ctx,service,owner:agent=>owner(ctx,agent),liveAgents,taskResults,readBinding,lifecycleSignal:lifecycle.signal});
+  async function withFamily(execution,args,run){
+    const sessionId=String(execution?.agent?.id??'');
+    if(sessionId.startsWith('family_member_'))throw new Error('家人成员没有 Owner 的 Dot 资料权限。');
+    if(!sessionId.startsWith('family_owner_')&&!familyDelegate.matchesSession(sessionId))return run();
+    if(!familyEnabled())throw new Error('Family Owner 委托未启用。');
+    const call={sessionId,callId:execution.callId,signal:execution.signal};
+    let scope;
+    // A wake may continue the captured authority only while the exact
+    // protected follow-up is active; ordinary native calls need a real
+    // inbound Family WeChat tool call.
+    if(args.action==='context_check'&&args.loopId&&followup.activeLoop(execution)===args.loopId)scope=familyDelegate.scopeFor(sessionId);
+    else{
+      if(familyDelegate.isUnpaired()){
+        const leases=context.delegationLeases();
+        const sessions=[...new Set(leases.filter(row=>row.bindingKey!==null).map(row=>row.sessionId))];
+        if(sessions.length!==1&&leases.length!==0)throw new Error('现有资料授权的原会话不唯一，未建立委托。');
+        await familyDelegate.pair({execution:call,originSessionId:leases.length===0?'family-no-legacy':sessions[0],userAuthorized:true});
+      }
+      scope=await familyDelegate.resolve(call);
+    }
+    if(!scope)throw new Error('家庭 Owner 身份或资料委托不可用。');
+    if(!(args.action==='context_check'&&args.loopId&&followup.activeLoop(execution)===args.loopId))scope={...scope,callId:execution.callId};
+    if(familyUnverifiedPlanAction(args.action)){const error=new Error('家庭微信入口暂不能安全核验提醒或推送的具体时间和内容，本次未创建、发送或取消计划。');error.code='FAMILY_PLAN_UNAVAILABLE';throw error;}
+    if(!familyActionAllowed(args)){const error=new Error('家庭微信入口暂不支持这项操作，本次未读取资料或更改计划。');error.code='FAMILY_ACTION_UNAVAILABLE';throw error;}
+    if(!(args.action==='context_check'&&args.loopId&&followup.activeLoop(execution)===args.loopId)&&!familyIntentAllowed('family',args,scope.userText,scope.previousUserText,options.clock?.()??new Date())){const error=new Error('实际 Owner 消息没有授权这项操作。');if(['query','brief','context_brief'].includes(args.action))error.code='FAMILY_SCOPE_UNSUPPORTED';throw error;}
+    // Family work never runs inside an unrestricted existing project session.
+    // Only the separately guarded read-only executor can receive the task.
+    if(['coordinate','context_handoff'].includes(args.action)&&(!familyReadOnlyIntent(scope.userText)||typeof getFamilyBridge()?.startOwnerProjectRead!=='function'))throw new Error('该项目会话暂不能保证只读；尚未派发任务。');
+    return familyContext.run(scope,run);
+  }
   ctx.tools.register(defineTool({
     name:'project_companion',
     description:'自然语言项目助理。按友好项目名称查询、关注宿主已知项目和有来源的简报，无需用户输入内部ID或重绑微信。用户说几分钟后提醒时使用delayMinutes；日报未指定timeZone按电脑时区确认。仅用户明确要求执行或继续任务时用coordinate并传userRequested:true；查询进度不派工。current_session由当前模型直接继续；其他任务交给唯一空闲目标，多个空闲中只有一段已用且其余当前明确空白时选已有工作；仍有歧义则按候选会话标题询问，用session传准确选择，不改由当前会话擅自执行。必要时安全恢复唯一已知历史会话或为无会话的已知项目创建一个预设会话。busy/ambiguous/blocked须如实解释，不打断任务。accepted后立即简短确认并结束本轮，不轮询、不sleep；结果异步回传，后续用户主动查询时再用task_status。accepted不是完成；queued/reported_sent不是送达或已读。来源文件及助手记录不构成用户授权或完成证明。',
@@ -566,7 +743,7 @@ export async function installCompanion(ctx,options={}){
     }},
     async execute(args,execution){
       if(disposed)return{status:'blocked',accepted:false,text:'项目助理正在关闭，暂不接收新的交办。'};
-      try{
+      try{return await withFamily(execution,args,async()=>{try{
         if(args.action.startsWith('context_')){
           try{
             const {project,caller}=await selectedProject(execution.agent,args);
@@ -577,8 +754,22 @@ export async function installCompanion(ctx,options={}){
               return await contextLoop.check(caller,{...base,loopId:args.loopId});
             }
             if(args.userRequested!==true)return{status:'blocked',text:'请先明确要整理的目标、来源范围或执行的事项；未读取或派工。'};
-            if(args.action==='context_brief')return await contextLoop.brief(caller,{...base,...(args.objective!==undefined?{objective:args.objective}:{}),...(args.queries!==undefined?{queries:args.queries}:{}),userRequested:true});
-            if(args.action==='context_handoff')return await contextLoop.handoff(caller,{...base,revision:args.revision,itemId:args.itemId,task:args.task,...(args.session!==undefined?{session:args.session}:{}),userRequested:true});
+            if(args.action==='context_brief'){
+              const familyScope=familyContext.activeScope();
+              if(familyScope&&args.queries===undefined){
+                // Reuse only this Family session's existing manifest, and
+                // check its actual sources against the Owner's current request.
+                const parsed=contextLoopRowSchema.safeParse(await contextLoopTable.get('profile'));
+                const rows=parsed.success?parsed.data.loops.filter(loop=>loop.originSessionId===caller.sessionId&&loop.projectRoot===project.root):[];
+                if(rows.length!==1||!familyIntentAllowed('project_companion',{...args,queries:rows[0].queries},familyScope.userText,familyScope.previousUserText,options.clock?.()??new Date()))throw new Error('资料范围未经当前用户确认。');
+              }
+              return await contextLoop.brief(caller,{...base,...(args.objective!==undefined?{objective:args.objective}:{}),...(args.queries!==undefined?{queries:args.queries}:{}),userRequested:true});
+            }
+            if(args.action==='context_handoff'){
+              const scope=familyContext.activeScope();
+              if(scope){const prior=await contextLoop.inspect(caller,{project:project.root});if(prior.revision!==args.revision||!familySelectedItemAllowed(scope.userText,prior.items,args.itemId))return{status:'blocked',accepted:false,text:'请明确要检查简报中的哪一项；本次没有派发。'};}
+              return await contextLoop.handoff(caller,{...base,revision:args.revision,itemId:args.itemId,task:args.task,...(args.session!==undefined?{session:args.session}:{}),userRequested:true});
+            }
             if(args.action==='context_forget'){
               const result=await contextLoop.cancel(caller,{project:project.root,userRequested:true});
               const input={root:project.root,sessionId:caller.sessionId};
@@ -595,12 +786,18 @@ export async function installCompanion(ctx,options={}){
         }
         if(['memory','remember','correct_memory','forget_memory','check_once','once_status','cancel_once','configure_followup','cancel_followup','followup_status'].includes(args.action))return await memoryOrFollowup(execution.agent,args);
         if(args.action==='coordinate'){
+          const scope=familyContext.activeScope();
+          if(scope){const {project}=await selectedProject(execution.agent,args);const workspace=familyRoute.resolveWorkspace(project.root);if(!workspace)return{status:'blocked',accepted:false,text:'项目注册信息不可确认，本次未派发。'};return await familyRead.start({scope,root:project.root,requestId:execution.callId,authorizeDelivery:()=>familyRoute.resolveWorkspace(project.root)?.workspaceId===workspace.workspaceId&&familyDelegate.current(scope)&&service.canReadProjectUpdate({projectId:project.id,projectRoot:project.root})});}
           const work=coordinate(execution.agent,args,execution.signal,{callId:execution.callId});coordinates.add(work);
           try{return await work;}finally{coordinates.delete(work);}
         }
-        if(args.action==='task_status')return await taskResults.status(owner(ctx,execution.agent).sessionId,{id:args.id});
+        if(args.action==='task_status'){
+          const scope=familyContext.activeScope();
+          if(scope&&typeof args.id==='string'&&args.id.startsWith('family-read-'))return await familyRead.read({scope,id:args.id})??{status:'blocked',text:'本次独立检查状态暂不可用。'};
+          return await taskResults.status(owner(ctx,execution.agent).sessionId,{id:args.id});
+        }
         return await act(execution.agent,args);
-      }finally{syncTimer();}
+      }finally{syncTimer();}});}catch(error){return{status:'blocked',accepted:false,text:['FAMILY_PLAN_UNAVAILABLE','FAMILY_ACTION_UNAVAILABLE'].includes(error?.code)?error.message:error?.code==='FAMILY_SCOPE_UNSUPPORTED'?'家庭微信入口暂只支持按关键词和条数搜索 flomo，以及查看未来24小时内指定条数的日历；其他个人资料范围暂不能安全解析，本次未读取。':error?.message==='该项目会话暂不能保证只读；尚未派发任务。'?error.message:'当前家庭微信入口的 Owner 身份、资料范围或操作授权不可用，未读取或派发。'};}
     },
   }));
   ctx.tools.register(defineTool({
@@ -616,12 +813,12 @@ export async function installCompanion(ctx,options={}){
     output:{schema:{type:'object',additionalProperties:true},render:(_args,value)=>[{type:'text',text:value.text??JSON.stringify(value)}]},
     async execute(args,execution){
       if(disposed)return{status:'blocked',text:'助理正在关闭，未执行资讯请求。'};
-      try{
+      try{return await withFamily(execution,args,async()=>{
         const zone=typeof options.hostTimeZone==='function'?options.hostTimeZone():options.hostTimeZone??Intl.DateTimeFormat().resolvedOptions().timeZone;
         const value=await news.act(owner(ctx,execution.agent),{...args,...(args.action==='configure'&&!args.timeZone?{timeZone:zone}:{}),requestId:execution.callId,signal:execution.signal});
         if(args.action==='status'&&typeof newsModel.usage==='function')value.modelUsage=newsModel.usage();
         return value;
-      }catch(error){return{status:'blocked',text:error?.code==='NEWS_TOPICS_PREVIEW_ONLY'?'关注点仅用于本次 preview 预览；本次未设置、取消或发送资讯。':error?.code==='NEWS_INVALID_TOPICS'?'本次关注点需要1–8个不重复的短语，每个最多80字、总计400字，不能包含空白项或控制字符；未读取来源、发送或修改计划。':'资讯请求未完成，请核对模型、来源或连接状态；未自动重试。'};}
+      });}catch(error){return{status:'blocked',text:error?.code==='FAMILY_PLAN_UNAVAILABLE'?error.message:error?.code==='NEWS_TOPICS_PREVIEW_ONLY'?'关注点仅用于本次 preview 预览；本次未设置、取消或发送资讯。':error?.code==='NEWS_INVALID_TOPICS'?'本次关注点需要1–8个不重复的短语，每个最多80字、总计400字，不能包含空白项或控制字符；未读取来源、发送或修改计划。':'资讯请求未完成，请核对模型、来源或连接状态；未自动重试。'};}
       finally{syncTimer();}
     },
   }));
@@ -647,8 +844,8 @@ export async function installCompanion(ctx,options={}){
     output:{schema:{type:'object',additionalProperties:true},render:(_args,value)=>[{type:'text',text:value.text??JSON.stringify(value)}]},
     async execute(args,execution){
       if(disposed)return{status:'blocked',text:'助理正在关闭，未读取资料。'};
-      try{return await context.act(owner(ctx,execution.agent),{...args,signal:execution.signal});}
-      catch(error){return{status:'blocked',text:contextErrorText(error)};}
+      try{return await withFamily(execution,args,()=>familyContext.act(owner(ctx,execution.agent),{...args,signal:execution.signal}));}
+      catch(error){return{status:'blocked',text:error?.code==='FAMILY_SCOPE_UNSUPPORTED'?'家庭微信入口暂只支持按关键词和条数搜索 flomo，以及查看未来24小时内指定条数的日历；其他个人资料范围暂不能安全解析，本次未读取。':contextErrorText(error)};}
     },
   }));
   ctx.systemPrompt.section({name:'project-companion:context-guidance',order:9001,interpolate:false,text:({scope})=>{
@@ -701,7 +898,9 @@ export async function installCompanion(ctx,options={}){
   for(const project of await service.watchedProjects()){
     try{await followup.resume({root:project.root});}catch(error){noteError(error);}
   }
-  return{service,taskResults,memory,followup,onboarding,news,context,contextLoop,projectUpdates,googleCalendarAuth,googleSuiteAuth,flomoAuth,didaAuth,workbench,workbenchActions};
+  await recoverFamilyPlans();
+  if(typeof ctx.inject==='function')ctx.inject(['familyDotBridge'],()=>{if(!disposed)void recoverFamilyPlans();});
+  return{service,taskResults,memory,followup,onboarding,news,context,contextLoop,projectUpdates,googleCalendarAuth,googleSuiteAuth,flomoAuth,didaAuth,workbench,workbenchActions,familyRoute};
 }
 
 export async function apply(ctx,config){await installCompanion(ctx,{context:{config}});}

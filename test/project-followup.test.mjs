@@ -46,7 +46,7 @@ async function harness(t,options={}){
   ctx.provide('agents',registry);ctx.provide('agentDefaultModel',{currentSelection:()=>({provider:'synthetic',model:'synthetic'})});
   ctx.provide('agentPresets',{mount:async(_scope,id)=>mounts.push(id)});
   for(const name of ['project_companion','send_wechat','bash'])ctx.tools.register(defineTool({name,description:'Synthetic capability only, no external effects',parameters:{action:{type:'string'},project:{type:'string'}},output:{schema:{type:'object',additionalProperties:true},render:()=>[]},execute:args=>{tools.push({name,args});return options.toolResult?.(name,args)??{ok:true};}}));
-  const optionsForAdapter={ctx,clock:()=>now,hostTimeZone:()=> 'America/Mexico_City',authorizeRoot:async r=>allow&&authorizedRoots.has(r),canRun:async()=>allowedRun,readBinding:async sessionId=>options.readBinding?options.readBinding(sessionId):currentBinding,readConnection:async()=>options.readConnection?options.readConnection():{state:'bound',sessionId:owner.id,bindingKey:'d'.repeat(64)},readNativeRoute:async sessionId=>options.readNativeRoute?options.readNativeRoute(sessionId):(currentBinding===null?{kind:'unbound'}:{kind:'bound',binding:currentBinding}),createScheduler:deps=>{const scheduler=new ProactiveScheduler(deps);schedulers.push(scheduler);return scheduler;}};
+  const optionsForAdapter={ctx,clock:()=>now,hostTimeZone:()=> 'America/Mexico_City',authorizeRoot:async r=>allow&&authorizedRoots.has(r),canRun:async()=>allowedRun,readBinding:async sessionId=>options.readBinding?options.readBinding(sessionId):currentBinding,readConnection:async()=>options.readConnection?options.readConnection():{state:'bound',sessionId:owner.id,bindingKey:'d'.repeat(64)},readNativeRoute:async sessionId=>options.readNativeRoute?options.readNativeRoute(sessionId):(currentBinding===null?{kind:'unbound'}:{kind:'bound',binding:currentBinding}),createScheduler:deps=>{const scheduler=new ProactiveScheduler(deps);schedulers.push(scheduler);options.onSchedulerCreated?.();return scheduler;}};
   let adapter=createProjectFollowup(optionsForAdapter);
   const args={root,sessionId:owner.id,everyMinutes:30,projectLabel:'测试项目'};
   const drain=async()=>{for(const s of schedulers)await s.driveChain;};
@@ -326,6 +326,12 @@ test('closing a cancelled active wake retains its guards until that old driver s
   try{await new Promise(resolve=>setTimeout(resolve,20));early=settled;}finally{release();await running;await closing;}
   assert.equal(early,false,'close must retain read-only guards until the retired driver is actually settled');
 });
+test('close drains the unawaited scheduler boot persistence before returning',async t=>{
+ const {ProactiveStore}=await import('../vendor/proactive/lib/store.js');const original=ProactiveStore.prototype.persist;
+ let hold=false,release,entered;const arrived=new Promise(resolve=>{entered=resolve;});const waiting=new Promise(resolve=>{release=resolve;});
+ ProactiveStore.prototype.persist=function(...args){if(hold){hold=false;entered();return waiting.then(()=>original.apply(this,args));}return original.apply(this,args);};
+ try{const h=await harness(t,{onSchedulerCreated:()=>{hold=true;}});await h.adapter.configure(h.args);await arrived;let settled=false;const closing=h.adapter.close().then(()=>{settled=true;});await new Promise(resolve=>setTimeout(resolve,20));const early=settled;release();await closing;assert.equal(early,false,'close must wait for boot persistence even though upstream does not await it');}finally{release?.();ProactiveStore.prototype.persist=original;}
+});
 
 test('copying a plan directory into another watched project cannot transfer its authorization',async t=>{
   const h=await harness(t);await h.adapter.configure(h.args);await h.drain();const second=join(h.temp,'other-watched');await mkdir(second);h.authorize(second);
@@ -347,7 +353,10 @@ test('explicit native once uses the real upstream once scheduler and completes w
   const first=await h.adapter.checkOnce(args);assert.equal(first.status,'queued');assert.equal(first.delivery,'native');assert.equal(first.enabled,true);assert.equal(h.messages.length,0);
   await h.drain();h.advanceSeconds(30);await h.tick();assert.equal(h.messages.length,0);h.advanceSeconds(30);await h.tick();
   const done=await h.adapter.onceStatus(args);assert.equal(done.status,'completed');assert.equal(done.enabled,false);assert.equal(done.runCount,1);assert.equal(done.lastReviewedAt,'2026-10-18T16:01:00.000Z');assert.equal(h.messages.length,1);
-  const stored=JSON.parse(await readFile(join(onceDirectory(h),'alarms.json'),'utf8'));assert.equal(stored.alarms.length,1);assert.equal(stored.alarms[0].type,'once');assert.equal(stored.alarms[0].status,'completed');assert.equal(stored.alarms[0].respectQuietHours,false);
+  // Upstream advances its in-memory alarm first and persists asynchronously.
+  // Wait for the actual file instead of assuming driveChain awaited that write.
+  let stored;for(let i=0;i<100;i++){stored=JSON.parse(await readFile(join(onceDirectory(h),'alarms.json'),'utf8'));if(stored.alarms[0]?.status==='completed')break;await new Promise(resolve=>setTimeout(resolve,10));}
+  assert.equal(stored.alarms.length,1);assert.equal(stored.alarms[0].type,'once');assert.equal(stored.alarms[0].status,'completed');assert.equal(stored.alarms[0].respectQuietHours,false);
   const runs=(await readFile(join(onceDirectory(h),'runs.jsonl'),'utf8')).trim().split('\n').map(JSON.parse);assert.equal(runs.length,1);assert.equal(runs[0].decision,'reply');
   h.advance(60);await h.tick();assert.equal(h.messages.length,1);assert.equal(h.resumes.length,0);
 });

@@ -103,8 +103,16 @@ export function createContextLoop({store,readScope,authorizeSync,authorization,a
    // Only certain non-admission may receive another explicit attempt. Keep its
    // ledger entry and use a fresh stable call ID; unknown/accepted never retry.
    const dispatch={revision:loop.revision,itemId:item.id,callId:'loop_'+hash([loop.id,loop.revision,item.id,attempts.length+1]).slice(0,48),status:'prepared',jobId:null,createdAt:now().toISOString()};await c.commit(replace({...loop,dispatches:[...loop.dispatches,dispatch]}));await c.guard();
+   // Delivery runs after the initiating tool call returns. Keep this check
+   // independent of the short-lived call signal, but revoke immediately on
+   // loop cancellation, replacement, closure, or an unrelated dispatch.
+   const deliveryGeneration=generation,deliveryVersion=versions.get(c.key)??0;
+   const authorizeDelivery=()=>{
+    if(closed||failed||deliveryGeneration!==generation||deliveryVersion!==(versions.get(c.key)??0))return false;
+    const current=find(c);return !!current&&current.id===loop.id&&current.originSessionId===who.sessionId&&current.projectRoot===loop.projectRoot&&current.projectId===loop.projectId&&current.grant===loop.grant&&current.items.some(row=>row.id===item.id)&&current.dispatches.some(row=>row.itemId===item.id&&row.callId===dispatch.callId&&['prepared','accepted'].includes(row.status));
+   };
    let result;
-   try{c.sync();result=await wait(Promise.resolve().then(()=>coordinate(who,{project:loop.projectRoot,task,...(value.session?{session:value.session}:{})},{callId:dispatch.callId,signal:c.signal,authorizeAdmission:()=>c.guard(),authorizeAdmissionSync:()=>c.sync()})),c.signal);}catch{result={status:'unknown',accepted:false};}
+   try{c.sync();result=await wait(Promise.resolve().then(()=>coordinate(who,{project:loop.projectRoot,task,...(value.session?{session:value.session}:{})},{callId:dispatch.callId,signal:c.signal,authorizeAdmission:()=>c.guard(),authorizeAdmissionSync:()=>c.sync(),authorizeDelivery})),c.signal);}catch{result={status:'unknown',accepted:false};}
    await c.guard();
    if(result?.accepted===false&&!validText(result.jobId,200)&&['busy','ambiguous','blocked','not_admitted','current_session'].includes(result.status)){
     const current=find(c);await c.commit(replace({...current,dispatches:current.dispatches.filter(d=>d.callId!==dispatch.callId)}));

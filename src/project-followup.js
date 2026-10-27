@@ -6,6 +6,7 @@ import {ProactiveStore} from '../vendor/proactive/lib/store.js';
 import {ProactiveScheduler} from '../vendor/proactive/lib/scheduler.js';
 import {WakeDriver,sessionLogOf} from '../vendor/proactive/lib/wake.js';
 import {isFramingNotice} from '../vendor/proactive/lib/observer.js';
+import {extractTextBlocks} from '../vendor/proactive/lib/observer.js';
 import {validateCreateArgs,buildAlarm} from '../vendor/proactive/lib/alarm-factory.js';
 import {canonicalizeTimeZone,isValidSessionId} from '../vendor/proactive/lib/domain.js';
 import {DEFAULT_CONFIG} from '../vendor/proactive/lib/config.js';
@@ -20,11 +21,18 @@ const requireLoopId=value=>{if(value!==undefined&&!validLoopId(value))throw new 
 const terminalLoopCodes=new Set(['LOOP_AUTH_CHANGED','LOOP_NOT_FOUND','LOOP_SCOPE_CHANGED','LOOP_STOPPED']);
 const blockedLoopReason='已停止此资料跟进：授权、所选资料范围或原微信通路已变化，请核对后重新安排。';
 const explicitTime=value=>typeof value==='string'&&value.length<=40&&/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?(?:Z|[+-]\d{2}:\d{2})$/.test(value)&&Number.isFinite(Date.parse(value));
+const familyRequest=value=>typeof value==='string'&&/^family-followup-[a-f0-9]{64}$/.test(value);
 
 /** A watched-project-only composition of the unchanged upstream host library. */
 export function createProjectFollowup(options={}){
   const {ctx}=options;
-  const scopes=new Map(),ones=new Map(),intents=new Map(),active=new Map(),runtimes=new Set(),draining=new Set();
+  const scopes=new Map(),ones=new Map(),intents=new Map(),active=new Map(),runtimes=new Set(),draining=new Set(),persisting=new Set(),trackedStores=new WeakSet();
+  function trackStore(store){
+    if(trackedStores.has(store))return;
+    const persist=store.persist.bind(store);
+    store.persist=(...args)=>{const work=Promise.resolve(persist(...args));persisting.add(work);work.then(()=>persisting.delete(work),()=>persisting.delete(work));return work;};
+    trackedStores.add(store);
+  }
   let chain=Promise.resolve(),closed=false,closing;
   const now=()=>{const value=options.clock?.()??new Date();const epoch=value instanceof Date?value.getTime():Number(value);if(!Number.isFinite(epoch))throw new Error('Invalid follow-up clock');return epoch;};
   const requireOpen=()=>{if(closed)throw new Error('Project follow-up adapter is closed');};
@@ -80,6 +88,9 @@ export function createProjectFollowup(options={}){
   const safeEntry=entry=>safe(entry.root,entry.once?{sessionId:entry.meta.sessionId}:{});
   function verifyMeta(meta,root){
     if(!meta||meta.version!==1||!isValidSessionId(meta.sessionId)||typeof meta.alarmId!=='string'||!meta.alarmId.startsWith('alarm_')||!Number.isSafeInteger(meta.everyMinutes)||meta.everyMinutes<30||meta.everyMinutes>1440||typeof meta.projectLabel!=='string'||meta.projectLabel.length>80||!validBinding(meta.binding)||typeof meta.enabled!=='boolean')throw new Error('Invalid scoped follow-up ownership metadata');
+    if(meta.delivery!==undefined&&!['wechat','family'].includes(meta.delivery))throw new Error('Invalid follow-up delivery');
+    if(meta.familyInflight!==undefined&&!familyRequest(meta.familyInflight)||meta.familyCompleted!==undefined&&!familyRequest(meta.familyCompleted))throw new Error('Invalid family follow-up receipt');
+    if(meta.familyOfflineDue!==undefined&&!explicitTime(meta.familyOfflineDue))throw new Error('Invalid family offline due time');
     requireLoopId(meta.loopId);
     if(meta.blockedCode!==undefined&&(!meta.loopId||!terminalLoopCodes.has(meta.blockedCode)))throw new Error('Invalid blocked context loop metadata');
     if(meta.root!==root)throw new Error('Follow-up ownership root differs from the authorized project root');
@@ -143,9 +154,44 @@ export function createProjectFollowup(options={}){
     if(!agent||String(agent.id)!==entry.meta.sessionId||entry.nativeAgent&&entry.nativeAgent!==agent)return;
     const directory=agent.ctx?.get?.('workingDirectory')??ctx.get('workingDirectory',false);
     const cwd=typeof directory?.get==='function'?directory.get(agent.session):agent.session?.header?.cwd;
-    return typeof cwd==='string'&&isAbsolute(cwd)&&resolve(cwd)===entry.root?agent:undefined;
+    if(typeof cwd!=='string'||!isAbsolute(cwd)||resolve(cwd)!==cwd)return;
+    if(cwd===entry.root)return agent;
+    const scope=familyScope(entry);
+    return scope?agent:undefined;
+  }
+  function familyScope(entry){
+    if(entry?.meta?.delivery!=='family'||!validBinding(entry.meta.binding))return null;
+    try{const route=options.familyRoute,scope=route?.getScope?.(entry.meta.sessionId);
+      return scope?.familySessionId===entry.meta.sessionId&&scope.bindingRevision===entry.meta.binding.userHash&&route?.isCurrent?.(scope)===true?scope:null;
+    }catch{return null;}
+  }
+  async function familyRouteState(entry){
+    if(entry?.meta?.delivery!=='family'||!validBinding(entry.meta.binding)||typeof options.familyRoute?.routeState!=='function')return 'unknown';
+    try{const state=await options.familyRoute.routeState({sessionId:entry.meta.sessionId,bindingRevision:entry.meta.binding.userHash});
+      return ['current','offline','changed','unknown'].includes(state)?state:'unknown';
+    }catch{return 'unknown';}
+  }
+  async function familyDotPaused(entry){
+    if(entry?.meta?.delivery!=='family'||typeof options.pauseState!=='function')return false;
+    try{return await options.pauseState()!==false;}catch{return true;}
+  }
+  async function deferFamilyOffline(entry,alarm){
+    const first=entry.meta.familyOfflineDue??alarm.nextDueAt;
+    if(!explicitTime(first))throw new Error('Family offline due time unavailable');
+    const deadline=entry.once?Date.parse(entry.meta.dueAt)+300000:Date.parse(first)+21600000;
+    if(now()>=deadline){
+      if(entry.once)await blockOnce(entry,'One-off check expired while Family was offline; no catch-up');
+      else{delete entry.meta.familyOfflineDue;await persistMeta(entry);}
+      return{outcome:'skipped',skipReason:'Family offline window expired; no replay'};
+    }
+    if(entry.meta.familyOfflineDue===undefined){entry.meta.familyOfflineDue=first;await persistMeta(entry);}
+    return{outcome:'defer',deferUntilMs:Math.min(deadline,now()+30000)};
   }
   async function routeAllowed(entry){
+    if(entry.meta.delivery==='family'){
+      const scope=familyScope(entry);if(!scope||typeof options.familyRoute?.recheck!=='function')return false;
+      try{return await options.familyRoute.recheck(scope,{root:entry.root,loopId:entry.meta.loopId})===true&&options.familyRoute.isCurrent(scope)===true&&sameBinding(await options.readBinding?.(entry.meta.sessionId),entry.meta.binding)&&options.familyRoute.isCurrent(scope)===true;}catch{return false;}
+    }
     if(!entry.once||entry.meta.delivery==='wechat')return sameBinding(await options.readBinding?.(entry.meta.sessionId),entry.meta.binding);
     const agent=nativeAgent(entry);if(!agent)return false;
     const route=await options.readNativeRoute?.(entry.meta.sessionId);
@@ -161,7 +207,9 @@ export function createProjectFollowup(options={}){
     if(ones.has(key)){const entry=ones.get(key);owned(entry);return entry;}
     if(!path.exists)return null;
     let meta;try{const text=await readFile(join(path.dir,'scope.json'),'utf8');if(text.length>8192)throw new Error('One-off metadata exceeds bound');meta=JSON.parse(text);}catch(error){if(absent(error)){try{await lstat(join(path.dir,'alarms.json'));throw new Error('One-off store has no ownership metadata');}catch(e){if(absent(e))return null;throw e;}}throw error;}
-    if(!meta||meta.version!==1||meta.kind!=='once'||meta.root!==root||meta.sessionId!==sessionId||!['native','wechat'].includes(meta.delivery)||typeof meta.alarmId!=='string'||!meta.alarmId.startsWith('alarm_')||!(meta.delaySeconds===null||Number.isSafeInteger(meta.delaySeconds)&&meta.delaySeconds>=30&&meta.delaySeconds<=300)||typeof meta.projectLabel!=='string'||meta.projectLabel.length>80||typeof meta.enabled!=='boolean'||!['queued','completed','failed','cancelled','blocked'].includes(meta.status)||typeof meta.dueAt!=='string'||!Number.isFinite(Date.parse(meta.dueAt))||new Date(meta.dueAt).toISOString()!==meta.dueAt||(meta.delivery==='wechat'?!validBinding(meta.binding):meta.binding!==null))throw new Error('Invalid one-off scoped ownership metadata');
+    if(!meta||meta.version!==1||meta.kind!=='once'||meta.root!==root||meta.sessionId!==sessionId||!['native','wechat','family'].includes(meta.delivery)||typeof meta.alarmId!=='string'||!meta.alarmId.startsWith('alarm_')||!(meta.delaySeconds===null||Number.isSafeInteger(meta.delaySeconds)&&meta.delaySeconds>=30&&meta.delaySeconds<=300)||typeof meta.projectLabel!=='string'||meta.projectLabel.length>80||typeof meta.enabled!=='boolean'||!['queued','completed','failed','cancelled','blocked'].includes(meta.status)||typeof meta.dueAt!=='string'||!Number.isFinite(Date.parse(meta.dueAt))||new Date(meta.dueAt).toISOString()!==meta.dueAt||(meta.delivery!=='native'?!validBinding(meta.binding):meta.binding!==null))throw new Error('Invalid one-off scoped ownership metadata');
+    if(meta.familyInflight!==undefined&&!familyRequest(meta.familyInflight)||meta.familyCompleted!==undefined&&!familyRequest(meta.familyCompleted))throw new Error('Invalid family follow-up receipt');
+    if(meta.familyOfflineDue!==undefined&&!explicitTime(meta.familyOfflineDue))throw new Error('Invalid family offline due time');
     requireLoopId(meta.loopId);
     if(meta.blockedCode!==undefined&&(!meta.loopId||!terminalLoopCodes.has(meta.blockedCode)))throw new Error('Invalid blocked context loop metadata');
     if(meta.lastReviewedAt!==null&&(typeof meta.lastReviewedAt!=='string'||!Number.isFinite(Date.parse(meta.lastReviewedAt))||new Date(meta.lastReviewedAt).toISOString()!==meta.lastReviewedAt))throw new Error('Invalid one-off source-review watermark');
@@ -187,6 +235,7 @@ export function createProjectFollowup(options={}){
     const entry=activeEntry(execution);if(!entry)return;
     if(execution.name==='proactive_reclaim')return;
     if(closed||!entry.enabled||entry.loopInvalidated)return 'Project follow-up was cancelled or closed';
+    if(entry.meta.delivery==='family'&&!familyScope(entry))return 'Family Owner permission or destination changed';
     // Arbitrary code is denied too: the prototype supports native read tools.
     if(!isAllowedRead(entry,execution))return 'Autonomous follow-up is restricted to its exact watched project read; no sends, writes or handoffs';
     if(entry.meta.loopId&&(entry.loopReadPending&&entry.loopReadPending!==execution||entry.successfulReads?.has('context_check')))return 'Context loop already checked in this wake; do not repeat its read or report';
@@ -244,24 +293,73 @@ export function createProjectFollowup(options={}){
   async function start(entry,expectedVersion,mutationArgs){
     if(entry.scheduler||!entry.enabled)return;
     if(!disposeGuard||!disposePolicy)throw new Error('Host read-only tool guards unavailable; follow-up cannot start');
-    if(!await routeAllowed(entry)){if(entry.meta.loopId)await blockLoop(entry,'LOOP_SCOPE_CHANGED');else if(entry.once)await blockOnce(entry,'One-off native route or original WeChat binding changed or is unavailable');else entry.blocked='Original WeChat binding changed or is unavailable';return;}
+    if(entry.meta.delivery==='family'){
+      if(await familyDotPaused(entry)){entry.blocked='Dot is paused';return;}
+      const state=await familyRouteState(entry);
+      if(state==='offline'||state==='unknown'){entry.blocked='Family Owner route temporarily unavailable';return;}
+    }
+    if(!await routeAllowed(entry)){
+      if(entry.meta.delivery==='family'){if(await familyDotPaused(entry)){entry.blocked='Dot is paused';return;}const state=await familyRouteState(entry);if(state==='offline'||state==='unknown'){entry.blocked='Family Owner route temporarily unavailable';return;}}
+      if(entry.meta.loopId)await blockLoop(entry,'LOOP_SCOPE_CHANGED');else if(entry.once)await blockOnce(entry,'One-off native route or original WeChat binding changed or is unavailable');else entry.blocked='Original WeChat binding changed or is unavailable';return;
+    }
     if(mutationArgs)await authorizeMutation(mutationArgs,entry);
     if(!entry.enabled||closed||expectedVersion!==undefined&&intent(intentKey(entry))!==expectedVersion)return;
     const config={...clone(DEFAULT_CONFIG),quietHours:{...DEFAULT_CONFIG.quietHours,timeZone:canonicalizeTimeZone(typeof options.hostTimeZone==='function'?options.hostTimeZone():options.hostTimeZone??Intl.DateTimeFormat().resolvedOptions().timeZone)},dataDir:entry.dir,bootOverduePolicy:'drop'};
-    const agents=entry.once&&entry.meta.delivery==='native'?{
+    let familyWakeAgent;
+    const familyAgents=entry.meta.delivery==='family'?{
+      get:id=>{const agent=id===entry.meta.sessionId?nativeAgent(entry):undefined;if(agent)familyWakeAgent=agent;return agent;},
+      resume:async args=>{if(args?.resumeSessionId!==entry.meta.sessionId||!await routeAllowed(entry))throw new Error('Family wake route is unavailable');
+        const handle=await ctx.get('agents').resume(args);familyWakeAgent=handle?.agent;
+        const cwd=familyWakeAgent?.session?.header?.cwd;
+        if(!familyWakeAgent||String(familyWakeAgent.id)!==entry.meta.sessionId||typeof cwd!=='string'||!isAbsolute(cwd)||resolve(cwd)!==cwd||!await routeAllowed(entry)){await handle?.dispose?.();throw new Error('Family wake identity changed');}
+        return handle;},
+    }:null;
+    const agents=familyAgents??(entry.once&&entry.meta.delivery==='native'?{
       get:id=>id===entry.meta.sessionId?nativeAgent(entry):undefined,
       resume:async()=>{throw new Error('Native one-off check cannot cold resume or create a session');},
-    }:ctx.get('agents');
+    }:ctx.get('agents'));
     const driver=new WakeDriver({agents,sessionPersistence:ctx.get('sessionPersistence',false),agentPresets:ctx.get('agentPresets',false),store:entry.store,config,now,modelSelection:()=>ctx.get('agentDefaultModel',false)?.currentSelection?.(),log});entry.driver=driver;
     const deps={store:entry.store,config,now,log,runWake:async alarm=>{
       const version=intent(intentKey(entry));
       const defer=()=>({outcome:'defer',deferUntilMs:now()+entry.meta.everyMinutes*60000});
+      if(await familyDotPaused(entry))return deferFamilyOffline(entry,alarm);
       if(!await canRun(entry)||!owned(entry)||alarm.id!==entry.meta.alarmId){if(entry.once){await blockOnce(entry,'One-off project scope was paused or revoked');return{outcome:'skipped',skipReason:entry.blocked};}return defer();}
       await safeEntry(entry);
-      if(!await routeAllowed(entry)){if(entry.meta.loopId){await blockLoop(entry,'LOOP_SCOPE_CHANGED');return{outcome:'skipped',skipReason:entry.blocked};}if(entry.once){await blockOnce(entry,'One-off destination route or current project changed');return{outcome:'skipped',skipReason:entry.blocked};}return defer();}
+      if(entry.meta.delivery==='family'){
+        const routeState=await familyRouteState(entry);
+        if(routeState==='offline'||routeState==='unknown')return deferFamilyOffline(entry,alarm);
+        if(routeState==='changed'){if(entry.meta.loopId)await blockLoop(entry,'LOOP_SCOPE_CHANGED');else if(entry.once)await blockOnce(entry,'Family route or source grant changed');else{entry.enabled=false;entry.meta.enabled=false;entry.blocked='Family route or source grant changed';entry.scheduler?.stop();await persistMeta(entry);}return{outcome:'skipped',skipReason:'Family route or source grant changed'};}
+      }
+      if(!await routeAllowed(entry)){
+        if(entry.meta.delivery==='family'){if(await familyDotPaused(entry))return deferFamilyOffline(entry,alarm);const state=await familyRouteState(entry);if(state==='offline'||state==='unknown')return deferFamilyOffline(entry,alarm);}
+        if(entry.meta.loopId){await blockLoop(entry,'LOOP_SCOPE_CHANGED');return{outcome:'skipped',skipReason:entry.blocked};}if(entry.once){await blockOnce(entry,'One-off destination route or current project changed');return{outcome:'skipped',skipReason:entry.blocked};}return defer();
+      }
+      if(entry.meta.familyOfflineDue!==undefined){delete entry.meta.familyOfflineDue;await persistMeta(entry);}
       if(entry.once&&Date.parse(entry.meta.dueAt)+300000<now()){await blockOnce(entry,'One-off check expired while its original session was unavailable');return{outcome:'skipped',skipReason:entry.blocked};}
       if(active.has(entry.meta.sessionId))return entry.once?{outcome:'defer',deferUntilMs:now()+30000}:{outcome:'skipped',skipReason:'Another scoped follow-up is active'};
       if(closed||!entry.enabled||intent(intentKey(entry))!==version)return{outcome:'skipped',skipReason:'Cancelled or closing'};
+      const scope=entry.meta.delivery==='family'?familyScope(entry):null;
+      const requestId=scope?'family-followup-'+createHash('sha256').update(JSON.stringify([entry.root,alarm.id,alarm.runCount])).digest('hex'):null;
+      if(scope){
+        if(typeof options.familyRoute?.readDelivery!=='function'||typeof options.familyRoute?.send!=='function')throw new Error('Family delivery receipt service unavailable');
+        if(entry.meta.familyCompleted===requestId)return{outcome:'skipped',skipReason:'This exact family wake was already completed'};
+        let receipt;try{receipt=await options.familyRoute.readDelivery({scope,requestId});}catch{receipt={status:'uncertain'};}
+        if(!await routeAllowed(entry)||options.familyRoute.isCurrent(scope)!==true){const state=await familyRouteState(entry);if(!entry.meta.familyInflight&&(await familyDotPaused(entry)||state==='offline'||state==='unknown'))return deferFamilyOffline(entry,alarm);if(entry.meta.loopId)await blockLoop(entry,'LOOP_SCOPE_CHANGED');else if(entry.once)await blockOnce(entry,'Family route changed before check');return{outcome:'skipped',skipReason:'Family route changed before check'};}
+        if(receipt?.status==='accepted'){
+          entry.meta.familyCompleted=requestId;delete entry.meta.familyInflight;
+          if(entry.once){entry.meta.status='completed';entry.meta.enabled=false;retire(entry);}await persistMeta(entry);
+          return{outcome:'skipped',skipReason:'Family already accepted this exact wake'};
+        }
+        if(receipt?.status!=='absent'||entry.meta.familyInflight){
+          if(entry.meta.loopId)await blockLoop(entry,'LOOP_SCOPE_CHANGED');else if(entry.once)await blockOnce(entry,'Previous family wake outcome is unknown; no retry');else{entry.enabled=false;entry.meta.enabled=false;entry.blocked='Previous family wake outcome is unknown; no retry';await persistMeta(entry);}
+          return{outcome:'skipped',skipReason:'Family wake outcome was already pending or unknown'};
+        }
+        entry.meta.familyInflight=requestId;await persistMeta(entry);
+        if(!await routeAllowed(entry)||options.familyRoute.isCurrent(scope)!==true||intent(intentKey(entry))!==version||!entry.enabled){
+          const state=await familyRouteState(entry);if(entry.enabled&&intent(intentKey(entry))===version&&(await familyDotPaused(entry)||state==='offline'||state==='unknown')){delete entry.meta.familyInflight;await persistMeta(entry);return deferFamilyOffline(entry,alarm);}
+          return{outcome:'skipped',skipReason:'Family route changed before wake'};
+        }
+      }
       const startedAt=new Date(now()).toISOString();active.set(entry.meta.sessionId,entry);entry.successfulReads=new Set();entry.loopReadPending=false;entry.loopQuiet=false;entry.loopReclaimed=false;
       try{
         const prefix=entry.once?'这是用户明确安排的一次性只读检查，结束后没有下一次；本次明确请求可在免打扰时段执行。':'';
@@ -269,7 +367,28 @@ export function createProjectFollowup(options={}){
         const result=await driver.fire({...alarm,prompt:prefix+prompt(entry,alarm,startedAt)+suffix});
         if(entry.blocking)await entry.blocking;
         if(entry.enabled&&(entry.once||entry.meta.loopId)&&!await routeAllowed(entry)){if(entry.meta.loopId)await blockLoop(entry,'LOOP_SCOPE_CHANGED');else await blockOnce(entry,'One-off destination changed before result was observed');}
-        const reviewed=result.outcome==='ok'&&['reply','no_reply'].includes(result.analysis?.decision)&&(entry.meta.loopId?entry.successfulReads.size===1&&entry.successfulReads.has('context_check')&&(!entry.loopQuiet||result.analysis.decision==='no_reply'&&entry.loopReclaimed):entry.successfulReads.size===2)&&await canRun(entry)&&intent(intentKey(entry))===version;
+        let reviewed=result.outcome==='ok'&&['reply','no_reply'].includes(result.analysis?.decision)&&(entry.meta.loopId?entry.successfulReads.size===1&&entry.successfulReads.has('context_check')&&(!entry.loopQuiet||result.analysis.decision==='no_reply'&&entry.loopReclaimed):entry.successfulReads.size===2)&&await canRun(entry)&&intent(intentKey(entry))===version;
+        if(scope&&result.outcome==='busy'){delete entry.meta.familyInflight;await persistMeta(entry);}
+        if(scope&&reviewed&&result.analysis.decision==='reply'){
+          // Recover the actual wake turn's final text, not the upstream 200-char run summary.
+          const events=sessionLogOf(familyWakeAgent?.session),marker=`[dsh-proactive wake ${alarm.id} `;
+          const frame=events.findLastIndex(event=>isFramingNotice(event)&&event.data?.content?.[0]?.text?.startsWith(marker));
+          const segment=frame<0?[]:events.slice(frame),end=segment.findIndex(event=>event.type==='turn/end');
+          const reason=end>=0?segment[end]?.data?.reason?.kind:null;
+          const texts=end<0?[]:segment.slice(0,end).filter(event=>event.type==='assistant/message').flatMap(event=>extractTextBlocks(event.data??{}));
+          const text=texts.at(-1)?.trim();
+          if(!text||['error','aborted','max-tokens'].includes(reason)||!await routeAllowed(entry))reviewed=false;
+          else{
+            const safeText=text.length>3000?text.slice(0,2990)+'…（内容已截断）':text;
+            const authorize=()=>!closed&&entry.enabled&&intent(intentKey(entry))===version&&!!familyScope(entry)&&options.familyRoute.isCurrent(scope)===true;
+            let sent;try{sent=await options.familyRoute.send({scope,text:safeText,requestId,authorize});}catch{sent={status:'uncertain'};}
+            if(sent?.status!=='accepted'||!authorize()||!await routeAllowed(entry))reviewed=false;
+          }
+        }
+        if(scope&&reviewed){entry.meta.familyCompleted=requestId;delete entry.meta.familyInflight;await persistMeta(entry);}
+        else if(scope&&result.outcome!=='busy'&&entry.enabled){
+          if(entry.meta.loopId)await blockLoop(entry,'LOOP_SCOPE_CHANGED');else if(entry.once)await blockOnce(entry,'Family follow-up outcome not confirmed; no automatic retry');else{entry.enabled=false;entry.meta.enabled=false;entry.blocked='Family follow-up outcome not confirmed; no automatic retry';await persistMeta(entry);}
+        }
         if(reviewed){entry.meta.lastReviewedAt=startedAt;await persistMeta(entry);}
         if(entry.once&&result.outcome==='busy')return{outcome:'defer',deferUntilMs:now()+30000};
         if(entry.once&&entry.meta.status!=='blocked'&&entry.meta.status!=='cancelled'&&result.outcome!=='defer'){
@@ -281,7 +400,7 @@ export function createProjectFollowup(options={}){
         throw error;
       }finally{active.delete(entry.meta.sessionId);entry.successfulReads=null;}
     }};
-    entry.scheduler=(options.createScheduler??(dependencies=>new ProactiveScheduler(dependencies)))(deps);runtimes.add(entry);entry.blocked=null;entry.scheduler.start();
+    trackStore(entry.store);entry.scheduler=(options.createScheduler??(dependencies=>new ProactiveScheduler(dependencies)))(deps);runtimes.add(entry);entry.blocked=null;entry.scheduler.start();
   }
   function retire(entry){
     entry.enabled=false;entry.scheduler?.stop();
@@ -318,10 +437,10 @@ export function createProjectFollowup(options={}){
           if(args.delaySeconds!==undefined)throw new Error('One-off check requires either dueAt or delaySeconds, not both');
           if(!explicitTime(args.dueAt)||Date.parse(args.dueAt)<=now()||Date.parse(args.dueAt)>now()+7*86400000)throw new Error('One-off absolute time must be an explicit ISO future date within seven (7) days');
         }else if(!Number.isSafeInteger(delaySeconds)||delaySeconds<30||delaySeconds>300)throw new Error('One-off delay must be 30–300 whole seconds');
-        if(!['native','wechat'].includes(args.delivery))throw new Error('Explicit one-off delivery is required');
+        if(!['native','wechat','family'].includes(args.delivery))throw new Error('Explicit one-off delivery is required');
         const label=args.projectLabel??'项目';if(typeof label!=='string'||!label.trim()||label.length>80||/[\r\n\0]/.test(label))throw new Error('Invalid project label');
         await safe(args.root,{sessionId:args.sessionId});
-        const binding=args.delivery==='wechat'?clone(await options.readBinding?.(args.sessionId)):null;
+        const binding=args.delivery!=='native'?clone(await options.readBinding?.(args.sessionId)):null;
         const probe={once:true,root:args.root,meta:{sessionId:args.sessionId,delivery:args.delivery,binding}};
         if(!await routeAllowed(probe))throw new Error('One-off native route must be explicitly unbound and live in this project, or use its exact WeChat binding');
         if(!await authorizes(args.root)||options.canRun&&await options.canRun({root:args.root,sessionId:args.sessionId})!==true)throw new Error('One-off project is paused or unauthorized');
@@ -346,6 +465,30 @@ export function createProjectFollowup(options={}){
       });
     },
     onceStatus:args=>queued(async()=>view(await loadOnce(args.root,args.sessionId))),
+    // Reopen only the exact already-persisted Family owner's one-off plan.
+    // This never creates a plan, follows a different project, or replays an
+    // overdue/uncertain wake. The caller may retry while Family is offline.
+    recoverFamilyOnce({root,sessionId}={}){
+      return queued(async()=>{
+        requireSession(sessionId);
+        const entry=await loadOnce(root,sessionId);if(!entry)return{status:'absent',enabled:false,running:false};
+        if(entry.meta.delivery!=='family'||!entry.enabled||entry.scheduler)return view(entry);
+        const scope=familyScope(entry);
+        if(!scope)return{...view(entry),recoveryPending:true,blocked:'Family Owner route is unavailable; no wake was started'};
+        if(entry.meta.familyInflight){
+          let receipt;try{receipt=await options.familyRoute?.readDelivery?.({scope,requestId:entry.meta.familyInflight});}catch{receipt={status:'uncertain'};}
+          if(options.familyRoute?.isCurrent?.(scope)!==true)return{...view(entry),recoveryPending:true,blocked:'Family Owner route changed during recovery'};
+          if(receipt?.status==='accepted'){
+            entry.meta.familyCompleted=entry.meta.familyInflight;delete entry.meta.familyInflight;
+            entry.meta.status='completed';entry.meta.enabled=false;entry.enabled=false;entry.store.removeAlarm(entry.meta.alarmId);await entry.store.persist();await persistMeta(entry);return view(entry);
+          }
+          await blockOnce(entry,'Previous Family wake outcome is unknown; no automatic replay');return view(entry);
+        }
+        if(Date.parse(entry.meta.dueAt)<=now()){await blockOnce(entry,'One-off check expired while the app was unavailable; no catch-up');return view(entry);}
+        if(!await routeAllowed(entry)||options.familyRoute?.isCurrent?.(scope)!==true)return{...view(entry),recoveryPending:true,blocked:'Family authorization is unavailable; no wake was started'};
+        await start(entry);return view(entry);
+      });
+    },
     cancelOnce(args){
       const key=onceKey(args.root,args.sessionId),live=ones.get(key);if(!guarded(args)){intents.set(key,intent(key)+1);if(live){live.enabled=false;live.scheduler?.stop();invalidate(live);}}
       return queued(async()=>{const entry=await loadOnce(args.root,args.sessionId);if(entry?.blocking)await entry.blocking;await authorizeMutation(args,entry);if(!entry)return{status:'cancelled',enabled:false,running:false};
@@ -362,20 +505,21 @@ export function createProjectFollowup(options={}){
         requireSession(args.sessionId);requireLoopId(args.loopId);if(!Number.isSafeInteger(args.everyMinutes)||args.everyMinutes<30||args.everyMinutes>1440)throw new Error('Follow-up cadence must be 30–1440 whole minutes');
         const label=args.projectLabel??'项目';if(typeof label!=='string'||!label.trim()||label.length>80||/[\r\n\0]/.test(label))throw new Error('Invalid project label');
         let entry=await load(args.root);checkOwner(entry,args.sessionId);if(entry?.blocking)await entry.blocking;
+        if(args.delivery!==undefined&&!['wechat','family'].includes(args.delivery))throw new Error('Invalid follow-up delivery');
         const binding=clone(await options.readBinding?.(args.sessionId));if(!validBinding(binding))throw new Error('Original WeChat binding is unavailable');
-        const probe={root:args.root,enabled:true,meta:{sessionId:args.sessionId,binding}};
+        const probe={root:args.root,enabled:true,meta:{sessionId:args.sessionId,binding,...(args.delivery==='family'?{delivery:'family'}:{})}};
         if(!await canRun(probe))throw new Error('Follow-up project is paused or unauthorized');
         if(!await routeAllowed(probe))throw new Error('Original WeChat binding changed before follow-up configuration');
         await authorizeMutation(args,probe);
         if(guarded(args)){if(intent(args.root)!==before)return{enabled:false,running:false};intents.set(args.root,version);}
-        if(entry?.enabled&&entry.meta.loopId===args.loopId&&entry.meta.everyMinutes===args.everyMinutes&&entry.meta.projectLabel===label&&sameBinding(binding,entry.meta.binding)){if(intent(args.root)===version)await start(entry,version,args);return view(entry);}
+        if(entry?.enabled&&entry.meta.loopId===args.loopId&&entry.meta.everyMinutes===args.everyMinutes&&entry.meta.projectLabel===label&&(entry.meta.delivery??'wechat')===(args.delivery??'wechat')&&sameBinding(binding,entry.meta.binding)){if(intent(args.root)===version)await start(entry,version,args);return view(entry);}
         const {dir}=await safe(args.root,{create:true});
         const spec=validateCreateArgs({prompt:'项目只读跟进',every_seconds:args.everyMinutes*60,time_zone:typeof options.hostTimeZone==='function'?options.hostTimeZone():options.hostTimeZone??Intl.DateTimeFormat().resolvedOptions().timeZone,respect_quiet_hours:true,target_mode:'resume',target_source:'session',target_session_id:args.sessionId,compaction:'off'},args.sessionId);
         if(spec.code)throw new Error(spec.message);const built=buildAlarm(args.sessionId,spec,now());if(built.code)throw new Error(built.message);
         await authorizeMutation(args,probe);
         if(entry){const previous=entry;invalidate(previous);retire(previous);previous.store.removeAlarm(previous.meta.alarmId);entry={root:args.root,dir,store:previous.store,meta:previous.meta,scheduler:null,driver:null};}
         else entry={root:args.root,dir,store:new ProactiveStore(dir),scheduler:null,driver:null};
-        entry.meta={version:1,...(args.loopId!==undefined?{loopId:args.loopId}:{}),root:args.root,sessionId:args.sessionId,alarmId:built.alarm.id,everyMinutes:args.everyMinutes,projectLabel:label,binding:clone(binding),enabled:true,lastReviewedAt:entry.meta?.loopId===args.loopId?entry.meta?.lastReviewedAt??null:null};entry.enabled=true;built.alarm.prompt=prompt(entry,built.alarm);entry.store.addAlarm(built.alarm);
+        entry.meta={version:1,...(args.loopId!==undefined?{loopId:args.loopId}:{}),...(args.delivery==='family'?{delivery:'family'}:{}),root:args.root,sessionId:args.sessionId,alarmId:built.alarm.id,everyMinutes:args.everyMinutes,projectLabel:label,binding:clone(binding),enabled:true,lastReviewedAt:entry.meta?.loopId===args.loopId?entry.meta?.lastReviewedAt??null:null};entry.enabled=true;built.alarm.prompt=prompt(entry,built.alarm);entry.store.addAlarm(built.alarm);
         await entry.store.persist();await persistMeta(entry);scopes.set(args.root,entry);
         if(intent(args.root)===version)await start(entry,version,args);return view(entry);
       });
@@ -395,7 +539,7 @@ export function createProjectFollowup(options={}){
     close(){
       if(closing)return closing;closed=true;
       for(const entry of new Set([...scopes.values(),...ones.values(),...active.values()]))invalidate(entry);
-      closing=(async()=>{await chain;const pending=[...runtimes];for(const entry of pending)entry.scheduler?.stop();await Promise.allSettled([...pending.map(entry=>entry.scheduler?.driveChain),...draining]);await Promise.allSettled([...scopes.values(),...ones.values()].map(entry=>entry.store.persist()));disposeReads?.();disposeStep?.();disposeStopping?.();disposePolicy?.();disposeGuard?.();disposeReclaim?.();scopes.clear();ones.clear();runtimes.clear();draining.clear();})();return closing;
+      closing=(async()=>{await chain;const pending=[...runtimes];for(const entry of pending)entry.scheduler?.stop();await Promise.allSettled([...pending.map(entry=>entry.scheduler?.driveChain),...draining]);while(persisting.size)await Promise.allSettled([...persisting]);await Promise.allSettled([...scopes.values(),...ones.values()].map(entry=>entry.store.persist()));while(persisting.size)await Promise.allSettled([...persisting]);disposeReads?.();disposeStep?.();disposeStopping?.();disposePolicy?.();disposeGuard?.();disposeReclaim?.();scopes.clear();ones.clear();runtimes.clear();draining.clear();})();return closing;
     },
   };
   if(typeof ctx?.effect==='function')ctx.effect(function*(){

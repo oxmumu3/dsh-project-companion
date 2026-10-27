@@ -27,12 +27,12 @@ async function fixture(t,options={}){
   const session=ctx.sessions.create(SessionId('context-owner'),{meta:{cwd:root}});
   const agent={id:session.id,session,ctx,status:'idle'};agents.set(agent.id,agent);
   let adapter;
-  const config={didaToken:'synthetic-private-token',flomoToken:'',googleClientId:'',googleClientSecret:'',googleRefreshToken:''};
+  const config={didaToken:'synthetic-private-token',flomoToken:'synthetic-flomo',googleClientId:'',googleClientSecret:'',googleRefreshToken:''};
   const googleTokenVault=options.vaultFactory?.(config);
-  const transport={catalog:async(source,{signal})=>{calls.push({type:'catalog',source});return options.catalog?.(source,{signal})??{tools:[{name:'list_projects',inputSchema:{type:'object',properties:{limit:{type:'integer'},offset:{type:'integer'}}}}],fetchedAt:'2026-10-19T12:00:00Z'};},call:async(source,name,args,{signal})=>{calls.push({type:'call',source,name,args});return options.call?.(source,name,args,{signal})??{value:{structuredContent:{projects:[{id:'p1',name:'当前事项'}]}},fetchedAt:'2026-10-19T12:00:00Z'};},close:async()=>closed.push('transport')};
+  const transport={catalog:async(source,{signal})=>{calls.push({type:'catalog',source});return options.catalog?.(source,{signal})??{tools:[{name:source==='flomo'?'memo_search':'list_projects',inputSchema:{type:'object',properties:{limit:{type:'integer'},offset:{type:'integer'}}}}],fetchedAt:'2026-10-19T12:00:00Z'};},call:async(source,name,args,{signal})=>{calls.push({type:'call',source,name,args});return options.call?.(source,name,args,{signal})??{value:{structuredContent:source==='flomo'?{memos:[{id:'m1',content:'Synthetic DeepSeek note'}]}:{projects:[{id:'p1',name:'当前事项'}]}},fetchedAt:'2026-10-19T12:00:00Z'};},close:async()=>closed.push('transport')};
   const googleAuth={status:()=>({clientConfigured:false,refreshConfigured:false,authInProgress:false}),start:async()=>{calls.push({type:'google_authorize'});return{url:'https://accounts.google.com/o/oauth2/v2/auth?state=synthetic',expiresAt:'2026-10-19T12:05:00Z'};},getToken:async()=>{throw new Error('must not access Google');},close:async()=>closed.push('googleAuth')};
   options.onRoot?.(ctx);
-  const plugin=await ctx.plugin({name:'synthetic-context-host',inject:['tools','commands','storageDomain','sessions','systemPrompt'],async apply(scope){adapter=await installCompanion(scope,{clock:()=>new Date('2026-10-19T12:00:00Z'),readSetup:async()=>connection,readNativeRoute:options.readNativeRoute??(async()=>({kind:'unbound'})),readBinding:options.readBinding??(async()=>null),context:{readConfig:()=>({...config}),...(googleTokenVault?{googleTokenVault}:{}),googlePublisher:options.googlePublisher??null,fetch:options.contextFetch??(async()=>{throw new Error('Synthetic context host must not contact real services');}),transport,googleAuth,...(options.flomoAuth?{flomoAuth:options.flomoAuth}:{}),...(options.didaAuth?{didaAuth:options.didaAuth}:{}),...(options.googleCalendarAuth?{googleCalendarAuth:options.googleCalendarAuth}:{}),...(options.googleSuiteAuth?{googleSuiteAuth:options.googleSuiteAuth}:{}),...(options.suiteTransport?{suiteTransport:options.suiteTransport}:{}),...(options.calendarTransport?{calendarTransport:options.calendarTransport}:{})},contextLoop:options.contextLoop,timers:{setInterval(){return{unref(){}};},clearInterval(){}}});}});
+  const plugin=await ctx.plugin({name:'synthetic-context-host',inject:['tools','commands','storageDomain','sessions','systemPrompt'],async apply(scope){adapter=await installCompanion(scope,{clock:()=>new Date('2026-10-19T12:00:00Z'),readSetup:async()=>connection,readNativeRoute:options.readNativeRoute??(async()=>({kind:'unbound'})),readBinding:options.readBinding??(async()=>null),family:options.family,context:{readConfig:()=>({...config}),...(googleTokenVault?{googleTokenVault}:{}),googlePublisher:options.googlePublisher??null,fetch:options.contextFetch??(async()=>{throw new Error('Synthetic context host must not contact real services');}),transport,googleAuth,...(options.flomoAuth?{flomoAuth:options.flomoAuth}:{}),...(options.didaAuth?{didaAuth:options.didaAuth}:{}),...(options.googleCalendarAuth?{googleCalendarAuth:options.googleCalendarAuth}:{}),...(options.googleSuiteAuth?{googleSuiteAuth:options.googleSuiteAuth}:{}),...(options.suiteTransport?{suiteTransport:options.suiteTransport}:{}),...(options.calendarTransport?{calendarTransport:options.calendarTransport}:{})},contextLoop:options.contextLoop,timers:{setInterval(){return{unref(){}};},clearInterval(){}}});}});
   let number=0;
   const tool=async args=>{const response=await ctx.tools.execute({callId:'context-test-'+(++number),name:'personal_context',arguments:args,agent,signal:new AbortController().signal});assert.equal(response.isError,false,JSON.stringify(response));return response.value;};
   const project=async args=>{const response=await ctx.tools.execute({callId:'context-project-'+(++number),name:'project_companion',arguments:args,agent,signal:new AbortController().signal});assert.equal(response.isError,false,JSON.stringify(response));return response.value;};
@@ -43,6 +43,49 @@ async function fixture(t,options={}){
   t.after(async()=>{await close();await rm(root,{recursive:true,force:true});});
   return{ctx,agent,agents,routes,calls,closed,adapter,plugin,config,googleTokenVault,tool,project,get,post,route,close,setConnection:value=>connection=value};
 }
+
+test('Family Owner can reuse a Dot grant only when separately enabled and exact call verified',async t=>{
+ const revision='b'.repeat(64);let authorized=true;
+ const bridge={resolveOwnerCall:async ({sessionId,callId})=>authorized&&sessionId==='family_owner_1'&&callId==='family-real-call'?{sessionId,bindingRevision:revision,userText:'从 flomo 搜索 DeepSeek 最多2条'}:null,isOwnerRevisionCurrent:(id,r)=>authorized&&id==='family_owner_1'&&r===revision};
+ const h=await fixture(t,{family:{enabled:true},onRoot:ctx=>ctx.provide('familyDotBridge',bridge)});
+ await h.tool({action:'connect',source:'flomo',userRequested:true});
+ const session=h.ctx.sessions.create(SessionId('family_owner_1'),{meta:{cwd:h.agent.session.header.cwd}}),agent={id:session.id,session,ctx:h.ctx,status:'idle'};h.agents.set(agent.id,agent);
+ const query=callId=>h.ctx.tools.execute({callId,name:'personal_context',arguments:{action:'query',source:'flomo',operation:'search',query:'DeepSeek',limit:2,userRequested:true},agent,signal:new AbortController().signal});
+ const denied=await query('fabricated');assert.equal(denied.value.status,'blocked');assert.equal(h.calls.filter(c=>c.type==='call').length,0);
+ const allowed=await query('family-real-call');assert.equal(allowed.isError,false);assert.equal(allowed.value.source,'flomo',JSON.stringify(allowed.value));assert.equal(h.calls.filter(c=>c.type==='call').length,1);
+ const memberSession=h.ctx.sessions.create(SessionId('family_member_1'),{meta:{cwd:h.agent.session.header.cwd}}),member={id:memberSession.id,session:memberSession,ctx:h.ctx,status:'idle'};h.agents.set(member.id,member);
+ const memberRead=await h.ctx.tools.execute({callId:'family-real-call',name:'personal_context',arguments:{action:'query',source:'flomo',operation:'search',query:'DeepSeek',limit:2,userRequested:true},agent:member,signal:new AbortController().signal});assert.equal(memberRead.value.status,'blocked');assert.equal(h.calls.filter(c=>c.type==='call').length,1);
+ h.setConnection({state:'bound',sessionId:'different-old-wechat-owner',bindingKey:'f'.repeat(64)});const rebound=await query('family-real-call');assert.equal(rebound.value.status,'blocked');
+ h.setConnection({state:'bound',sessionId:'context-owner',bindingKey:'a'.repeat(64)});const restored=await query('family-real-call');assert.equal(restored.value.status,'blocked','a confirmed old-route rebind remains revoked');assert.equal(h.calls.filter(c=>c.type==='call').length,1);
+ authorized=false;const after=await query('family-real-call');assert.equal(after.value.status,'blocked');assert.equal(h.calls.filter(c=>c.type==='call').length,1);
+});
+
+test('Family delegation is off by default even when the bridge and old grants exist',async t=>{
+ const rev='b'.repeat(64),bridge={resolveOwnerCall:async({sessionId})=>({sessionId,bindingRevision:rev,userText:'读取滴答清单'}),isOwnerRevisionCurrent:()=>true};
+ const h=await fixture(t,{onRoot:ctx=>ctx.provide('familyDotBridge',bridge)});await h.tool({action:'connect',source:'dida',userRequested:true});
+ const session=h.ctx.sessions.create(SessionId('family_owner_1'),{meta:{cwd:h.agent.session.header.cwd}}),agent={id:session.id,session,ctx:h.ctx,status:'idle'};h.agents.set(agent.id,agent);
+ const r=await h.ctx.tools.execute({callId:'family-call',name:'personal_context',arguments:{action:'query',source:'dida',operation:'projects',userRequested:true},agent,signal:new AbortController().signal});
+ assert.equal(r.value.status,'blocked');assert.equal(h.calls.filter(c=>c.type==='call').length,0);
+});
+
+test('Family Owner scoped brief does not admit project handoff until a turn guard is available',async t=>{
+ const revision='b'.repeat(64),sent=[],admissions=[];
+ const bridge={resolveOwnerCall:async ({sessionId,callId})=>sessionId==='family_owner_1'&&callId.startsWith('family-real-')?{sessionId,bindingRevision:revision,userText:'从 flomo 搜索 DeepSeek 最多2条，生成 family-target 的项目简报。'}:null,isOwnerRevisionCurrent:(id,r)=>id==='family_owner_1'&&r===revision,sendOwner:async item=>{assert.equal(item.authorize(),true);sent.push(item);return{status:'accepted'};}};
+ const h=await fixture(t,{family:{enabled:true},onRoot:ctx=>ctx.provide('familyDotBridge',bridge),contextLoop:{summarize:async input=>({changes:[],blockers:[],nextSteps:[{kind:'suggestion',text:'建议核对当前事项。',sourceIds:[input.sources.find(s=>s.role==='file'&&s.status==='ok').sourceId]}]})}});
+ await h.tool({action:'connect',source:'flomo',userRequested:true});
+ const root=join(h.agent.session.header.cwd,'family-target');await mkdir(join(root,'.agent/memory'),{recursive:true});for(const f of ['README.md','.agent/memory/progress.md','.agent/memory/context.md'])await writeFile(join(root,f),'Synthetic target context');
+ const ts=h.ctx.sessions.create(SessionId('family-target-session'),{meta:{cwd:root}}),target={id:ts.id,session:ts,ctx:h.ctx,status:'idle',followup:message=>admissions.push(message)};h.agents.set(target.id,target);await h.project({action:'watch',project:root});
+ const fs=h.ctx.sessions.create(SessionId('family_owner_1'),{meta:{cwd:h.agent.session.header.cwd}}),agent={id:fs.id,session:fs,ctx:h.ctx,status:'idle'};h.agents.set(agent.id,agent);let i=0;
+ const project=async args=>(await h.ctx.tools.execute({callId:'family-real-'+(++i),name:'project_companion',arguments:args,agent,signal:new AbortController().signal})).value;
+ const brief=await project({action:'context_brief',project:root,objective:'推进当前事项',queries:[{source:'flomo',operation:'search',query:'DeepSeek',limit:2}],userRequested:true});assert.ok(brief.loopId,JSON.stringify(brief));
+ const scope=h.adapter.familyRoute.getScope(agent.id);assert.ok(scope);h.agents.delete(agent.id);
+ assert.equal(await h.adapter.familyRoute.recheck(scope,{root,loopId:brief.loopId}),true,'cold Owner must pass only persisted-scoped authority before an exact resume');
+ h.agents.set(agent.id,agent);
+ const item=brief.items.find(row=>row.section==='nextSteps');assert.ok(item);
+ const denied=await project({action:'context_handoff',project:root,revision:brief.revision,itemId:item.id,task:'只读检查并总结。',userRequested:true});assert.equal(denied.status,'blocked');assert.equal(admissions.length,0);
+ const request={action:'context_handoff',project:root,revision:brief.revision,itemId:item.id,task:'检查并总结。',userRequested:true};
+ const handoff=await project(request);assert.equal(handoff.status,'blocked',JSON.stringify(handoff));assert.equal(admissions.length,0);assert.equal(sent.length,0);
+});
 
 test('native context loop exposes sourced brief and inspection, ordinary turns cannot call autonomous check',async t=>{
  const h=await fixture(t,{contextLoop:{summarize:async input=>({changes:[],blockers:[],nextSteps:[{kind:'suggestion',text:'建议核对当前事项的下一步。',sourceIds:[input.sources.find(s=>s.role==='file'&&s.status==='ok').sourceId]}]})}});

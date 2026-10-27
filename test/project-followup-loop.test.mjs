@@ -13,16 +13,19 @@ import {createProjectFollowup} from '../src/project-followup.js';
 const binding={userHash:'a'.repeat(64),botHash:'b'.repeat(64)};
 async function harness(t,options={}){
   const temp=await realpath(await mkdtemp(join(tmpdir(),'dot-followup-loop-'))),root=join(temp,'project');await mkdir(root);
+  const ownerRoot=options.ownerOutside?join(temp,'owner-workspace'):root;if(options.ownerOutside)await mkdir(ownerRoot);
   const ctx=new Context();await ctx.plugin(SystemPrompt,{});await ctx.plugin(ToolRuntime,{mode:'native'});
   ctx.provide('workingDirectory',{get:session=>session.header.cwd,ensure:async agent=>agent.session.header.cwd});
   const events=[],messages=[],tools=[],schedulers=[],invalidated=[],wakeErrors=[];let now=new Date('2026-10-18T16:00:00Z'),adapter,currentBinding=binding;
-  const owner={id:'session-loop',status:'idle',session:{id:'session-loop',header:{cwd:root,agentPreset:'default'},events,get seq(){return events.length;},requestHeader:()=>({config:{provider:'synthetic',model:'synthetic'}})},runMaintenance:async work=>work(),
+  const owner={id:'session-loop',status:'idle',session:{id:'session-loop',header:{cwd:ownerRoot,agentPreset:'default'},events,get seq(){return events.length;},requestHeader:()=>({config:{provider:'synthetic',model:'synthetic'}})},runMaintenance:async work=>work(),
     followup(message){messages.push(message);events.push({seq:events.length,type:'turn/start',data:{turn:messages.length},time:now.toISOString()},{seq:events.length+1,type:'user/message',data:message,time:now.toISOString()});},
     whenIdle:async()=>{try{await options.onWake?.(h);}catch(error){wakeErrors.push(error);throw error;}events.push({seq:events.length,type:'turn/end',data:{reason:{kind:'completed'}},time:now.toISOString()});}};
   const scope=createScope(ctx,owner);owner.ctx=scope.ctx;
   ctx.provide('agents',{get:id=>id===owner.id?owner:undefined});ctx.provide('agentDefaultModel',{currentSelection:()=>({provider:'synthetic',model:'synthetic'})});
   for(const name of ['project_companion','personal_context','send_wechat','bash'])ctx.tools.register(defineTool({name,description:'Synthetic only',parameters:{action:{type:'string'},project:{type:'string'},loopId:{type:'string'}},output:{schema:{type:'object',additionalProperties:true},render:()=>[]},execute:async args=>{tools.push({name,args});return options.toolResult?.(name,args)??{ok:true,quiet:false};}}));
-  const adapterOptions={ctx,clock:()=>now,hostTimeZone:'America/Mexico_City',authorizeRoot:async value=>value===root,readBinding:async()=>currentBinding,readConnection:async()=>({state:'bound',sessionId:owner.id,bindingKey:'d'.repeat(64)}),invalidateLoop:value=>{invalidated.push(value);options.invalidateLoop?.(value);},createScheduler:deps=>{const s=new ProactiveScheduler(deps);schedulers.push(s);return s;}};
+  const adapterOptions={ctx,clock:()=>now,hostTimeZone:'America/Mexico_City',authorizeRoot:async value=>value===root,readBinding:async()=>currentBinding,readConnection:async()=>({state:'bound',sessionId:owner.id,bindingKey:'d'.repeat(64)}),invalidateLoop:value=>{invalidated.push(value);options.invalidateLoop?.(value);},createScheduler:deps=>{const s=new ProactiveScheduler(deps);schedulers.push(s);return s;},...(options.familyRoute?{familyRoute:options.familyRoute}: {})};
+  if(options.pauseState)adapterOptions.pauseState=options.pauseState;
+  if(options.canRun)adapterOptions.canRun=options.canRun;
   adapter=createProjectFollowup(adapterOptions);
   let call=0;
   const h={root,temp,ctx,owner,events,messages,tools,schedulers,invalidated,get adapter(){return adapter;},setBinding:value=>{currentBinding=value;},args:{root,sessionId:owner.id,projectLabel:'公开测试项目',everyMinutes:30,loopId:'loop_123'},
@@ -35,6 +38,184 @@ async function harness(t,options={}){
   t.after(async()=>{await adapter.close();await scope.dispose();await ctx.fiber.dispose();await rm(temp,{recursive:true,force:true});});return h;
 }
 const exact=h=>({action:'context_check',project:h.root,loopId:h.args.loopId});
+
+test('family Owner in a different workspace wakes exactly once and delivers the entire scoped response',async t=>{
+ const sent=[],scope={familySessionId:'session-loop',bindingRevision:'a'.repeat(64)};
+ const route={getScope:id=>id===scope.familySessionId?scope:null,isCurrent:value=>value===scope,recheck:async()=>true,routeState:async()=> 'current',
+  readDelivery:async()=>({status:'absent'}),send:async value=>{assert.equal(value.authorize(),true);sent.push(value);return{status:'accepted'};}};
+ const text='有来源的真实新增事项。'.repeat(30);
+ const h=await harness(t,{familyRoute:route,ownerOutside:true,onWake:async h=>{assert.equal((await h.invoke(exact(h))).isError,false);h.reply(text);}});
+ await h.adapter.checkOnce({...h.args,delivery:'family',delaySeconds:60});await h.drain();await h.tick(60);
+ assert.equal(sent.length,1);assert.equal(sent[0].text,text);assert.equal((await h.adapter.onceStatus(h.args)).status,'completed');
+ await h.tick(120);assert.equal(sent.length,1);
+});
+
+function familyFixture(overrides={}){
+ const scope={familySessionId:'session-loop',bindingRevision:'a'.repeat(64)},deliveries=[],state={current:true,grant:true,offline:false};
+ const route={getScope:id=>id===scope.familySessionId?scope:null,isCurrent:()=>state.current,recheck:async()=>state.grant,
+   routeState:async()=>state.offline?'offline':state.current&&state.grant?'current':'changed',readDelivery:async()=>({status:'absent'}),send:async value=>{deliveries.push(value);return{status:'accepted'};},...overrides};
+ return{scope,route,deliveries,state};
+}
+
+test('family one-off keeps quiet when scoped context did not change',async t=>{
+ const f=familyFixture(),h=await harness(t,{familyRoute:f.route,ownerOutside:true,toolResult:()=>({ok:true,quiet:true}),onWake:async h=>{assert.equal((await h.invoke(exact(h))).isError,false);assert.equal((await h.reclaim()).isError,false);}});
+ await h.adapter.checkOnce({...h.args,delivery:'family',delaySeconds:60});await h.drain();await h.tick(60);
+ assert.equal(f.deliveries.length,0);assert.equal((await h.adapter.onceStatus(h.args)).status,'completed');
+});
+
+test('family one-off rejects old route or revoked source permission before wake',async t=>{
+ for(const field of ['current','grant']){
+  const f=familyFixture(),h=await harness(t,{familyRoute:f.route,ownerOutside:true,onWake:async h=>{await h.invoke(exact(h));h.reply('变化');}});
+  await h.adapter.checkOnce({...h.args,delivery:'family',delaySeconds:60});await h.drain();f.state[field]=false;await h.tick(60);
+  assert.equal(h.messages.length,0);assert.equal(f.deliveries.length,0);assert.equal((await h.adapter.onceStatus(h.args)).status,'blocked');
+ }
+});
+
+test('a temporary Family disconnection defers a due check without reading or sending, then resumes once',async t=>{
+ const f=familyFixture(),h=await harness(t,{familyRoute:f.route,ownerOutside:true,onWake:async h=>{assert.equal((await h.invoke(exact(h))).isError,false);h.reply('恢复后的项目变化');}});
+ await h.adapter.checkOnce({...h.args,delivery:'family',delaySeconds:60});await h.drain();f.state.offline=true;f.state.current=false;await h.tick(60);
+ assert.equal(h.tools.length,0);assert.equal(h.messages.length,0);assert.equal(f.deliveries.length,0);assert.equal((await h.adapter.onceStatus(h.args)).enabled,true);
+ f.state.offline=false;f.state.current=true;await h.tick(30);assert.equal(f.deliveries.length,1);assert.equal((await h.adapter.onceStatus(h.args)).status,'completed');await h.tick(60);assert.equal(f.deliveries.length,1);
+});
+
+test('an offline Family check expires without a late send or automatic catch-up',async t=>{
+ const f=familyFixture(),h=await harness(t,{familyRoute:f.route,ownerOutside:true,onWake:async h=>{await h.invoke(exact(h));h.reply('变化');}});
+ await h.adapter.checkOnce({...h.args,delivery:'family',delaySeconds:60});await h.drain();f.state.offline=true;f.state.current=false;await h.tick(60);await h.tick(300);
+ assert.equal((await h.adapter.onceStatus(h.args)).status,'blocked');f.state.offline=false;f.state.current=true;await h.tick(30);
+ assert.equal(h.messages.length,0);assert.equal(h.tools.length,0);assert.equal(f.deliveries.length,0);
+});
+
+test('unknown Family route state defers safely without treating unknown as authorization',async t=>{
+ const f=familyFixture(),h=await harness(t,{familyRoute:f.route,ownerOutside:true});
+ await h.adapter.checkOnce({...h.args,delivery:'family',delaySeconds:60});await h.drain();f.route.routeState=async()=> 'unknown';await h.tick(60);
+ assert.equal((await h.adapter.onceStatus(h.args)).enabled,true);assert.equal(h.messages.length,0);assert.equal(f.deliveries.length,0);
+});
+
+test('a long Family outage skips the expired recurring run while keeping future checks',async t=>{
+ const f=familyFixture(),h=await harness(t,{familyRoute:f.route,ownerOutside:true,onWake:async h=>{await h.invoke(exact(h));h.reply('后续变化');}});
+ await h.adapter.configure({...h.args,delivery:'family'});await h.drain();f.state.offline=true;f.state.current=false;await h.tick();await h.tick(21600);
+ assert.equal((await h.adapter.status(h.args)).enabled,true);assert.equal(h.messages.length,0);assert.equal(f.deliveries.length,0);
+ f.state.offline=false;f.state.current=true;await h.tick();assert.equal(f.deliveries.length,1);
+});
+
+test('a confirmed Family route change invalidates even a recurring check without a loop',async t=>{
+ const f=familyFixture(),h=await harness(t,{familyRoute:f.route,ownerOutside:true});
+ await h.adapter.configure({...h.args,loopId:undefined,delivery:'family'});await h.drain();f.state.current=false;await h.tick();
+ assert.equal((await h.adapter.status(h.args)).enabled,false);assert.equal(h.messages.length,0);assert.equal(f.deliveries.length,0);
+});
+
+test('restarting a recurring Family check while temporarily offline preserves its existing plan',async t=>{
+ const f=familyFixture(),h=await harness(t,{familyRoute:f.route,ownerOutside:true});
+ await h.adapter.configure({...h.args,delivery:'family'});await h.drain();await h.reopen();const before=h.invalidated.length;f.state.offline=true;f.state.current=false;
+ const status=await h.adapter.resume(h.args);assert.equal(status.enabled,true);assert.equal(h.invalidated.length,before);
+ f.state.offline=false;f.state.current=true;await h.adapter.resume(h.args);assert.equal((await h.adapter.status(h.args)).enabled,true);
+});
+
+test('Family going offline during recurring recovery authorization preserves its existing plan',async t=>{
+ const f=familyFixture(),h=await harness(t,{familyRoute:f.route,ownerOutside:true});
+ await h.adapter.configure({...h.args,delivery:'family'});await h.drain();await h.reopen();
+ f.route.recheck=async()=>{f.state.offline=true;f.state.current=false;return false;};
+ const status=await h.adapter.resume(h.args);assert.equal(status.enabled,true);
+});
+test('a paused Dot service preserves the recurring Family plan across recovery and resumes when unpaused',async t=>{
+ let paused=false;const f=familyFixture(),h=await harness(t,{familyRoute:f.route,ownerOutside:true,pauseState:async()=>paused,canRun:async()=>!paused});
+ await h.adapter.configure({...h.args,delivery:'family'});await h.drain();await h.reopen();paused=true;f.route.recheck=async()=>!paused;
+ assert.equal((await h.adapter.resume(h.args)).enabled,true);paused=false;assert.equal((await h.adapter.resume(h.args)).enabled,true);
+});
+test('a paused Dot service does not discard a pending one-off Family check',async t=>{
+ let paused=false;const f=familyFixture(),h=await harness(t,{familyRoute:f.route,ownerOutside:true,pauseState:async()=>paused,canRun:async()=>!paused,onWake:async h=>{await h.invoke(exact(h));h.reply('恢复后的项目变化');}});
+ await h.adapter.checkOnce({...h.args,delivery:'family',delaySeconds:60});await h.drain();paused=true;await h.tick(60);assert.equal((await h.adapter.onceStatus(h.args)).enabled,true);assert.equal(f.deliveries.length,0);
+ paused=false;await h.tick(30);assert.equal(f.deliveries.length,1);
+});
+test('Dot pausing during route authorization defers the unstarted Family check',async t=>{
+ let paused=false;const f=familyFixture(),h=await harness(t,{familyRoute:f.route,ownerOutside:true,pauseState:async()=>paused,canRun:async()=>!paused,onWake:async h=>{await h.invoke(exact(h));h.reply('恢复后的项目变化');}});
+ await h.adapter.checkOnce({...h.args,delivery:'family',delaySeconds:60});await h.drain();f.route.recheck=async()=>{paused=true;return false;};await h.tick(60);
+ assert.equal((await h.adapter.onceStatus(h.args)).enabled,true);assert.equal(h.messages.length,0);paused=false;f.route.recheck=async()=>true;await h.tick(30);assert.equal(f.deliveries.length,1);
+});
+
+test('family grant replacement during an asynchronous scope recheck cannot authorize the stale scope',async t=>{
+ let enter,release,first=true;const entered=new Promise(resolve=>enter=resolve),held=new Promise(resolve=>release=resolve);
+ const a={familySessionId:'session-loop',bindingRevision:'a'.repeat(64),leaseFingerprint:'old'},b={...a,leaseFingerprint:'new'};let current=a;
+ const route={getScope:()=>current,isCurrent:scope=>scope===current,recheck:async()=>{if(first){first=false;enter();await held;}return true;},readDelivery:async()=>({status:'absent'}),send:async()=>({status:'accepted'})};
+ const h=await harness(t,{familyRoute:route,ownerOutside:true});
+ const requested=h.adapter.checkOnce({...h.args,delivery:'family',delaySeconds:60});await entered;current=b;release();
+ await assert.rejects(requested,/binding|route|native|微信/i);assert.equal(h.schedulers.length,0);
+});
+
+test('cancelled family check performs no later wake, read or delivery',async t=>{
+ const f=familyFixture(),h=await harness(t,{familyRoute:f.route,ownerOutside:true,onWake:async h=>{await h.invoke(exact(h));h.reply('变化');}});
+ await h.adapter.checkOnce({...h.args,delivery:'family',delaySeconds:60});await h.drain();
+ assert.equal((await h.adapter.cancelOnce(h.args)).status,'cancelled');await h.tick(120);
+ assert.equal(h.messages.length,0);assert.equal(h.tools.length,0);assert.equal(f.deliveries.length,0);
+});
+
+test('unknown family delivery blocks rather than retrying or claiming completion',async t=>{
+ let attempts=0;const f=familyFixture({send:async()=>{attempts++;return{status:'uncertain'};}});
+ const h=await harness(t,{familyRoute:f.route,ownerOutside:true,onWake:async h=>{await h.invoke(exact(h));h.reply('变化');}});
+ await h.adapter.checkOnce({...h.args,delivery:'family',delaySeconds:60});await h.drain();await h.tick(60);await h.tick(120);
+ assert.equal(attempts,1);assert.equal((await h.adapter.onceStatus(h.args)).status,'blocked');
+});
+
+test('family recurring follow-up recognizes a prior accepted receipt after restart without waking again',async t=>{
+ let wakes=0,sends=0,receipt={status:'absent'};const f=familyFixture({readDelivery:async()=>receipt,send:async()=>{sends++;return{status:'accepted'};}});
+ const h=await harness(t,{familyRoute:f.route,ownerOutside:true,onWake:async h=>{wakes++;await h.invoke(exact(h));h.reply('变化');}});
+ await h.adapter.configure({...h.args,delivery:'family'});await h.drain();await h.reopen();receipt={status:'accepted'};
+ await h.adapter.resume(h.args);await h.drain();await h.tick();assert.equal(wakes,0);assert.equal(sends,0);
+});
+
+test('future family one-off restores only its existing watched plan after restart',async t=>{
+ const f=familyFixture(),h=await harness(t,{familyRoute:f.route,ownerOutside:true,onWake:async h=>{await h.invoke(exact(h));h.reply('恢复后的变化');}});
+ const original=await h.adapter.checkOnce({...h.args,delivery:'family',delaySeconds:60});await h.drain();await h.reopen();
+ assert.equal(typeof h.adapter.recoverFamilyOnce,'function');
+ const attempts=await Promise.all([h.adapter.recoverFamilyOnce(h.args),h.adapter.recoverFamilyOnce(h.args),h.adapter.recoverFamilyOnce(h.args)]);
+ for(const recovered of attempts){assert.equal(recovered.status,'queued');assert.equal(recovered.alarmId,original.alarmId);}assert.equal(h.schedulers.length,2);
+ await h.drain();await h.tick(60);assert.equal(f.deliveries.length,1);assert.equal((await h.adapter.onceStatus(h.args)).status,'completed');
+});
+
+test('restoring an overdue family one-off never wakes or sends',async t=>{
+ const f=familyFixture(),h=await harness(t,{familyRoute:f.route,ownerOutside:true,onWake:async h=>{await h.invoke(exact(h));h.reply('变化');}});
+ await h.adapter.checkOnce({...h.args,delivery:'family',delaySeconds:60});await h.drain();await h.reopen();await h.tick(120);
+ const recovered=await h.adapter.recoverFamilyOnce(h.args);assert.equal(recovered.status,'blocked');await h.tick(60);
+ assert.equal(h.messages.length,0);assert.equal(f.deliveries.length,0);
+});
+
+test('restoring an interrupted family one-off without a receipt never reruns it',async t=>{
+ const f=familyFixture({readDelivery:async()=>({status:'uncertain'})}),h=await harness(t,{familyRoute:f.route,ownerOutside:true,onWake:async h=>{await h.invoke(exact(h));h.reply('变化');}});
+ await h.adapter.checkOnce({...h.args,delivery:'family',delaySeconds:60});await h.drain();await h.reopen();
+ const scopeFile=join(h.root,'.dsh/dot-checks',(await import('node:crypto')).createHash('sha256').update(h.owner.id).digest('hex'),'scope.json');
+ const saved=JSON.parse(await readFile(scopeFile,'utf8'));saved.familyInflight='family-followup-'+'1'.repeat(64);await writeFile(scopeFile,JSON.stringify(saved));
+ const recovered=await h.adapter.recoverFamilyOnce(h.args);assert.equal(recovered.status,'blocked');await h.tick(120);
+ assert.equal(h.messages.length,0);assert.equal(f.deliveries.length,0);
+});
+
+test('family recovery ignores absent and legacy plans and does not create any files',async t=>{
+ const f=familyFixture(),h=await harness(t,{familyRoute:f.route,ownerOutside:true});
+ assert.equal((await h.adapter.recoverFamilyOnce(h.args)).status,'absent');await assert.rejects(access(join(h.root,'.dsh')));
+ await h.adapter.checkOnce({...h.args,delivery:'wechat',delaySeconds:60});await h.drain();await h.reopen();
+ const recovered=await h.adapter.recoverFamilyOnce(h.args);assert.equal(recovered.delivery,'wechat');assert.equal(h.schedulers.length,1);
+});
+
+test('offline family recovery does not rewrite an existing future plan',async t=>{
+ const f=familyFixture(),h=await harness(t,{familyRoute:f.route,ownerOutside:true});
+ await h.adapter.checkOnce({...h.args,delivery:'family',delaySeconds:60});await h.drain();await h.reopen();
+ const folder=join(h.root,'.dsh/dot-checks',(await import('node:crypto')).createHash('sha256').update(h.owner.id).digest('hex'));
+ const before=await readFile(join(folder,'scope.json'),'utf8');f.state.current=false;
+ const recovered=await h.adapter.recoverFamilyOnce(h.args);assert.equal(recovered.recoveryPending,true);assert.equal(await readFile(join(folder,'scope.json'),'utf8'),before);assert.equal(h.schedulers.length,1);
+});
+
+test('revoked original lease keeps a future family plan stopped after restart',async t=>{
+ const f=familyFixture(),h=await harness(t,{familyRoute:f.route,ownerOutside:true});
+ await h.adapter.checkOnce({...h.args,delivery:'family',delaySeconds:60});await h.drain();await h.reopen();f.state.grant=false;
+ const recovered=await h.adapter.recoverFamilyOnce(h.args);assert.equal(recovered.recoveryPending,true);assert.equal(h.schedulers.length,1);await h.tick(120);assert.equal(h.messages.length,0);
+});
+
+test('accepted pre-crash family delivery is recorded once without a second wake',async t=>{
+ const f=familyFixture({readDelivery:async()=>({status:'accepted'})}),h=await harness(t,{familyRoute:f.route,ownerOutside:true});
+ await h.adapter.checkOnce({...h.args,delivery:'family',delaySeconds:60});await h.drain();await h.reopen();
+ const scopeFile=join(h.root,'.dsh/dot-checks',(await import('node:crypto')).createHash('sha256').update(h.owner.id).digest('hex'),'scope.json');
+ const saved=JSON.parse(await readFile(scopeFile,'utf8'));saved.familyInflight='family-followup-'+'2'.repeat(64);await writeFile(scopeFile,JSON.stringify(saved));
+ assert.equal((await h.adapter.recoverFamilyOnce(h.args)).status,'completed');await h.tick(120);assert.equal(h.messages.length,0);assert.equal(f.deliveries.length,0);
+});
 
 test('loop plan persists exact scope, preserves same timer, and replaces a different loop',async t=>{
   const h=await harness(t);const first=await h.adapter.configure(h.args);await h.drain();

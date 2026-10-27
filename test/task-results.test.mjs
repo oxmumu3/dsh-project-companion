@@ -21,7 +21,7 @@ async function fixture(options = {}) {
       await options.onPut?.(value);
     } },
     clock: () => now, hostTimeZone: 'Asia/Shanghai',
-    send: async item => { sends.push(structuredClone(item)); return options.send ? options.send(item) : { status: 'reported_sent' }; },
+    send: async item => { const {authorize,...data}=item;sends.push(structuredClone(data)); return options.send ? options.send(item) : { status: 'reported_sent' }; },
   });
   await service.ready();
   return { service, writes, sends, persisted: () => structuredClone(saved), time: value => { now = new Date(value); } };
@@ -35,6 +35,14 @@ async function running(f, overrides = {}) {
 const reply = (service, text, extra = {}) => service.observe({sessionId:'target-session',type:'assistant',turn:12,text,...extra});
 const end = (service, reason = {kind:'completed'}, extra = {}) => service.observe({sessionId:'target-session',type:'turn/end',turn:12,reason,...extra});
 const jobStatus = async (f, id) => (await f.service.status('origin-session', {id})).jobs[0];
+
+test('result delivery exposes a durable request ID and a guard that expires when the service closes',async()=>{
+ let enter,release;const entered=new Promise(resolve=>enter=resolve),held=new Promise(resolve=>release=resolve);let item;
+ const f=await fixture({send:async value=>{item=value;enter();await held;return{status:'blocked'};}});
+ const id=await running(f);await reply(f.service,'合成结果');const finishing=end(f.service);await entered;
+ assert.equal(item.requestId,'task-result-'+id);assert.equal(item.authorize(),true);
+ const closing=f.service.close();assert.equal(item.authorize(),false);release();await finishing;await closing;
+});
 
 test('passive inspect never recovers, expires, writes or sends cold task state and scopes the original pairing',async()=>{
   const f=await fixture();const id=await running(f);await reply(f.service,'unfinished fragment');

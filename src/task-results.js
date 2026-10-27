@@ -288,7 +288,9 @@ export function createTaskResults({store,clock = () => new Date(),send = async (
       }
       let result;
       try {
-        result=await send({sessionId:job.originSessionId,text:delivery.text,expiresAt:delivery.expiresAt,expectedBinding:copy(job.returnBinding)});
+        const expectedBinding=copy(job.returnBinding);
+        const authorize=()=>!closing&&!storageFailed&&state.jobs.includes(job)&&job.delivery===delivery&&delivery.status==='dispatching'&&now().getTime()<Date.parse(delivery.expiresAt)&&job.returnBinding?.userHash===expectedBinding.userHash&&(job.returnBinding?.botHash??null)===(expectedBinding.botHash??null);
+        result=await send({sessionId:job.originSessionId,text:delivery.text,expiresAt:delivery.expiresAt,expectedBinding,requestId:'task-result-'+job.id,authorize});
       } catch { result={status:'uncertain'}; }
       delivery.status=['blocked','queued','reported_sent','failed','uncertain'].includes(result?.status)?result.status:'uncertain';
       delivery.detail=deliveryNames[delivery.status];

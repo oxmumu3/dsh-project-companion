@@ -3,6 +3,7 @@ import z from '@deepseek-ai/schemastery';
 // Native Configure owns credential entry and persistence. No chat/tool accepts these fields.
 export const Config = z.object({
   dotAppearance: z.union(['native','dot']).default('native').description('界面外观：native 保留原生外观，dot 使用可恢复的 Dot 主题').volatile(),
+  familyOwnerDelegation: z.boolean().default(false).description('允许已验证的家庭管家 Owner 使用本人现有 Dot 资料授权；默认关闭').volatile(),
   flomoToken: z.string().default('').role('secret').description('flomo MCP 访问令牌；仅用于你主动开启的只读查询').volatile(),
   didaToken: z.string().default('').role('secret').description('滴答清单 MCP API 口令；仅用于只读查询').volatile(),
   flomoOAuthCredentials: z.string().default('').role('secret').description('flomo 账号授权后自动保存；清空可移除本机连接').volatile(),
