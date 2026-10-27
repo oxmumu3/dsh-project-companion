@@ -38,3 +38,8 @@ test('binding change during suite refresh prevents credential persistence and ev
 test('owner change after Gmail listing stops detail reads and discards search result',async t=>{
  let h;h=fixture(t,{beforeRead:async u=>{if(u.pathname.endsWith('/messages'))h.changeBinding();}});await h.service.act(owner,{action:'connect',source:'gmail',userRequested:true});await assert.rejects(h.service.act(owner,{action:'query',source:'gmail',operation:'search',query:'today',userRequested:true}));assert.equal(h.calls.some(c=>c.url.includes('/messages/m1')),false);
 });
+test('cold suite Calendar uses the service guard through the real REST and auth chain',async t=>{
+ const h=fixture(t);await h.service.act(owner,{action:'connect',source:'calendar',userRequested:true});
+ const r=await h.service.act(owner,{action:'query',source:'calendar',operation:'upcoming',from:'2026-10-22T08:00:00Z',to:'2026-10-23T08:00:00Z',limit:2,userRequested:true});
+ assert.equal(r.source,'calendar');assert.equal(r.coverage.returned,0);assert.equal(h.calls.filter(c=>c.method==='POST').length,1);assert.equal(h.writes.length,1);
+});

@@ -1,0 +1,26 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {createContextAccountAuth} from '../src/context-account-auth.js';
+import {createContextTransport} from '../src/context-transport.js';
+import {createPersonalContext} from '../src/context-service.js';
+import {createFamilyContextAdapter} from '../src/family-context-adapter.js';
+import {createContextCredentialWriter} from '../src/context-credential-writer.js';
+
+const at=new Date('2026-10-27T19:00:00Z');
+const owner={sessionId:'fixture-owner',cwd:'/private/synthetic-project'};
+test('expired flomo access token refreshes with the real service guard and provider contract',async t=>{
+ const initial={version:1,source:'flomo',connectionId:'fixture-connection',clientId:'fixture-client',accessToken:'fixture-old',refreshToken:'fixture-refresh',expiresAt:at.getTime()+60000,scope:'mcp'};
+ let config={flomoOAuthCredentials:JSON.stringify(initial)},state,refreshes=0,writes=0,reads=0,revision=1;
+ const writer=createContextCredentialWriter({ctx:{fiber:{entry:{options:{id:'fixture'}}},get:()=>({describe:()=>[{ns:'fixture',revision}],mutate:async(_ns,ops,expected)=>{assert.equal(expected,revision);writes++;config={...config,[ops[0].path[0]]:ops[0].value};revision++;}})},readConfig:()=>config});
+ const auth=createContextAccountAuth({source:'flomo',readConfig:()=>config,clock:()=>at.getTime(),saveCredentials:(value,conditions)=>writer('flomo',value,conditions),fetch:async(url)=>{assert.equal(url,'https://flomoapp.com/oauth/token');refreshes++;return Response.json({access_token:'fixture-new',refresh_token:'fixture-refresh-new',token_type:'Bearer',expires_in:3600,scope:'mcp'});}});
+ const fetch=async(_url,init)=>{const req=JSON.parse(init.body),rpc=result=>Response.json({jsonrpc:'2.0',id:req.id,result});if(req.method==='initialize')return rpc({protocolVersion:'2025-03-26',capabilities:{tools:{}}});if(req.method==='notifications/initialized')return new Response(null,{status:202});if(req.method==='tools/list')return rpc({tools:[{name:'memo_search',inputSchema:{type:'object',properties:{keywords:{type:'string'},limit:{type:'integer'}}}}]});if(req.method==='tools/call'){reads++;return rpc({structuredContent:{memos:[{id:'fixture',content:'synthetic note'}]}});}throw Error('synthetic invalid RPC');};
+ const transport=createContextTransport({flomoAuth:auth,fetch,clock:()=>at});
+ let family;const binding='a'.repeat(64),scope={familySessionId:'fixture-family-owner',originSessionId:owner.sessionId,originBindingKey:binding};
+ const service=createPersonalContext({store:{get:async()=>state,put:async(_k,v)=>{state=v;}},readConfig:()=>config,readBinding:async id=>await family?.bindingOverride(id)??{kind:'bound',bindingKey:binding},transport,clock:()=>at});
+ family=createFamilyContextAdapter({context:service,delegation:{current:()=>true,recheck:async()=>true}});
+ t.after(async()=>{await service.close();await transport.close();await auth.close();});
+ await service.act(owner,{action:'connect',source:'flomo',userRequested:true});assert.equal(refreshes,0);
+ config={...config,flomoOAuthCredentials:JSON.stringify({...initial,expiresAt:at.getTime()-1000})};
+ const result=await family.run(scope,()=>family.act({...owner,sessionId:scope.familySessionId},{action:'query',source:'flomo',operation:'search',query:'DeepSeek',limit:2,userRequested:true}));
+ assert.equal(result.items.length,1);assert.equal(refreshes,1);assert.equal(writes,1);assert.equal(reads,1);
+});
