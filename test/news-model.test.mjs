@@ -152,13 +152,18 @@ test('rejects every tool attempt and every non-stop or missing finish outcome', 
     const f = fixture([async function* () { yield before; yield* textStream('{"ids":["a"]}')(); }]);
     await assert.rejects(f.model.selectArticles({ articles: [article('a')] }), { code: 'MODEL_TOOL_OUTPUT' });
   }
-  for (const kind of ['max-tokens', 'tool-calls', 'error', 'aborted', 'future-reason', null]) {
+  for (const kind of ['tool-calls', 'error', 'aborted', 'future-reason', null]) {
     const f = fixture([async function* () {
       yield { type: 'block-end', index: 0, block: { type: 'text', text: '{"ids":["a"]}' } };
       if (kind) yield { type: 'finish', reason: { kind, failure: { message: 'SENSITIVE_PROVIDER_BODY' } } };
     }]);
     await assert.rejects(f.model.selectArticles({ articles: [article('a')] }), { code: 'MODEL_INCOMPLETE' });
   }
+});
+
+test('token-limit finish is distinguishable from malformed or missing stream completion', async () => {
+ const f=fixture([async function* () {yield {type:'finish',reason:{kind:'max-tokens',failure:{message:'SENSITIVE_PROVIDER_BODY'}}};}]);
+ await assert.rejects(f.model.selectArticles({articles:[article('a')]}),e=>e.code==='MODEL_TOKEN_LIMIT'&&!/SENSITIVE_PROVIDER_BODY/.test(e.message));
 });
 
 test('bounds response text and rejects content after a terminal finish', async () => {

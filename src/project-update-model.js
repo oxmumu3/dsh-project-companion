@@ -136,7 +136,7 @@ export function createProjectUpdateModel(ctx, { clock = () => new Date(), timeou
       } catch (error) {
         if (controller.signal.aborted) throw controller.signal.reason;
         if (error instanceof ProjectUpdateModelError) throw error;
-        if (typeof error?.code === 'string' && /^MODEL_(?:UNAVAILABLE|INCOMPLETE|OUTPUT_LIMIT|TOOL_OUTPUT)$/u.test(error.code)) throw failure(error.code);
+        if (typeof error?.code === 'string' && /^MODEL_(?:UNAVAILABLE|INCOMPLETE|OUTPUT_LIMIT|TOOL_OUTPUT|TOKEN_LIMIT)$/u.test(error.code)) throw failure(error.code);
         throw failure('MODEL_REQUEST_FAILED');
       } finally {
         clearTimeout(timer);

@@ -162,6 +162,7 @@ export async function runNewsModel({ llm, selection, system, data, signal, maxTo
         onUsage(usage);
       } else if (chunk.type === 'finish') {
         finish = chunk.reason?.kind;
+        if (finish === 'max-tokens') fail('MODEL_TOKEN_LIMIT');
         if (finish !== 'stop') fail('MODEL_INCOMPLETE');
       }
     }

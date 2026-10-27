@@ -87,3 +87,10 @@ test('insufficient scope during connect or query survives the service boundary w
     } finally { await service.close(); }
   }
 });
+test('bounded provider diagnostics preserve safe classifications without preserving upstream details',async()=>{
+ const {createPersonalContext}=await api();
+ for(const [underlying,expected] of [['CONTEXT_TIMEOUT','CONTEXT_TIMEOUT'],['CONTEXT_HTTP_ERROR','CONTEXT_HTTP_ERROR'],['CONTEXT_PROTOCOL_INVALID','CONTEXT_PROTOCOL_INVALID'],['SYNTHETIC_UNKNOWN','CONTEXT_UNAVAILABLE']]){
+  let state;const s=createPersonalContext({store:{get:async()=>state,put:async(_k,v)=>{state=v;}},readConfig:()=>({flomoToken:'synthetic'}),readBinding:async()=>({kind:'unbound'}),transport:{catalog:async()=>({tools:[{name:'memo_search',inputSchema:{type:'object'}}]}),call:async()=>{throw Object.assign(Error('SYNTHETIC_PRIVATE_BODY'),{code:underlying});}}});
+  try{await s.act(owner,{action:'connect',source:'flomo',userRequested:true});await assert.rejects(s.act(owner,{action:'query',source:'flomo',operation:'search',query:'example',userRequested:true}),e=>e.code===expected&&!String(e).includes('SYNTHETIC_PRIVATE_BODY'));}finally{await s.close();}
+ }
+});
