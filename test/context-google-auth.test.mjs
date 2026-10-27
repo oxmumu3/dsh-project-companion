@@ -35,7 +35,7 @@ function fixture(options = {}) {
 test('native Config keeps live credential fields separate from normal Dot appearance', () => {
   requireModules();
   const schema = configModule.Config;
-  assert.deepEqual(Object.keys(schema.dict).sort(), [...Object.keys(initial()),'dotAppearance','familyOwnerDelegation'].sort());
+  assert.deepEqual(Object.keys(schema.dict).sort(), [...Object.keys(initial()),'dotAppearance','familyOwnerDelegation','familyOwnerReminderEnabled'].sort());
   for (const key of Object.keys(initial())) {
     const value=schema.dict[key];
     assert.equal(value.meta.volatile, true);
@@ -45,6 +45,8 @@ test('native Config keeps live credential fields separate from normal Dot appear
   assert.notEqual(schema.dict.dotAppearance.meta.role,'secret');
   assert.equal(schema.dict.dotAppearance.meta.volatile,true,'changing only appearance must not restart the running backend');
   assert.equal(schema.dict.familyOwnerDelegation.meta.default,false,'cross-entry sharing must be opt-in');
+  assert.equal(schema.dict.familyOwnerReminderEnabled.meta.default,false,'Family reminder entry must be independently opt-in');
+  assert.equal(schema.dict.familyOwnerReminderEnabled.meta.volatile,true);
   assert.deepEqual(configModule.readContextConfig({...initial(),dotAppearance:'dot'}),initial());
   const refs = Object.fromEntries(Object.entries(initial()).map(([key, value]) => [key, { get: () => value }]));
   assert.deepEqual(configModule.readContextConfig(refs), initial());

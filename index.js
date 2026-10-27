@@ -37,6 +37,7 @@ import {createPersonalContext,contextRowSchema,CONTEXT_SOURCES,contextErrorText}
 import {createFamilyOwnerDelegation} from './src/family-owner-delegation.js';
 import {createFamilyContextAdapter} from './src/family-context-adapter.js';
 import {familyIntentAllowed,familyReadOnlyIntent,familySelectedItemAllowed,familyUnverifiedPlanAction,familyActionAllowed} from './src/family-intent.js';
+import {parseFamilyReminder} from './src/family-reminder.js';
 import {createFamilyReadAdapter} from './src/family-read-adapter.js';
 import {createContextRoute,registerContextRoute} from './src/context-route.js';
 import {createWorkbench,registerWorkbenchRoute} from './src/workbench.js';
@@ -126,6 +127,7 @@ export async function installCompanion(ctx,options={}){
   const legacyReadNativeRoute=options.readNativeRoute??(sessionId=>readWechatRoute(ctx,sessionId,{...(options.fetch?{fetch:options.fetch}:{})}));
   const familyBinding=scope=>({userHash:scope.bindingRevision,botHash:createHash('sha256').update('family-dot:'+scope.bindingRevision).digest('hex')});
   const familyEnabled=()=>{const v=options.family?.enabled??options.context?.config?.familyOwnerDelegation;return (v&&typeof v.get==='function'?v.get():v)===true;};
+  const familyReminderEnabled=()=>{const v=options.family?.reminderEnabled??options.context?.config?.familyOwnerReminderEnabled;return (v&&typeof v.get==='function'?v.get():v)===true;};
   const getFamilyBridge=()=>familyEnabled()?ctx.get('familyDotBridge',false):null;
   const readBinding=async sessionId=>{
     if(typeof sessionId==='string'&&(sessionId.startsWith('family_owner_')||familyDelegate?.matchesSession(sessionId))){const scope=familyDelegate?.scopeFor(sessionId);return scope&&await familyDelegate.recheck(scope)?familyBinding(scope):null;}
@@ -684,9 +686,24 @@ export async function installCompanion(ctx,options={}){
     }
     if(!scope)throw new Error('家庭 Owner 身份或资料委托不可用。');
     if(!protectedWake)scope={...scope,callId:execution.callId};
-    if(familyUnverifiedPlanAction(args.action)){const error=new Error('家庭微信入口暂不能安全核验提醒或推送的具体时间和内容，本次未创建、发送或取消计划。');error.code='FAMILY_PLAN_UNAVAILABLE';throw error;}
-    if(!protectedWake&&!familyActionAllowed(args)){const error=new Error('家庭微信入口暂不支持这项操作，本次未读取资料或更改计划。');error.code='FAMILY_ACTION_UNAVAILABLE';throw error;}
-    if(!protectedWake&&!familyIntentAllowed('family',args,scope.userText,scope.previousUserText,options.clock?.()??new Date())){const error=new Error('实际 Owner 消息没有授权这项操作。');if(['query','brief','context_brief'].includes(args.action))error.code='FAMILY_SCOPE_UNSUPPORTED';throw error;}
+    let familyReminder=false;
+    if(args.action==='remind'&&familyReminderEnabled()&&typeof getFamilyBridge()?.remindOwnerOnce==='function'){
+      try{parseFamilyReminder(scope,options.clock?.()??new Date());familyReminder=true;}catch{}
+    }
+    if(familyUnverifiedPlanAction(args.action)&&!familyReminder){const error=new Error('家庭微信入口暂不能安全核验提醒或推送的具体时间和内容，本次未创建、发送或取消计划。');error.code='FAMILY_PLAN_UNAVAILABLE';throw error;}
+    if(!protectedWake&&!familyReminder&&!familyActionAllowed(args)){const error=new Error('家庭微信入口暂不支持这项操作，本次未读取资料或更改计划。');error.code='FAMILY_ACTION_UNAVAILABLE';throw error;}
+    if(!protectedWake&&!familyReminder&&!familyIntentAllowed('family',args,scope.userText,scope.previousUserText,options.clock?.()??new Date())){const error=new Error('实际 Owner 消息没有授权这项操作。');if(['query','brief','context_brief'].includes(args.action))error.code='FAMILY_SCOPE_UNSUPPORTED';throw error;}
+    if(familyReminder){
+      const authorize=()=>{try{parseFamilyReminder(scope,options.clock?.()??new Date());return familyReminderEnabled()&&familyDelegate.current(scope)&&!execution.signal?.aborted;}catch{return false;}};
+      if(!authorize()||!await familyDelegate.recheck(scope)||!authorize())return{status:'blocked',accepted:false,text:'当前消息的提醒时间或绑定不可确认，本次未安排。'};
+      // The Family service owns the single durable receipt. Once called, a
+      // lost response or changed binding cannot be described as “not created”.
+      try{
+        const result=await getFamilyBridge()?.remindOwnerOnce({sessionId:scope.familySessionId,bindingRevision:scope.bindingRevision,callId:scope.callId,authorize});
+        if(['scheduled','duplicate'].includes(result?.status))return{status:result.status,text:familyDelegate.current(scope)?(typeof result.text==='string'?result.text.slice(0,1000):'已记下这条提醒。'):'提醒已被记录；连接状态刚刚改变，后续能否送达仍需核对。'};
+      }catch{}
+      return{status:'unknown',accepted:false,text:'提醒状态未确认，暂不要重复安排；请先核对已有提醒。'};
+    }
     // Family work never runs inside an unrestricted existing project session.
     // Only the separately guarded read-only executor can receive the task.
     if(['coordinate','context_handoff'].includes(args.action)&&(!familyReadOnlyIntent(scope.userText)||typeof getFamilyBridge()?.startOwnerProjectRead!=='function'))throw new Error('该项目会话暂不能保证只读；尚未派发任务。');
