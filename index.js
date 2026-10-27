@@ -17,7 +17,7 @@ import {createWelcomeGuard} from './src/welcome-guard.js';
 import {createNewsService,newsRowSchema} from './src/news-service.js';
 import {fetchNewsCandidates,readNewsArticle} from './src/news-feeds.js';
 import {createNewsModel} from './src/news-model.js';
-import {createProjectUpdateModel} from './src/project-update-model.js';
+import {createProjectUpdateModel,safeValidationDiagnostic} from './src/project-update-model.js';
 import {createContextLoop,contextLoopRowSchema} from './src/context-loop.js';
 import {createProjectUpdateService,projectUpdateRowSchema} from './src/project-updates.js';
 import {Config,readContextConfig} from './src/context-config.js';
@@ -757,7 +757,7 @@ export async function installCompanion(ctx,options={}){
       if(['project_update','context_check'].includes(args.action)&&value.quiet===true)return[{type:'text',text:'项目变化检查 quiet=true；本次可见范围未变，请安静结束，不复述旧正文。不代表全项目无变化或来源缺失已解决。'}];
       const content=[{type:'text',text:typeof value.text==='string'?value.text:JSON.stringify(value)}];
       if(args.action==='context_brief'&&['MODEL_UNAVAILABLE','MODEL_TIMEOUT','MODEL_REQUEST_FAILED','MODEL_INCOMPLETE','MODEL_OUTPUT_LIMIT','MODEL_TOOL_OUTPUT','MODEL_TOKEN_LIMIT','MODEL_INVALID_OUTPUT'].includes(value.modelDiagnostic))content.push({type:'text',text:`内部脱敏诊断代码：${value.modelDiagnostic}；不包含来源内容或错误原文，仅帮助排查模型整理，不要据此断言原因。`});
-      if(args.action==='context_brief'&&value.modelDiagnostic==='MODEL_INVALID_OUTPUT'&&['JSON_SYNTAX','OBJECT_FIELDS','ARRAY_LENGTH','ITEM_FIELDS','KIND','TEXT_LIMIT','TEXT_MARKUP','ROLE_SPOOF','CLAIM','COMMAND','SOURCE_ID','UNKNOWN_SOURCE_ID','QUOTE_MISMATCH','UNKNOWN'].includes(value.validationDiagnostic))content.push({type:'text',text:`内部脱敏格式诊断：${value.validationDiagnostic}；不包含模型原文或来源标识。`});
+      if(args.action==='context_brief'&&value.modelDiagnostic==='MODEL_INVALID_OUTPUT'&&typeof value.validationDiagnostic==='string')content.push({type:'text',text:`内部脱敏格式诊断：${safeValidationDiagnostic(value.validationDiagnostic)}；不包含模型原文或来源标识。`});
       if(args.action==='context_brief'&&Array.isArray(value.readSummary)){
         const allowedSources=new Set(['gmail','calendar','drive','docs','sheets','slides','dida','flomo','project','memory']),allowedCodes=new Set(['CONTEXT_AUTH_REQUIRED','CONTEXT_INSUFFICIENT_SCOPE','CONTEXT_TIMEOUT','CONTEXT_HTTP_ERROR','CONTEXT_PROTOCOL_INVALID','CONTEXT_SCHEMA_MISMATCH','CONTEXT_SCOPE_VIOLATION','CONTEXT_BINDING_CHANGED','CONTEXT_NOT_ENABLED','CONTEXT_STOPPED','CONTEXT_INVALID_INPUT','CONTEXT_UNSUPPORTED_OPERATION','CONTEXT_UNAVAILABLE']);
         const rows=value.readSummary.filter(r=>allowedSources.has(r?.source)&&['ok','partial','unavailable'].includes(r?.status)&&(r.count===null||Number.isInteger(r.count)&&r.count>=0&&r.count<=20)&&typeof r.truncated==='boolean'&&(r.code===null||allowedCodes.has(r.code))).slice(0,6).map(r=>({source:r.source,status:r.status,count:r.count,truncated:r.truncated,code:r.code}));

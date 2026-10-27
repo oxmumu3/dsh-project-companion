@@ -3,11 +3,10 @@ import {createHash,randomUUID} from 'node:crypto';
 import {isAbsolute,resolve} from 'node:path';
 import {z} from 'zod';
 import {buildContextCall} from './context-contracts.js';
-import {validateProjectUpdateSummary} from './project-update-model.js';
+import {validateProjectUpdateSummary,safeValidationDiagnostic} from './project-update-model.js';
 
 const SOURCES=['gmail','calendar','drive','docs','sheets','slides','dida','flomo'];
 const SOURCE_FAILURES=new Set(['CONTEXT_AUTH_REQUIRED','CONTEXT_INSUFFICIENT_SCOPE','CONTEXT_TIMEOUT','CONTEXT_HTTP_ERROR','CONTEXT_PROTOCOL_INVALID','CONTEXT_SCHEMA_MISMATCH','CONTEXT_SCOPE_VIOLATION','CONTEXT_BINDING_CHANGED','CONTEXT_NOT_ENABLED','CONTEXT_STOPPED','CONTEXT_INVALID_INPUT','CONTEXT_UNSUPPORTED_OPERATION','CONTEXT_UNAVAILABLE']);
-const VALIDATION_DIAGNOSTICS=new Set(['JSON_SYNTAX','OBJECT_FIELDS','ARRAY_LENGTH','ITEM_FIELDS','KIND','TEXT_LIMIT','TEXT_MARKUP','ROLE_SPOOF','CLAIM','COMMAND','SOURCE_ID','UNKNOWN_SOURCE_ID','QUOTE_MISMATCH','UNKNOWN']);
 const hash=value=>createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const hex=z.string().regex(/^[a-f0-9]{64}$/),identity=z.string().min(1).max(200);
 const clean=(value,max)=>String(value??'').replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/gu,'').slice(0,max);
@@ -116,7 +115,7 @@ export function createContextLoop({store,readScope,authorizeSync,authorization,a
   await c.guard();if(!prior&&state.loops.length>=10)fail('LOOP_LIMIT');
   const {sources,references,coverage,sourceDiagnostics,readSummary}=await collect(caller,c,prior,objective);await c.guard();const fingerprint=hash({objective,grant:c.grant,queries:c.queries,sources:sources.map(({sourceId,role,status,text,truncated})=>({sourceId,role,status,text,truncated}))});const unavailable=coverage.some(row=>row.unavailable),same=prior?.fingerprint===fingerprint;
   if(same)return{...view(prior,unavailable?'partial':checking?'quiet':'ready',checking),sourceDiagnostics};
-  const invalidModel=error=>{const safe=new ContextLoopError('LOOP_MODEL_INVALID_OUTPUT');safe.modelDiagnostic='MODEL_INVALID_OUTPUT';safe.validationDiagnostic=VALIDATION_DIAGNOSTICS.has(error?.validationDiagnostic)?error.validationDiagnostic:'UNKNOWN';return safe;};
+  const invalidModel=error=>{const safe=new ContextLoopError('LOOP_MODEL_INVALID_OUTPUT');safe.modelDiagnostic='MODEL_INVALID_OUTPUT';safe.validationDiagnostic=safeValidationDiagnostic(error?.validationDiagnostic);return safe;};
   const fallback=async error=>{if(checking||!['LOOP_MODEL_UNAVAILABLE','LOOP_MODEL_INVALID_OUTPUT'].includes(error?.code))throw error;await c.guard();const text=renderSourceFallback(c.scope,c.queries,sources,references,coverage,now().toISOString(),error.code==='LOOP_MODEL_INVALID_OUTPUT');c.sync();return{status:'partial',quiet:false,text,modelDiagnostic:error.modelDiagnostic,...(error.code==='LOOP_MODEL_INVALID_OUTPUT'?{validationDiagnostic:error.validationDiagnostic}:{}),sourceDiagnostics,readSummary};};
   let answer;try{answer=await wait(Promise.resolve().then(async()=>{c.sync();try{return await summarize({project:{label:c.scope.label},sources:copy(sources),previous:previousFor(prior),signal:c.signal});}catch(error){if(error?.code==='MODEL_INVALID_OUTPUT')throw invalidModel(error);if(error?.code==='MODEL_INVALID_INPUT')fail('LOOP_MODEL_INVALID_INPUT');if(['MODEL_UNAVAILABLE','MODEL_TIMEOUT','MODEL_REQUEST_FAILED','MODEL_INCOMPLETE','MODEL_OUTPUT_LIMIT','MODEL_TOOL_OUTPUT','MODEL_TOKEN_LIMIT'].includes(error?.code)){const safe=new ContextLoopError('LOOP_MODEL_UNAVAILABLE');safe.modelDiagnostic=error.code;throw safe;}fail('LOOP_UNAVAILABLE');}}),c.signal);}catch(error){return fallback(error);}await c.guard();let summary;try{summary=validateProjectUpdateSummary(answer,sources);}catch(error){return fallback(invalidModel(error));}
   if(unavailable){const text='部分来源读取未完成，相关内容仍未知。',unknown={sourceId:'coverage:unknown',label:'memory coverage',role:'coverage',status:'ok',text,at:null,truncated:false};sources.push(unknown);references.push({...unknown,label:'读取范围'});delete references.at(-1).text;summary={...summary,blockers:[{kind:'quote',text,sourceIds:[unknown.sourceId]},...summary.blockers].slice(0,3)};}
