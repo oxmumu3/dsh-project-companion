@@ -79,3 +79,11 @@ test('post-model schema failure in automatic checks does not generate a fallback
 test('cancellation during invalid model output prevents excerpt and metadata delivery',async t=>{const entered=deferred(),release=deferred(),controller=new AbortController(),h=fixture(t,{summarize:async()=>{entered.resolve();await release.promise;throw Object.assign(Error('PRIVATE'),{code:'MODEL_INVALID_OUTPUT'});}});const p=h.brief({signal:controller.signal});await entered.promise;controller.abort();release.resolve();await assert.rejects(p,e=>e.code==='LOOP_STOPPED');assert.equal(h.calls.writes.length,0);});
 
 test('missing and duplicate project source rows mark coverage incomplete on model failure',async t=>{for(const rows of [[],[{path:'README.md',status:'ok',text:'fixture'}],[{path:'README.md',status:'ok',text:'fixture'},{path:'README.md',status:'ok',text:'fixture'},{path:'.agent/memory/context.md',status:'ok',text:'fixture'}]]){const h=fixture(t,{readProject:async()=>({project:{root},sources:rows}),summarize:async()=>{throw Object.assign(Error('PRIVATE'),{code:'MODEL_INVALID_OUTPUT'});}});const r=await h.brief();assert.notEqual(r.readSummary.find(row=>row.source==='project').status,'ok');assert.match(r.text,/部分项目资料读取未完成，相关内容未知。/);}});
+test('brief shows source operation and limit without implying total or leaking query and ids',async t=>{
+ const h=fixture(t);const r=await h.brief({queries:[{source:'flomo',operation:'search',query:'SYNTHETIC_PRIVATE_SEARCH',limit:2},{source:'calendar',operation:'upcoming',limit:2}]});
+ assert.match(r.text,/本次查询范围/);assert.match(r.text,/flomo[^\n]*搜索[^\n]*最多\s*2\s*条/);assert.match(r.text,/calendar[^\n]*未来24小时日程[^\n]*最多\s*2\s*条/);assert.match(r.text,/本次[^\n]*不代表账号总量/);assert.doesNotMatch(r.text,/SYNTHETIC_PRIVATE_SEARCH/);
+});
+test('calendar range label claims a 24 hour interval only when query proves it',async t=>{
+ const h=fixture(t);const daily=await h.brief({queries:[{source:'calendar',operation:'upcoming',from:'2026-10-26T10:00:00Z',to:'2026-10-27T10:00:00Z',limit:2}]});assert.match(daily.text,/calendar 24小时时段的日程（最多 2 条）/);
+ const longer=await h.brief({objective:'另一范围',queries:[{source:'calendar',operation:'upcoming',from:'2026-10-26T10:00:00Z',to:'2026-10-28T10:00:00Z',limit:2}]});assert.match(longer.text,/calendar 近期日程（最多 2 条）/);assert.doesNotMatch(longer.text,/24小时/);
+});

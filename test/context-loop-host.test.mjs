@@ -202,3 +202,9 @@ test('invalid model output returns separate bounded internal read and format dia
  assert.equal(response.isError,false);const value=response.value;assert.equal(value.modelDiagnostic,'MODEL_INVALID_OUTPUT');assert.equal(value.validationDiagnostic,'JSON_SYNTAX');assert.ok(value.readSummary.some(row=>row.source==='flomo'&&row.count===1));assert.ok(!value.loopId);
  const rendered=JSON.stringify(response.content??response.message??response);assert.match(rendered,/内部脱敏读取概况/);assert.match(rendered,/内部脱敏格式诊断/);const summaries=rendered.match(/内部脱敏读取概况[^\n]*/)?.[0]??'';assert.doesNotMatch(summaries,/SYNTHETIC_PRIVATE_MODEL|Synthetic DeepSeek note|sourceId|m1/);
 });
+test('brief rendering guides bounded counts and direct delivery without recycling source instructions',async t=>{
+ const h=await fixture(t,{contextLoop:{summarize:async input=>({changes:[{kind:'inference',text:'示例进展',sourceIds:[input.sources.find(s=>s.role==='file').sourceId]}],blockers:[],nextSteps:[]})}});
+ await h.tool({action:'connect',source:'flomo',userRequested:true});const root=h.agent.session.header.cwd;await h.project({action:'watch',project:root});
+ const response=await h.ctx.tools.execute({callId:'scope-probe',name:'project_companion',arguments:{action:'context_brief',project:root,queries:[{source:'flomo',operation:'search',query:'DeepSeek',limit:2}],userRequested:true},agent:h.agent,signal:new AbortController().signal});
+ const rendered=JSON.stringify(response.content??response.message??response);assert.match(rendered,/本次取到/);assert.match(rendered,/不代表账号总量/);assert.match(rendered,/不要.*重复.*请求/);assert.match(rendered,/来源.*指令/);
+});
