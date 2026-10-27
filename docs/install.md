@@ -1,6 +1,6 @@
 # 安装 DSH Dot 0.12.0-preview.4
 
-适用于 macOS 上已有的官方 DeepSeek Harness `0.2.0-rc.2` 或 `0.2.1-rc.2`。安装包包含项目助理和配套微信桥接，沿用已有兼容绑定；这是社区预览版，作者奥克斯木木山，非 DeepSeek 或 OpenAI 官方产品。
+适用于 macOS 上已有的官方 DeepSeek Harness `0.2.0-rc.2` 或 `0.2.1-rc.2`。安装包包含项目助理和配套微信桥接，沿用已有兼容绑定；这是社区预览版，作者牛村木木山，非 DeepSeek 或 OpenAI 官方产品。
 
 ## 复制安装指令
 
@@ -43,3 +43,7 @@ Google 三件套已切为 External / In production，无需测试账号白名单
 完整目录包含 `Install.command`、`bundle-manifest.json`、安装脚本、两个固定 tgz 和完整许可证。原始桥接来源与固定差异见[桥接来源说明](https://github.com/oxmumu3/dsh-project-companion/blob/v0.12.0-preview.4/bridge-maintenance/README.md)。有 Node 时可在完整目录运行 `node scripts/install.mjs --bundle-dir . --dry-run`；显式安装加 `--install`。没有独立 Node 时，入口使用官方 App 自带运行时。
 
 本版新增 Google 授权前的数据用途说明，以及普通三件套、单独日历的 Keychain 密钥 + AES-256-GCM 存储。旧普通授权只在明确查询前迁移，状态刷新不写配置；高级手填凭据、会话和历史备份不在该补强范围。源码回归、独立审读及本版隔离官方 Host 的另一账号三项有界实读见验证记录。日常 App 仍运行此前 `0.12.0-preview.3`，历史读取不能作为本版日常升级、新用户完整开箱或手机验收证明；长期运行、滴答任务正文、Drive 文档正文和非空日程的日常 App／手机呈现仍分别待验。
+
+## 未公开的本地闭环候选
+
+`0.14.0-preview.1` 的完整包单独交付，新增对官方 Harness `0.2.1-rc.3` 的精确适配。上面的公开 preview4 下载资产仍只支持其原有两个版本，不因修改当前源码而获得新兼容能力。候选的步骤和范围见[个人资料闭环](context-loop.md)。

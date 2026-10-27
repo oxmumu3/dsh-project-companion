@@ -14,6 +14,7 @@ export function effectiveCwd(ctx,subject){
 
 const clean=error=>String(error?.message??error).replace(/[\u0000-\u001f\u007f]/g,' ').slice(0,200);
 const blocked=text=>({status:'blocked',accepted:false,text});
+const uncertainResult=text=>({status:'uncertain',accepted:false,text});
 const lifecycleNotice='本次恢复或新建会话由项目助理插件拥有；卸载插件会停止该会话。';
 const sameBinding=(left,right)=>typeof left?.userHash==='string'&&/^[a-f0-9]{64}$/.test(left.userHash)&&left.userHash===right?.userHash&&(left.botHash??null)===(right?.botHash??null);
 
@@ -70,13 +71,21 @@ export function createCoordinator({ctx,service,owner,liveAgents,taskResults,read
     signal.throwIfAborted();
     return sameBinding(binding,trusted.binding);
   }
-  async function submit(target,project,task,signal,{cold=false,agent,callId,trusted,retainHandle=()=>{}}={}){
+  async function submit(target,project,task,signal,{cold=false,agent,callId,trusted,authorizeAdmission,authorizeAdmissionSync,retainHandle=()=>{}}={}){
     signal.throwIfAborted();
     if(!await trustedRoute(project,agent,trusted,signal))return blocked('上次交办的项目会话或原微信绑定已变化，尚未提交；请重新选定目标会话。');
     if(target.status!=='idle')return{status:'busy',accepted:false,text:`「${project.label}」正在处理其他任务。尚未提交，不会打断；等它空闲后再继续。`};
     if(typeof target.followup!=='function')return blocked(`「${project.label}」的会话暂时不能接收任务，请先在电脑上检查该会话。`);
     const message=createUserMessage({content:[{type:'text',text:task}],source:{kind:'user'}});
     let job;
+    // Keep the durable association even when admission cannot be confirmed.
+    // A caller must inspect this same job rather than create another dispatch.
+    const recorded=result=>job?{...result,jobId:job.id}:result;
+    const rejectPrepared=async(result,uncertain=false)=>{
+      if(job)try{await taskResults.notAdmitted(job.id,{uncertain});}
+      catch{return recorded(uncertainResult('目标会话的接收记录不确定，已停止自动重试；可以查询本次交办状态。'));}
+      return recorded(result);
+    };
     if(taskResults){
       if(typeof callId!=='string'||!callId)return blocked('宿主未提供这次工具调用的身份，尚未提交任务。');
       let returnBinding=null;
@@ -86,29 +95,33 @@ export function createCoordinator({ctx,service,owner,liveAgents,taskResults,read
       const prepared=await taskResults.prepare({originSessionId:owner(agent).sessionId,originToolCallId:callId,targetSessionId:String(target.id),targetMessageId:String(message.id),projectRoot:project.root,projectLabel:project.label,task,returnBinding});
       job=prepared.job;
       // A duplicate may refer to an earlier admission; do not stop that restored work.
-      if(prepared.duplicate){retainHandle();return{status:'duplicate',accepted:false,text:'这次交办已经记录，不会重复提交；可以查询最近交办状态。'};}
+      if(prepared.duplicate){retainHandle();return recorded({status:'duplicate',accepted:false,text:'这次交办已经记录，不会重复提交；可以查询最近交办状态。'});}
       let routeUnchanged=false;
       try{routeUnchanged=await trustedRoute(project,agent,trusted,signal);}catch{}
-      if(!routeUnchanged){await taskResults.notAdmitted(job.id,{uncertain:false});return blocked('原微信绑定或项目目标已变化，尚未提交任务。');}
+      if(!routeUnchanged)return rejectPrepared(blocked('原微信绑定或项目目标已变化，尚未提交任务。'));
+    }
+    // Scoped callers can revoke their source grant while preparation is saving.
+    // Revalidate it here, then close the final synchronous admission boundary.
+    if(authorizeAdmission!==undefined){
+      let authorized=false;
+      try{authorized=typeof authorizeAdmission==='function'&&await authorizeAdmission()===true;}catch{}
+      if(!authorized)return rejectPrepared(blocked('本次资料授权或事项范围已变化，尚未提交任务。'));
     }
     // Durable preparation and route checks yield; the final target gate is synchronous.
     let projectAllowed=false;
-    try{projectAllowed=service.canCoordinate?.({projectId:project.id,projectRoot:project.root,sessionId:String(target.id)})===true;}catch{}
+    try{projectAllowed=service.canCoordinate?.({projectId:project.id,projectRoot:project.root,sessionId:String(target.id)})===true&&(authorizeAdmissionSync===undefined||typeof authorizeAdmissionSync==='function'&&authorizeAdmissionSync()===true);}catch{}
     if(!projectAllowed||signal.aborted||effectiveCwd(ctx,target)!==project.root||target.session?.header?.origin==='subagent'||ctx.get('agents')?.get?.(String(target.id))!==target){
-      if(job)await taskResults.notAdmitted(job.id,{uncertain:false});
-      return blocked('目标会话或插件状态已变化，尚未提交任务。');
+      return rejectPrepared(blocked('目标会话或插件状态已变化，尚未提交任务。'));
     }
     if(target.status!=='idle'){
-      if(job)await taskResults.notAdmitted(job.id,{uncertain:false});
-      return{status:'busy',accepted:false,text:`「${project.label}」正在处理其他任务。尚未提交，不会打断；等它空闲后再继续。`};
+      return rejectPrepared({status:'busy',accepted:false,text:`「${project.label}」正在处理其他任务。尚未提交，不会打断；等它空闲后再继续。`});
     }
     // No await between the final status check and official synchronous inbox admission.
     try{retainHandle();target.followup(message);}catch{
-      if(job)await taskResults.notAdmitted(job.id,{uncertain:true});
-      return blocked('目标会话的接收结果不确定，已停止自动重试；可以查询最近交办状态。');
+      return rejectPrepared(uncertainResult('目标会话的接收结果不确定，已停止自动重试；可以查询最近交办状态。'),true);
     }
-    if(job){try{await taskResults.admitted(job.id);}catch{return{status:'uncertain',accepted:false,text:'任务已经提交，但接收记录未能确认。不会重复派工，请查询最近交办状态。'};}}
-    return{status:'accepted',accepted:true,projectId:project.id,sessionId:String(target.id),messageId:String(message.id),...(cold?{lifecycle:lifecycleNotice}:{}),text:`已把任务交给「${project.label}」的空闲会话。目标已接收，这还不是任务完成证明。${job?'已记录本次交办；执行回复返回后仍待验收。':''}${cold?lifecycleNotice:''}`};
+    if(job){try{await taskResults.admitted(job.id);}catch{return recorded({status:'uncertain',accepted:false,text:'任务已经提交，但接收记录未能确认。不会重复派工，请查询最近交办状态。'});}}
+    return recorded({status:'accepted',accepted:true,projectId:project.id,sessionId:String(target.id),messageId:String(message.id),...(cold?{lifecycle:lifecycleNotice}:{}),text:`已把任务交给「${project.label}」的空闲会话。目标已接收，这还不是任务完成证明。${job?'已记录本次交办；执行回复返回后仍待验收。':''}${cold?lifecycleNotice:''}`});
   }
   async function coordinateNow(agent,reference,task,signal,meta,selector){
     signal.throwIfAborted();
@@ -193,7 +206,7 @@ export function createCoordinator({ctx,service,owner,liveAgents,taskResults,read
       if(!retained)await release();
       return result;
     }catch(error){
-      if(retained)return blocked('目标会话的接收结果不确定，已保留会话并停止自动重试；可以查询最近交办状态。');
+      if(retained)return uncertainResult('目标会话的接收结果不确定，已保留会话并停止自动重试；可以查询最近交办状态。');
       await release();
       return blocked(`「${project.label}」暂时无法恢复或创建可用会话：${clean(error)}。尚未提交任务，也没有创建替代会话。`);
     }

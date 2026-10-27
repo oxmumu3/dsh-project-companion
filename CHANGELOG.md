@@ -1,5 +1,13 @@
 # 版本记录
 
+## v0.14.0-preview.1 · 个人资料闭环本地候选
+
+- 复用现有来源读取、摘要模型、原生交办账本与主动调度，把选定的个人资料、简报事项、项目交办和后续变化连接起来。
+- 有界查询与原项目绑定；只保存摘要、引用及少量摘录。权限撤回、重新连接或范围变更使旧检查失效。
+- 同事项持久去重，明确未派发允许本人有界重试；助手回复仍待验收。无变化静默，缺失资料保持未知。
+- V2 首页新增“结合资料排下一步”，修改跟进频率保留原资料范围。未发布、未升级日常 App、未进行新手机验收。
+- 当前候选的精确兼容与验收范围见[闭环说明](docs/context-loop.md)及[验证记录](docs/verification.md)。
+
 ## v0.12.0-preview.4 · Google 公众预览与安全存储
 
 - 普通 Google 三件套、单独日历的点击登录新增 macOS Keychain 密钥 + AES-256-GCM 本机存储；已有普通明文授权仅在明确查询前经过 guard 和原生 CAS 迁移，状态刷新不写配置。高级手填凭据、会话和备份不在该保证范围。
@@ -12,7 +20,7 @@
 
 ## v0.12.0-preview.3 · 预览发布
 
-Google 三件套、flomo、滴答均有本人授权及有限读取证据；滴答改用官方只读 Open API，保持 tasks:read。正式仓库已迁至 oxmumu3，署名奥克斯木木山。源码、两套 SDK 兼容回归和本机验收范围见[验证记录](docs/verification.md)。[固定版本与安装资产](https://github.com/oxmumu3/dsh-project-companion/releases/tag/v0.12.0-preview.3)。该版本发布当时 Google 仍为受限内测，flomo需MAX；私人Context主动订阅尚未实现。
+Google 三件套、flomo、滴答均有本人授权及有限读取证据；滴答改用官方只读 Open API，保持 tasks:read。正式仓库已迁至 oxmumu3；正确署名为牛村木木山。源码、两套 SDK 兼容回归和本机验收范围见[验证记录](docs/verification.md)。[固定版本与安装资产](https://github.com/oxmumu3/dsh-project-companion/releases/tag/v0.12.0-preview.3)。该版本发布当时 Google 仍为受限内测，flomo需MAX；私人Context主动订阅尚未实现。
 
 以下为各历史阶段快照；当时的“公开下载”记录不证明之后版本的发布或验收。仓库迁移核验时的公开最高版本为 v0.6.0-preview.1，随后发布记录见上文。
 

@@ -13,6 +13,9 @@ import {ProactiveScheduler} from '../vendor/proactive/lib/scheduler.js';
 async function api(){const m=await import('../src/project-followup.js').catch(()=>({}));assert.equal(typeof m.createProjectFollowup,'function','scoped real proactive adapter must exist');return m;}
 const binding={userHash:'a'.repeat(64),botHash:'b'.repeat(64)};
 const deferred=()=>{let resolve;const promise=new Promise(done=>resolve=done);return{promise,resolve};};
+// 0.2.0 supports both; 0.2.1 exposes the reserved transport through ptc only.
+// Ask the loaded SDK schema instead of inferring support from a matrix label.
+const codeTransportMode=(()=>{try{return ToolRuntime.Config({mode:'both'}).mode;}catch{return ToolRuntime.Config({mode:'ptc'}).mode;}})();
 async function harness(t,options={}){
   const {createProjectFollowup}=await api();
   const temp=await realpath(await mkdtemp(join(tmpdir(),'dot-followup-')));
@@ -263,7 +266,7 @@ test('cancelling an active wake still permits its reclaim tool to end silently',
 });
 
 test('autonomous wake denies the reserved code transport before any PTC execution',async t=>{
-  const mode=process.env.DSH_TEST_SDK_VERSION==='0.2.1-rc.2'?'ptc':'both';
+  const mode=codeTransportMode;
   let result;const h=await harness(t,{mode,onWake:async({agent,ctx})=>{
     result=await ctx.tools.execute({callId:'autonomous-code-transport',name:'run_code',arguments:{code:'return "must not execute";',description:'Synthetic code transport deny regression'},agent,signal:new AbortController().signal});
   }});
@@ -423,7 +426,7 @@ test('one-off requested checks run inside quiet hours while existing recurring a
 
 test('a native once enforces read-only tools and checks its route again before source reads',async t=>{
   let changedResult;const outcomes=[];
-  const mode=process.env.DSH_TEST_SDK_VERSION==='0.2.1-rc.2'?'ptc':'both';
+  const mode=codeTransportMode;
   const h=await harness(t,{mode,onWake:async({agent,ctx})=>{
     for(const [name,args] of [['send_wechat',{}],['bash',{}],['project_companion',{action:'coordinate',project:h.root}],['project_companion',{action:'remember',project:h.root}],['run_code',{code:'return \"denied\";',description:'deny one-off code'}]]){
       outcomes.push(await ctx.tools.execute({callId:'once-deny-'+outcomes.length,name,arguments:args,agent,signal:new AbortController().signal}));

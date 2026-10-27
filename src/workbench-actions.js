@@ -3,6 +3,7 @@ import {createHash} from 'node:crypto';
 import {isAbsolute,resolve,parse} from 'node:path';
 
 const identity=value=>typeof value==='string'&&/^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/.test(value);
+const loopIdentity=value=>typeof value==='string'&&/^[a-zA-Z0-9_-]{1,100}$/.test(value);
 const bound=value=>value?.state==='bound'&&identity(value.sessionId)&&/^[a-f0-9]{64}$/.test(value.bindingKey??'');
 const same=(a,b)=>bound(a)&&bound(b)&&a.sessionId===b.sessionId&&a.bindingKey===b.bindingKey;
 const validReturnBinding=value=>value&&/^[a-f0-9]{64}$/.test(value.userHash??'')&&(value.botHash===undefined||/^[a-f0-9]{64}$/.test(value.botHash));
@@ -79,7 +80,8 @@ export function createWorkbenchActions({service,memory,followup,taskResults,read
   function plan(value,{once=false,clean}){
     if(!value||typeof value!=='object'||typeof value.enabled!=='boolean'||typeof value.running!=='boolean')unavailable();
     if(once&&value.status!==undefined&&!ONCE_STATES.has(value.status))unavailable();
-    const out={enabled:value.enabled,running:value.running,delivery:once&&['native','wechat'].includes(value.delivery)?value.delivery:'wechat'};
+    if(value.loopId!==undefined&&!loopIdentity(value.loopId))unavailable();
+    const out={...(value.loopId!==undefined?{loopId:value.loopId}:{}),enabled:value.enabled,running:value.running,delivery:once&&['native','wechat'].includes(value.delivery)?value.delivery:'wechat'};
     if(once&&ONCE_STATES.has(value.status))out.status=value.status;
     if(!once&&Number.isSafeInteger(value.everyMinutes)&&value.everyMinutes>=30&&value.everyMinutes<=1440)out.everyMinutes=value.everyMinutes;
     for(const key of ['nextDueAt','lastRunAt','lastReviewedAt'])out[key]=timestamp(value[key]);
@@ -156,7 +158,14 @@ export function createWorkbenchActions({service,memory,followup,taskResults,read
       }
       const method={followup_configure:'configure',followup_cancel:'cancel',check_once:'checkOnce',cancel_once:'cancelOnce'}[input.action];if(typeof followup?.[method]!=='function')unavailable();
       const once=['check_once','cancel_once'].includes(input.action);
-      const params={...args,authorizeMutation,expectedBinding:{sessionId:expected.sessionId,bindingKey:expected.bindingKey},...(input.action==='followup_configure'?{everyMinutes:input.everyMinutes,projectLabel:authorized.project.label}:{}),...(input.action==='check_once'?{projectLabel:authorized.project.label,delivery:'wechat',...(input.dueAt!==undefined?{dueAt:timestamp(input.dueAt)}:{delaySeconds:input.delaySeconds??60})}:{})};
+      let loopId;
+      if(['followup_configure','check_once'].includes(input.action)){
+        if(typeof followup?.inspect!=='function')unavailable();
+        const stored=await followup.inspect({...args,expectedBinding:{sessionId:expected.sessionId,bindingKey:expected.bindingKey}});await scope(expected,input.projectId);
+        const existing=stored?.[once?'once':'followup'];
+        if(existing!==null){const original=plan(existing,{once,clean});loopId=original.loopId;}
+      }
+      const params={...args,...(loopId!==undefined?{loopId}:{}),authorizeMutation,expectedBinding:{sessionId:expected.sessionId,bindingKey:expected.bindingKey},...(input.action==='followup_configure'?{everyMinutes:input.everyMinutes,projectLabel:authorized.project.label}:{}),...(input.action==='check_once'?{projectLabel:authorized.project.label,delivery:'wechat',...(input.dueAt!==undefined?{dueAt:timestamp(input.dueAt)}:{delaySeconds:input.delaySeconds??60})}:{})};
       const value=await followup[method](params);await scope(expected,input.projectId);
       return{...base,[once?'once':'followup']:plan(value,{once,clean}),limitations:[...limitations]};
     },

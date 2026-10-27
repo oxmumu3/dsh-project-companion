@@ -1,0 +1,186 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {mkdtemp,mkdir,readFile,writeFile,rm,realpath,access} from 'node:fs/promises';
+import {join} from 'node:path';
+import {tmpdir} from 'node:os';
+import {Context} from '@deepseek-ai/cordis';
+import SystemPrompt from '@deepseek-ai/dsh-system-prompt';
+import ToolRuntime,{defineTool} from '@deepseek-ai/dsh-tools';
+import {createScope} from '@deepseek-ai/dsh-scope';
+import {ProactiveScheduler} from '../vendor/proactive/lib/scheduler.js';
+import {createProjectFollowup} from '../src/project-followup.js';
+
+const binding={userHash:'a'.repeat(64),botHash:'b'.repeat(64)};
+async function harness(t,options={}){
+  const temp=await realpath(await mkdtemp(join(tmpdir(),'dot-followup-loop-'))),root=join(temp,'project');await mkdir(root);
+  const ctx=new Context();await ctx.plugin(SystemPrompt,{});await ctx.plugin(ToolRuntime,{mode:'native'});
+  ctx.provide('workingDirectory',{get:session=>session.header.cwd,ensure:async agent=>agent.session.header.cwd});
+  const events=[],messages=[],tools=[],schedulers=[],invalidated=[],wakeErrors=[];let now=new Date('2026-10-18T16:00:00Z'),adapter,currentBinding=binding;
+  const owner={id:'session-loop',status:'idle',session:{id:'session-loop',header:{cwd:root,agentPreset:'default'},events,get seq(){return events.length;},requestHeader:()=>({config:{provider:'synthetic',model:'synthetic'}})},runMaintenance:async work=>work(),
+    followup(message){messages.push(message);events.push({seq:events.length,type:'turn/start',data:{turn:messages.length},time:now.toISOString()},{seq:events.length+1,type:'user/message',data:message,time:now.toISOString()});},
+    whenIdle:async()=>{try{await options.onWake?.(h);}catch(error){wakeErrors.push(error);throw error;}events.push({seq:events.length,type:'turn/end',data:{reason:{kind:'completed'}},time:now.toISOString()});}};
+  const scope=createScope(ctx,owner);owner.ctx=scope.ctx;
+  ctx.provide('agents',{get:id=>id===owner.id?owner:undefined});ctx.provide('agentDefaultModel',{currentSelection:()=>({provider:'synthetic',model:'synthetic'})});
+  for(const name of ['project_companion','personal_context','send_wechat','bash'])ctx.tools.register(defineTool({name,description:'Synthetic only',parameters:{action:{type:'string'},project:{type:'string'},loopId:{type:'string'}},output:{schema:{type:'object',additionalProperties:true},render:()=>[]},execute:async args=>{tools.push({name,args});return options.toolResult?.(name,args)??{ok:true,quiet:false};}}));
+  const adapterOptions={ctx,clock:()=>now,hostTimeZone:'America/Mexico_City',authorizeRoot:async value=>value===root,readBinding:async()=>currentBinding,readConnection:async()=>({state:'bound',sessionId:owner.id,bindingKey:'d'.repeat(64)}),invalidateLoop:value=>{invalidated.push(value);options.invalidateLoop?.(value);},createScheduler:deps=>{const s=new ProactiveScheduler(deps);schedulers.push(s);return s;}};
+  adapter=createProjectFollowup(adapterOptions);
+  let call=0;
+  const h={root,temp,ctx,owner,events,messages,tools,schedulers,invalidated,get adapter(){return adapter;},setBinding:value=>{currentBinding=value;},args:{root,sessionId:owner.id,projectLabel:'公开测试项目',everyMinutes:30,loopId:'loop_123'},
+    invoke:(args,name='project_companion')=>ctx.tools.execute({callId:'loop-'+(++call),name,arguments:args,agent:owner,signal:new AbortController().signal}),
+    reply:text=>events.push({seq:events.length,type:'assistant/message',data:{blocks:[{type:'text',text}]},time:now.toISOString()}),
+    reclaim:async()=>{const result=await h.invoke({reason:'无实质变化'},'proactive_reclaim');events.push({seq:events.length,type:'tool/call',data:{name:'proactive_reclaim',arguments:'{}'}});return result;},
+    drain:async()=>{for(const s of schedulers)await s.driveChain;},
+    tick:async(seconds=1800)=>{now=new Date(now.getTime()+seconds*1000);for(const s of schedulers)s.requestDrive();await h.drain();if(wakeErrors.length)throw wakeErrors[0];},
+    reopen:async()=>{await adapter.close();adapter=createProjectFollowup(adapterOptions);}};
+  t.after(async()=>{await adapter.close();await scope.dispose();await ctx.fiber.dispose();await rm(temp,{recursive:true,force:true});});return h;
+}
+const exact=h=>({action:'context_check',project:h.root,loopId:h.args.loopId});
+
+test('loop plan persists exact scope, preserves same timer, and replaces a different loop',async t=>{
+  const h=await harness(t);const first=await h.adapter.configure(h.args);await h.drain();
+  assert.equal(first.loopId,h.args.loopId);
+  const same=await h.adapter.configure(h.args);assert.equal(same.alarmId,first.alarmId);assert.equal(h.invalidated.length,0);
+  const next=await h.adapter.configure({...h.args,loopId:'loop_456'});assert.notEqual(next.alarmId,first.alarmId);assert.equal(next.loopId,'loop_456');
+  assert.deepEqual(h.invalidated,[{root:h.root,loopId:'loop_123'}]);
+  const meta=JSON.parse(await readFile(join(h.root,'.dsh/dot-followup/scope.json'),'utf8'));assert.equal(meta.loopId,'loop_456');
+  await h.reopen();assert.equal((await h.adapter.status(h.args)).loopId,'loop_456');
+});
+
+for(const method of ['configure','checkOnce'])test(method+' rejects invalid loop IDs before writing a plan',async t=>{
+  const h=await harness(t);
+  for(const loopId of ['',null,[],{},'with space','a/b','a\n','a'.repeat(101)])await assert.rejects(h.adapter[method]({...h.args,loopId,delivery:'wechat',delaySeconds:60}),/loop/i);
+  assert.equal(h.schedulers.length,0);await assert.rejects(access(join(h.root,'.dsh')));
+});
+
+test('stored loop ID is validated instead of trusting modified scope metadata',async t=>{
+  const h=await harness(t);await h.adapter.configure(h.args);await h.drain();await h.reopen();
+  const path=join(h.root,'.dsh/dot-followup/scope.json'),meta=JSON.parse(await readFile(path,'utf8'));meta.loopId='../other';await writeFile(path,JSON.stringify(meta));
+  await assert.rejects(h.adapter.status(h.args),/loop|metadata/i);
+});
+
+test('ordinary follow-up never gains context, handoff or send permissions',async t=>{
+  const denied=[];const h=await harness(t,{onWake:async h=>{
+    assert.equal(h.adapter.activeLoop({agent:h.owner}),null);
+    for(const [name,args] of [['project_companion',exact(h)],['personal_context',{}],['send_wechat',{}]])denied.push(await h.invoke(args,name));
+    for(const action of ['memory','digest'])assert.equal((await h.invoke({action,project:h.root})).isError,false);
+    h.reply('合成项目进展');
+  }});
+  await h.adapter.configure({...h.args,loopId:undefined});await h.drain();await h.tick();
+  assert.ok(denied.every(result=>result.isError));assert.equal((await h.adapter.status(h.args)).lastReviewedAt,'2026-10-18T16:30:00.000Z');
+});
+
+test('loop wake only permits exact action/root/ID once and exposes its loop to the handler',async t=>{
+  const results=[];const h=await harness(t,{onWake:async h=>{
+    assert.equal(h.adapter.activeLoop({agent:h.owner}),h.args.loopId);
+    for(const [name,args] of [['project_companion',{...exact(h),loopId:'other'}],['project_companion',{...exact(h),project:'/other'}],['project_companion',{action:'memory',project:h.root}],['project_companion',{action:'digest',project:h.root}],['project_companion',{action:'coordinate',project:h.root}],['personal_context',{}],['send_wechat',{}]])results.push(await h.invoke(args,name));
+    {const outcome=await h.invoke(exact(h));assert.equal(outcome.isError,false,JSON.stringify(outcome));}
+    assert.equal((await h.invoke(exact(h))).isError,true,'one successful read must not be repeated in the same wake');
+    h.reply('来源发生了有价值的新变化');
+  }});
+  assert.equal(h.adapter.activeLoop({agent:h.owner}),null);
+  await h.adapter.configure(h.args);await h.drain();await h.tick();
+  assert.ok(results.every(result=>result.isError));assert.equal(h.tools.length,1);assert.equal(h.adapter.activeLoop({agent:h.owner}),null);
+  assert.equal((await h.adapter.status(h.args)).lastReviewedAt,'2026-10-18T16:30:00.000Z');
+  const prompt=h.messages[0].content[0].text;assert.match(prompt,/action=context_check/);assert.ok(prompt.includes(JSON.stringify(h.root)));assert.ok(prompt.includes('loopId="loop_123"'));assert.match(prompt,/quiet=true.*proactive_reclaim/);assert.doesNotMatch(prompt,/action=memory|action=digest/);
+});
+
+test('one-off loop check needs one successful context_check, quiet result reclaims, and no recurrence remains',async t=>{
+  const h=await harness(t,{toolResult:()=>({ok:true,quiet:true}),onWake:async h=>{{const outcome=await h.invoke(exact(h));assert.equal(outcome.isError,false,JSON.stringify(outcome));}assert.equal((await h.reclaim()).isError,false);}});
+  await h.adapter.checkOnce({...h.args,delivery:'wechat',delaySeconds:60});await h.drain();await h.tick(60);
+  const status=await h.adapter.onceStatus(h.args);assert.equal(status.status,'completed');assert.equal(status.loopId,h.args.loopId);assert.equal(status.lastReviewedAt,'2026-10-18T16:01:00.000Z');assert.equal(status.nextDueAt,null);assert.equal(h.tools.length,1);
+});
+
+for(const value of [{ok:false},{accepted:false},{status:'blocked'},{code:'invalid_action'}])test('failed context_check does not mark review complete: '+JSON.stringify(value),async t=>{
+  const h=await harness(t,{toolResult:()=>value,onWake:async h=>{await h.invoke(exact(h));h.reply('不可冒充成功');}});
+  await h.adapter.checkOnce({...h.args,delivery:'wechat',delaySeconds:60});await h.drain();await h.tick(60);
+  assert.equal((await h.adapter.onceStatus(h.args)).status,'failed');assert.equal((await h.adapter.onceStatus(h.args)).lastReviewedAt,null);
+});
+
+test('quiet result followed by ordinary text is not accepted as a completed review',async t=>{
+  const h=await harness(t,{toolResult:()=>({ok:true,quiet:true}),onWake:async h=>{await h.invoke(exact(h));h.reply('旧汇报不能重复发送');}});
+  await h.adapter.checkOnce({...h.args,delivery:'wechat',delaySeconds:60});await h.drain();await h.tick(60);
+  assert.equal((await h.adapter.onceStatus(h.args)).status,'failed');assert.equal((await h.adapter.onceStatus(h.args)).lastReviewedAt,null);
+});
+
+for(const method of ['cancel','cancelOnce','close'])test(method+' invalidates active loop immediately and cannot continue reading',async t=>{
+  let operation;const h=await harness(t,{onWake:async h=>{
+    assert.equal(h.adapter.activeLoop({agent:h.owner}),h.args.loopId);
+    operation=method==='close'?h.adapter.close():h.adapter[method](h.args);
+    assert.deepEqual(h.invalidated,[{root:h.root,loopId:h.args.loopId}]);
+    assert.equal(h.adapter.activeLoop({agent:h.owner}),null);
+    assert.equal((await h.invoke(exact(h))).isError,true);
+    assert.equal((await h.reclaim()).isError,false);
+  }});
+  await h.adapter[method==='cancelOnce'?'checkOnce':'configure']({...h.args,delivery:'wechat',delaySeconds:60});await h.drain();await h.tick(method==='cancelOnce'?60:1800);await operation;assert.equal(h.tools.length,0);
+});
+
+test('cancel invalidates a context read already in flight, and its eventual success does not advance review',async t=>{
+  let h,cancellation;const seen=[];
+  h=await harness(t,{toolResult:async()=>{cancellation=h.adapter.cancel(h.args);seen.push(h.invalidated.length);return{ok:true,quiet:false};},onWake:async h=>{await h.invoke(exact(h));h.reply('过期结果');}});
+  await h.adapter.configure(h.args);await h.drain();await h.tick();await cancellation;
+  assert.deepEqual(seen,[1]);assert.equal((await h.adapter.status(h.args)).lastReviewedAt,null);
+});
+
+test('a denied UI cancellation neither invalidates the loop nor disables its plan',async t=>{
+  const h=await harness(t);await h.adapter.configure(h.args);await h.drain();
+  await assert.rejects(h.adapter.cancel({...h.args,authorizeMutation:async()=>false}),/authoriz/i);
+  assert.equal(h.invalidated.length,0);assert.equal((await h.adapter.status(h.args)).enabled,true);
+});
+
+test('changing a pending one-off loop replaces it instead of returning the wrong saved context',async t=>{
+  const h=await harness(t),args={...h.args,delivery:'wechat',delaySeconds:60};const first=await h.adapter.checkOnce(args);await h.drain();
+  const next=await h.adapter.checkOnce({...args,loopId:'loop_456'});assert.notEqual(next.alarmId,first.alarmId);assert.equal(next.loopId,'loop_456');assert.deepEqual(h.invalidated,[{root:h.root,loopId:'loop_123'}]);
+});
+
+test('quiet result requires explicit reclaim, not merely an empty model turn',async t=>{
+  const h=await harness(t,{toolResult:()=>({ok:true,quiet:true}),onWake:async h=>{assert.equal((await h.invoke(exact(h))).isError,false);}});
+  await h.adapter.checkOnce({...h.args,delivery:'wechat',delaySeconds:60});await h.drain();await h.tick(60);
+  const status=await h.adapter.onceStatus(h.args);assert.equal(status.status,'failed');assert.equal(status.lastReviewedAt,null);
+});
+
+test('parallel context checks cannot enter the connector twice in one wake',async t=>{
+  let entered,release;const started=new Promise(resolve=>entered=resolve),gate=new Promise(resolve=>release=resolve);
+  const h=await harness(t,{toolResult:async()=>{entered();await gate;return{ok:true,quiet:false};},onWake:async h=>{
+    const first=h.invoke(exact(h));await started;const duplicate=await h.invoke(exact(h));release();assert.equal(duplicate.isError,true);assert.equal((await first).isError,false);h.reply('一份变化');
+  }});
+  await h.adapter.configure(h.args);await h.drain();await h.tick();assert.equal(h.tools.length,1);
+});
+
+test('reconfiguring an executing loop invalidates the old read and resets its source baseline',async t=>{
+  let h;h=await harness(t,{toolResult:async()=>{await h.adapter.configure({...h.args,loopId:'loop_456'});assert.deepEqual(h.invalidated,[{root:h.root,loopId:'loop_123'}]);assert.equal(h.adapter.activeLoop({agent:h.owner}),null);return{ok:true,quiet:false};},onWake:async h=>{await h.invoke(exact(h));h.reply('旧配置的结果');}});
+  await h.adapter.configure(h.args);await h.drain();await h.tick();const status=await h.adapter.status(h.args);assert.equal(status.loopId,'loop_456');assert.equal(status.lastReviewedAt,null);
+});
+
+test('a following explicit user turn has no activeLoop and is not restricted by the finished wake',async t=>{
+  const h=await harness(t,{onWake:async h=>{
+    h.events.push({seq:h.events.length,type:'turn/end',data:{reason:{kind:'completed'}}},{seq:h.events.length+1,type:'turn/start',data:{turn:2}},{seq:h.events.length+2,type:'user/message',data:{source:{kind:'user'},content:[{type:'text',text:'新的用户请求'}]}});
+    assert.equal(h.adapter.activeLoop({agent:h.owner}),null);assert.equal((await h.invoke({},'personal_context')).isError,false);
+  }});
+  await h.adapter.configure(h.args);await h.drain();await h.tick();assert.equal(h.tools.length,1);
+});
+
+for(const code of ['LOOP_AUTH_CHANGED','LOOP_NOT_FOUND','LOOP_SCOPE_CHANGED','LOOP_STOPPED'])test('terminal '+code+' stops the loop timer once and persists a blocked plan',async t=>{
+ const h=await harness(t,{toolResult:()=>({status:'blocked',code}),onWake:async h=>{await h.invoke(exact(h));await h.reclaim();}});
+ await h.adapter.configure(h.args);await h.drain();await h.tick();const status=await h.adapter.status(h.args);
+ assert.equal(status.enabled,false);assert.equal(status.running,false);assert.match(status.blocked,/已停止|停用/);assert.equal(status.nextDueAt,null);assert.equal(status.lastReviewedAt,null);
+ await h.tick();assert.equal(h.tools.length,1);assert.equal(h.messages.length,1);await h.reopen();const stored=await h.adapter.status(h.args);assert.equal(stored.enabled,false);assert.ok(stored.blocked);await h.adapter.resume(h.args);await h.tick();assert.equal(h.messages.length,1);
+ assert.equal((await h.adapter.cancel(h.args)).enabled,false);
+});
+test('a transient LOOP_UNAVAILABLE does not silently stop the authorized recurring loop',async t=>{
+ const h=await harness(t,{toolResult:()=>({status:'blocked',code:'LOOP_UNAVAILABLE'}),onWake:async h=>{await h.invoke(exact(h));await h.reclaim();}});
+ await h.adapter.configure(h.args);await h.drain();await h.tick();assert.equal((await h.adapter.status(h.args)).enabled,true);assert.equal((await h.adapter.status(h.args)).lastReviewedAt,null);await h.tick();assert.equal(h.tools.length,2);assert.equal(h.invalidated.length,0);
+});
+test('terminal loop error blocks a one-off and leaves no future occurrence',async t=>{
+ const h=await harness(t,{toolResult:()=>({status:'blocked',code:'LOOP_AUTH_CHANGED'}),onWake:async h=>{await h.invoke(exact(h));await h.reclaim();}});
+ await h.adapter.checkOnce({...h.args,delivery:'wechat',delaySeconds:60});await h.drain();await h.tick(60);const status=await h.adapter.onceStatus(h.args);assert.equal(status.status,'blocked');assert.equal(status.enabled,false);assert.ok(status.blocked);assert.equal(status.nextDueAt,null);
+});
+
+test('an in-flight read returning LOOP_STOPPED after explicit cancellation cannot relabel it blocked',async t=>{
+ let h,cancellation;h=await harness(t,{toolResult:async()=>{cancellation=h.adapter.cancelOnce(h.args);return{status:'blocked',code:'LOOP_STOPPED'};},onWake:async h=>{await h.invoke(exact(h));await h.reclaim();}});
+ await h.adapter.checkOnce({...h.args,delivery:'wechat',delaySeconds:60});await h.drain();await h.tick(60);await cancellation;const status=await h.adapter.onceStatus(h.args);assert.equal(status.status,'cancelled');assert.equal(status.blocked,undefined);
+});
+for(const stage of ['before-wake','before-read','after-read'])test('loop route change '+stage+' stops the recurring timer without adopting a new binding',async t=>{
+ const h=await harness(t,{onWake:async h=>{if(stage==='before-read')h.setBinding({...binding,userHash:'c'.repeat(64)});await h.invoke(exact(h));if(stage==='after-read')h.setBinding({...binding,userHash:'c'.repeat(64)});await h.reclaim();}});
+ await h.adapter.configure(h.args);await h.drain();if(stage==='before-wake')h.setBinding({...binding,userHash:'c'.repeat(64)});await h.tick();
+ const status=await h.adapter.status(h.args);assert.equal(status.enabled,false);assert.equal(status.running,false);assert.ok(status.blocked);assert.equal(status.lastReviewedAt,null);const count=h.messages.length;await h.tick();assert.equal(h.messages.length,count);
+});

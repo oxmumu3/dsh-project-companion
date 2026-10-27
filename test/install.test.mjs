@@ -70,6 +70,16 @@ test('installer previews exact packages without profile or package-manager write
   assert.equal(result.status,'ready');assert.equal(result.mode,'dry_run');assert.equal(result.steps.length,2);
   assert.equal(f.calls.filter(c=>c.args.includes('add')).length,0);assert.equal(await readFile(join(f.profile,'package.json'),'utf8'),before);
 });
+test('verified 0.2.1-rc.3 host and SDK match the candidate manifest without exemptions',async t=>{
+  const f=await fixture(t);f.manifest.runtimeVersions.push('0.2.1-rc.3');await writeFile(join(f.bundleDir,'bundle-manifest.json'),JSON.stringify(f.manifest));
+  const runner=async(c,a,o)=>a.includes('--eval')?{code:0,stdout:JSON.stringify({runtimeVersion:'0.2.1-rc.3',sdkVersion:'0.2.1-rc.3'})}:f.runner(c,a,o);
+  const r=await ready()({...f,runner});assert.equal(r.status,'ready');assert.equal(r.runtimeVersion,'0.2.1-rc.3');assert.equal(f.calls.some(c=>c.args.includes('add')),false);
+});
+test('new host with a mismatched SDK remains blocked',async t=>{
+  const f=await fixture(t);f.manifest.runtimeVersions.push('0.2.1-rc.3');await writeFile(join(f.bundleDir,'bundle-manifest.json'),JSON.stringify(f.manifest));
+  const runner=async(c,a,o)=>a.includes('--eval')?{code:0,stdout:JSON.stringify({runtimeVersion:'0.2.1-rc.3',sdkVersion:'0.2.1-rc.2'})}:f.runner(c,a,o);
+  await assert.rejects(ready()({...f,runner}),e=>e.code==='UNSUPPORTED_RUNTIME');
+});
 test('missing official App returns needs_harness without installing or downloading',async t=>{
   const f=await fixture(t);await rm(f.appPath,{recursive:true});const r=await ready()({...f,install:true});
   assert.equal(r.status,'needs_harness');assert.equal(f.calls.length,0);assert.match(r.officialUrl,/github.com\/deepseek-ai\/deepseek-harness\/releases/);

@@ -8,7 +8,7 @@ import {gunzipSync} from 'node:zlib';
 import {spawn} from 'node:child_process';
 
 export const OFFICIAL_HARNESS_URL='https://github.com/deepseek-ai/deepseek-harness/releases';
-const RUNTIMES=['0.2.0-rc.2','0.2.1-rc.2'];
+const RUNTIMES=['0.2.0-rc.2','0.2.1-rc.2','0.2.1-rc.3'];
 const NAMES=['dsh-wechat','dsh-project-companion'];
 const BRIDGE_VERSIONS=new Set(['0.11.0','0.11.1-dot.1','0.11.1-dot.2']);
 const MAX_PACKAGE=20*1024*1024;

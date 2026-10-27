@@ -17,8 +17,8 @@ import {createScope,scopeTarget} from '@deepseek-ai/dsh-scope';
 
 test('host integration runs against the selected verified official SDK packages',()=>{
   const sdk=process.env.DSH_TEST_SDK_VERSION??'0.2.0-rc.2';
-  const cordis=sdk==='0.2.1-rc.2'?'4.0.5':'4.0.4';
-  assert.ok(['0.2.0-rc.2','0.2.1-rc.2'].includes(sdk),'unsupported test SDK version');
+  const cordis=sdk.startsWith('0.2.1-')?'4.0.5':'4.0.4';
+  assert.ok(['0.2.0-rc.2','0.2.1-rc.2','0.2.1-rc.3'].includes(sdk),'unsupported test SDK version');
   const require=createRequire(import.meta.url);
   assert.equal(require('@deepseek-ai/cordis/package.json').version,cordis);
   for(const name of ['agent','tools','commands','storage-domain','session','llm','system-prompt','storage','storage-json'])assert.equal(require(`@deepseek-ai/dsh-${name}/package.json`).version,sdk,name);
