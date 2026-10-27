@@ -91,3 +91,7 @@ test('token refresh mutation receives an affirmative owner gate',async()=>{
  const t=createGoogleCalendarRest({getToken:async({authorizeMutation})=>{affirmed=await authorizeMutation();assert.equal(affirmed,true);return 'x';},fetch:async()=>response({items:[]})});
  const r=await t.call('calendar','list_events',args,gates);assert.equal(affirmed,true);assert.equal(r.value.items.length,0);await t.close();
 });
+test('Calendar auth failure preserves fixed diagnostics without calling source API',async()=>{
+ const transport=createGoogleCalendarRest({getToken:async()=>{throw Object.assign(Error('SYNTHETIC_PRIVATE'),{authDiagnostic:{stage:'token_endpoint_http',statusClass:'400',oauthError:'invalid_grant',error_description:'SYNTHETIC_PRIVATE'}});},fetch:async()=>{throw Error('must not access source');}});
+ try{await assert.rejects(transport.call('calendar','list_events',{calendarId:'primary',startTime:'2026-10-27T19:00:00Z',endTime:'2026-10-28T19:00:00Z',orderBy:'startTime',pageSize:2},{authorize:async()=>true,authorizeSync:()=>true}),e=>{assert.equal(e.code,'CONTEXT_AUTH_REQUIRED');assert.deepEqual(e.authDiagnostic,{stage:'token_endpoint_http',statusClass:'400',oauthError:'invalid_grant'});assert.doesNotMatch(String(e)+JSON.stringify(e.authDiagnostic),/SYNTHETIC_PRIVATE/);return true;});}finally{await transport.close();}
+});

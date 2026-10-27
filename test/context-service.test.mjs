@@ -105,3 +105,7 @@ test('source query errors expose only the bounded stage and safe category',async
   }finally{await service.close();}
  }
 });
+test('source query preserves only fixed OAuth diagnostics and contextual stage',async()=>{
+ const {createPersonalContext}=await api();let state;const service=createPersonalContext({store:{get:async()=>state,put:async(_k,v)=>state=v},readConfig:()=>({flomoToken:'fixture'}),readBinding:async()=>({kind:'unbound'}),transport:{catalog:async()=>({tools:[{name:'memo_search',inputSchema:{type:'object'}}]}),call:async()=>{throw Object.assign(Error('SYNTHETIC_PRIVATE'),{code:'CONTEXT_AUTH_REQUIRED',authDiagnostic:{stage:'token_endpoint_http',statusClass:'400',oauthError:'invalid_grant',error_description:'SYNTHETIC_PRIVATE'}});}}});
+ try{await service.act(owner,{action:'connect',source:'flomo',userRequested:true});await assert.rejects(service.act(owner,{action:'query',source:'flomo',operation:'search',query:'DeepSeek',limit:2,userRequested:true}),e=>{assert.equal(e.code,'CONTEXT_AUTH_REQUIRED');assert.equal(e.readStage,'call');assert.deepEqual(e.authDiagnostic,{stage:'token_endpoint_http',statusClass:'400',oauthError:'invalid_grant'});assert.doesNotMatch(String(e)+JSON.stringify(e.authDiagnostic),/SYNTHETIC_PRIVATE/);return true;});}finally{await service.close();}
+});

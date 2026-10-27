@@ -1,3 +1,4 @@
+import {withAuthDiagnostic} from './auth-diagnostics.js';
 /** Bounded Google Calendar REST reads. This is a bundled contract, not MCP discovery. */
 const ORIGIN='https://www.googleapis.com';
 const PATH='/calendar/v3/calendars/primary/events';
@@ -78,7 +79,7 @@ export function createGoogleCalendarRest({getToken,fetch:fetchImpl=globalThis.fe
   const timer=setTimeout(()=>controller.abort('calendar-timeout'),REQUEST_MS);active.add(controller);
   try{controller.signal.throwIfAborted();return await fn(controller.signal);}catch(e){
    if(controller.signal.aborted)fail(controller.signal.reason==='calendar-timeout'?'CONTEXT_TIMEOUT':'CONTEXT_ABORTED');
-   if(CODES.has(e?.code))throw error(e.code);
+   if(CODES.has(e?.code)){const safe=error(e.code);throw e.code==='CONTEXT_AUTH_REQUIRED'&&e.authDiagnostic?withAuthDiagnostic(safe,e.authDiagnostic):safe;}
    fail('CONTEXT_PROTOCOL_INVALID');
   }finally{clearTimeout(timer);settings.signal?.removeEventListener('abort',stop);active.delete(controller);}
  }
@@ -88,7 +89,7 @@ export function createGoogleCalendarRest({getToken,fetch:fetchImpl=globalThis.fe
    const args=validate(source,name,input);
    return operate(settings,async signal=>{
     await authorized(settings,signal);cancelled(settings);
-    let bearer;try{bearer=await wait(Promise.resolve().then(()=>{signal.throwIfAborted();cancelled(settings);return getToken?.({signal,authorizeMutation:()=>authorized(settings,signal)});}),signal);}catch(e){if(e?.code?.startsWith('CONTEXT_'))throw e;fail('CONTEXT_AUTH_REQUIRED');}
+    let bearer;try{bearer=await wait(Promise.resolve().then(()=>{signal.throwIfAborted();cancelled(settings);return getToken?.({signal,authorizeMutation:()=>authorized(settings,signal)});}),signal);}catch(e){if(e?.code?.startsWith('CONTEXT_'))throw e;const safe=error('CONTEXT_AUTH_REQUIRED');throw e?.authDiagnostic?withAuthDiagnostic(safe,e.authDiagnostic):safe;}
     if(typeof bearer!=='string'||!bearer.length||bearer.length>8192||/\s/u.test(bearer)||CONTROL.test(bearer))fail('CONTEXT_AUTH_REQUIRED');
     await authorized(settings,signal);signal.throwIfAborted();
     const url=new URL(PATH,ORIGIN);for(const [key,value]of Object.entries({timeMin:args.startTime,timeMax:args.endTime,singleEvents:'true',orderBy:'startTime',showDeleted:'false',maxResults:String(args.pageSize),fields:'summary,timeZone,updated,nextPageToken,items(id,status,summary,htmlLink,updated,start,end)'}))url.searchParams.set(key,value);
