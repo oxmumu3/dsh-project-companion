@@ -1,4 +1,5 @@
 import {safeAuthDiagnostic} from './auth-diagnostics.js';
+import {createContextSummaryProbe} from './context-summary-probe.js';
 import {bindingRevision,matchesBindingRevision} from './workbench-scope.js';
 const bound = value => value?.state === 'bound' && typeof value.sessionId === 'string' && value.sessionId.length > 0 && value.sessionId.length <= 200 && /^[a-f0-9]{64}$/.test(value.bindingKey ?? '');
 const same = (left, right) => bound(left) && bound(right) && left.sessionId === right.sessionId && left.bindingKey === right.bindingKey;
@@ -8,11 +9,19 @@ const readStages=new Set(['scope','build','catalog','call','projection']);
 const readErrors=new Set(['CONTEXT_AUTH_REQUIRED','CONTEXT_INSUFFICIENT_SCOPE','CONTEXT_TIMEOUT','CONTEXT_HTTP_ERROR','CONTEXT_PROTOCOL_INVALID','CONTEXT_SCHEMA_MISMATCH','CONTEXT_SCOPE_VIOLATION','CONTEXT_BINDING_CHANGED','CONTEXT_NOT_ENABLED','CONTEXT_STOPPED','CONTEXT_INVALID_INPUT','CONTEXT_UNSUPPORTED_OPERATION','CONTEXT_UNAVAILABLE']);
 
 /** Owner-authenticated native settings facade. GET never resumes or queries a source. */
-export function createContextRoute({context,googleAuth,googleCalendarAuth,googleSuiteAuth,flomoAuth,didaAuth,checkCalendarToken,readConnection,resolveOwner,activateOwner,canRun=async()=>true,isClosed=()=>false,authCheckTimeoutMs=30000,readCheckClock=()=>new Date()}={}){
+export function createContextRoute({context,googleAuth,googleCalendarAuth,googleSuiteAuth,flomoAuth,didaAuth,checkCalendarToken,readConnection,resolveOwner,activateOwner,canRun=async()=>true,isClosed=()=>false,authCheckTimeoutMs=30000,readCheckClock=()=>new Date(),summarizeSynthetic,summaryCheckTimeoutMs=60000}={}){
   let closed=false;
   const open=()=>{if(closed||isClosed())invalid();};
   const connection=async()=>{open();try{const value=await readConnection();return bound(value)?{state:'bound',sessionId:value.sessionId,bindingKey:value.bindingKey}:{state:'unknown'};}catch{return{state:'unknown'};}};
   const check=async expected=>{open();if(!same(expected,await connection()))invalid();};
+  const summaryProbe=createContextSummaryProbe({summarize:summarizeSynthetic,timeoutMs:summaryCheckTimeoutMs,guard:async input=>{
+    open();if(!await canRun())invalid();const expected=await connection();
+    if(!bound(expected)||!matchesBindingRevision(input,expected))invalid();
+    // The probe must not activate/resume a session just to run a diagnostic.
+    const owner=resolveOwner(expected.sessionId);
+    if(!owner||owner.sessionId!==expected.sessionId||typeof owner.cwd!=='string'||!owner.cwd.startsWith('/'))invalid();
+    await check(expected);if(!await canRun())invalid();
+  }});
   async function readyOwner(expected){
     let owner=resolveOwner(expected.sessionId);
     if(!owner&&typeof activateOwner==='function'){
@@ -92,6 +101,8 @@ export function createContextRoute({context,googleAuth,googleCalendarAuth,google
       const keys=Object.keys(input).filter(key=>key!=='expectedBindingRevision');
       if(['google_authorize','google_calendar_authorize','google_suite_authorize','flomo_authorize','dida_authorize'].includes(input.action)){
         if(keys.length!==1||!await canRun())invalid();
+      }else if(input.action==='check_summary'){
+        if(keys.length!==1||typeof input.expectedBindingRevision!=='string')invalid();
       }else if(input.action==='check_authorization'){
         if(keys.length!==2||!keys.includes('source')||!['calendar','flomo'].includes(input.source)||typeof input.expectedBindingRevision!=='string')invalid();
       }else if(input.action==='check_read'){
@@ -99,6 +110,7 @@ export function createContextRoute({context,googleAuth,googleCalendarAuth,google
         if(input.source==='flomo'?(keys.length!==3||input.query!=='DeepSeek'):(keys.length!==2||Object.hasOwn(input,'query')))invalid();
       }else if(!['connect','disconnect'].includes(input.action)||keys.length!==2||!keys.includes('source')||!sourceIds.has(input.source))invalid();
       if(input.action==='connect'&&!await canRun())invalid();
+      if(input.action==='check_summary')return summaryProbe.check(input);
       if(['check_authorization','check_read'].includes(input.action))return checkAuthorization(input);
       const expected=await connection();
       if(!bound(expected)||!matchesBindingRevision(input,expected))invalid();
@@ -116,7 +128,7 @@ export function createContextRoute({context,googleAuth,googleCalendarAuth,google
       await check(expected);
       return snapshot();
     },
-    close(){closed=true;},
+    close(){closed=true;summaryProbe.close();},
   };
 }
 
