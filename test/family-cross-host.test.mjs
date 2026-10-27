@@ -112,9 +112,9 @@ test('real Family Owner WeChat admission + Cordis bridge + native Dot brief, han
   {text:'Synthetic project 项目简报，只看滴答今天的工作任务。',q:{source:'dida',operation:'projects',limit:2}},
  ];
  for(const [i,row] of adversarial.entries()){await family.receive('owner',{id:'adversarial-owner-'+i,peerId:'synthetic-peer-owner',text:row.text});await family.settled();const n=reads.length;const rejected=await tool(familyAgent,'project_companion',{action:'context_brief',project:targetRoot,queries:[row.q],userRequested:true});assert.equal(rejected.status,'blocked',JSON.stringify(row));assert.equal(reads.length,n,'unsupported user restriction must block before provider reads');}
- const finalReadCount=reads.length;
+ const finalReadCount=reads.length,finalSentCount=sent.length;
  family.store.bindPerson('owner',{accountId:'new-synthetic-account',peerId:'new-synthetic-peer'});
- const stale=await tool(familyAgent,'personal_context',{action:'query',source:'dida',operation:'projects',userRequested:true});assert.equal(stale.status,'blocked');assert.equal(reads.length,finalReadCount);assert.equal(sent.length,2);
+ const stale=await tool(familyAgent,'personal_context',{action:'query',source:'dida',operation:'projects',userRequested:true});assert.equal(stale.status,'blocked');assert.equal(reads.length,finalReadCount);assert.equal(sent.length,finalSentCount,'stale binding must not send any new result');
  await dotFiber.dispose();await familyFiber.dispose();
 });
 
