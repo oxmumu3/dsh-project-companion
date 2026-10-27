@@ -1,3 +1,4 @@
+import {safeAuthDiagnostic} from './auth-diagnostics.js';
 import {bindingRevision,matchesBindingRevision} from './workbench-scope.js';
 const bound = value => value?.state === 'bound' && typeof value.sessionId === 'string' && value.sessionId.length > 0 && value.sessionId.length <= 200 && /^[a-f0-9]{64}$/.test(value.bindingKey ?? '');
 const same = (left, right) => bound(left) && bound(right) && left.sessionId === right.sessionId && left.bindingKey === right.bindingKey;
@@ -5,7 +6,7 @@ const invalid = () => { throw new Error('Context 操作未完成，请刷新连�
 const sourceIds = new Set(['gmail','calendar','drive','docs','sheets','slides','dida','flomo']);
 
 /** Owner-authenticated native settings facade. GET never resumes or queries a source. */
-export function createContextRoute({context,googleAuth,googleCalendarAuth,googleSuiteAuth,flomoAuth,didaAuth,readConnection,resolveOwner,activateOwner,canRun=async()=>true,isClosed=()=>false}={}){
+export function createContextRoute({context,googleAuth,googleCalendarAuth,googleSuiteAuth,flomoAuth,didaAuth,checkCalendarToken,readConnection,resolveOwner,activateOwner,canRun=async()=>true,isClosed=()=>false,authCheckTimeoutMs=30000}={}){
   let closed=false;
   const open=()=>{if(closed||isClosed())invalid();};
   const connection=async()=>{open();try{const value=await readConnection();return bound(value)?{state:'bound',sessionId:value.sessionId,bindingKey:value.bindingKey}:{state:'unknown'};}catch{return{state:'unknown'};}};
@@ -42,11 +43,33 @@ export function createContextRoute({context,googleAuth,googleCalendarAuth,google
       const keys=Object.keys(input).filter(key=>key!=='expectedBindingRevision');
       if(['google_authorize','google_calendar_authorize','google_suite_authorize','flomo_authorize','dida_authorize'].includes(input.action)){
         if(keys.length!==1||!await canRun())invalid();
+      }else if(input.action==='check_authorization'){
+        if(keys.length!==2||!keys.includes('source')||!['calendar','flomo'].includes(input.source)||typeof input.expectedBindingRevision!=='string'||!await canRun())invalid();
       }else if(!['connect','disconnect'].includes(input.action)||keys.length!==2||!keys.includes('source')||!sourceIds.has(input.source))invalid();
       if(input.action==='connect'&&!await canRun())invalid();
       const expected=await connection();
       if(!bound(expected)||!matchesBindingRevision(input,expected))invalid();
       const owner=await readyOwner(expected);
+      if(input.action==='check_authorization'){
+        const source=input.source,initial=await context.snapshot(owner);
+        if(!initial.sources?.some(item=>item.id===source&&item.configured===true&&item.enabled===true))invalid();
+        await check(expected);
+        const grant=await context.authorization(owner,[source]);
+        if(!Number.isFinite(authCheckTimeoutMs)||authCheckTimeoutMs<=0||authCheckTimeoutMs>30000)invalid();
+        const controller=new AbortController(),signal=controller.signal,timer=setTimeout(()=>controller.abort(),authCheckTimeoutMs);
+        const guard=async()=>{if(signal.aborted)invalid();await check(expected);if(!await canRun())invalid();if(await context.authorization(owner,[source])!==grant||context.assertAuthorization(owner,[source],grant)!==true)invalid();await check(expected);if(signal.aborted)invalid();return true;};
+        try{
+          await guard();let available=false,diagnostic;
+          try{
+            const settings={signal,authorizeMutation:guard};
+            const operation=Promise.resolve().then(()=>source==='calendar'?checkCalendarToken?.(settings):flomoAuth?.getToken?.(settings));
+            const token=await new Promise((resolve,reject)=>{const abort=()=>reject(new Error('cancelled'));signal.addEventListener('abort',abort,{once:true});operation.then(value=>{signal.removeEventListener('abort',abort);resolve(value);},error=>{signal.removeEventListener('abort',abort);reject(error);});});
+            available=typeof token==='string'&&token.length>0&&token.length<=8192&&!/[\r\n]/u.test(token);
+            if(!available)diagnostic={stage:'parse'};
+          }catch(error){diagnostic=safeAuthDiagnostic(error?.authDiagnostic);}
+          await guard();return{source,tokenAvailable:available,...(!available?{diagnostic}: {})};
+        }finally{clearTimeout(timer);controller.abort();}
+      }
       if(['google_authorize','google_calendar_authorize','google_suite_authorize','flomo_authorize','dida_authorize'].includes(input.action)){
         if(!await canRun())invalid();
         await check(expected);

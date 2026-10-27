@@ -470,7 +470,7 @@ export async function installCompanion(ctx,options={}){
     },
   });
   contextRoute=createContextRoute({
-    context,googleAuth,googleCalendarAuth,googleSuiteAuth,flomoAuth,didaAuth,readConnection:readSetup,isClosed:()=>disposed,
+    context,googleAuth,googleCalendarAuth,googleSuiteAuth,flomoAuth,didaAuth,checkCalendarToken:settings=>useCalendarRecord()?googleCalendarAuth.getToken(settings):googleSuiteAuth.getToken('calendar',settings),readConnection:readSetup,isClosed:()=>disposed,
     canRun:async()=>!disposed&&!await service.isPaused(),
     resolveOwner:sessionId=>{const agent=ctx.get('agents')?.get?.(sessionId);const cwd=effectiveCwd(ctx,agent);return !disposed&&agent&&String(agent.id)===sessionId&&cwd?{sessionId,cwd}:null;},
     activateOwner:async sessionId=>{

@@ -5,6 +5,8 @@ import {createContextTransport} from '../src/context-transport.js';
 import {createPersonalContext} from '../src/context-service.js';
 import {createFamilyContextAdapter} from '../src/family-context-adapter.js';
 import {createContextCredentialWriter} from '../src/context-credential-writer.js';
+import {createContextRoute} from '../src/context-route.js';
+import {bindingRevision} from '../src/workbench-scope.js';
 
 const at=new Date('2026-10-27T19:00:00Z');
 const owner={sessionId:'fixture-owner',cwd:'/private/synthetic-project'};
@@ -21,6 +23,8 @@ test('expired flomo access token refreshes with the real service guard and provi
  t.after(async()=>{await service.close();await transport.close();await auth.close();});
  await service.act(owner,{action:'connect',source:'flomo',userRequested:true});assert.equal(refreshes,0);
  config={...config,flomoOAuthCredentials:JSON.stringify({...initial,expiresAt:at.getTime()-1000})};
+ const connection={state:'bound',sessionId:owner.sessionId,bindingKey:binding},route=createContextRoute({context:service,readConnection:async()=>connection,resolveOwner:()=>owner,flomoAuth:auth});
+ const diag=await route.action({action:'check_authorization',source:'flomo',expectedBindingRevision:bindingRevision(connection)});assert.deepEqual(diag,{source:'flomo',tokenAvailable:true});assert.equal(refreshes,1);assert.equal(writes,1);assert.equal(reads,0);
  const result=await family.run(scope,()=>family.act({...owner,sessionId:scope.familySessionId},{action:'query',source:'flomo',operation:'search',query:'DeepSeek',limit:2,userRequested:true}));
  assert.equal(result.items.length,1);assert.equal(refreshes,1);assert.equal(writes,1);assert.equal(reads,1);
 });

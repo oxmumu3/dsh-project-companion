@@ -1,3 +1,4 @@
+import {withAuthDiagnostic} from './auth-diagnostics.js';
 import {createCipheriv,createDecipheriv,createHash,randomBytes} from 'node:crypto';
 import {spawn as spawnProcess} from 'node:child_process';
 
@@ -119,10 +120,10 @@ export function createGoogleTokenVault({rawReadConfig,rawWrite,keychain=createMa
   return new Promise((resolve,reject)=>{
    let done=false;const finish=(error,result)=>{if(done)return;done=true;clearTimeout(timer);signal?.removeEventListener('abort',cancel);error?reject(error):resolve(result);};
    const cancel=()=>finish(changed()),timer=setTimeout(cancel,OPERATION_TIMEOUT);signal?.addEventListener('abort',cancel,{once:true});
-   Promise.resolve(value).then(result=>finish(null,result),error=>finish(error?.code==='GOOGLE_CREDENTIALS_CHANGED'?changed():unavailable()));
+   Promise.resolve(value).then(result=>finish(null,result),error=>finish(error?.authDiagnostic?withAuthDiagnostic(unavailable(),error.authDiagnostic):error?.code==='GOOGLE_CREDENTIALS_CHANGED'?changed():unavailable()));
   });
  }
- async function affirm(guard,signal){open(signal);if(typeof guard!=='function'||await waitFor(Promise.resolve().then(guard),signal)!==true)throw changed();open(signal);}
+ async function affirm(guard,signal){try{open(signal);if(typeof guard!=='function'||await waitFor(Promise.resolve().then(guard),signal)!==true)throw changed();open(signal);}catch{throw withAuthDiagnostic(changed(),{stage:'guard'});}}
  function cleanup(account){
   const task=Promise.resolve().then(()=>keychain.remove(account)).catch(()=>{});cleanupTasks.add(task);task.finally(()=>cleanupTasks.delete(task));return task;
  }
@@ -161,11 +162,11 @@ export function createGoogleTokenVault({rawReadConfig,rawWrite,keychain=createMa
   const combined=AbortSignal.any([lifecycle.signal,...(signal?[signal]:[])]);
   await affirm(guard,combined);current(source,expected,combined);
   const key=randomBytes(32),account=`v1-${scopeHash}-${source}-${randomBytes(24).toString('hex')}`;
-  const sealed=encrypt(value,source,scopeHash,key,account);let committed=false,hostWrite=null,hostSettled=false;
+  const sealed=encrypt(value,source,scopeHash,key,account);let committed=false,hostWrite=null,hostSettled=false,stage='storage';
   try{
    await waitFor(keychain.write(account,key.toString('base64url'),{signal:combined}),combined);
    await affirm(guard,combined);current(source,expected,combined);
-   hostWrite=Promise.resolve().then(()=>rawWrite(source,sealed,{expectedValue:expected,authorizeMutation:async()=>{await affirm(guard,combined);current(source,expected,combined);return true;}}));
+   stage='persist';hostWrite=Promise.resolve().then(()=>rawWrite(source,sealed,{expectedValue:expected,authorizeMutation:async()=>{await affirm(guard,combined);current(source,expected,combined);return true;}}));
    hostWrite.then(()=>{hostSettled=true;},()=>{hostSettled=true;});
    await waitFor(hostWrite,combined);
    current(source,sealed,combined);committed=true;erase(source);cache.set(source,{raw:sealed,key:Buffer.from(key)});
@@ -182,7 +183,7 @@ export function createGoogleTokenVault({rawReadConfig,rawWrite,keychain=createMa
     const afterHost=()=>{let stillReferenced=true;try{stillReferenced=raw()[fieldFor(source)]===sealed;}catch{}return stillReferenced?undefined:cleanup(account);};
     void hostWrite.then(afterHost,afterHost).catch(()=>{});
    }else if(!committed&&!pointsHere)await cleanup(account);
-   if(error?.code==='GOOGLE_CREDENTIALS_CHANGED')throw error;throw unavailable();
+   if(error?.code==='GOOGLE_CREDENTIALS_CHANGED')throw error?.authDiagnostic?withAuthDiagnostic(changed(),error.authDiagnostic):changed();if(error?.authDiagnostic)throw withAuthDiagnostic(unavailable(),error.authDiagnostic);throw withAuthDiagnostic(unavailable(),{stage});
   }finally{key.fill(0);}
  }
  return Object.freeze({

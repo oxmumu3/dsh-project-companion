@@ -7,6 +7,8 @@ import {createGoogleCalendarRest} from '../src/google-calendar-rest.js';
 import {createContextCredentialWriter} from '../src/context-credential-writer.js';
 import {createPersonalContext} from '../src/context-service.js';
 import {createFamilyContextAdapter} from '../src/family-context-adapter.js';
+import {createContextRoute} from '../src/context-route.js';
+import {bindingRevision} from '../src/workbench-scope.js';
 
 test('Family cold Calendar migrates a legacy grant into the vault then refreshes through the real guards',async t=>{
  const publisher={kind:'desktop',clientId:'fixture.apps.googleusercontent.com',clientSecret:'fixture-public'};
@@ -22,6 +24,8 @@ test('Family cold Calendar migrates a legacy grant into the vault then refreshes
  family=createFamilyContextAdapter({context:service,delegation:{current:()=>true,recheck:async()=>true}});
  t.after(async()=>{await service.close();await transport.close();await auth.close();await vault.close();});
  await service.act(owner,{action:'connect',source:'calendar',userRequested:true});assert.equal(refreshes,0);assert.equal(writes,0);
+ const connection={state:'bound',sessionId:owner.sessionId,bindingKey:binding};const route=createContextRoute({context:service,readConnection:async()=>connection,resolveOwner:()=>owner,checkCalendarToken:settings=>auth.getToken('calendar',settings)});
+ const diag=await route.action({action:'check_authorization',source:'calendar',expectedBindingRevision:bindingRevision(connection)});assert.deepEqual(diag,{source:'calendar',tokenAvailable:true});assert.equal(refreshes,1);assert.equal(reads,0);assert.equal(writes,1);
  const result=await family.run(scope,()=>family.act({...owner,sessionId:scope.familySessionId},{action:'query',source:'calendar',operation:'upcoming',from:'2026-10-27T19:00:00Z',to:'2026-10-28T19:00:00Z',limit:2,userRequested:true}));
  assert.equal(result.source,'calendar');assert.equal(result.coverage.returned,0);assert.equal(refreshes,1);assert.equal(reads,1);assert.equal(writes,1);assert.doesNotMatch(config.googleSuiteOAuthCredentials,/fixture-refresh/);
 });
