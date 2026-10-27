@@ -35,6 +35,39 @@ export function createContextRoute({context,googleAuth,googleCalendarAuth,google
     if(bindingRevision(current)!==bindingRevision(after))invalid();
     return{bindingRevision:bindingRevision(current),sources:value.sources,googleAuth:authStatus(),...(googleCalendarAuth?{googleCalendarAuth:authStatus(googleCalendarAuth)}:{}),...(googleSuiteAuth?{googleSuiteAuth:{...authStatus(googleSuiteAuth),grantedSources:['gmail','calendar','drive'].filter(source=>googleSuiteAuth.status?.().grantedSources?.includes(source))}}:{}),...(flomoAuth?{flomoAuth:authStatus(flomoAuth)}:{}),...(didaAuth?{didaAuth:authStatus(didaAuth)}:{})};
   }
+  async function checkAuthorization(input){
+    if(!Number.isFinite(authCheckTimeoutMs)||authCheckTimeoutMs<=0||authCheckTimeoutMs>30000)invalid();
+    const controller=new AbortController(),signal=controller.signal,timer=setTimeout(()=>controller.abort(),authCheckTimeoutMs);
+    const live=()=>{if(signal.aborted)invalid();};
+    const bounded=fn=>new Promise((resolve,reject)=>{
+      if(signal.aborted){reject(new Error('cancelled'));return;}
+      const stop=()=>reject(new Error('cancelled'));signal.addEventListener('abort',stop,{once:true});
+      Promise.resolve().then(()=>{live();return fn();}).then(value=>{signal.removeEventListener('abort',stop);if(signal.aborted)reject(new Error('cancelled'));else resolve(value);},error=>{signal.removeEventListener('abort',stop);reject(error);});
+    });
+    try{
+      if(!await bounded(canRun))invalid();
+      const expected=await bounded(connection);live();if(!bound(expected)||!matchesBindingRevision(input,expected))invalid();
+      const owner=await bounded(()=>readyOwner(expected)),source=input.source;
+      const initial=await bounded(()=>context.snapshot(owner));
+      if(!initial.sources?.some(item=>item.id===source&&item.configured===true&&item.enabled===true))invalid();
+      await bounded(()=>check(expected));
+      const grant=await bounded(()=>context.authorization(owner,[source]));
+      const guard=async()=>{
+        live();await bounded(()=>check(expected));if(!await bounded(canRun))invalid();
+        if(await bounded(()=>context.authorization(owner,[source]))!==grant)invalid();live();
+        if(context.assertAuthorization(owner,[source],grant)!==true)invalid();
+        await bounded(()=>check(expected));live();return true;
+      };
+      await guard();let available=false,diagnostic;
+      try{
+        const settings={signal,authorizeMutation:guard};
+        const token=await bounded(()=>source==='calendar'?checkCalendarToken?.(settings):flomoAuth?.getToken?.(settings));
+        available=typeof token==='string'&&token.length>0&&token.length<=8192&&!/[\r\n]/u.test(token);
+        if(!available)diagnostic={stage:'parse'};
+      }catch(error){diagnostic=safeAuthDiagnostic(error?.authDiagnostic);}
+      await guard();return{source,tokenAvailable:available,...(!available?{diagnostic}:{})};
+    }finally{clearTimeout(timer);controller.abort();}
+  }
   return{
     snapshot,
     async action(input){
@@ -44,32 +77,13 @@ export function createContextRoute({context,googleAuth,googleCalendarAuth,google
       if(['google_authorize','google_calendar_authorize','google_suite_authorize','flomo_authorize','dida_authorize'].includes(input.action)){
         if(keys.length!==1||!await canRun())invalid();
       }else if(input.action==='check_authorization'){
-        if(keys.length!==2||!keys.includes('source')||!['calendar','flomo'].includes(input.source)||typeof input.expectedBindingRevision!=='string'||!await canRun())invalid();
+        if(keys.length!==2||!keys.includes('source')||!['calendar','flomo'].includes(input.source)||typeof input.expectedBindingRevision!=='string')invalid();
       }else if(!['connect','disconnect'].includes(input.action)||keys.length!==2||!keys.includes('source')||!sourceIds.has(input.source))invalid();
       if(input.action==='connect'&&!await canRun())invalid();
+      if(input.action==='check_authorization')return checkAuthorization(input);
       const expected=await connection();
       if(!bound(expected)||!matchesBindingRevision(input,expected))invalid();
       const owner=await readyOwner(expected);
-      if(input.action==='check_authorization'){
-        const source=input.source,initial=await context.snapshot(owner);
-        if(!initial.sources?.some(item=>item.id===source&&item.configured===true&&item.enabled===true))invalid();
-        await check(expected);
-        const grant=await context.authorization(owner,[source]);
-        if(!Number.isFinite(authCheckTimeoutMs)||authCheckTimeoutMs<=0||authCheckTimeoutMs>30000)invalid();
-        const controller=new AbortController(),signal=controller.signal,timer=setTimeout(()=>controller.abort(),authCheckTimeoutMs);
-        const guard=async()=>{if(signal.aborted)invalid();await check(expected);if(!await canRun())invalid();if(await context.authorization(owner,[source])!==grant||context.assertAuthorization(owner,[source],grant)!==true)invalid();await check(expected);if(signal.aborted)invalid();return true;};
-        try{
-          await guard();let available=false,diagnostic;
-          try{
-            const settings={signal,authorizeMutation:guard};
-            const operation=Promise.resolve().then(()=>source==='calendar'?checkCalendarToken?.(settings):flomoAuth?.getToken?.(settings));
-            const token=await new Promise((resolve,reject)=>{const abort=()=>reject(new Error('cancelled'));signal.addEventListener('abort',abort,{once:true});operation.then(value=>{signal.removeEventListener('abort',abort);resolve(value);},error=>{signal.removeEventListener('abort',abort);reject(error);});});
-            available=typeof token==='string'&&token.length>0&&token.length<=8192&&!/[\r\n]/u.test(token);
-            if(!available)diagnostic={stage:'parse'};
-          }catch(error){diagnostic=safeAuthDiagnostic(error?.authDiagnostic);}
-          await guard();return{source,tokenAvailable:available,...(!available?{diagnostic}: {})};
-        }finally{clearTimeout(timer);controller.abort();}
-      }
       if(['google_authorize','google_calendar_authorize','google_suite_authorize','flomo_authorize','dida_authorize'].includes(input.action)){
         if(!await canRun())invalid();
         await check(expected);

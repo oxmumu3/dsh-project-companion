@@ -3,9 +3,9 @@ import assert from 'node:assert/strict';
 import {createContextRoute,registerContextRoute} from '../src/context-route.js';
 import {bindingRevision} from '../src/workbench-scope.js';
 const initial={state:'bound',sessionId:'fixture',bindingKey:'a'.repeat(64)},grant='b'.repeat(64);
-function fixture({enabled=true,token=async()=> 'SYNTHETIC_ACCESS',credentialError,owner=true,timeoutMs}={}){
+function fixture({enabled=true,token=async()=> 'SYNTHETIC_ACCESS',credentialError,owner=true,timeoutMs,onSnapshot,onAuthorization}={}){
  let connection=initial,allowed=true,queries=0,called=0;const calls=[];
- const context={snapshot:async()=>({sources:[{id:'calendar',configured:true,enabled},{id:'flomo',configured:true,enabled}]}),authorization:async(_o,sources)=>{calls.push('authorization:'+sources.join());if(!allowed)throw Error('revoked');return grant;},assertAuthorization:(_o,_s,g)=>allowed&&g===grant};
+ const context={snapshot:async()=>{await onSnapshot?.();return({sources:[{id:'calendar',configured:true,enabled},{id:'flomo',configured:true,enabled}]});},authorization:async(_o,sources)=>{calls.push('authorization:'+sources.join());await onAuthorization?.(calls.length);if(!allowed)throw Error('revoked');return grant;},assertAuthorization:(_o,_s,g)=>allowed&&g===grant};
  const route=createContextRoute({authCheckTimeoutMs:timeoutMs,context,readConnection:async()=>connection,resolveOwner:sessionId=>owner?{sessionId,cwd:'/synthetic/project'}:null,checkCalendarToken:async settings=>{called++;return token(settings);},flomoAuth:{getToken:async settings=>{called++;if(credentialError)throw credentialError;return token(settings);}}});
  return{route,calls,change:()=>{connection={...initial,bindingKey:'c'.repeat(64)}},revoke:()=>{allowed=false},called:()=>called,queries:()=>queries};
 }
@@ -27,4 +27,16 @@ test('a non-cooperative token controller times out and its late mutation guard i
  let guard;const h=fixture({token:async settings=>{guard=settings.authorizeMutation;return new Promise(()=>{});},timeoutMs:10});
  await assert.rejects(h.route.action({action:'check_authorization',source:'calendar',expectedBindingRevision:bindingRevision(initial)}));
  assert.equal(typeof guard,'function');await assert.rejects(guard());
+});
+
+test('preflight snapshot and authorization deadlines prevent all later token operations',async()=>{
+ for(const stage of ['snapshot','authorization']){let release;const stalled=new Promise(r=>{release=r;}),h=fixture({timeoutMs:10,...(stage==='snapshot'?{onSnapshot:()=>stalled}:{onAuthorization:()=>stalled})});
+  const outcome=await Promise.race([h.route.action({action:'check_authorization',source:'calendar',expectedBindingRevision:bindingRevision(initial)}).then(()=> 'unexpected-success',()=> 'rejected'),new Promise(r=>setTimeout(()=>r('hung'),80))]);
+  assert.equal(outcome,'rejected');release();await new Promise(r=>setImmediate(r));assert.equal(h.called(),0);
+ }
+});
+test('deadline during the mutation guard rejects and a late authorization cannot commit',async()=>{
+ for(const stallAt of [2,3]){let release,checks=0,writes=0;const stalled=new Promise(r=>{release=r;}),h=fixture({timeoutMs:10,onAuthorization:async()=>{if(++checks===stallAt)await stalled;},token:async options=>{await options.authorizeMutation();writes++;return'SYNTHETIC_ACCESS';}});
+ const outcome=await Promise.race([h.route.action({action:'check_authorization',source:'calendar',expectedBindingRevision:bindingRevision(initial)}).then(()=> 'unexpected-success',()=> 'rejected'),new Promise(r=>setTimeout(()=>r('hung'),80))]);
+ assert.equal(outcome,'rejected');release();await new Promise(r=>setImmediate(r));assert.equal(writes,0);}
 });
