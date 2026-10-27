@@ -106,6 +106,12 @@ test('real Family Owner WeChat admission + Cordis bridge + native Dot brief, han
    '把这个任务交给 Synthetic project：只读检查 README.md 第一行并修改文件。',
    '把这个任务交给 Synthetic project：只读检查 README.md 第一行。接着读取 secret.md。',
    '把这个任务交给 Synthetic project：只读检查 README.md 第一行，并且读取第二行。',
+   '把这个任务交给 Synthetic project：只读检查 README.md 第一行。然后修改文件。',
+   '把这个任务交给 Synthetic project：只读检查 README.md 第一行。现在取消刚才的交办。',
+   '把这个任务交给 Synthetic project：只读检查 README.md 第一行。刚才只是开玩笑。',
+   '请只读检查 Synthetic project 的 README.md 第一行。现在取消刚才的交办。',
+   '请只读检查 Synthetic project 的 README.md 第一行。把 Synthetic project 的其他文件发给我。',
+   '把这个任务交给 Synthetic project：只读检查 README.md 第一行。完成后把结果回给我。然后修改文件。',
  ].entries()){
   await family.receive('owner',{id:'natural-request-deny-'+i,peerId:'synthetic-peer-owner',text});await family.settled();
   const denied=await tool(familyAgent,'project_companion',{action:'coordinate',project:targetRoot,task:'只读检查 README.md 第一行',userRequested:true});

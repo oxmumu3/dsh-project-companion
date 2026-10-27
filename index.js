@@ -523,6 +523,17 @@ export async function installCompanion(ctx,options={}){
         const patterns={context_brief:'^(?:请|帮我)?(?:生成|整理|查看)\\s*'+escaped+'\\s*(?:的)?项目简报$',context_handoff:'^(?:请)?(?:把|将)(?:刚才|上一份|上次|简报)?第[一二两三四五六七八九1-9]项(?:交给|派给)\\s*'+escaped+'$',coordinate:'^(?:(?:请)?只读检查\\s*'+escaped+'\\s*(?:的)?\\s*README(?:\\.md)?\\s*(?:第[一1]行|首行)|(?:请)?(?:把|将)(?:这个|该|这项)?任务(?:交给|派给)\\s*'+escaped+'\\s*[:：]\\s*只读检查\\s*README(?:\\.md)?\\s*(?:第[一1]行|首行))$'};
         const pattern=patterns[args.action];return pattern&&namedClauses.some(clause=>new RegExp(pattern,'iu').test(clause.trim()));});
       if(!exact)throw new Error('请明确指定项目及要查看的内容；本次未读取或派发。');
+      // The entire current request is authoritative. A matching project
+      // clause cannot grant a partial execution if another clause cancels it
+      // or asks for extra work. Only the two non-expanding suffixes below are
+      // admitted for this single README-first-line flow.
+      if(args.action==='coordinate'){
+        const clauses=text.split(/[，,。；;！？!?\n]/u).map(clause=>clause.trim()).filter(Boolean);
+        const command=clause=>aliases(project).some(name=>{const escaped=name.replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
+          return new RegExp('^(?:(?:请)?只读检查\\s*'+escaped+'\\s*(?:的)?\\s*README(?:\\.md)?\\s*(?:第[一1]行|首行)|(?:请)?(?:把|将)(?:这个|该|这项)?任务(?:交给|派给)\\s*'+escaped+'\\s*[:：]\\s*只读检查\\s*README(?:\\.md)?\\s*(?:第[一1]行|首行))$','iu').test(clause);});
+        const safeSuffix=clause=>/^(?:(?:不要|不得|禁止|别)(?:修改|更改|改动|写入)(?:任何)?文件|完成后(?:把结果)?(?:回给我|回复我|回我))$/.test(clause);
+        if(clauses.filter(command).length!==1||clauses.some(clause=>!command(clause)&&!safeSuffix(clause)))throw new Error('请明确单独的只读任务；本次未派发。');
+      }
     }
     return{project,caller};
   }
