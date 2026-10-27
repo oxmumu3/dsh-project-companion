@@ -20,6 +20,18 @@ export function familyUnverifiedPlanAction(action){return ['check_once','configu
 // Only audited Owner entry points are reachable; new tool actions do not
 // silently inherit Family authority when other plugins add capabilities.
 export function familyActionAllowed(args){return ['connections','query','context_brief','context_handoff','coordinate'].includes(args?.action)||(args?.action==='task_status'&&typeof args.id==='string'&&args.id.startsWith('family-read-'));}
+// Derive a rolling calendar window from the verified Owner message, not the
+// model's clock. All source, qualifier, count and denial checks still run below.
+export function familyNormalizeCalendar(args,userText,now=new Date()){
+  if(!args||typeof userText!=='string'||!(now instanceof Date)||!Number.isFinite(now.getTime()))return args;
+  const clauses=userText.split(/[，,。；;！？!?\n]/u).map(c=>c.trim()).filter(Boolean);
+  const requested=clauses.filter(c=>sourceNames.calendar.test(c)&&/(?:未来|接下来|之后)\s*(?:24|二十四)\s*(?:小时|h)/i.test(c));
+  if(requested.length!==1)return args;
+  const normalize=q=>q?.source==='calendar'&&q.operation==='upcoming'?{...q,from:now.toISOString(),to:new Date(now.getTime()+86400000).toISOString()}:q;
+  if(args.action==='context_brief'&&Array.isArray(args.queries))return{...args,queries:args.queries.map(normalize)};
+  if(args.action==='query'&&args.source==='calendar')return normalize(args);
+  return args;
+}
 const positive=(text,pattern)=>text.split(/[，,。；;！？!?\n]/u).some(clause=>{
   const matcher=new RegExp(pattern.source,[...new Set((pattern.flags+'g').split(''))].join(''));
   for(const match of clause.matchAll(matcher)){const prefix=clause.slice(Math.max(0,match.index-5),match.index);if(!/(?:不|无需|别|禁止).{0,2}$/u.test(prefix))return true;}

@@ -36,7 +36,7 @@ import {createContextTransport} from './src/context-transport.js';
 import {createPersonalContext,contextRowSchema,CONTEXT_SOURCES,contextErrorText} from './src/context-service.js';
 import {createFamilyOwnerDelegation} from './src/family-owner-delegation.js';
 import {createFamilyContextAdapter} from './src/family-context-adapter.js';
-import {familyIntentAllowed,familyReadOnlyIntent,familySelectedItemAllowed,familyUnverifiedPlanAction,familyActionAllowed} from './src/family-intent.js';
+import {familyIntentAllowed,familyReadOnlyIntent,familySelectedItemAllowed,familyUnverifiedPlanAction,familyActionAllowed,familyNormalizeCalendar} from './src/family-intent.js';
 import {parseFamilyReminder} from './src/family-reminder.js';
 import {createFamilyReadAdapter} from './src/family-read-adapter.js';
 import {createContextRoute,registerContextRoute} from './src/context-route.js';
@@ -666,7 +666,7 @@ export async function installCompanion(ctx,options={}){
   async function withFamily(execution,args,run){
     const sessionId=String(execution?.agent?.id??'');
     if(sessionId.startsWith('family_member_'))throw new Error('家人成员没有 Owner 的 Dot 资料权限。');
-    if(!sessionId.startsWith('family_owner_')&&!familyDelegate.matchesSession(sessionId))return run();
+    if(!sessionId.startsWith('family_owner_')&&!familyDelegate.matchesSession(sessionId))return run(args);
     if(!familyEnabled())throw new Error('Family Owner 委托未启用。');
     const call={sessionId,callId:execution.callId,signal:execution.signal};
     const protectedWake=args.action==='context_check'&&typeof args.loopId==='string'&&followup.activeLoop(execution)===args.loopId;
@@ -692,7 +692,9 @@ export async function installCompanion(ctx,options={}){
     }
     if(familyUnverifiedPlanAction(args.action)&&!familyReminder){const error=new Error('家庭微信入口暂不能安全核验提醒或推送的具体时间和内容，本次未创建、发送或取消计划。');error.code='FAMILY_PLAN_UNAVAILABLE';throw error;}
     if(!protectedWake&&!familyReminder&&!familyActionAllowed(args)){const error=new Error('家庭微信入口暂不支持这项操作，本次未读取资料或更改计划。');error.code='FAMILY_ACTION_UNAVAILABLE';throw error;}
-    if(!protectedWake&&!familyReminder&&!familyIntentAllowed('family',args,scope.userText,scope.previousUserText,options.clock?.()??new Date())){const error=new Error('实际 Owner 消息没有授权这项操作。');if(['query','brief','context_brief'].includes(args.action))error.code='FAMILY_SCOPE_UNSUPPORTED';throw error;}
+    const now=options.clock?.()??new Date();
+    const admittedArgs=protectedWake||familyReminder?args:familyNormalizeCalendar(args,scope.userText,now);
+    if(!protectedWake&&!familyReminder&&!familyIntentAllowed('family',admittedArgs,scope.userText,scope.previousUserText,now)){const error=new Error('实际 Owner 消息没有授权这项操作。');if(['query','brief','context_brief'].includes(args.action))error.code='FAMILY_SCOPE_UNSUPPORTED';throw error;}
     if(familyReminder){
       const authorize=()=>{try{parseFamilyReminder(scope,options.clock?.()??new Date());return familyReminderEnabled()&&familyDelegate.current(scope)&&!execution.signal?.aborted;}catch{return false;}};
       if(!authorize()||!await familyDelegate.recheck(scope)||!authorize())return{status:'blocked',accepted:false,text:'当前消息的提醒时间或绑定不可确认，本次未安排。'};
@@ -707,7 +709,7 @@ export async function installCompanion(ctx,options={}){
     // Family work never runs inside an unrestricted existing project session.
     // Only the separately guarded read-only executor can receive the task.
     if(['coordinate','context_handoff'].includes(args.action)&&(!familyReadOnlyIntent(scope.userText)||typeof getFamilyBridge()?.startOwnerProjectRead!=='function'))throw new Error('该项目会话暂不能保证只读；尚未派发任务。');
-    return familyContext.run(scope,run);
+    return familyContext.run(scope,()=>run(admittedArgs));
   }
   ctx.tools.register(defineTool({
     name:'project_companion',
@@ -761,7 +763,7 @@ export async function installCompanion(ctx,options={}){
     }},
     async execute(args,execution){
       if(disposed)return{status:'blocked',accepted:false,text:'项目助理正在关闭，暂不接收新的交办。'};
-      try{return await withFamily(execution,args,async()=>{try{
+      try{return await withFamily(execution,args,async admittedArgs=>{args=admittedArgs;try{
         if(args.action.startsWith('context_')){
           try{
             const {project,caller}=await selectedProject(execution.agent,args);
@@ -795,7 +797,7 @@ export async function installCompanion(ctx,options={}){
               const once=await followup.onceStatus(input);if(once.loopId)await followup.cancelOnce(input);
               return result;
             }
-          }catch(error){return{status:'blocked',quiet:false,text:'本次资料简报操作未完成。请核对来源是否仍在当前对话启用，以及项目范围和简报是否已变化；没有自动重派任务。',code:typeof error?.code==='string'?error.code:'CONTEXT_LOOP_UNAVAILABLE'};}
+          }catch(error){const known={LOOP_MODEL_UNAVAILABLE:'简报整理服务暂不可用，本次未生成简报。',LOOP_MODEL_INVALID_OUTPUT:'简报整理结果格式不正确，本次未生成简报。',LOOP_MODEL_INVALID_INPUT:'用于整理的资料格式不符合要求，本次未生成简报。',LOOP_INTENT_REQUIRED:'简报的项目或资料范围尚未确认，本次未生成简报。',LOOP_SCOPE_CHANGED:'项目或当前会话范围已变化，本次未生成简报。',LOOP_AUTH_CHANGED:'资料授权状态已变化，本次未继续生成简报。',LOOP_STORE_UNAVAILABLE:'简报保存暂不可用，本次未生成简报。',LOOP_STOPPED:'本次简报已停止，未继续整理。'};const code=Object.hasOwn(known,error?.code??'')?error.code:'CONTEXT_LOOP_UNAVAILABLE';return{status:'blocked',quiet:false,text:known[code]??'本次资料简报操作未完成；具体原因未确认，没有自动重试。',code};}
         }
         if(args.action==='project_update'){
           if(args.userRequested!==true||typeof args.project!=='string'||!args.project.trim())return{status:'blocked',quiet:false,text:'请明确要检查哪个已关注项目的变化；不会扫描全部项目或自动建立水位。'};
@@ -862,7 +864,7 @@ export async function installCompanion(ctx,options={}){
     output:{schema:{type:'object',additionalProperties:true},render:(_args,value)=>[{type:'text',text:value.text??JSON.stringify(value)}]},
     async execute(args,execution){
       if(disposed)return{status:'blocked',text:'助理正在关闭，未读取资料。'};
-      try{return await withFamily(execution,args,()=>familyContext.act(owner(ctx,execution.agent),{...args,signal:execution.signal}));}
+      try{return await withFamily(execution,args,admittedArgs=>familyContext.act(owner(ctx,execution.agent),{...admittedArgs,signal:execution.signal}));}
       catch(error){return{status:'blocked',text:error?.code==='FAMILY_SCOPE_UNSUPPORTED'?'家庭微信入口暂只支持按关键词和条数搜索 flomo，以及查看未来24小时内指定条数的日历；其他个人资料范围暂不能安全解析，本次未读取。':contextErrorText(error)};}
     },
   }));
