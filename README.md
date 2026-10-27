@@ -2,7 +2,7 @@
 
 给 DeepSeek Harness 加上个人项目助理：通过现有微信通路交办项目任务、记住项目上下文、安排提醒，并把执行回复带回原对话。作者：牛村木木山；社区开源项目，非 DeepSeek 或 OpenAI 官方产品。
 
-当前预发布版 **0.13.0-preview.2** 修复 Harness 0.2.1-rc.3 更新后的插件兼容检查，保留已安装 V2 的工作台和服务。支持范围为明确验过的 0.2.0-rc.2、0.2.1-rc.2 与 0.2.1-rc.3。本轮官方 rc.3 SDK 全量合成回归通过，真实手机投递与新账号授权没有重新验收，见[验证记录](docs/verification.md)。
+当前预发布版 **0.13.0-preview.2** 修复 Harness 0.2.1-rc.3 更新后的插件兼容检查，保留已安装 V2 的工作台和服务。支持范围为明确验过的 0.2.0-rc.2、0.2.1-rc.2 与 0.2.1-rc.3。本轮官方 rc.3 SDK 全量合成回归通过，真实手机投递与新账号授权没有重新验收，见[验证记录](https://github.com/oxmumu3/dsh-project-companion/blob/d389852e3aebfab061325d72b8286ba40de319ee/docs/verification.md)。
 
 ## 在 Harness 中升级
 
@@ -74,8 +74,8 @@ AI 资讯抓取只访问固定公开来源，候选标题、摘要及选中文�
 
 ## 开发与许可
 
-MIT。默认开发环境为 Node.js 22.13+；本版源码已做两套 SDK 回归、独立审读与隔离官方 Host 检查，最终包、日常升级及新用户验收分别记录。此前日常 `0.12.0-preview.3` 的本人有限读取不能替代本版验收；详见[验证记录](docs/verification.md)。请通过官方插件管理器安装与启用，不手改 profile 或宿主 bundle 绕过管理器。
+MIT。默认开发环境为 Node.js 22.13+；本版源码已做两套 SDK 回归、独立审读与隔离官方 Host 检查，最终包、日常升级及新用户验收分别记录。此前日常 `0.12.0-preview.3` 的本人有限读取不能替代本版验收；详见[验证记录](https://github.com/oxmumu3/dsh-project-companion/blob/d389852e3aebfab061325d72b8286ba40de319ee/docs/verification.md)。请通过官方插件管理器安装与启用，不手改 profile 或宿主 bundle 绕过管理器。
 
 ## 后续迭代
 
-项目变化卡已进入候选，电脑端、真实模型和手机验收分别记录；先收口准确交办、单份回复与恢复，再逐步接入主动计划。后续方向见[路线图](docs/roadmap.md)。
+项目变化卡已进入候选，电脑端、真实模型和手机验收分别记录；先收口准确交办、单份回复与恢复，再逐步接入主动计划。后续方向见[路线图](https://github.com/oxmumu3/dsh-project-companion/blob/d389852e3aebfab061325d72b8286ba40de319ee/docs/roadmap.md)。

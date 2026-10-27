@@ -1,5 +1,5 @@
 {
-  "name": "dsh-project-companion",
+  "name": "@oxmumu3/dsh-project-companion",
   "version": "0.13.0-preview.2",
   "description": "DSH Dot: WeChat personal agent, project memory and proactive follow-up for DeepSeek Harness",
   "author": "牛村木木山",
@@ -17,37 +17,29 @@
   "files": [
     "index.js",
     "src/",
+    "vendor/",
+    "assets/",
     "cordis.patch.yml",
     "README.md",
     "LICENSE",
-    "docs/quickstart.md",
-    "docs/verification.md",
-    "docs/comparison.md",
-    "scripts/demo.mjs",
-    "test/",
-    "docs/developer-commands.md",
-    "vendor/",
     "THIRD_PARTY_NOTICES.md",
     "third-party-licenses/",
+    "docs/quickstart.md",
+    "docs/comparison.md",
     "docs/first-use.md",
     "docs/install.md",
-    "assets/",
     "docs/news.md",
     "docs/news-feed-provenance.md",
     "docs/context-sources.md",
-    "docs/roadmap.md",
-    "docs/wechat-queue-2026-10-19.md",
-    "bridge-maintenance/",
-    "docs/google-desktop-oauth.md",
-    "docs/google-public-onboarding.md",
-    "docs/dot-v2-implementation.md"
+    "docs/privacy.html",
+    "docs/site.css"
   ],
   "scripts": {
     "test": "node --max-old-space-size=128 --test --test-concurrency=1 test/*.test.mjs",
     "demo": "node --max-old-space-size=128 scripts/demo.mjs"
   },
   "dependencies": {
-    "zod": "4.6.6"
+    "zod": "4.6.7"
   },
   "devDependencies": {
     "@deepseek-ai/cordis": "4.0.5",
@@ -93,5 +85,9 @@
   "homepage": "https://github.com/oxmumu3/dsh-project-companion",
   "bugs": {
     "url": "https://github.com/oxmumu3/dsh-project-companion/issues"
+  },
+  "publishConfig": {
+    "access": "public",
+    "tag": "latest"
   }
 }

@@ -10,4 +10,4 @@
 
 [固定版本页面与校验资产](https://github.com/oxmumu3/dsh-project-companion/releases/tag/v0.13.0-preview.2)。电脑和 Harness 需保持运行；安装、组件运行、通道受理和手机实收分别核对。Google 仍有未验证权限与累计账号上限，flomo 需 MAX，均为可选来源。
 
-完整使用方式见[快速开始](quickstart.md)和[真实验证边界](verification.md)。
+完整使用方式见[快速开始](quickstart.md)和[真实验证边界](https://github.com/oxmumu3/dsh-project-companion/blob/d389852e3aebfab061325d72b8286ba40de319ee/docs/verification.md)。

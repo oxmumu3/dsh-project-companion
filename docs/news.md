@@ -37,4 +37,4 @@
 
 ## 验证边界
 
-以[验证记录](verification.md)为准。服务和 SDK 合成测试、真实 RSS 获取、原生模型执行、插件安装、通道发送与用户手机确认分别记录。请勿把旧项目日报的手机确认当成新资讯日报已验收。
+以[验证记录](https://github.com/oxmumu3/dsh-project-companion/blob/d389852e3aebfab061325d72b8286ba40de319ee/docs/verification.md)为准。服务和 SDK 合成测试、真实 RSS 获取、原生模型执行、插件安装、通道发送与用户手机确认分别记录。请勿把旧项目日报的手机确认当成新资讯日报已验收。

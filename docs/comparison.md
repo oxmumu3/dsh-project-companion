@@ -17,11 +17,11 @@
 
 ## 复用与许可
 
-微信桥接仍是独立 bundle；维护差异、固定来源与复建方法见[桥接来源说明](../bridge-maintenance/README.md)，维护责任归本项目，不代表原作者背书。YOLO 与 proactive 采用固定版本库模块组合；YOLO 去除 TypeScript 类型并调整导入后缀，proactive 使用完整性验证后的 npm 编译文件，未修改其运行逻辑。完整 MIT 许可、版权、来源与逐文件 hash 见[第三方声明](../THIRD_PARTY_NOTICES.md)及 vendor 中的 `SOURCE.json`。项目署名不代表 DeepSeek 或上游作者背书。
+微信桥接仍是独立 bundle；维护差异、固定来源与复建方法见[桥接来源说明](https://github.com/oxmumu3/dsh-project-companion/blob/d389852e3aebfab061325d72b8286ba40de319ee/docs/../bridge-maintenance/README.md)，维护责任归本项目，不代表原作者背书。YOLO 与 proactive 采用固定版本库模块组合；YOLO 去除 TypeScript 类型并调整导入后缀，proactive 使用完整性验证后的 npm 编译文件，未修改其运行逻辑。完整 MIT 许可、版权、来源与逐文件 hash 见[第三方声明](../THIRD_PARTY_NOTICES.md)及 vendor 中的 `SOURCE.json`。项目署名不代表 DeepSeek 或上游作者背书。
 
 项目记忆只操作已关注根目录下的独立数据库，不导入全部历史。主动跟进默认关闭；用户明确安排后绑定项目和原来源会话，只允许该项目的记忆、资料读取与静默结束。写入、派工、直接微信发送及任意代码执行在自主回合中被拒绝，后续普通用户回合恢复原权限。
 
-历史版本已有本机一次性唤醒、准确摘要和第二次无变化静默证据，也有用户手机收件记录；之后仍出现过延迟与恢复后复述，不能合并为稳定性已通过。本轮 `0.11.0-preview.2` 尚未安装或手机验收，准确交办、单份结果和恢复防重复需重新核对。陌生用户开箱、长期运行、休眠重连、多用户及与上游整包同时启用的互操作仍待验证。按版本与层次查看[验证记录](verification.md)。
+历史版本已有本机一次性唤醒、准确摘要和第二次无变化静默证据，也有用户手机收件记录；之后仍出现过延迟与恢复后复述，不能合并为稳定性已通过。本轮 `0.11.0-preview.2` 尚未安装或手机验收，准确交办、单份结果和恢复防重复需重新核对。陌生用户开箱、长期运行、休眠重连、多用户及与上游整包同时启用的互操作仍待验证。按版本与层次查看[验证记录](https://github.com/oxmumu3/dsh-project-companion/blob/d389852e3aebfab061325d72b8286ba40de319ee/docs/verification.md)。
 
 来源：
 

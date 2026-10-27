@@ -1,6 +1,6 @@
 /* Client half: reuse the official settings shell and the upstream QR viewer. */
 window.__ModuleLoader__.load({
-  id:'dsh-project-companion',
+  id:'@oxmumu3/dsh-project-companion',
   factory:require=>{
     const React=require('react');
     const {Modal,SettingsForm,SettingsSecretField,SettingsValueField}=require('@deepseek-ai/dsh-client-ui-primitives');
@@ -657,7 +657,7 @@ window.__ModuleLoader__.load({
       ctx.effect(()=>ctx.slots.inject('settings.section',()=>ctx.slots.register({name:'settings.section',id:'project-companion',order:39,label:'DSH Dot'},Section)));
       ctx.effect(()=>ctx.slots.inject('settings.onboarding',()=>ctx.slots.register({name:'settings.onboarding',id:'project-companion-dot',order:50},Onboarding)));
       const forms=typeof ctx.get==='function'?ctx.get('configForms',false):ctx.configForms;
-      if(forms)ctx.effect(()=>ctx.slots.inject('plugins.row.config',()=>ctx.slots.register({name:'plugins.row.config',key:'dsh-project-companion#project-companion'},props=>props.view==='summary'?'DeepSeek Dot 的个人资料来源与原生凭据配置':h('div',{className:'pc_setup'},h('h3',null,'连接凭据'),h(CredentialForm)))));
+      if(forms)ctx.effect(()=>ctx.slots.inject('plugins.row.config',()=>ctx.slots.register({name:'plugins.row.config',key:'@oxmumu3/dsh-project-companion#project-companion'},props=>props.view==='summary'?'DeepSeek Dot 的个人资料来源与原生凭据配置':h('div',{className:'pc_setup'},h('h3',null,'连接凭据'),h(CredentialForm)))));
     }
     return{inject,apply,createDotAppearance,prepareDotDraft};
   },
