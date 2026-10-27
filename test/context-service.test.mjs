@@ -94,3 +94,14 @@ test('bounded provider diagnostics preserve safe classifications without preserv
   try{await s.act(owner,{action:'connect',source:'flomo',userRequested:true});await assert.rejects(s.act(owner,{action:'query',source:'flomo',operation:'search',query:'example',userRequested:true}),e=>e.code===expected&&!String(e).includes('SYNTHETIC_PRIVATE_BODY'));}finally{await s.close();}
  }
 });
+test('source query errors expose only the bounded stage and safe category',async()=>{
+ const {createPersonalContext}=await api();
+ for(const stage of ['scope','build','catalog','call','projection']){
+  let state,afterConnect=false,validBinding=true;
+  const service=createPersonalContext({store:{get:async()=>state,put:async(_k,v)=>{state=v;}},readConfig:()=>({flomoToken:'fixture'}),readBinding:async()=>({kind:'bound',bindingKey:(validBinding?'a':'b').repeat(64)}),transport:{catalog:async()=>{if(afterConnect&&stage==='catalog')throw Object.assign(Error('SYNTHETIC_PRIVATE'),{code:'CONTEXT_AUTH_REQUIRED'});return{tools:[{name:'memo_search',inputSchema:{type:'object'}}]};},call:async()=>{if(stage==='call')throw Object.assign(Error('SYNTHETIC_PRIVATE'),{code:'CONTEXT_HTTP_ERROR'});return{value:{structuredContent:{memos:stage==='projection'?[{id:'1',content:'a'},{id:'2',content:'b'},{id:'3',content:'secret'}]:[]}}};}}});
+  try{await service.act(owner,{action:'connect',source:'flomo',userRequested:true});afterConnect=true;if(stage==='scope')validBinding=false;
+   const input={action:'query',source:'flomo',operation:'search',query:stage==='build'?'':'DeepSeek',limit:2,userRequested:true};
+   await assert.rejects(service.act(owner,input),error=>{assert.equal(error.readStage,stage);assert.doesNotMatch(String(error)+JSON.stringify(error),/SYNTHETIC_PRIVATE|secret/);return true;});
+  }finally{await service.close();}
+ }
+});

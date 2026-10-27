@@ -25,6 +25,7 @@ test('expired flomo access token refreshes with the real service guard and provi
  config={...config,flomoOAuthCredentials:JSON.stringify({...initial,expiresAt:at.getTime()-1000})};
  const connection={state:'bound',sessionId:owner.sessionId,bindingKey:binding},route=createContextRoute({context:service,readConnection:async()=>connection,resolveOwner:()=>owner,flomoAuth:auth});
  const diag=await route.action({action:'check_authorization',source:'flomo',expectedBindingRevision:bindingRevision(connection)});assert.deepEqual(diag,{source:'flomo',tokenAvailable:true});assert.equal(refreshes,1);assert.equal(writes,1);assert.equal(reads,0);
+ const probe=await route.action({action:'check_read',source:'flomo',query:'DeepSeek',expectedBindingRevision:bindingRevision(connection)});assert.deepEqual(probe,{source:'flomo',readAvailable:true,returnedCount:1,truncated:false});assert.equal(reads,1);assert.doesNotMatch(JSON.stringify(probe),/synthetic note|fixture/);
  const result=await family.run(scope,()=>family.act({...owner,sessionId:scope.familySessionId},{action:'query',source:'flomo',operation:'search',query:'DeepSeek',limit:2,userRequested:true}));
- assert.equal(result.items.length,1);assert.equal(refreshes,1);assert.equal(writes,1);assert.equal(reads,1);
+ assert.equal(result.items.length,1);assert.equal(refreshes,1);assert.equal(writes,1);assert.equal(reads,2);
 });
