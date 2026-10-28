@@ -11,16 +11,17 @@ const INPUT_KEYS = new Set(['operation', 'query', 'id', 'ids', 'projectId', 'ran
 const OPERATION_INPUTS = {
   gmail: { search: ['query', 'limit'], read: ['id'] }, calendar: { upcoming: ['from', 'to', 'calendarId', 'limit'] },
   drive: { search: ['query', 'limit'], read: ['id'] }, docs: { read: ['id'] }, sheets: { read: ['id', 'range'] }, slides: { read: ['id'] },
-  dida: { projects: ['limit'], tasks: ['projectId'], read: ['id', 'projectId'], search: ['query'] },
+  dida: { projects: ['limit'], tasks: ['projectId', 'query', 'limit'], read: ['id', 'projectId'], search: ['query'] },
   flomo: { search: ['query', 'limit'], read: ['id', 'ids'] },
 };
-const READ_TOOLS = new Set(['search_threads', 'get_message', 'list_events', 'search_files', 'read_file_content', 'read_doc', 'get_values', 'read_presentation', 'list_projects', 'get_project_with_undone_tasks', 'get_task_in_project', 'search', 'memo_search', 'memo_batch_get']);
+const READ_TOOLS = new Set(['search_threads', 'get_message', 'list_events', 'search_files', 'read_file_content', 'read_doc', 'get_values', 'read_presentation', 'list_projects', 'get_project_with_undone_tasks', 'get_named_project_with_undone_tasks', 'get_task_in_project', 'search', 'memo_search', 'memo_batch_get']);
 const ARG_KEYS = {
   search_threads: ['query', 'pageSize', 'includeTrash', 'view'], get_message: ['messageId', 'messageFormat'],
   list_events: ['calendarId', 'startTime', 'endTime', 'orderBy', 'pageSize'], search_files: ['query', 'pageSize', 'excludeContentSnippets'],
   read_file_content: ['fileId', 'includeComments'], read_doc: ['documentId', 'commentsIncluded'], get_values: ['spreadsheetId', 'range'],
   read_presentation: ['presentationId', 'fields', 'commentsIncluded'], list_projects: ['limit', 'offset'],
   get_project_with_undone_tasks: ['project_id'], get_task_in_project: ['project_id', 'task_id'], search: ['query'],
+  get_named_project_with_undone_tasks: ['project_name', 'limit'],
   memo_search: ['keywords', 'limit'], memo_batch_get: ['ids'],
 };
 const plain = value => value !== null && typeof value === 'object' && !Array.isArray(value) && (Object.getPrototypeOf(value) === Object.prototype || Object.getPrototypeOf(value) === null);
@@ -75,7 +76,11 @@ export function buildContextCall(source, input, { now = new Date() } = {}) {
   if (source === 'slides' && operation === 'read') return make('read_presentation', { presentationId: id(input.id), fields: ['presentationId', 'title', 'slides.pageElements(objectId,shape.text)'], commentsIncluded: false });
   if (source === 'dida') {
     if (operation === 'projects') return make('list_projects', { limit: max, offset: 0 });
-    if (operation === 'tasks') return make('get_project_with_undone_tasks', { project_id: id(input.projectId) });
+    if (operation === 'tasks') {
+      if (input.query !== undefined) { if (input.projectId !== undefined) fail(); return make('get_named_project_with_undone_tasks', { project_name: string(input.query,180), limit:max }); }
+      if (input.limit !== undefined) fail('CONTEXT_UNSUPPORTED_OPERATION');
+      return make('get_project_with_undone_tasks', { project_id: id(input.projectId) });
+    }
     if (operation === 'read') return make('get_task_in_project', { project_id: id(input.projectId), task_id: id(input.id) });
     if (operation === 'search') return make('search', { query: string(input.query) });
   }

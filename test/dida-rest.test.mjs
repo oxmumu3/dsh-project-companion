@@ -13,7 +13,7 @@ const task=(id='t1',projectId='p1')=>({id,projectId,title:'Example task',content
 
 test('Dida catalog is passive, bundled and excludes unsupported account search',async()=>{
  let calls=0;const t=create({getToken:async()=>{calls++;return'token';},fetch:async()=>{calls++;return response([]);},clock:()=>fixed});
- const c=await t.catalog('dida',gates);assert.equal(c.provenance,'bundled-contract');assert.deepEqual(c.tools.map(t=>t.name),['list_projects','get_project_with_undone_tasks','get_task_in_project']);assert.deepEqual(c.unsupportedOperations,['search']);assert.equal(calls,0);
+ const c=await t.catalog('dida',gates);assert.equal(c.provenance,'bundled-contract');assert.deepEqual(c.tools.map(t=>t.name),['list_projects','get_project_with_undone_tasks','get_named_project_with_undone_tasks','get_task_in_project']);assert.deepEqual(c.unsupportedOperations,['search']);assert.equal(calls,0);
  assert.throws(()=>validateContextCall(buildContextCall('dida',{operation:'search',query:'work'}),c),code('CONTEXT_UNSUPPORTED_OPERATION'));
  const legacy={tools:[{name:'search',inputSchema:{type:'object',properties:{query:{type:'string'}}}}]};assert.equal(validateContextCall({name:'search',args:{query:'work'}},legacy).name,'search');
  for(const unsupportedOperations of [['delete'],['search','search'],'search',['search',42]])assert.throws(()=>validateContextCall({name:'list_projects',args}, {...c,unsupportedOperations}),code('CONTEXT_SCHEMA_MISMATCH'));

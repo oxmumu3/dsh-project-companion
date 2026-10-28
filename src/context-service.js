@@ -48,7 +48,7 @@ export function createPersonalContext({store,transport,readConfig,readBinding,cr
   const leaseDigest=leases=>digest(JSON.stringify(leases.map(lease=>[lease.source,lease.sessionId,lease.bindingKey,lease.credentialKey,lease.grantId??'legacy']).sort((a,b)=>a[0].localeCompare(b[0]))));
   function assertAuthorization(owner,sources,expected){
     validateOwner(owner);
-    if(closed||failed||!state||!Array.isArray(sources)||sources.length<1||sources.length>4||new Set(sources).size!==sources.length)fail('CONTEXT_BINDING_CHANGED');
+    if(closed||failed||!state||!Array.isArray(sources)||sources.length<1||sources.length>5||new Set(sources).size!==sources.length)fail('CONTEXT_BINDING_CHANGED');
     const leases=sources.map(source=>{sourceId(source);const lease=state.sources.find(row=>row.source===source);if(!lease||lease.sessionId!==owner.sessionId||!credentials(source).configured||credentials(source).key!==lease.credentialKey)fail('CONTEXT_BINDING_CHANGED');return lease;});
     if(leaseDigest(leases)!==expected)fail('CONTEXT_BINDING_CHANGED');return true;
   }
@@ -65,7 +65,7 @@ export function createPersonalContext({store,transport,readConfig,readBinding,cr
     const admitted=generation;
     return serial(async()=>{
       validateOwner(owner);await load();
-      if(!Array.isArray(sources)||sources.length<1||sources.length>4||new Set(sources).size!==sources.length)fail('CONTEXT_INTENT_REQUIRED');
+      if(!Array.isArray(sources)||sources.length<1||sources.length>5||new Set(sources).size!==sources.length)fail('CONTEXT_INTENT_REQUIRED');
       const run=scope(null,undefined,admitted);
       try{
         const leases=[];

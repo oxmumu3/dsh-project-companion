@@ -1,5 +1,6 @@
 // Conservative admission only. It uses the Family gateway's actual Owner
 // message, never a model-provided interpretation or a retrieved document.
+import {familyScopedContextAllowed,normalizeFamilyScopedContext} from './family-context-intent.js';
 const effects={
   coordinate:{want:/(交给|交办|派给|派发|安排.+(?:做|执行)|让.{0,24}(?:做|处理|检查|核对|分析)|(?:帮我|请).{0,24}(?:执行|检查|核对|处理|分析))/,target:/(交办|派发|执行|处理|交给)/},
   context_handoff:{want:/(交给|交办|派给|派发|安排.+(?:做|执行)|让.{0,24}(?:做|处理|检查|核对|分析)|(?:帮我|请).{0,24}(?:执行|检查|核对|处理|分析))/,target:/(交办|派发|执行|处理|交给)/},
@@ -22,8 +23,9 @@ export function familyUnverifiedPlanAction(action){return ['check_once','configu
 export function familyActionAllowed(args){return ['connections','query','context_brief','context_handoff','coordinate'].includes(args?.action)||(args?.action==='task_status'&&typeof args.id==='string'&&args.id.startsWith('family-read-'));}
 // Derive a rolling calendar window from the verified Owner message, not the
 // model's clock. All source, qualifier, count and denial checks still run below.
-export function familyNormalizeCalendar(args,userText,now=new Date()){
+export function familyNormalizeCalendar(args,userText,now=new Date(),previousUserText){
   if(!args||typeof userText!=='string'||!(now instanceof Date)||!Number.isFinite(now.getTime()))return args;
+  args=normalizeFamilyScopedContext(args,userText,previousUserText,now);
   const clauses=userText.split(/[，,。；;！？!?\n]/u).map(c=>c.trim()).filter(Boolean);
   const requested=clauses.filter(c=>sourceNames.calendar.test(c)&&/(?:未来|接下来|之后)\s*(?:24|二十四)\s*(?:小时|h)/i.test(c));
   if(requested.length!==1)return args;
@@ -55,6 +57,7 @@ export function familySelectedItemAllowed(text,items,itemId){
 }
 export function familyIntentAllowed(tool,args,userText,previousUserText,now=new Date()){
   if(typeof userText!=='string'||!userText.trim()||userText.length>64000)return false;
+  if(familyScopedContextAllowed(args,userText,previousUserText,now))return true;
   // Only the immediately preceding verified Owner message can inform an
   // explicit continuation; retrieved content never supplies user intent.
   const mentionsSource=Object.values(sourceNames).some(name=>name.test(userText));

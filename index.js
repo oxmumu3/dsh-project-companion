@@ -705,7 +705,7 @@ export async function installCompanion(ctx,options={}){
     if(familyUnverifiedPlanAction(args.action)&&!familyReminder){const error=new Error('家庭微信入口暂不能安全核验提醒或推送的具体时间和内容，本次未创建、发送或取消计划。');error.code='FAMILY_PLAN_UNAVAILABLE';throw error;}
     if(!protectedWake&&!familyReminder&&!familyActionAllowed(args)){const error=new Error('家庭微信入口暂不支持这项操作，本次未读取资料或更改计划。');error.code='FAMILY_ACTION_UNAVAILABLE';throw error;}
     const now=options.clock?.()??new Date();
-    const admittedArgs=protectedWake||familyReminder?args:familyNormalizeCalendar(args,scope.userText,now);
+    const admittedArgs=protectedWake||familyReminder?args:familyNormalizeCalendar(args,scope.userText,now,scope.previousUserText);
     if(!protectedWake&&!familyReminder&&!familyIntentAllowed('family',admittedArgs,scope.userText,scope.previousUserText,now)){const error=new Error('实际 Owner 消息没有授权这项操作。');if(['query','brief','context_brief'].includes(args.action))error.code='FAMILY_SCOPE_UNSUPPORTED';throw error;}
     if(familyReminder){
       const authorize=()=>{try{parseFamilyReminder(scope,options.clock?.()??new Date());return familyReminderEnabled()&&familyDelegate.current(scope)&&!execution.signal?.aborted;}catch{return false;}};

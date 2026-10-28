@@ -1,5 +1,12 @@
 import test from 'node:test';import assert from 'node:assert/strict';
 const m=await import('../src/family-intent.js').catch(()=>({}));
+test('shared Owner admits literal Gmail Drive and Chinese flomo searches plus Dida metadata',()=>{
+ const now=new Date('2026-10-28T12:00:00Z');
+ const text='Gmail 搜索「subject:预算」最多2条，Drive 搜索「预算」最多2条，flomo 搜索「成长」最多2条，滴答清单列出清单最多2个，生成 Alpha 的项目简报。不要建立计划。';
+ const queries=[{source:'gmail',operation:'search',query:'subject:预算',limit:2},{source:'drive',operation:'search',query:'预算',limit:2},{source:'flomo',operation:'search',query:'成长',limit:2},{source:'dida',operation:'projects',limit:2}];
+ assert.equal(m.familyIntentAllowed('project_companion',{action:'context_brief',queries,userRequested:true},text,undefined,now),true);
+ assert.equal(m.familyIntentAllowed('project_companion',{action:'context_brief',queries:queries.map((q,i)=>i===0?{...q,query:'private'}:q),userRequested:true},text,undefined,now),false);
+});
 test('negative or preview user message cannot authorize a follow-up despite model flag',()=>{assert.equal(typeof m.familyIntentAllowed,'function');for(const text of ['帮我整理项目。不要设置提醒，也不要建立计划。','这个功能能不能实现两分钟后跟进？','只是预览，先别安排检查。'])assert.equal(m.familyIntentAllowed('project_companion',{action:'check_once',userRequested:true},text),false);});
 test('single-check and cancellation are distinguished from an explicit prohibition of repeating plans',()=>{assert.equal(m.familyIntentAllowed('project_companion',{action:'check_once',userRequested:true},'两分钟后检查一次，有变化再告诉我。不要建立周期计划。'),true);assert.equal(m.familyIntentAllowed('project_companion',{action:'configure_followup',userRequested:true},'两分钟后检查一次，不要建立周期计划。'),false);});
 test('side effects need real owner text and explicit tool intent',()=>{for(const a of ['context_handoff','coordinate','remind','configure_daily'])assert.equal(m.familyIntentAllowed('project_companion',{action:a,userRequested:true},'只是帮我看看当前情况。'),false);assert.equal(m.familyIntentAllowed('project_companion',{action:'coordinate',task:'只读检查',userRequested:false},'把这个任务交给项目做一次。'),false);assert.equal(m.familyIntentAllowed('project_companion',{action:'coordinate',task:'只读检查',userRequested:true},'把这个任务交给项目做一次。'),true);});
