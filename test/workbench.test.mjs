@@ -117,7 +117,7 @@ test('binding replacement while jobs are being read discards their content and m
 });
 
 test('latest completed reply is inspected once, redacted, bounded and keeps truncation evidence',async()=>{
-  const rows=[{id:'old',projectLabel:'项目',task:'旧交办',status:'completed',createdAt:now,finishedAt:now},{id:'latest',projectLabel:'项目',task:'新交办',status:'completed',createdAt:now,finishedAt:'2026-10-19T15:01:00Z'},{id:'interrupted',projectLabel:'项目',task:'中断',status:'interrupted',createdAt:now}];
+  const rows=[{id:'old',projectLabel:'项目',task:'旧交办',status:'completed',createdAt:'2026-10-19T14:00:00Z',finishedAt:now},{id:'latest',projectLabel:'项目',task:'新交办',status:'completed',createdAt:now,finishedAt:'2026-10-19T15:01:00Z'},{id:'interrupted',projectLabel:'项目',task:'中断',status:'interrupted',createdAt:'2026-10-19T14:30:00Z'}];
   const f=await fixture({jobs:async(_id,args)=>args.id?{jobs:[{...rows[1],reply:`${project.root} ${binding.bindingKey} api_key=private-token `+'字'.repeat(900),replyTruncated:false}]}:{jobs:rows}});
   const value=await f.adapter.snapshot();
   assert.equal(Object.hasOwn(value.jobs[0],'result'),false);assert.equal(Object.hasOwn(value.jobs[2],'result'),false);
@@ -281,4 +281,15 @@ test('offline paired Family view never projects legacy reminders or daily plans'
 
 test('Family mode remains read-only when its binding disappears midway through a snapshot',async()=>{
  let f;f=await fixture({connection:{...binding,readOnly:true},readProject:async()=>{f.setConnection({state:'unknown',readOnly:true});return[];}});const result=await f.adapter.snapshot();assert.equal(result.connection.state,'unknown');assert.equal(result.connection.readOnly,true);assert.deepEqual(result.jobs,[]);assert.deepEqual(result.reminders,[]);
+});
+
+
+test('a new active job does not eagerly read an older completion into the current snapshot',async()=>{
+ const f=await fixture({jobs:async(_s,args)=>args?.id?{jobs:[{id:args.id,status:'completed',reply:'OLD_DETAIL',replyTruncated:false}]}:{jobs:[{id:'old',projectLabel:'公开项目',task:'旧任务',status:'completed',createdAt:'2026-10-18T15:00:00Z',finishedAt:'2026-10-18T15:01:00Z'},{id:'new',projectLabel:'公开项目',task:'新任务',status:'running',createdAt:now}]}});const result=await f.adapter.snapshot();assert.equal(f.calls.some(c=>Array.isArray(c)&&c[0]==='detail'),false);assert.doesNotMatch(JSON.stringify(result),/OLD_DETAIL/);
+});
+
+
+test('verified quiet check is projected as historical evidence, never inferred for legacy records',async()=>{
+ const f=await fixture({dependencies:{followup:{inspect:async()=>({followup:null,once:{enabled:false,running:false,status:'completed',delivery:'family',lastReviewedAt:now,lastCheckOutcome:'quiet',runCount:1}})}}});const r=await f.adapter.snapshot();assert.equal(r.projects[0].followup.once.lastCheckOutcome,'quiet');assert.equal(r.projects[0].followup.once.lastReviewedAt,now);
+ const bad=await fixture({dependencies:{followup:{inspect:async()=>({followup:null,once:{enabled:false,running:false,status:'completed',delivery:'family',lastCheckOutcome:'quiet'}})}}});assert.equal((await bad.adapter.snapshot()).projects[0].followup.available,false);
 });

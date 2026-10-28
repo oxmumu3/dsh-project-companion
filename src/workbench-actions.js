@@ -89,6 +89,7 @@ export function createWorkbenchActions({service,memory,followup,taskResults,read
     if(!once&&Number.isSafeInteger(value.everyMinutes)&&value.everyMinutes>=30&&value.everyMinutes<=1440)out.everyMinutes=value.everyMinutes;
     if(!once)Object.assign(out,projectDailySchedule(value));
     for(const key of ['nextDueAt','lastRunAt','lastReviewedAt'])out[key]=timestamp(value[key]);
+    if(value.lastCheckOutcome!==undefined){if(!['quiet','reviewed'].includes(value.lastCheckOutcome)||!timestamp(value.lastReviewedAt))unavailable();out.lastCheckOutcome=value.lastCheckOutcome;}
     if(typeof value.blocked==='string')out.blocked=clean(value.blocked,200);
     if(Number.isSafeInteger(value.runCount)&&value.runCount>=0)out.runCount=value.runCount;
     return out;

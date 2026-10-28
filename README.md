@@ -18,6 +18,12 @@
 
 Google Gmail、Calendar、Drive 的数据权限已正式提交，当前 **`UNDER_REVIEW`**，尚未批准、完成 CASA 或解除已知累计 100 个账号上限；不保证任意新账号均能接入。flomo 需要 MAX。五源授权在本机升级后保留，不等于已创建扫描或订阅。历史账号实读与旧版手机记录见[历史验证记录](docs/verification.md)，不能代替本版验收。
 
+## 0.15.0-preview.2 体验收口候选
+
+本地候选进一步区分 Google 本次授权结果与已有凭据；在授权卡说明未验证提示及恢复方式，把首份问题放到已启用来源旁边，已连接后的重连降为次级。首页显示最新交办，保留上次已核验检查与静默状态。共享家庭微信入口的工作台只投影当前 Owner 的记录，交代和改计划继续在原微信完成；本视图不回退另一条旧会话的写入口。此候选尚未公开发布，也不替代手机验收。
+
+具体取舍及一手来源见[本轮迭代](docs/personal-agent-iteration.md)、[竞品与复用研究](docs/research/personal-agent-20261028/README.md)和[交互依据](docs/research/personal-agent-20261028/UX.md)。
+
 ## 安装
 
 [下载 0.14.1-preview.11 macOS 完整包](https://github.com/oxmumu3/dsh-project-companion/releases/download/v0.14.1-preview.11/dsh-dot-0.14.1-preview.11-r3-macos.zip) · [固定版本发布页](https://github.com/oxmumu3/dsh-project-companion/releases/tag/v0.14.1-preview.11) · [安装说明](docs/install.md)。

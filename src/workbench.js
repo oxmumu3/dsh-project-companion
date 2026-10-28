@@ -85,6 +85,7 @@ export function createWorkbench({service,taskResults,memory,followup,readBinding
       const result={...(value.loopId!==undefined?{loopId:value.loopId}:{}),enabled:value.enabled,running:value.running,delivery:'wechat',...(once?{status:value.status}:{everyMinutes:value.everyMinutes,...projectDailySchedule(value)})};
       for(const key of ['nextDueAt','lastReviewedAt','lastRunAt'])if(value[key]!==undefined&&value[key]!==null){if(!at(value[key]))throw new Error('Invalid follow-up time');result[key]=at(value[key]);}
       if(value.runCount!==undefined){if(!Number.isSafeInteger(value.runCount)||value.runCount<0)throw new Error('Invalid follow-up count');result.runCount=value.runCount;}
+      if(value.lastCheckOutcome!==undefined){if(!['quiet','reviewed'].includes(value.lastCheckOutcome)||!at(value.lastReviewedAt))throw new Error('Invalid last check outcome');result.lastCheckOutcome=value.lastCheckOutcome;}
       if(value.blocked)result.blocked='原跟进当前不可运行，请打开安排核对。';
       return result;
     };
@@ -132,8 +133,8 @@ export function createWorkbench({service,taskResults,memory,followup,readBinding
         jobs=list(result?.jobs,10).filter(job=>identity(job?.id)&&at(job.createdAt)).map(job=>({id:job.id,projectLabel:clean(job.projectLabel,80),task:clean(job.task,160),status:JOB_STATES.has(job.status)?job.status:'unknown',createdAt:at(job.createdAt),
           ...(at(job.finishedAt)?{finishedAt:at(job.finishedAt)}:{}),...(job.delivery?{delivery:{status:DELIVERY_STATES.has(job.delivery.status)?job.delivery.status:'uncertain',detail:clean(job.delivery.detail,160)}}:{})}));
         availability.jobs=true;
-        const latest=jobs.filter(job=>job.status==='completed').sort((a,b)=>Date.parse(b.finishedAt??b.createdAt)-Date.parse(a.finishedAt??a.createdAt))[0];
-        if(latest){
+        const latest=[...jobs].reverse().sort((a,b)=>Date.parse(b.createdAt)-Date.parse(a.createdAt))[0];
+        if(latest?.status==='completed'){
           latest.result={available:false,text:'',truncated:false};
           try{
             if(!same(expected,await connection()))throw new Error('Original binding changed');

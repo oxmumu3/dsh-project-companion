@@ -41,7 +41,8 @@
     "bridge-maintenance/",
     "docs/google-desktop-oauth.md",
     "docs/google-public-onboarding.md",
-    "docs/dot-v2-implementation.md"
+    "docs/dot-v2-implementation.md",
+    "docs/personal-agent-iteration.md"
   ],
   "scripts": {
     "test": "node --max-old-space-size=128 --test --test-concurrency=1 test/*.test.mjs",
