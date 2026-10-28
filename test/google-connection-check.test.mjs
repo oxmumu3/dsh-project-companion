@@ -28,3 +28,10 @@ test('reachable probe still requires unchanged owner before creating one consent
 test('failed probe after revoke or close invalidates the UI instead of retaining an old connection',async()=>{
  for(const mode of ['revoke','close']){let release,enter;const entered=new Promise(r=>enter=r),held=new Promise(r=>release=r);const h=route(async()=>{enter();await held;throw Object.assign(Error('PRIVATE'),{code:'GOOGLE_CONNECTION_UNAVAILABLE'});});let handler;registerContextRoute({get:()=>({fetch:{register:v=>handler=v}})},h.r);const pending=handler.fetch(new Request('http://localhost/api/project_companion/context',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(input)}));await entered;if(mode==='revoke')h.revoke();else h.r.close();release();const response=await pending;assert.equal(response.status,400);assert.equal((await response.json()).code,undefined);assert.equal(h.starts(),0);}
 });
+
+test('binding change while the failed probe rechecks pause state cannot retain the old snapshot',async()=>{
+ let b=binding,checks=0,starts=0;
+ const r=createContextRoute({context:{},readConnection:async()=>b,resolveOwner:()=>({sessionId:binding.sessionId,cwd:'/synthetic'}),canRun:async()=>{if(++checks===3)b={state:'unknown'};return true;},googleSuiteAuth:{start:async()=>{starts++;}},checkGoogleConnection:async()=>{throw Object.assign(Error('PRIVATE'),{code:'GOOGLE_CONNECTION_UNAVAILABLE'});}});
+ let handler;registerContextRoute({get:()=>({fetch:{register:v=>handler=v}})},r);
+ const response=await handler.fetch(new Request('http://localhost/api/project_companion/context',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(input)}));assert.equal(response.status,400);assert.equal((await response.json()).code,undefined);assert.equal(starts,0);assert.equal(checks,3);
+});

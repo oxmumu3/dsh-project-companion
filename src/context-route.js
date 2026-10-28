@@ -125,7 +125,7 @@ export function createContextRoute({context,googleAuth,googleCalendarAuth,google
         if(input.action==='google_suite_authorize'&&typeof checkGoogleConnection==='function'){
           const checkController=new AbortController();connectionChecks.add(checkController);
           try{if(await checkGoogleConnection({signal:checkController.signal})!==true)invalid();}
-          catch(failure){await check(expected);if(!await canRun())invalid();throw failure;}
+          catch(failure){await check(expected);if(!await canRun())invalid();await check(expected);throw failure;}
           finally{connectionChecks.delete(checkController);}
           await check(expected);if(!await canRun())invalid();
         }
