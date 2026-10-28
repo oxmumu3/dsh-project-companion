@@ -262,3 +262,12 @@ test('official SDK install exposes passive watched projects with a cold source a
   assert.deepEqual(await adapter.service.act(owner,{action:'status'}),before);
   await ctx.fiber.dispose();assert.equal(routes.has('/api/project_companion/workbench'),false);await assert.rejects(adapter.workbench.snapshot(),/关闭|停止/);assert.equal((await route.fetch(new Request('http://localhost/api/project_companion/workbench'))).status,503);
 });
+
+test('Family projection uses its own result scope while legacy source and reminder scope stay separate',async()=>{
+ const {createWorkbench}=await api();const legacy={state:'bound',sessionId:'legacy-owner',bindingKey:'a'.repeat(64)};
+ const family={state:'bound',sessionId:'family_owner_synthetic',bindingKey:'b'.repeat(64),readOnly:true};
+ const adapter=createWorkbench({service:{watchedProjects:async()=>[]},readConnection:async()=>family,readContextConnection:async()=>legacy,readState:async()=>({paused:true,daily:{time:'09:00',timeZone:'UTC',enabled:true},reminders:[{id:'legacy-reminder',title:'OTHER OWNER REMINDER',dueAt:now,status:'scheduled'}],outbox:[]}),readBinding:async()=>returnBinding,taskResults:{inspect:async id=>{assert.equal(id,family.sessionId);return{jobs:[]};}},clock:()=>new Date(now)});
+ const value=await adapter.snapshot();const {bindingRevision}=await import('../src/workbench-scope.js');
+ assert.equal(value.contextBindingRevision,bindingRevision(legacy));assert.notEqual(value.bindingRevision,value.contextBindingRevision);assert.equal(value.connection.readOnly,true);
+ assert.equal(value.availability.plans,false);assert.deepEqual(value.reminders,[]);assert.equal(value.daily,null);assert.equal(value.paused,true);assert.doesNotMatch(JSON.stringify(value),/OTHER OWNER/);adapter.close();
+});

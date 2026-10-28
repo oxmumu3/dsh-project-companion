@@ -424,12 +424,12 @@ export function createProjectFollowup(options={}){
       return queued(async()=>{
         requireSession(sessionId);
         if(expected?.sessionId!==sessionId||!hash(expected?.bindingKey))throw new Error('Expected original UI binding is required');
-        const confirm=async()=>{requireOpen();const current=await options.readConnection?.();requireOpen();if(current?.state!=='bound'||current.sessionId!==sessionId||current.bindingKey!==expected.bindingKey)throw new Error('Original UI binding changed during inspection');};
-        await confirm();const binding=clone(await options.readBinding?.(sessionId));
+        const confirm=async()=>{requireOpen();const current=await options.readConnection?.();requireOpen();if(current?.state!=='bound'||current.sessionId!==sessionId||current.bindingKey!==expected.bindingKey)throw new Error('Original UI binding changed during inspection');return current;};
+        const ui=await confirm();const binding=clone(await options.readBinding?.(sessionId));
         if(!validBinding(binding))throw new Error('Original follow-up binding unavailable');
         // Cold loads remain local to this read and cannot join close() persistence.
         const recurring=await load(root,{cache:false}),once=await loadOnce(root,sessionId,{cache:false});
-        for(const entry of [recurring,once])if(entry){checkOwner(entry,sessionId);if(entry.once&&entry.meta.delivery!=='wechat'||!sameBinding(entry.meta.binding,binding))throw new Error('Follow-up belongs to another original binding');}
+        for(const entry of [recurring,once])if(entry){checkOwner(entry,sessionId);if(entry.once&&!['wechat','family'].includes(entry.meta.delivery)||!sameBinding(entry.meta.binding,binding))throw new Error('Follow-up belongs to another original binding');if(entry.meta.delivery==='family'){if(ui.readOnly!==true||!await routeAllowed(entry))throw new Error('Family follow-up route is not current');}else if(ui.readOnly===true)throw new Error('Follow-up belongs to another original route');}
         const result={followup:recurring?clone(view(recurring)):null,once:once?clone(view(once)):null};
         if(!await authorizes(root)||!sameBinding(binding,await options.readBinding?.(sessionId)))throw new Error('Follow-up scope changed during inspection');
         await confirm();return result;

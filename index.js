@@ -42,6 +42,7 @@ import {parseFamilyReminder} from './src/family-reminder.js';
 import {deriveFamilyPlan,familyPlanAction} from './src/family-plan.js';
 import {createFamilyReadAdapter} from './src/family-read-adapter.js';
 import {createContextRoute,registerContextRoute} from './src/context-route.js';
+import {createFamilyWorkbenchConnection} from './src/family-workbench-route.js';
 import {createWorkbench,registerWorkbenchRoute} from './src/workbench.js';
 import {createWorkbenchActions,registerWorkbenchActionsRoute} from './src/workbench-actions.js';
 import {createProjectCatalog} from './src/project-catalog.js';
@@ -391,7 +392,8 @@ export async function installCompanion(ctx,options={}){
       return getFamilyBridge()?.readOwnerDelivery({sessionId:scope.familySessionId,bindingRevision:scope.bindingRevision,requestId});
     },
   };
-  followup=createProjectFollowup({ctx,invalidateLoop:()=>contextLoop?.suspend(),authorizeRoot,readBinding,readConnection:readSetup,readNativeRoute,familyRoute,pauseState:()=>service.isPaused(),canRun:async({root})=>await authorizeRoot(root)&&!await service.isPaused(),...(options.clock?{clock:options.clock}:{}),...(options.hostTimeZone?{hostTimeZone:options.hostTimeZone}:{}),...(options.followup?.createScheduler?{createScheduler:options.followup.createScheduler}:{})});
+  const readWorkbenchConnection=createFamilyWorkbenchConnection({isEnabled:familyEnabled,readLegacyConnection:readSetup,delegation:familyDelegate,readNativeRoute});
+  followup=createProjectFollowup({ctx,invalidateLoop:()=>contextLoop?.suspend(),authorizeRoot,readBinding,readConnection:readWorkbenchConnection,readNativeRoute,familyRoute,pauseState:()=>service.isPaused(),canRun:async({root})=>await authorizeRoot(root)&&!await service.isPaused(),...(options.clock?{clock:options.clock}:{}),...(options.hostTimeZone?{hostTimeZone:options.hostTimeZone}:{}),...(options.followup?.createScheduler?{createScheduler:options.followup.createScheduler}:{})});
   projectUpdateModel=createProjectUpdateModel(ctx,{...(options.clock?{clock:options.clock}:{})});
   const updateOwner=(caller)=>{const agent=ctx.get('agents',false)?.get(caller.sessionId);return !disposed&&!lifecycle.signal.aborted&&agent&&String(agent.id)===caller.sessionId&&effectiveCwd(ctx,agent)===caller.cwd;};
   const readUpdateScope=async(caller,root)=>{
@@ -498,19 +500,19 @@ export async function installCompanion(ctx,options={}){
     },
   });
   workbench=createWorkbench({
-    service,taskResults,memory,followup,readBinding,readConnection:readSetup,isClosed:()=>disposed,
+    service,taskResults,memory,followup,readBinding,readConnection:readWorkbenchConnection,readContextConnection:readSetup,isClosed:()=>disposed,
     // Read the existing table directly: GET must not require or resume a live
     // owner, normalize recovery state, or create a second state store.
     readState:()=>table.get('profile'),
     ...(options.clock?{clock:options.clock}:{}),...(options.hostTimeZone?{hostTimeZone:options.hostTimeZone}:{}),
   });
   workbenchActions=createWorkbenchActions({
-    service,memory,followup,taskResults,readBinding,readConnection:readSetup,isClosed:()=>disposed,
+    service,memory,followup,taskResults,readBinding,readConnection:readSetup,readReadonlyConnection:readWorkbenchConnection,isClosed:()=>disposed,
     resolveOwner:sessionId=>{const agent=ctx.get('agents',false)?.get(sessionId),cwd=effectiveCwd(ctx,agent);return !disposed&&agent&&String(agent.id)===sessionId&&cwd?{sessionId,cwd}:null;},
     activateOwner:async sessionId=>{const controller=ctx.get('sessionController',false);if(disposed||typeof controller?.resolveAgent!=='function')throw new Error('请先打开原 Dot 微信会话。');const value=await controller.resolveAgent(sessionId);if(disposed||value?.error||String(value?.agent?.id)!==sessionId)throw new Error('原 Dot 会话暂不能恢复。');},
     ...(options.clock?{clock:options.clock}:{}),
   });
-  const projectCatalogController=createProjectCatalogController({catalog:projectCatalog,readConnection:readSetup,isPaused:()=>service.isPaused(),isPausedSync:()=>disposed||service.isPausedSync(),isClosed:()=>disposed});
+  const projectCatalogController=createProjectCatalogController({catalog:projectCatalog,readConnection:readWorkbenchConnection,isPaused:()=>service.isPaused(),isPausedSync:()=>disposed||service.isPausedSync(),isClosed:()=>disposed});
   if(typeof ctx.inject==='function')ctx.inject(['connection'],scope=>{if(!disposed)registerProjectCatalogRoute(scope,projectCatalogController);});
   if(typeof ctx.inject==='function')ctx.inject(['connection'],scope=>{if(!disposed)registerWorkbenchActionsRoute(scope,workbenchActions);});
   if(typeof ctx.inject==='function')ctx.inject(['connection'],scope=>{if(!disposed)registerWorkbenchRoute(scope,workbench);});
@@ -915,7 +917,7 @@ export async function installCompanion(ctx,options={}){
           return await taskResults.status(owner(ctx,execution.agent).sessionId,{id:args.id,...(scope?{expectedBinding:familyBinding(scope)}:{})});
         }
         return await act(execution.agent,args);
-      }finally{syncTimer();}});}catch(error){return{status:'blocked',accepted:false,text:['FAMILY_PLAN_UNAVAILABLE','FAMILY_ACTION_UNAVAILABLE'].includes(error?.code)?error.message:error?.code==='FAMILY_SCOPE_UNSUPPORTED'?'家庭微信入口暂只支持按关键词和条数搜索 flomo，以及查看未来24小时内指定条数的日历；其他个人资料范围暂不能安全解析，本次未读取。':error?.message==='该项目会话暂不能保证只读；尚未派发任务。'?error.message:'当前家庭微信入口的 Owner 身份、资料范围或操作授权不可用，未读取或派发。'};}
+      }finally{syncTimer();}});}catch(error){return{status:'blocked',accepted:false,text:['FAMILY_PLAN_UNAVAILABLE','FAMILY_ACTION_UNAVAILABLE'].includes(error?.code)?error.message:error?.code==='FAMILY_SCOPE_UNSUPPORTED'?'家庭微信入口支持按明确关键词和条数搜索 Gmail、Drive、flomo，查看未来七天内的日历，以及滴答清单或指定清单的未完成任务。请补充来源、关键词或时间范围；本次未读取。':error?.message==='该项目会话暂不能保证只读；尚未派发任务。'?error.message:'当前家庭微信入口的 Owner 身份、资料范围或操作授权不可用，未读取或派发。'};}
     },
   }));
   ctx.tools.register(defineTool({
@@ -963,7 +965,7 @@ export async function installCompanion(ctx,options={}){
     async execute(args,execution){
       if(disposed)return{status:'blocked',text:'助理正在关闭，未读取资料。'};
       try{return await withFamily(execution,args,admittedArgs=>familyContext.act(owner(ctx,execution.agent),{...admittedArgs,signal:execution.signal}));}
-      catch(error){return{status:'blocked',text:error?.code==='FAMILY_SCOPE_UNSUPPORTED'?'家庭微信入口暂只支持按关键词和条数搜索 flomo，以及查看未来24小时内指定条数的日历；其他个人资料范围暂不能安全解析，本次未读取。':contextErrorText(error)};}
+      catch(error){return{status:'blocked',text:error?.code==='FAMILY_SCOPE_UNSUPPORTED'?'家庭微信入口支持按明确关键词和条数搜索 Gmail、Drive、flomo，查看未来七天内的日历，以及滴答清单或指定清单的未完成任务。请补充来源、关键词或时间范围；本次未读取。':contextErrorText(error)};}
     },
   }));
   ctx.systemPrompt.section({name:'project-companion:context-guidance',order:9001,interpolate:false,text:({scope})=>{

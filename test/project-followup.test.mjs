@@ -46,7 +46,7 @@ async function harness(t,options={}){
   ctx.provide('agents',registry);ctx.provide('agentDefaultModel',{currentSelection:()=>({provider:'synthetic',model:'synthetic'})});
   ctx.provide('agentPresets',{mount:async(_scope,id)=>mounts.push(id)});
   for(const name of ['project_companion','send_wechat','bash'])ctx.tools.register(defineTool({name,description:'Synthetic capability only, no external effects',parameters:{action:{type:'string'},project:{type:'string'}},output:{schema:{type:'object',additionalProperties:true},render:()=>[]},execute:args=>{tools.push({name,args});return options.toolResult?.(name,args)??{ok:true};}}));
-  const optionsForAdapter={ctx,clock:()=>now,hostTimeZone:()=> 'America/Mexico_City',authorizeRoot:async r=>allow&&authorizedRoots.has(r),canRun:async()=>allowedRun,readBinding:async sessionId=>options.readBinding?options.readBinding(sessionId):currentBinding,readConnection:async()=>options.readConnection?options.readConnection():{state:'bound',sessionId:owner.id,bindingKey:'d'.repeat(64)},readNativeRoute:async sessionId=>options.readNativeRoute?options.readNativeRoute(sessionId):(currentBinding===null?{kind:'unbound'}:{kind:'bound',binding:currentBinding}),createScheduler:deps=>{const scheduler=new ProactiveScheduler(deps);schedulers.push(scheduler);options.onSchedulerCreated?.();return scheduler;}};
+  const optionsForAdapter={ctx,clock:()=>now,hostTimeZone:()=> 'America/Mexico_City',authorizeRoot:async r=>allow&&authorizedRoots.has(r),canRun:async()=>allowedRun,readBinding:async sessionId=>options.readBinding?options.readBinding(sessionId):currentBinding,readConnection:async()=>options.readConnection?options.readConnection():{state:'bound',sessionId:owner.id,bindingKey:'d'.repeat(64)},readNativeRoute:async sessionId=>options.readNativeRoute?options.readNativeRoute(sessionId):(currentBinding===null?{kind:'unbound'}:{kind:'bound',binding:currentBinding}),...(options.familyRoute?{familyRoute:options.familyRoute}:{}),createScheduler:deps=>{const scheduler=new ProactiveScheduler(deps);schedulers.push(scheduler);options.onSchedulerCreated?.();return scheduler;}};
   let adapter=createProjectFollowup(optionsForAdapter);
   const args={root,sessionId:owner.id,everyMinutes:30,projectLabel:'测试项目'};
   const drain=async()=>{for(const s of schedulers)await s.driveChain;};
@@ -523,4 +523,16 @@ test('close during pending wake routing cannot masquerade as a completed one-off
   while(!release)await new Promise(resolve=>setTimeout(resolve,1));
   const closing=h.adapter.close();waiting=false;release();await scheduler.driveChain;await closing;await h.reopen();
   const status=await h.adapter.onceStatus(onceArgs(h));assert.notEqual(status.status,'completed');assert.equal(status.enabled,false);assert.equal(status.lastReviewedAt,null);assert.equal(h.messages.length,0);assert.equal(h.resumes.length,0);
+});
+
+
+test('passive Family inspection retains only the exact original route and never starts cold plans',async t=>{
+ let current=true;const scope={familySessionId:'session-original',bindingRevision:binding.userHash};
+ const familyRoute={getScope:()=>scope,isCurrent:()=>current,recheck:async()=>current};
+ const h=await harness(t,{familyRoute,readConnection:()=>({state:'bound',sessionId:'session-original',bindingKey:'d'.repeat(64),readOnly:true})});
+ await h.adapter.configure({...h.args,delivery:'family'});await h.adapter.checkOnce({...h.args,delivery:'family',delaySeconds:60});await h.drain();await h.reopen();
+ const count=h.schedulers.length,args={...h.args,expectedBinding:{sessionId:h.owner.id,bindingKey:'d'.repeat(64)}};
+ const before=await readFile(join(h.root,'.dsh/dot-followup/scope.json'),'utf8');const value=await h.adapter.inspect(args);
+ assert.equal(value.followup.enabled,true);assert.equal(value.followup.running,false);assert.equal(value.once.delivery,'family');assert.equal(h.schedulers.length,count);assert.deepEqual(h.resumes,[]);assert.deepEqual(h.messages,[]);
+ current=false;await assert.rejects(h.adapter.inspect(args));assert.equal(await readFile(join(h.root,'.dsh/dot-followup/scope.json'),'utf8'),before);
 });

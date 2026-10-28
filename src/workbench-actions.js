@@ -21,16 +21,18 @@ const unavailable=()=>{throw new Error('工作台操作未完成，请刷新后�
 const rootValid=root=>typeof root==='string'&&isAbsolute(root)&&root===resolve(root)&&root!==parse(root).root&&root.length<=4096;
 
 /** Explicit owner-authenticated controls. It owns no scheduler, store or model. */
-export function createWorkbenchActions({service,memory,followup,taskResults,readBinding,readConnection,resolveOwner,activateOwner,isClosed=()=>false,clock=()=>new Date()}={}){
+export function createWorkbenchActions({service,memory,followup,taskResults,readBinding,readConnection,readReadonlyConnection=readConnection,resolveOwner,activateOwner,isClosed=()=>false,clock=()=>new Date()}={}){
   let closed=false;
   const open=()=>{if(closed||isClosed())unavailable();};
   const now=()=>{const value=clock();const epoch=value instanceof Date?value.getTime():Number(value);if(!Number.isFinite(epoch))unavailable();return epoch;};
-  const connection=async()=>{
-    open();const value=await readConnection?.();open();
+  const connectionReaders=new WeakMap();
+  const connection=async(readonly=false)=>{
+    open();const value=await (readonly?readReadonlyConnection:readConnection)?.();open();
     // Never retain a mutable carrier object across another await.
-    return bound(value)?{state:'bound',sessionId:value.sessionId,bindingKey:value.bindingKey}:{state:'unknown'};
+    const result=bound(value)?{state:'bound',sessionId:value.sessionId,bindingKey:value.bindingKey}:{state:'unknown'};
+    connectionReaders.set(result,readonly);return result;
   };
-  const checkBinding=async expected=>{if(!same(expected,await connection()))unavailable();};
+  const checkBinding=async expected=>{if(!same(expected,await connection(connectionReaders.get(expected))))unavailable();};
   async function scope(expected,projectId){
     open();const projects=await service.watchedProjects();await checkBinding(expected);
     if(!Array.isArray(projects)||projects.length>5||projects.some(row=>!rootValid(row?.root)))unavailable();
@@ -108,7 +110,7 @@ export function createWorkbenchActions({service,memory,followup,taskResults,read
   }
   return{
     async action(input){
-      open();input=structuredClone(input);const write=validate(input),expected=await connection();if(!bound(expected)||!matchesBindingRevision(input,expected))unavailable();
+      open();input=structuredClone(input);const write=validate(input),expected=await connection(!write);if(!bound(expected)||!matchesBindingRevision(input,expected))unavailable();
       let authorized=await scope(expected,input.projectId);
       if(write){await readyOwner(expected,input.projectId);authorized=await scope(expected,input.projectId);}
       const clean=cleaner(authorized.roots,expected),base={action:input.action,...(input.projectId?{projectId:input.projectId}:{})};
