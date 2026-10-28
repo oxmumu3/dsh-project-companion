@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { basename, dirname, isAbsolute, resolve } from 'node:path';
 import { readProjectFiles, readGithubRelease, validateRepository, PROJECT_FILES, FILE_BYTES } from './sources.js';
 import { formatWechatDigest, formatWechatReminder } from './presentation.js';
+import {createProjectCatalog,projectPublicId} from './project-catalog.js';
 
 const SIX_HOURS = 6 * 60 * 60 * 1000;
 const REMINDER_GRACE = 15 * 60 * 1000;
@@ -55,7 +56,7 @@ const friendlyName = value => String(value ?? '').normalize('NFKC').trim().repla
 function projectMatch(projects, reference, { optional = false } = {}) {
   if(typeof reference!=='string'||!reference.trim()||reference.length>4096)throw new Error('请告诉我你指的是哪个项目。');
   const query=reference.trim();
-  let matches=projects.filter(p=>p.id===query||p.root===query);
+  let matches=projects.filter(p=>p.id===query||p.root===query||projectPublicId(p.root)===query);
   if(!matches.length&&!isAbsolute(query)){
     const normalized=friendlyName(query);
     matches=projects.filter(p=>friendlyName(p.label)===normalized);
@@ -168,7 +169,7 @@ export function createService(options = {}) {
   const candidates = async owner => {
     const rows = await discover(owner);
     const unique = new Map();
-    for (const row of [...rows.slice(0, 100), { root: owner.cwd, label: basename(owner.cwd), sessionIds: [owner.sessionId] }]) {
+    for (const row of [...rows, { root: owner.cwd, label: basename(owner.cwd), sessionIds: [owner.sessionId] }]) {
       if (typeof row.root !== 'string' || !isAbsolute(row.root)) continue;
       const root = resolve(row.root);
       const prior = unique.get(root);
@@ -328,11 +329,13 @@ export function createService(options = {}) {
       }
       case 'list': {
         const known=await candidates(owner);
-        const shown=known.slice(0,10).map(p=>({...p,root:snippet(p.root,256),sessionIds:p.sessionIds.slice(-2)}));
+        const catalog=options.catalog??createProjectCatalog({readRegistered:()=>known,readWatched:async()=>state.projects});
+        const page=await catalog.page({...(input.query!==undefined?{query:input.query}:{}),...(input.offset!==undefined?{offset:input.offset}:{}),...(input.limit!==undefined?{limit:input.limit}:{}),...(input.catalogRevision!==undefined?{expectedRevision:input.catalogRevision}:{})});
+        const shown=page.items;
         const projects=view().projects;
         const time=currentTime();
-        const text=[`现在: ${time.now}；电脑时区: ${time.hostTimeZone}`,'关注项目:',...projects.map(p=>`${p.id} ${p.label}; session ${p.sessionIds.join(', ')||'无'}`),`可选项目(${known.length}，最多列10个):`,...shown.map(p=>`${snippet(p.id,120)} ${p.label}; session ${p.sessionIds.join(', ')||'无'}`),'告诉我你想关注的项目名称即可；同名时我会先核对。'].join('\n');
-        return{...time,projects,candidates:shown,candidateCount:known.length,text:text.length<=3200?text:`${text.slice(0,3100)}\n[列表已截断；请告诉我目标项目名称]`};
+        const text=[`现在: ${time.now}；电脑时区: ${time.hostTimeZone}`,`持续关注项目（${projects.length}/5，单次查看其他已知项目不占名额）:`,...projects.map(p=>`${p.id} ${p.label}`),`已知项目 ${page.total} 个；本次匹配 ${page.matchedTotal} 个，本页 ${shown.length} 个:`,...shown.map(p=>`${p.label}${p.disambiguator?`（${p.disambiguator}）`:''}${p.watched?' · 正在关注':''}`),page.hasMore?'还有下一页，也可以直接告诉我项目名称。':'本次匹配已列完。','同名时我会先核对；列项目不会读取项目文件、派工或创建推送。'].join('\n');
+        return{...time,scope:options.catalog?page.scope:'live_compatibility',complete:!!options.catalog&&page.complete===true,projects,candidates:shown,candidateCount:page.total,catalogRevision:page.revision,matchedTotal:page.matchedTotal,offset:page.offset,limit:page.limit,hasMore:page.hasMore,nextOffset:page.nextOffset,text:text.length<=3200?text:`${text.slice(0,3100)}\n[文字已截断；结构化本页与分页信息仍完整]`};
       }
       case 'digest': return digest(input.project,owner,input.detail);
       case 'configure_daily': {
@@ -434,6 +437,8 @@ export function createService(options = {}) {
   });
   const needsTimer = () => !!state && !state.paused && (state.daily?.enabled || state.reminders.some(r => r.status === 'scheduled') || state.outbox.some(r => ['pending', 'blocked'].includes(r.status)));
   const coordinationTarget = projectId => serial(async()=>{await load();return structuredClone(projectMatch(state.projects,projectId,{optional:true}));});
+  const registeredProjectTarget=reference=>serial(async()=>{await load();return options.catalog?.registeredProjectTarget(reference)??null;});
+  const authorizeRegisteredCoordinationSync=scope=>coordinationReady&&!state?.paused&&options.catalog?.authorizeRegisteredCoordinationSync(scope)===true;
   // Final inbox admission cannot yield: read only this service's initialized current state.
   const canCoordinate = scope => {
     if(!coordinationReady||state?.paused||!Array.isArray(state?.projects)||typeof scope?.projectId!=='string'||!scope.projectId||typeof scope.projectRoot!=='string'||!isAbsolute(scope.projectRoot)||resolve(scope.projectRoot)!==scope.projectRoot||typeof scope.sessionId!=='string'||!scope.sessionId)return false;
@@ -454,5 +459,6 @@ export function createService(options = {}) {
   const canReadProjectUpdate=scope=>coordinationReady&&!state?.paused&&typeof scope?.projectRoot==='string'&&state.projects.some(p=>p.id===scope.projectId&&p.root===scope.projectRoot);
   const watchedProjects = () => serial(async()=>{await load();return structuredClone(state.projects);});
   const isPaused = () => serial(async()=>{await load();return state.paused;});
-  return { ready, act, record, tick, needsTimer, coordinationTarget, canCoordinate, coordinationPausedSync:()=>!coordinationReady||state?.paused===true, watchedProjects, isPaused, fixedProjectAnalysis, canReadProjectUpdate };
+  const isPausedSync = () => !coordinationReady||state?.paused!==false;
+  return { ready, act, record, tick, needsTimer, coordinationTarget, canCoordinate, coordinationPausedSync:isPausedSync, watchedProjects, isPaused, isPausedSync, fixedProjectAnalysis, canReadProjectUpdate, registeredProjectTarget, authorizeRegisteredCoordinationSync };
 }

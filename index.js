@@ -44,6 +44,9 @@ import {createFamilyReadAdapter} from './src/family-read-adapter.js';
 import {createContextRoute,registerContextRoute} from './src/context-route.js';
 import {createWorkbench,registerWorkbenchRoute} from './src/workbench.js';
 import {createWorkbenchActions,registerWorkbenchActionsRoute} from './src/workbench-actions.js';
+import {createProjectCatalog} from './src/project-catalog.js';
+import {createProjectCatalogController,registerProjectCatalogRoute} from './src/project-catalog-route.js';
+import {parseFamilyCatalogList} from './src/project-catalog-intent.js';
 import {observeWelcomeOutcome} from './src/onboarding-outcome.js';
 export {Config};
 
@@ -92,11 +95,11 @@ function liveAgents(ctx){return ctx.get('agents')?.list?.()??[];}
 function discover(ctx){
   const rows=[];
   // Official workspace service; effective live directories are the compatibility fallback.
-  const registry=ctx.get('workspaceRegistry');
-  if(typeof registry?.list==='function')for(const workspace of registry.list().slice(0,100)){
+  const registry=ctx.get('workspaceRegistry',false);
+  if(typeof registry?.list==='function')for(const workspace of registry.list()){
     if(typeof workspace.path==='string')rows.push({id:workspace.id,root:workspace.path,label:workspace.title,sessionIds:Array.isArray(workspace.sessionIds)?workspace.sessionIds:[]});
   }
-  for(const agent of liveAgents(ctx).slice(0,100)){const root=effectiveCwd(ctx,agent);if(root)rows.push({root,label:root.split('/').at(-1),sessionIds:[String(agent.id)]});}
+  for(const agent of liveAgents(ctx)){const root=effectiveCwd(ctx,agent);if(root)rows.push({root,label:root.split('/').at(-1),sessionIds:[String(agent.id)]});}
   return rows;
 }
 
@@ -179,9 +182,14 @@ export async function installCompanion(ctx,options={}){
       }catch{return{status:'uncertain',detail:'Task return outcome unknown; no automatic retry'};}
     },
   });
+  const projectCatalog=createProjectCatalog({
+    readRegistered:()=>{const registry=ctx.get('workspaceRegistry',false);if(typeof registry?.list!=='function')throw new Error('Registered catalog unavailable');return registry.list();},
+    readWatched:async()=>(await table.get('profile'))?.projects??[],isClosed:()=>disposed,
+  });
   const service=createService({
     store:{get:key=>table.get(key),put:(key,value)=>table.put(key,storedRow.parse(value))},
     discover:()=>discover(ctx),
+    ...(typeof ctx.get('workspaceRegistry',false)?.list==='function'?{catalog:projectCatalog}:{}),
     ...(options.clock?{clock:options.clock}:{}),
     ...(options.hostTimeZone?{hostTimeZone:options.hostTimeZone}:{}),
     async send(item,{authorize}={}){
@@ -502,6 +510,8 @@ export async function installCompanion(ctx,options={}){
     activateOwner:async sessionId=>{const controller=ctx.get('sessionController',false);if(disposed||typeof controller?.resolveAgent!=='function')throw new Error('请先打开原 Dot 微信会话。');const value=await controller.resolveAgent(sessionId);if(disposed||value?.error||String(value?.agent?.id)!==sessionId)throw new Error('原 Dot 会话暂不能恢复。');},
     ...(options.clock?{clock:options.clock}:{}),
   });
+  const projectCatalogController=createProjectCatalogController({catalog:projectCatalog,readConnection:readSetup,isPaused:()=>service.isPaused(),isPausedSync:()=>disposed||service.isPausedSync(),isClosed:()=>disposed});
+  if(typeof ctx.inject==='function')ctx.inject(['connection'],scope=>{if(!disposed)registerProjectCatalogRoute(scope,projectCatalogController);});
   if(typeof ctx.inject==='function')ctx.inject(['connection'],scope=>{if(!disposed)registerWorkbenchActionsRoute(scope,workbenchActions);});
   if(typeof ctx.inject==='function')ctx.inject(['connection'],scope=>{if(!disposed)registerWorkbenchRoute(scope,workbench);});
   if(typeof ctx.inject==='function')ctx.inject(['connection'],scope=>{if(!disposed)registerContextRoute(scope,contextRoute);});
@@ -752,6 +762,15 @@ export async function installCompanion(ctx,options={}){
     const now=options.clock?.()??new Date();
     const admittedArgs=trustedPlan?{...args,action:trustedPlan.action,project:trustedPlan.root,userRequested:true,dueAt:trustedPlan.dueAt,delaySeconds:undefined,everyMinutes:trustedPlan.everyMinutes,time:trustedPlan.dailyTime,timeZone:trustedPlan.timeZone}:protectedWake||familyReminder?args:familyNormalizeCalendar(args,scope.userText,now,scope.previousUserText);
     if(!protectedWake&&!familyReminder&&!trustedPlan&&!familyIntentAllowed('family',admittedArgs,scope.userText,scope.previousUserText,now)){const error=new Error('实际 Owner 消息没有授权这项操作。');if(['query','brief','context_brief'].includes(args.action))error.code='FAMILY_SCOPE_UNSUPPORTED';throw error;}
+    if(args.action==='list'){
+      const query=parseFamilyCatalogList(args,scope.userText);
+      if(!query||execution.signal?.aborted||!familyDelegate.current(scope)||!await familyDelegate.recheck(scope))throw new Error('当前 Owner 目录请求不可确认。');
+      const page=await projectCatalog.page(query);
+      if(execution.signal?.aborted||!familyDelegate.current(scope)||!await familyDelegate.recheck(scope))throw new Error('Owner 绑定已变化，未返回目录。');
+      if(!familyDelegate.current(scope))throw new Error('Owner 绑定已变化，未返回目录。');projectCatalog.assertCurrentRevision(page.revision);
+      const text=[`Harness 已登记项目 ${page.total} 个，本次匹配 ${page.matchedTotal} 个，显示 ${page.items.length} 个。`,...page.items.map(p=>`${p.label}${p.disambiguator?`（${p.disambiguator}）`:''}${p.watched?' · 持续关注':''}`),page.hasMore?`还有下一页。可以说“${query.query?`搜索我的Harness项目「${query.query}」`:'列出我的Harness项目'}第${Math.floor(page.offset/page.limit)+2}页，每页${page.limit}个”。`:'本次匹配已列完。','本次只列项目名称，没有读取文件、派工或创建计划。'].join('\n');
+      return{...page,candidates:page.items,candidateCount:page.total,catalogRevision:page.revision,text};
+    }
     if(familyReminder){
       const authorize=()=>{try{parseFamilyReminder(scope,options.clock?.()??new Date());return familyReminderEnabled()&&familyDelegate.current(scope)&&!execution.signal?.aborted;}catch{return false;}};
       if(!authorize()||!await familyDelegate.recheck(scope)||!authorize())return{status:'blocked',accepted:false,text:'当前消息的提醒时间或绑定不可确认，本次未安排。'};
@@ -784,6 +803,10 @@ export async function installCompanion(ctx,options={}){
       itemId:{type:'string',description:'context_handoff：从当前简报items将用户所指编号或内容映射为itemId，不让用户输入ID。'},
       detail:{type:'string',enum:['summary','analysis'],description:'digest：对单个明确项目分析变化、卡点或验证状态时用analysis，读取原有固定文件的有界材料及时间，不把手机短摘要当作全部资料；summary用于简短展示。'},
       project:{type:'string',description:'用户口述的友好项目名称；内部也接受已知项目ID/精确路径。省略表示当前有效项目目录。不要要求用户查ID。'},
+      query:{type:'string',description:'list：按项目名称搜索全部已登记目录，最多80字。只列目录，不读取项目文件。'},
+      offset:{type:'number',description:'list：上一页nextOffset；默认0，不要求用户提供。'},
+      limit:{type:'number',description:'list：每页1–50个，默认20。'},
+      catalogRevision:{type:'string',description:'list：沿用上一页catalogRevision，目录变化后重新从首页查询。'},
       session:{type:'string',description:'coordinate可选：用户选择的准确且唯一的友好会话标题；内部也接受已知会话ID。只选择目标项目中当前载入的会话，不据此恢复历史会话。不要求用户查ID或输入命令。'},
       time:{type:'string',description:'Explicit daily HH:mm chosen by user.'},
       timeZone:{type:'string',description:'仅用户指定时区时传IANA时区；省略默认电脑时区，并向用户说明。'},
@@ -995,7 +1018,7 @@ export async function installCompanion(ctx,options={}){
   }
   await recoverFamilyPlans();
   if(typeof ctx.inject==='function')ctx.inject(['familyDotBridge'],()=>{if(!disposed)void recoverFamilyPlans();});
-  return{service,taskResults,memory,followup,onboarding,news,context,contextLoop,projectUpdates,googleCalendarAuth,googleSuiteAuth,flomoAuth,didaAuth,workbench,workbenchActions,familyRoute};
+  return{service,taskResults,memory,followup,onboarding,news,context,contextLoop,projectUpdates,googleCalendarAuth,googleSuiteAuth,flomoAuth,didaAuth,workbench,workbenchActions,familyRoute,projectCatalog,projectCatalogController,registeredProjectTarget:service.registeredProjectTarget,authorizeRegisteredCoordinationSync:service.authorizeRegisteredCoordinationSync};
 }
 
 export async function apply(ctx,config){await installCompanion(ctx,{context:{config}});}

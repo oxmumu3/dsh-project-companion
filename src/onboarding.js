@@ -63,7 +63,7 @@ export function createOnboarding({store,service,readConnection,discoverProjects,
     const watched=await service.watchedProjects();
     const rows=new Map();
     const known=await discoverProjects();
-    for(const item of [...(Array.isArray(known)?known.slice(0,100):[]),...watched]){
+    for(const item of [...(Array.isArray(known)?known:[]),...watched]){
       if(typeof item?.root!=='string'||!isAbsolute(item.root))continue;
       const root=resolve(item.root);
       if(!rows.has(root))rows.set(root,{id:publicId(root),root,label:String(item.label||basename(root)).slice(0,80),watched:watched.some(p=>p.root===root)});

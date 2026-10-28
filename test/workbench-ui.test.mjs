@@ -43,6 +43,9 @@ const posts=h=>actionPosts(h).filter(row=>row.body.action!=='memory_detail');
 const memoryReads=h=>actionPosts(h).filter(row=>row.body.action==='memory_detail');
 const memoryDetail=row=>Response.json({action:'memory_detail',projectId:'p1',record:row});
 const memoryRow=(id,kind,value,source='user')=>({id,kind,text:value,at:'2026-10-19T17:00:00Z',source:{kind:source,reference:'session:session-a'},verified:false});
+const catalogEndpoint='/api/project_companion/catalog',catalogRevision='c'.repeat(64);
+const catalogItems=Array.from({length:137},(_,i)=>({id:`project_${i.toString(16).padStart(24,'0')}`,label:`目录项目 ${i}`,watched:i<5,sessionCount:1,registered:true}));
+function catalogFixture(h){h.context.onFetch=(url,options)=>{if(url!==catalogEndpoint)return Response.json(h.context.snapshot);const body=JSON.parse(options.body);if(body.action==='preview')return Response.json({version:1,project:{id:body.projectId,label:catalogItems.find(p=>p.id===body.projectId).label},revision:catalogRevision,previewOnly:true,historyScan:false,sources:[{path:'README.md',status:'ok',text:'SYNTHETIC_SINGLE_PROJECT_PREVIEW',truncated:true}]});const rows=catalogItems.filter(p=>!body.query||p.label.includes(body.query)),offset=body.offset??0,limit=body.limit??20;return Response.json({version:1,scope:'registered',complete:true,revision:catalogRevision,total:137,matchedTotal:rows.length,offset,limit,items:rows.slice(offset,offset+limit),hasMore:offset+limit<rows.length,nextOffset:offset+limit<rows.length?offset+limit:null,watchedCount:2,watchLimit:5});};}
 function seedMemory(h,row){h.context.snapshot.projects[0].overview={available:true,goals:[],blockers:[],nextSteps:[],recent:[row]};}
 async function openMemory(h){button(h.render(),'公开项目 A').props.onClick();button(h.render(),'记住的事').props.onClick();await button(h.render(),'纠正或忘记').props.onClick();return h.render();}
 
@@ -70,6 +73,30 @@ test('opening the page makes one read-only GET and evidence requires the selecte
   assert.equal(nodes(evidence,node=>node.props.dangerouslySetInnerHTML).length,0);assert.equal(nodes(evidence,node=>node.type==='script').length,0);
   assert.equal(h.requests.length,1);assert.deepEqual(posts(h),[]);
   assert.equal(h.opened.length,0);h.dispose();
+});
+
+test('Projects discovers137 registered projects with explicit search and paging, without reading contents',async()=>{
+ const h=await harness();catalogFixture(h);h.render();await h.flush();assert.equal(h.requests.length,1);
+ button(h.render(),'项目').props.onClick();h.render();await h.flush();let view=h.render();assert.match(text(view),/全部项目.*137/);assert.match(text(view),/目录项目 19/);assert.doesNotMatch(text(view),/目录项目 20|SYNTHETIC_SINGLE_PROJECT_PREVIEW/);
+ assert.deepEqual(actionPosts(h).map(p=>p.body.action),['list']);assert.equal(h.opened.length,0);
+ await button(view,'下一页').props.onClick();view=h.render();assert.match(text(view),/目录项目 20/);assert.equal(actionPosts(h).at(-1).body.expectedRevision,catalogRevision);
+ const search=nodes(view,n=>n.type==='input'&&n.props['aria-label']==='搜索全部项目')[0];search.props.onChange({target:{value:'目录项目 136'}});view=h.render();nodes(view,n=>n.type==='form'&&n.props['aria-label']==='搜索全部项目')[0].props.onSubmit({preventDefault(){}});await h.flush();view=h.render();assert.match(text(view),/目录项目 136/);assert.doesNotMatch(text(view),/目录项目 20/);assert.equal(actionPosts(h).at(-1).body.offset,0);assert.equal(actionPosts(h).every(p=>p.body.action==='list'),true);h.dispose();
+});
+
+test('unwatched project preview reads once only after selection and keeps composer draft',async()=>{
+ const h=await harness();catalogFixture(h);h.render();await h.flush();nodes(h.render(),n=>n.type==='textarea'&&n.props['aria-label']==='交代给 Dot 的事情')[0].props.onChange({target:{value:'SYNTHETIC_UNSENT_DRAFT'}});
+ button(h.render(),'项目').props.onClick();h.render();await h.flush();let view=h.render();const row=nodes(view,n=>n.props['data-catalog-project']===catalogItems[7].id)[0];assert.ok(row);assert.equal(actionPosts(h).filter(p=>p.body.action==='preview').length,0);await button(row,'单次查看').props.onClick();view=h.render();assert.match(text(view),/SYNTHETIC_SINGLE_PROJECT_PREVIEW/);assert.match(text(view),/已截断/);assert.match(text(view),/不会加入持续关注/);assert.deepEqual(actionPosts(h).filter(p=>p.body.action==='preview').map(p=>p.body),[{action:'preview',projectId:catalogItems[7].id,expectedRevision:catalogRevision}]);
+ button(view,'今天').props.onClick();assert.equal(nodes(h.render(),n=>n.type==='textarea'&&n.props['aria-label']==='交代给 Dot 的事情')[0].props.value,'SYNTHETIC_UNSENT_DRAFT');assert.equal(h.opened.length,0);h.dispose();
+});
+
+test('changed catalog resets paging without automatic retry; changed binding removes catalog contents',async()=>{
+ const h=await harness();catalogFixture(h);h.render();await h.flush();button(h.render(),'项目').props.onClick();h.render();await h.flush();h.context.onFetch=(url)=>url===catalogEndpoint?Response.json({code:'CATALOG_CHANGED',error:'项目目录已变化，请刷新后继续。'},{status:409}):Response.json(h.context.snapshot);
+ await button(h.render(),'下一页').props.onClick();let view=h.render();assert.match(text(view),/目录已变化/);assert.doesNotMatch(text(view),/目录项目 19/);const before=h.requests.length;h.render();await h.flush();assert.equal(h.requests.length,before);
+ catalogFixture(h);await button(view,'刷新项目目录').props.onClick();view=h.render();assert.match(text(view),/目录项目 19/);h.context.snapshot.connection={state:'bound',sessionId:'changed-owner'};await button(view,'刷新').props.onClick();view=h.render();assert.doesNotMatch(text(view),/目录项目 19|SYNTHETIC_SINGLE_PROJECT_PREVIEW/);assert.equal(h.opened.length,0);h.dispose();
+});
+
+test('source first-value examples stay inside implemented named-list and Gmail query scopes',async()=>{
+ const h=await harness();assert.equal(h.source.includes('Gmail 搜索「newer_than:3d」最多 3 条'),true);assert.equal(h.source.includes('先等我补充清单名'),true);assert.equal(h.source.includes('请只读查看滴答清单中今天到期的任务'),false);h.dispose();
 });
 
 test('project switching and navigation are explicit; multiple sessions are not picked automatically',async()=>{
@@ -423,7 +450,7 @@ test('dirty memory close offers continue, keep and discard; only explicit save w
 test('switching pages uses the same dirty-memory policy and retained drafts reject changed source text',async()=>{
   const h=await harness(),row=memoryRow('conflict','context','原始背景');seedMemory(h,row);let current=row;h.context.onFetch=url=>url===endpoint?Response.json(h.context.snapshot):memoryDetail(current);
   try{h.render();await h.flush();let view=await openMemory(h);nodes(drawer(view),n=>n.type==='textarea')[0].props.onChange({target:{value:'旧版原文上的修改'}});button(h.render(),'项目').props.onClick();assert.match(text(drawer(h.render())),/这次修改还没保存/);
-    button(h.render(),'保留草稿并离开').props.onClick();view=h.render();assert.match(text(view),/每件事的背景/);assert.equal(drawer(view),undefined);
+    button(h.render(),'保留草稿并离开').props.onClick();view=h.render();assert.match(text(view),/所有项目都能按需查看/);assert.equal(drawer(view),undefined);
     current={...row,text:'另一个入口已纠正的当前原文'};button(view,'今天').props.onClick();view=await openMemory(h);assert.equal(nodes(drawer(view),n=>n.type==='textarea')[0].props.value,current.text);assert.match(text(view),/原文已变化.*旧草稿未套用/);assert.match(text(nodes(view,n=>n.props['data-dot-conflict-draft'])[0]),/旧版原文上的修改/);assert.equal(posts(h).length,0);button(view,'使用保留草稿继续修改').props.onClick();assert.equal(nodes(drawer(h.render()),n=>n.type==='textarea')[0].props.value,'旧版原文上的修改');assert.equal(posts(h).length,0);
   }finally{h.dispose();}
 });
@@ -455,6 +482,13 @@ test('passive result and upcoming projection show scope, truncation, cold-runner
   const h=await harness();h.context.snapshot.projects[0].followup={available:true,followup:{enabled:true,running:false,everyMinutes:180,nextDueAt:'2026-10-23T20:00:00Z'},once:null};h.context.snapshot.projects[1].followup={available:true,followup:null,once:null};h.context.snapshot.jobs[0].result={available:true,text:'真实缓存原回复 <script>不会运行</script>',truncated:true};
   try{h.render();await h.flush();const view=h.render();assert.match(text(view),/真实缓存原回复 <script>不会运行<\/script>/);assert.match(text(view),/此处为摘录/);assert.match(text(view),/已保存，运行器未启动/);assert.ok(button(view,'打开完整会话历史'));assert.ok(nodes(view,n=>n.type==='details'&&n.props['data-dot-history']).length);assert.equal(nodes(view,n=>n.type==='script'||n.props.dangerouslySetInnerHTML).length,0);assert.equal(h.requests.length,1);assert.deepEqual(actionPosts(h),[]);
   }finally{h.dispose();}
+});
+
+test('daily follow-up labels keep its wall-clock time and timezone instead of1440-minute interval',async()=>{
+ const h=await harness(),plan={enabled:true,running:true,dailyTime:'21:30',timeZone:'Asia/Shanghai',everyMinutes:1440,nextDueAt:'2026-10-28T13:30:00Z'};
+ h.context.snapshot.projects[0].followup={available:true,followup:plan,once:null};h.context.onFetch=(url,options)=>url===endpoint?Response.json(h.context.snapshot):Response.json({action:'followup_status',projectId:'p1',followup:plan,once:null});
+ h.render();await h.flush();let view=h.render();assert.match(text(view),/每天21:30（Asia\/Shanghai）/);assert.doesNotMatch(text(view),/每 1440 分钟/);
+ await button(view,'查看安排').props.onClick();view=h.render();assert.match(text(drawer(view)),/每天21:30（Asia\/Shanghai）/);assert.doesNotMatch(text(drawer(view)),/每 1440 分钟/);h.dispose();
 });
 
 test('native draft navigation unmount and remount retains unsent local text without browser persistence',async()=>{
