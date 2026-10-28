@@ -1,3 +1,4 @@
+import {safeAuthDiagnostic} from './auth-diagnostics.js';
 // Fixed, non-sensitive login outcomes. Never include provider text, account,
 // OAuth code/state, credentials or the authorization URL in this projection.
 const messages=Object.freeze({
@@ -15,7 +16,9 @@ const messages=Object.freeze({
 export const googleAuthAttemptReasons=Object.freeze(Object.keys(messages));
 export function safeGoogleAuthAttempt(value){
   if(value?.status==='saved')return{status:'saved'};
-  return value?.status==='failed'&&Object.hasOwn(messages,value.reason)?{status:'failed',reason:value.reason}:null;
+  if(value?.status!=='failed'||!Object.hasOwn(messages,value.reason))return null;
+  const diagnostic=safeAuthDiagnostic({stage:'network',networkFailure:value.networkFailure});
+  return{status:'failed',reason:value.reason,...(value.reason==='network'&&diagnostic.networkFailure?{networkFailure:diagnostic.networkFailure}:{})};
 }
 export function googleAuthAttemptMessage(reason){return messages[reason]??messages.unknown;}
 export function googleAuthFailureReason(error,stage){

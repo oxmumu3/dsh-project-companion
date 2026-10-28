@@ -1,4 +1,4 @@
-import {withAuthDiagnostic,oauthHttpDiagnostic} from './auth-diagnostics.js';
+import {withAuthDiagnostic,oauthHttpDiagnostic,oauthNetworkDiagnostic,canRetryOAuthBeforeSend,safeAuthDiagnostic} from './auth-diagnostics.js';
 import {createServer} from 'node:http';
 import {createHash,randomBytes,timingSafeEqual} from 'node:crypto';
 import {readContextConfig} from './context-config.js';
@@ -49,11 +49,26 @@ export function createGoogleSuiteAuth({publisher,readConfig,saveCredentials,fetc
   if(signal?.aborted)cancel();else signal?.addEventListener('abort',cancel,{once:true});controllers.add(controller);const timer=setTimeout(cancel,TIMEOUT);
   let stage='guard';
   try{
-   await guarded(guard,controller.signal);if(configKey(read())!==expectedKey)throw error();
-   stage='network';
-   // Fixed token endpoint; Desktop client configuration is public registration,
-   // not a server-side secret. No credentials or response bodies enter errors.
-   const response=await bounded(Promise.resolve().then(()=>{open();if(controller.signal.aborted||configKey(read())!==expectedKey)throw error();return fetchImpl(TOKEN,{method:'POST',redirect:'error',headers:{accept:'application/json','content-type':'application/x-www-form-urlencoded'},body:new URLSearchParams({...fields,client_id:client.clientId,...(client.clientSecret?{client_secret:client.clientSecret}:{})}).toString(),signal:controller.signal});}),controller.signal);
+   let response;const retryBeforeSend=Symbol();
+   for(let attempt=0;attempt<2;attempt++){
+    // Every attempt, including a connection-only retry, rechecks current authority.
+    // The single outer timer and signal cover both attempts and all guards.
+    stage='guard';await guarded(guard,controller.signal);if(configKey(read())!==expectedKey)throw error();
+    response=await bounded(Promise.resolve().then(async()=>{
+     open();if(controller.signal.aborted||configKey(read())!==expectedKey)throw error();
+     const init={method:'POST',redirect:'error',headers:{accept:'application/json','content-type':'application/x-www-form-urlencoded'},body:new URLSearchParams({...fields,client_id:client.clientId,...(client.clientSecret?{client_secret:client.clientSecret}:{})}).toString(),signal:controller.signal};
+     stage='network';
+     try{return await fetchImpl(TOKEN,init);}
+     catch(failure){
+      // A code/refresh request must not be replayed after an uncertain delivery.
+      // Only fixed DNS/connect failures prove that no request was sent. No HTTP,
+      // TLS, reset, abort, parse or response-body failure reaches this branch.
+      if(attempt===0&&!closed&&!controller.signal.aborted&&canRetryOAuthBeforeSend(failure))return retryBeforeSend;
+      throw withAuthDiagnostic(error(),oauthNetworkDiagnostic(failure));
+     }
+    }),controller.signal);
+    if(response!==retryBeforeSend)break;
+   }
    if(!response.ok)throw withAuthDiagnostic(error(),await oauthHttpDiagnostic(response,controller.signal));
    if(response.status>=300||response.redirected||Number(response.headers?.get?.('content-length'))>MAX_BODY)throw withAuthDiagnostic(error(),{stage:'parse'});
    stage='parse';let body;
@@ -64,7 +79,7 @@ export function createGoogleSuiteAuth({publisher,readConfig,saveCredentials,fetc
    if(!hasScopes(scopes))throw error('Google只读权限未确认，请重新授权。');
    stage='guard';await guarded(guard,controller.signal);if(configKey(read())!==expectedKey)throw error();
    return{accessToken:v.access_token,refreshToken:v.refresh_token??'',grantedScopes:[...new Set(scopes)],expiresAt:now()+Math.min(Number(v.expires_in),3600)*1000};
-  }catch(failure){throw withAuthDiagnostic(error(closed||signal?.aborted?'Google连接请求已取消。':undefined),failure?.authDiagnostic??{stage});}
+  }catch(failure){throw withAuthDiagnostic(error(closed||signal?.aborted?'Google连接请求已取消。':undefined),failure?.authDiagnostic??(stage==='network'?oauthNetworkDiagnostic(controller.signal.aborted?{name:'AbortError'}:failure):{stage}));}
   finally{clearTimeout(timer);controllers.delete(controller);signal?.removeEventListener('abort',cancel);}
  }
  function stop(flow){clearTimeout(flow.timer);if(pending===flow)pending=null;if(flow.stopped)return flow.stopped;flow.stopped=new Promise(resolve=>{flow.server.close(resolve);flow.server.closeIdleConnections?.();});servers.add(flow.stopped);flow.stopped.then(()=>servers.delete(flow.stopped));return flow.stopped;}
@@ -101,7 +116,7 @@ export function createGoogleSuiteAuth({publisher,readConfig,saveCredentials,fetc
    const record={version:1,source:'google-suite',profile:'readonly',connectionId:randomBytes(32).toString('base64url'),clientId:client.clientId,requestedScopes:[...GOOGLE_SUITE_SCOPES],grantedScopes:result.grantedScopes,refreshToken:result.refreshToken,authorizedAt:new Date(now()).toISOString()};
    stage='persist';const serialized=await persist(record,flow.config,flowGuard,flow.abort.signal);
    cache={...result,key:configKey({[FIELD]:serialized})};lastAttempt={status:'saved'};respond(res,200,true);
-  }catch(failure){cache=null;const reason=googleAuthFailureReason(failure,stage);lastAttempt={status:'failed',reason};respond(res,400,false,reason);}finally{void stop(flow);}
+  }catch(failure){cache=null;const reason=googleAuthFailureReason(failure,stage);const diagnostic=safeAuthDiagnostic(failure?.authDiagnostic);lastAttempt={status:'failed',reason,...(reason==='network'&&diagnostic.networkFailure?{networkFailure:diagnostic.networkFailure}:{})};respond(res,400,false,reason);}finally{void stop(flow);}
  }
  async function startInner({authorizeMutation:guard,signal}={}){
   open();if(!client)throw error('Google连接准备中：产品方尚未配置自己的 Google 应用。');if(typeof saveCredentials!=='function')throw error();
