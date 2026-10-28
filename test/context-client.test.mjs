@@ -251,6 +251,45 @@ test('Calendar record can only be cleared via an explicit revision-CAS native fo
 
 const suiteButton = view => nodes(view, n => n.type === 'button' && n.props['data-google-suite-login'])[0];
 const suiteState = () => ({clientConfigured:true,refreshConfigured:false,authInProgress:false,grantedSources:[]});
+const visibleTree = node => {
+ if (!node || typeof node !== 'object') return node;
+ const children=node.type==='details'&&!node.props.open?node.children.filter(child=>child?.type==='summary'):node.children;
+ return {...node,children:children.map(visibleTree)};
+};
+const savedGoogle = c => {
+ c.context.snapshot.googleSuiteAuth={...suiteState(),refreshConfigured:true,lastAttempt:{status:'saved'},grantedSources:['gmail','calendar','drive']};
+ for(const row of c.context.snapshot.sources) if(['gmail','calendar','drive'].includes(row.id)) row.configured=true;
+};
+test('saved Google shows enable choices before collapsed reconnect help, without reading or enabling anything',async()=>{
+ const c=await load();savedGoogle(c);
+ try{c.render();await c.flush();const card=nodes(c.render(),n=>n.props['data-google-suite-connect'])[0],visible=visibleTree(card);
+  assert.match(text(visible),/Google 已连接/);assert.match(text(visible),/已启用 0\/3/);
+  assert.match(text(visible),/选择.*来源/);assert.match(text(visible),/启用后.*请求/);
+  assert.equal(nodes(visible,n=>n.props['data-context-source']).length,3);
+  assert.equal(nodes(visible,n=>n.props['data-google-suite-login']).length,0);
+  assert.equal(nodes(visible,n=>n.props['data-google-unverified-help']).length,0);
+  const help=nodes(card,n=>n.props['data-google-reconnect'])[0];assert.ok(help);assert.notEqual(help.props.open,true);
+  assert.ok(nodes(help,n=>n.props['data-google-data-use-disclosure']).length);
+  assert.ok(text(visible).indexOf('启用只读来源')<text(visible).indexOf('更换账号或重新授权'));
+  assert.match(text(visible),/审核中/);assert.equal(c.requests.length,1);assert.equal(c.requests[0].options.method,'GET');assert.equal(c.intervals.size,0);
+ }finally{c.dispose();}
+});
+test('Google enabled count follows source leases and all enabled offers a concrete question without another consent',async()=>{
+ for(const count of [1,3]){const c=await load();savedGoogle(c);for(let i=0;i<count;i++)c.context.snapshot.sources[i].enabled=true;
+  try{c.render();await c.flush();const visible=visibleTree(nodes(c.render(),n=>n.props['data-google-suite-connect'])[0]);assert.ok(text(visible).includes(`已启用 ${count}/3`));
+   if(count===3){assert.match(text(visible),/可以.*微信.*提问/);assert.doesNotMatch(text(visible),/请选择|请启用|选择下面/);}else assert.match(text(visible),/选择.*来源/);
+   assert.equal(c.requests.length,1);assert.equal(c.external.length,0);
+  }finally{c.dispose();}
+ }
+});
+test('failed Google reconnect keeps its failure and recovery visible even with a retained grant',async()=>{
+ const c=await load();savedGoogle(c);c.context.snapshot.googleSuiteAuth.lastAttempt={status:'failed',reason:'network'};
+ try{c.render();await c.flush();const visible=visibleTree(nodes(c.render(),n=>n.props['data-google-suite-connect'])[0]);assert.match(text(visible),/本次 Google 授权未完成/);assert.match(text(visible),/原有连接仍保留/);assert.doesNotMatch(text(visible),/Google 已连接/);assert.ok(suiteButton(visible));assert.ok(nodes(visible,n=>n.props['data-google-data-use-disclosure']).length);assert.equal(c.requests.length,1);}finally{c.dispose();}
+});
+test('pending Google reconnect stays visible and cannot be confused with its older saved grant',async()=>{
+ const c=await load();savedGoogle(c);c.context.snapshot.googleSuiteAuth={...c.context.snapshot.googleSuiteAuth,authInProgress:true,expiresAt:new Date(Date.now()+180000).toISOString()};
+ try{c.render();await c.flush();const visible=visibleTree(nodes(c.render(),n=>n.props['data-google-suite-connect'])[0]);assert.match(text(visible),/正在等待你完成 Google 授权/);assert.doesNotMatch(text(visible),/Google 已连接/);assert.ok(suiteButton(visible));assert.equal(c.requests.length,1);}finally{c.dispose();}
+});
 test('Google suite is the primary ordinary path with three clear services and no idle polling', async () => {
  const c = await load();
  try { c.render(); await c.flush(); const view=c.render(); const suite=nodes(view,n=>n.props['data-google-suite-connect'])[0];
@@ -371,5 +410,12 @@ test('Google preflight failure preserves current sources and offers a fresh clic
   await button.props.onClick();const view=c.render();assert.match(text(view),/尚未打开.*Google.*授权/);assert.match(text(view),/已有连接.*保留/);assert.doesNotMatch(text(view),/PRIVATE_PROVIDER_TEXT|操作结果暂不确定/);
   assert.equal(c.external.length,0);assert.equal(c.requests.filter(r=>r.options.method==='POST').length,1);assert.equal(nodes(view,n=>n.props['data-context-source']).length,8);
   assert.equal(nodes(view,n=>n.type==='button'&&text(n).includes('同意并重新连接 Google'))[0].props.disabled,false);
+ }finally{c.dispose();}
+});
+
+ test('starting a fresh Google attempt immediately supersedes the previous failure before polling',async()=>{
+ const c=await load();savedGoogle(c);c.context.snapshot.googleSuiteAuth.lastAttempt={status:'failed',reason:'network'};
+ try{c.render();await c.flush();c.context.onFetch=()=>Response.json({url:'https://accounts.google.com/o/oauth2/v2/auth?state=fresh',expiresAt:new Date(Date.now()+180000).toISOString()});await suiteButton(c.render()).props.onClick();
+ const card=visibleTree(nodes(c.render(),n=>n.props['data-google-suite-connect'])[0]);assert.match(text(card),/正在等待你完成 Google 授权/);assert.doesNotMatch(text(card),/本次 Google 授权未完成|Google 已连接/);assert.equal(c.requests.filter(r=>r.options.method==='POST').length,1);
  }finally{c.dispose();}
 });
