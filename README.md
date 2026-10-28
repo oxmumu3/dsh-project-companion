@@ -1,10 +1,22 @@
 # DSH Dot · DSH Project Companion
 
+## 0.14.1-preview.11 社区预览
+
+[发布页与下载](https://github.com/oxmumu3/dsh-project-companion/releases/tag/v0.14.1-preview.11) · [详细安装说明](https://github.com/oxmumu3/dsh-project-companion/releases/download/v0.14.1-preview.11/INSTALL.txt) · [该版本源码](https://github.com/oxmumu3/dsh-project-companion/tree/v0.14.1-preview.11)。本预览使用独立发布 tag；当前 main 源码与下方历史说明不代表该版本。
+
+macOS 用户先安装并打开一次官方 DeepSeek Harness 完成初始化，保存工作并正常退出，然后在终端执行：
+
+```sh
+(dsh_dot_dir="$(mktemp -d)" && cd "$dsh_dot_dir" && curl -fLO "https://github.com/oxmumu3/dsh-project-companion/releases/download/v0.14.1-preview.11/dsh-dot-0.14.1-preview.11-r3-macos.zip" && curl -fLO "https://github.com/oxmumu3/dsh-project-companion/releases/download/v0.14.1-preview.11/dsh-dot-0.14.1-preview.11-r3-macos.zip.sha256" && shasum -a 256 -c "dsh-dot-0.14.1-preview.11-r3-macos.zip.sha256" && ditto -x -k "dsh-dot-0.14.1-preview.11-r3-macos.zip" . && open "dsh-dot-0.14.1-preview.11-r3-macos/Install.command")
+```
+
+Google 品牌与权限尚未确认通过正式审核，可能出现未验证提示且已知有累计 100 个账号上限；首次独立新用户安装、扫码到手机收件仍未完整验收。家庭助手共用微信是额外配置，该入口暂不支持 Gmail / Drive，受控交办目前为 README 首行的独立只读检查。
+
 给 DeepSeek Harness 加上个人项目助理：通过现有微信通路交办项目任务、记住项目上下文、安排提醒，并把执行回复带回原对话。作者：牛村木木山；社区开源项目，非 DeepSeek 或 OpenAI 官方产品。
 
-当前预发布版 **0.13.0-preview.2** 修复 Harness 0.2.1-rc.3 更新后的插件兼容检查，保留已安装 V2 的工作台和服务。支持范围为明确验过的 0.2.0-rc.2、0.2.1-rc.2 与 0.2.1-rc.3。本轮官方 rc.3 SDK 全量合成回归通过，真实手机投递与新账号授权没有重新验收，见[验证记录](https://github.com/oxmumu3/dsh-project-companion/blob/d389852e3aebfab061325d72b8286ba40de319ee/docs/verification.md)。
+下方主分支历史说明对应 **0.13.0-preview.2** 修复 Harness 0.2.1-rc.3 更新后的插件兼容检查，保留已安装 V2 的工作台和服务。支持范围为明确验过的 0.2.0-rc.2、0.2.1-rc.2 与 0.2.1-rc.3。本轮官方 rc.3 SDK 全量合成回归通过，真实手机投递与新账号授权没有重新验收，见[验证记录](https://github.com/oxmumu3/dsh-project-companion/blob/d389852e3aebfab061325d72b8286ba40de319ee/docs/verification.md)。
 
-## 在 Harness 中升级
+## 历史版本 0.13 的升级方式
 
 在 Harness 新建会话，粘贴：
 
