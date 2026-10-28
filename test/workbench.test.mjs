@@ -17,6 +17,17 @@ const binding={state:'bound',sessionId:'source-session',bindingKey:'a'.repeat(64
 const returnBinding={userHash:'c'.repeat(64),botHash:'d'.repeat(64)};
 const project={id:'p_one',root:'/synthetic/watched-project',label:'当前项目',sessionIds:['project-session'],github:'owner/repo',watchedAt:now,events:[{kind:'assistant',text:'助手记录，仍待核对',at:now,sessionId:'project-session',id:'event-1'}]};
 const deferred=()=>{let resolve;const promise=new Promise(done=>resolve=done);return{promise,resolve};};
+test('shared WeChat plans retain daily clock and zone and render a Family single check',async()=>{
+ const followup={inspect:async()=>({followup:{enabled:true,running:true,everyMinutes:1440,dailyTime:'21:30',timeZone:'Asia/Shanghai',nextDueAt:now},once:{enabled:true,running:false,status:'queued',delivery:'family',nextDueAt:now}})};
+ const f=await fixture({dependencies:{followup}}),value=await f.adapter.snapshot(),plans=value.projects[0].followup;
+ assert.equal(plans.available,true);assert.equal(plans.followup.dailyTime,'21:30');assert.equal(plans.followup.timeZone,'Asia/Shanghai');assert.equal(plans.once.delivery,'wechat');assert.equal(plans.once.status,'queued');
+});
+test('invalid mixed daily schedule never becomes an interval-looking visible plan',async()=>{
+ for(const schedule of [{dailyTime:'99:00',timeZone:'Asia/Shanghai',everyMinutes:1440},{dailyTime:'21:30',timeZone:'PRIVATE INVALID',everyMinutes:1440},{dailyTime:'21:30',timeZone:'Asia/Shanghai',everyMinutes:60}]){
+ const f=await fixture({dependencies:{followup:{inspect:async()=>({followup:{enabled:true,running:true,...schedule},once:null})}}});
+ const result=await f.adapter.snapshot();assert.equal(result.projects[0].followup.available,false);assert.doesNotMatch(JSON.stringify(result),/PRIVATE/);
+ }
+});
 const memoryRow=(kind,index=0,extra={})=>({id:`memory-${index}`,kind,text:`已有${kind}记录 ${index}`,at:now,source:{kind:'assistant',reference:'session:recorded-session#turn7'},verified:true,sessionId:'PRIVATE MEMORY SESSION',fingerprint:'PRIVATE FINGERPRINT',...extra});
 async function api(){const value=await import('../src/workbench.js').catch(()=>({}));assert.equal(typeof value.createWorkbench,'function','read-only workbench adapter must exist');assert.equal(typeof value.registerWorkbenchRoute,'function','authenticated workbench route must exist');return value;}
 async function fixture(options={}){

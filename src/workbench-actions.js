@@ -1,5 +1,6 @@
 import {matchesBindingRevision} from './workbench-scope.js';
 import {createHash} from 'node:crypto';
+import {projectDailySchedule} from './followup-schedule.js';
 import {isAbsolute,resolve,parse} from 'node:path';
 
 const identity=value=>typeof value==='string'&&/^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/.test(value);
@@ -84,6 +85,7 @@ export function createWorkbenchActions({service,memory,followup,taskResults,read
     const out={...(value.loopId!==undefined?{loopId:value.loopId}:{}),enabled:value.enabled,running:value.running,delivery:once&&['native','wechat'].includes(value.delivery)?value.delivery:'wechat'};
     if(once&&ONCE_STATES.has(value.status))out.status=value.status;
     if(!once&&Number.isSafeInteger(value.everyMinutes)&&value.everyMinutes>=30&&value.everyMinutes<=1440)out.everyMinutes=value.everyMinutes;
+    if(!once)Object.assign(out,projectDailySchedule(value));
     for(const key of ['nextDueAt','lastRunAt','lastReviewedAt'])out[key]=timestamp(value[key]);
     if(typeof value.blocked==='string')out.blocked=clean(value.blocked,200);
     if(Number.isSafeInteger(value.runCount)&&value.runCount>=0)out.runCount=value.runCount;

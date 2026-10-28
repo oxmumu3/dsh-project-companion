@@ -11,6 +11,17 @@ const returnBinding={userHash:'c'.repeat(64),botHash:'d'.repeat(64)};
 const project={root:'/synthetic/watched-project',label:'已关注项目',sessionIds:['project-session']};
 const projectId=`project_${createHash('sha256').update(project.root).digest('hex').slice(0,24)}`;
 const deferred=()=>{let resolve;const promise=new Promise(done=>resolve=done);return{promise,resolve};};
+test('passive schedule details preserve a real daily clock and safe Family display route',async()=>{
+ const f=await fixture({followup:{inspect:async()=>({followup:{enabled:true,running:true,everyMinutes:1440,dailyTime:'21:30',timeZone:'Asia/Shanghai'},once:{enabled:true,running:false,status:'queued',delivery:'family'}})}});
+ const result=await f.adapter.action({action:'followup_status',projectId});
+ assert.equal(result.followup.dailyTime,'21:30');assert.equal(result.followup.timeZone,'Asia/Shanghai');assert.equal(result.once.delivery,'wechat');assert.equal(result.once.status,'queued');
+});
+test('schedule details reject malformed or mixed daily fields',async()=>{
+ for(const schedule of [{dailyTime:'99:00',timeZone:'UTC',everyMinutes:1440},{dailyTime:'21:30',timeZone:'not-a-zone',everyMinutes:1440},{dailyTime:'21:30',timeZone:'UTC',everyMinutes:30}]){
+ const f=await fixture({followup:{inspect:async()=>({followup:{enabled:true,running:true,...schedule},once:null})}});
+ await assert.rejects(f.adapter.action({action:'followup_status',projectId}));
+ }
+});
 async function api(){const m=await import('../src/workbench-actions.js').catch(()=>({}));assert.equal(typeof m.createWorkbenchActions,'function','owner-authenticated workbench actions must exist');assert.equal(typeof m.registerWorkbenchActionsRoute,'function');return m;}
 async function fixture(extra={}){
   const {createWorkbenchActions}=await api();let connection={...binding},projects=[{...project}],paused=false,live=true;

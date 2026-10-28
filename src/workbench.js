@@ -1,4 +1,5 @@
 import {createHash} from 'node:crypto';
+import {projectDailySchedule} from './followup-schedule.js';
 import {isAbsolute} from 'node:path';
 import {readProjectFiles,PROJECT_FILES,validateRepository} from './sources.js';
 import {bindingRevision} from './workbench-scope.js';
@@ -73,9 +74,9 @@ export function createWorkbench({service,taskResults,memory,followup,readBinding
     };
     const planOf=(value,once=false)=>{
       if(value===null)return null;
-      if(!value||typeof value.enabled!=='boolean'||typeof value.running!=='boolean'||(once?!['queued','running','completed','failed','cancelled','blocked'].includes(value.status)||value.delivery!=='wechat':!Number.isSafeInteger(value.everyMinutes)||value.everyMinutes<30||value.everyMinutes>1440))throw new Error('Follow-up projection unavailable');
+      if(!value||typeof value.enabled!=='boolean'||typeof value.running!=='boolean'||(once?!['queued','running','completed','failed','cancelled','blocked'].includes(value.status)||!['wechat','family'].includes(value.delivery):!Number.isSafeInteger(value.everyMinutes)||value.everyMinutes<30||value.everyMinutes>1440))throw new Error('Follow-up projection unavailable');
       if(value.loopId!==undefined&&(typeof value.loopId!=='string'||!/^[a-zA-Z0-9_-]{1,100}$/.test(value.loopId)))throw new Error('Invalid follow-up loop ID');
-      const result={...(value.loopId!==undefined?{loopId:value.loopId}:{}),enabled:value.enabled,running:value.running,delivery:'wechat',...(once?{status:value.status}:{everyMinutes:value.everyMinutes})};
+      const result={...(value.loopId!==undefined?{loopId:value.loopId}:{}),enabled:value.enabled,running:value.running,delivery:'wechat',...(once?{status:value.status}:{everyMinutes:value.everyMinutes,...projectDailySchedule(value)})};
       for(const key of ['nextDueAt','lastReviewedAt','lastRunAt'])if(value[key]!==undefined&&value[key]!==null){if(!at(value[key]))throw new Error('Invalid follow-up time');result[key]=at(value[key]);}
       if(value.runCount!==undefined){if(!Number.isSafeInteger(value.runCount)||value.runCount<0)throw new Error('Invalid follow-up count');result.runCount=value.runCount;}
       if(value.blocked)result.blocked='原跟进当前不可运行，请打开安排核对。';
