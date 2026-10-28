@@ -9,10 +9,14 @@ export function createFamilyReadAdapter({getBridge,isCurrent,authorizeRoot,reche
  const denied=()=>({status:'blocked',accepted:false,text:'这项独立只读检查暂不能安全开始；未派发任务。'});
  const allowed=fn=>{try{return typeof fn==='function'&&fn()===true;}catch{return false;}};
  return{
-  async start({scope,root,requestId,reference,authorizeAdmission,authorizeAdmissionSync,authorizeDelivery}={}){
+  async start({scope,root,requestId,reference,authorizeAdmission,authorizeAdmissionSync,authorizeDelivery,authorizeRegisteredRoot}={}){
    try{
     if(!current(scope)||typeof scope.callId!=='string'||!scope.callId||typeof root!=='string'||!isAbsolute(root)||resolve(root)!==root||typeof requestId!=='string'||!requestId||requestId.length>200||reference!==undefined&&(typeof reference!=='string'||reference.length>3000)||typeof authorizeDelivery!=='function')return denied();
-    if(!await authorizeRoot(root)||!await recheck(scope)||!current(scope))return denied();
+    // Only an internal registry guard can replace the watched-project guard
+    // for an explicit one-off read. Model arguments cannot supply callbacks.
+    if(authorizeRegisteredRoot!==undefined&&typeof authorizeRegisteredRoot!=='function')return denied();
+    const rootGuard=authorizeRegisteredRoot??authorizeRoot;
+    if(!await rootGuard(root)||!await recheck(scope)||!current(scope))return denied();
     if(typeof authorizeAdmission==='function'&&!await authorizeAdmission())return denied();
     const authorize=()=>current(scope)&&allowed(authorizeDelivery);
     const bridge=getBridge();if(!authorize()||authorizeAdmissionSync!==undefined&&!allowed(authorizeAdmissionSync)||typeof bridge?.startOwnerProjectRead!=='function')return denied();

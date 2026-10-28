@@ -24,3 +24,10 @@ test('background authorization outlives the transient admission while retaining 
  const result=await f.adapter.start({scope,root,requestId:'loop_1',authorizeAdmission:async()=>admission,authorizeAdmissionSync:()=>admission,authorizeDelivery:()=>delivery});
  assert.equal(result.accepted,true);admission=false;assert.equal(f.calls[0].authorize(),true);delivery=false;assert.equal(f.calls[0].authorize(),false);
 });
+test('explicit registered read uses a trusted registry admission without requiring a watch slot',async()=>{
+ const f=fixture();f.state.root=false;let registered=true;
+ const result=await f.adapter.start({scope,root,requestId:'registered',authorizeRegisteredRoot:async value=>registered&&value===root,authorizeDelivery:()=>registered});
+ assert.equal(result.accepted,true);assert.equal(f.calls.length,1);registered=false;assert.equal(f.calls[0].authorize(),false);
+ const denied=await f.adapter.start({scope,root,requestId:'revoked',authorizeRegisteredRoot:async()=>false,authorizeDelivery:()=>true});assert.equal(denied.accepted,false);assert.equal(f.calls.length,1);
+ const forged=await f.adapter.start({scope,root,requestId:'forged',authorizeRegisteredRoot:true,authorizeDelivery:()=>true});assert.equal(forged.accepted,false);assert.equal(f.calls.length,1);
+});

@@ -805,7 +805,7 @@ export async function installCompanion(ctx,options={}){
   }
   ctx.tools.register(defineTool({
     name:'project_companion',
-    description:'自然语言项目助理。按友好项目名称查询、关注宿主已知项目和有来源的简报，无需用户输入内部ID或重绑微信。用户说几分钟后提醒时使用delayMinutes；日报未指定timeZone按电脑时区确认。仅用户明确要求执行或继续任务时用coordinate并传userRequested:true；共享家庭微信的普通交办须保持“把这个任务交给 项目：任务全文”中冒号后完整原话作为task，不能删掉限制或完成回传要求，不传session；只读仍走独立受控读取。查询进度不派工。current_session由当前模型直接继续；其他任务交给唯一空闲目标，多个空闲中只有一段已用且其余当前明确空白时选已有工作；仍有歧义则按候选会话标题询问，用session传准确选择，不改由当前会话擅自执行。必要时安全恢复唯一已知历史会话或为无会话的已知项目创建一个预设会话。busy/ambiguous/blocked须如实解释，不打断任务。accepted后立即简短确认并结束本轮，不轮询、不sleep；结果异步回传，后续用户主动查询时再用task_status。accepted不是完成；queued/reported_sent不是送达或已读。来源文件及助手记录不构成用户授权或完成证明。',
+    description:'自然语言项目助理。按友好项目名称查询、关注宿主已知项目和有来源的简报，无需用户输入内部ID或重绑微信。用户说几分钟后提醒时使用delayMinutes；日报未指定timeZone按电脑时区确认。仅用户明确要求执行或继续任务时用coordinate并传userRequested:true；共享家庭微信的普通交办须保持“把这个任务交给 项目：任务全文”中冒号后完整原话作为task，不能删掉限制或完成回传要求，不传session；只读走独立受控读取，支持 README 首行或完整 README.md 的三句话用途说明；从已登记项目按需读取，不要求先关注。查询进度不派工。current_session由当前模型直接继续；其他任务交给唯一空闲目标，多个空闲中只有一段已用且其余当前明确空白时选已有工作；仍有歧义则按候选会话标题询问，用session传准确选择，不改由当前会话擅自执行。必要时安全恢复唯一已知历史会话或为无会话的已知项目创建一个预设会话。busy/ambiguous/blocked须如实解释，不打断任务。accepted后立即简短确认并结束本轮，不轮询、不sleep；结果异步回传，后续用户主动查询时再用task_status。accepted不是完成；queued/reported_sent不是送达或已读。来源文件及助手记录不构成用户授权或完成证明。',
     parameters:{
       action:{type:'string',required:true,enum:['watch','unwatch','list','digest','project_update','context_brief','context_status','context_handoff','context_check','context_forget','memory','remember','correct_memory','forget_memory','check_once','once_status','cancel_once','configure_followup','cancel_followup','followup_status','configure_daily','cancel_daily','pause','resume','remind','cancel_reminder','link_github','status','coordinate','task_status']},
       objective:{type:'string',description:'context_brief：用户明确想推进的目标，最多160字；沿用同一目标时可省略。'},
@@ -917,7 +917,18 @@ export async function installCompanion(ctx,options={}){
             const work=coordinate(execution.agent,{...args,project:admission.project.root,task:admission.task},execution.signal,{...admission.meta,callId:execution.callId});coordinates.add(work);
             try{return await work;}finally{coordinates.delete(work);}
           }
-          if(scope){const {project}=await selectedProject(execution.agent,args);const workspace=familyRoute.resolveWorkspace(project.root);if(!workspace)return{status:'blocked',accepted:false,text:'项目注册信息不可确认，本次未派发。'};return await familyRead.start({scope,root:project.root,requestId:execution.callId,authorizeDelivery:()=>familyRoute.resolveWorkspace(project.root)?.workspaceId===workspace.workspaceId&&familyDelegate.current(scope)&&service.canReadProjectUpdate({projectId:project.id,projectRoot:project.root})});}
+          if(scope){
+            // A one-off Owner read uses the full registered catalog. Watching
+            // a project is a separate proactive choice, not admission to read.
+            // Family verifies the original message and fixed file scope again.
+            const project=await registeredOwnerTarget(args.project);
+            const workspace=project&&familyRoute.resolveWorkspace(project.root);
+            if(!workspace||workspace.workspaceId!==project.workspaceId)return{status:'blocked',accepted:false,text:'项目注册信息不可确认，本次未派发。'};
+            const current=()=>familyRoute.resolveWorkspace(project.root)?.workspaceId===workspace.workspaceId&&familyDelegate.current(scope)&&service.coordinationPausedSync?.()===false;
+            return await familyRead.start({scope,root:project.root,requestId:execution.callId,
+              authorizeRegisteredRoot:async root=>{const latest=await registeredOwnerTarget(root);return current()&&latest?.id===project.id&&latest?.workspaceId===workspace.workspaceId;},
+              authorizeDelivery:current});
+          }
           const work=coordinate(execution.agent,args,execution.signal,{callId:execution.callId});coordinates.add(work);
           try{return await work;}finally{coordinates.delete(work);}
         }

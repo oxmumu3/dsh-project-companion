@@ -82,9 +82,10 @@ export function createContextLoop({store,readScope,authorizeSync,authorization,a
   const live=()=>{if(closed||failed||signal.aborted||admission.generation!==generation||admission.version!==(versions.get(key)??0))fail('LOOP_STOPPED');};
   const sync=()=>{live();if(typeof authorizeSync!=='function'||authorizeSync(caller,scope)!==true)fail('LOOP_SCOPE_CHANGED');if(queries&&grant&&typeof authorizationSync==='function'){try{if(authorizationSync(caller,[...new Set(queries.map(q=>q.source))],grant)!==true)fail('LOOP_AUTH_CHANGED');}catch{fail('LOOP_AUTH_CHANGED');}}return true;};
   async function guard(){live();const current=await wait(Promise.resolve().then(()=>readScope(caller,args.project)),signal);live();if(!current||current.projectRoot!==args.project||!validText(current.projectId,256)||!validText(current.label,80)||!(current.bindingKey===null||hex.safeParse(current.bindingKey).success))fail('LOOP_SCOPE_CHANGED');if(scope&&(current.projectRoot!==scope.projectRoot||current.projectId!==scope.projectId||current.bindingKey!==scope.bindingKey))fail('LOOP_SCOPE_CHANGED');scope??=copy(current);sync();if(queries){const currentGrant=await wait(Promise.resolve().then(()=>authorization(caller,[...new Set(queries.map(q=>q.source))])),signal);if(!hex.safeParse(currentGrant).success||grant&&grant!==currentGrant)fail('LOOP_AUTH_CHANGED');grant??=currentGrant;sync();}return true;}
-  function select(loop){if(loop.originSessionId!==caller.sessionId||loop.projectRoot!==scope.projectRoot||loop.projectId!==scope.projectId||loop.bindingKey!==scope.bindingKey)fail('LOOP_SCOPE_CHANGED');queries=copy(loop.queries);grant=loop.grant;}
+  const matches=loop=>loop.originSessionId===caller.sessionId&&loop.projectRoot===scope.projectRoot&&loop.projectId===scope.projectId&&loop.bindingKey===scope.bindingKey;
+  function select(loop){if(!matches(loop))fail('LOOP_SCOPE_CHANGED');queries=copy(loop.queries);grant=loop.grant;}
   async function commit(next){await guard();sync();const prior=copy(state);const work=nativeWrite.then(async()=>{await guard();sync();try{await store.put('profile',copy(next));}catch{failed=true;fail('LOOP_STORE_UNAVAILABLE');}try{await guard();sync();}catch(error){try{await store.put('profile',prior);}catch{failed=true;fail('LOOP_STORE_UNAVAILABLE');}throw error;}});nativeWrite=work.catch(()=>{});await wait(work,signal);try{await guard();sync();}catch(error){const restore=nativeWrite.then(()=>store.put('profile',prior));nativeWrite=restore.catch(()=>{failed=true;});await restore.catch(()=>{});throw error;}state=next;sync();}
-  return{key,signal,live,sync,guard,select,commit,get scope(){return scope;},get grant(){return grant;},get queries(){return queries;},choose(value){queries=copy(value);grant=undefined;},dispose(){active.delete(controller);}};
+  return{key,signal,live,sync,guard,matches,select,commit,get scope(){return scope;},get grant(){return grant;},get queries(){return queries;},choose(value){queries=copy(value);grant=undefined;},dispose(){active.delete(controller);}};
  }
  const admitted=(caller,args)=>({generation,version:versions.get(keyFor(caller,args.project))??0});
  const find=(c)=>state.loops.find(loop=>loop.key===c.key);
@@ -114,9 +115,13 @@ export function createContextLoop({store,readScope,authorizeSync,authorization,a
   return{sources,references,coverage,sourceDiagnostics,readSummary};
  }
  async function refresh(caller,args,c,checking){let prior=find(c),objective;
+  // Fresh, explicit queries may start a new scope after source/route renewal.
+  // Never reuse the old scope's goal, summary, queries or dispatch ledger, and
+  // do not replace its stored record until the new brief commits successfully.
+  if(!checking&&prior&&!c.matches(prior)&&args.queries!==undefined)prior=undefined;
   if(checking){prior=requireLoop(c);if(args.loopId!==prior.id)fail('LOOP_NOT_FOUND');objective=prior.objective;}
   else{if(prior)c.select(prior);objective=args.objective??prior?.objective??'整理项目简报';if(!validText(objective,160))fail('LOOP_INTENT_REQUIRED');if(args.queries!==undefined)c.choose(normalizeQueries(args.queries,now()));else if(!prior)fail('LOOP_INTENT_REQUIRED');}
-  await c.guard();if(!prior&&state.loops.length>=10)fail('LOOP_LIMIT');
+  await c.guard();if(!find(c)&&state.loops.length>=10)fail('LOOP_LIMIT');
   const {sources,references,coverage,sourceDiagnostics,readSummary}=await collect(caller,c,prior,objective);await c.guard();const fingerprint=hash({objective,grant:c.grant,queries:c.queries,sources:sources.map(({sourceId,role,status,text,truncated})=>({sourceId,role,status,text,truncated}))});const unavailable=coverage.some(row=>row.unavailable),same=prior?.fingerprint===fingerprint;
   if(same)return{...view(prior,unavailable?'partial':checking?'quiet':'ready',checking),sourceDiagnostics};
   const invalidModel=error=>{const safe=new ContextLoopError('LOOP_MODEL_INVALID_OUTPUT');safe.modelDiagnostic='MODEL_INVALID_OUTPUT';safe.validationDiagnostic=safeValidationDiagnostic(error?.validationDiagnostic);return safe;};

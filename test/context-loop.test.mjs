@@ -3,6 +3,30 @@ import assert from 'node:assert/strict';
 const mod=await import('../src/context-loop.js').catch(()=>null);
 const owner={sessionId:'origin',cwd:'/synthetic/home'},root='/synthetic/project',at='2026-10-26T10:00:00.000Z';
 const queries=[{source:'gmail',operation:'search',query:'subject:project',limit:2},{source:'calendar',operation:'upcoming',limit:3}];
+test('fresh explicit brief after binding renewal replaces stale scope without inheriting its context or jobs',async t=>{
+ const h=fixture(t),first=await h.brief({objective:'旧授权目标'});
+ await h.service.handoff(owner,{project:root,revision:first.revision,itemId:first.items[0].id,task:'旧授权任务',userRequested:true});
+ const oldDelivery=h.calls.coordinates[0].meta.authorizeDelivery;
+ h.setScope({...h.scope(),bindingKey:'e'.repeat(64)});h.setGrant('f'.repeat(64));
+ const next=await h.service.brief(owner,{project:root,queries,userRequested:true});
+ assert.notEqual(next.loopId,first.loopId);assert.equal(next.objective,'整理项目简报');
+ assert.equal(h.calls.models.at(-1).previous,null);assert.deepEqual(h.stored().loops[0].dispatches,[]);
+ assert.equal(h.stored().loops[0].bindingKey,'e'.repeat(64));assert.equal(h.stored().loops[0].grant,'f'.repeat(64));
+ assert.equal(oldDelivery(),false);const reads=h.calls.reads.length;
+ await assert.rejects(h.service.check(owner,{project:root,loopId:first.loopId}));assert.equal(h.calls.reads.length,reads);
+ assert.equal((await h.service.check(owner,{project:root,loopId:next.loopId})).quiet,true);
+});
+test('binding renewal cannot reuse old queries or inspect, hand off, or check old content',async t=>{
+ const h=fixture(t),first=await h.brief(),saved=structuredClone(h.stored()),reads=h.calls.reads.length;
+ h.setScope({...h.scope(),bindingKey:'e'.repeat(64)});
+ for(const run of [()=>h.service.brief(owner,{project:root,userRequested:true}),()=>h.service.inspect(owner,{project:root}),()=>h.service.check(owner,{project:root,loopId:first.loopId}),()=>h.service.handoff(owner,{project:root,revision:first.revision,itemId:first.items[0].id,task:'旧内容',userRequested:true})])await assert.rejects(run);
+ assert.equal(h.calls.reads.length,reads);assert.deepEqual(h.stored(),saved);
+});
+test('failed fresh brief after binding renewal leaves old record intact and never exposes its summary',async t=>{
+ let failModel=false;const seen=[],h=fixture(t,{summarize:async input=>{seen.push(input.previous);if(failModel)throw Object.assign(Error('fixture'),{code:'MODEL_UNAVAILABLE'});return{changes:[],blockers:[],nextSteps:[]};}});
+ await h.brief();const saved=structuredClone(h.stored());h.setScope({...h.scope(),bindingKey:'e'.repeat(64)});failModel=true;
+ const result=await h.brief();assert.equal(result.status,'partial');assert.equal(seen.at(-1),null);assert.deepEqual(h.stored(),saved);assert.equal(result.loopId,undefined);
+});
 test('a saved rolling calendar query expands at each check without a false new revision',async t=>{let current=Date.parse(at);const h=fixture(t,{clock:()=>new Date(current)}),first=await h.brief({queries:[{source:'calendar',operation:'upcoming',rollingWindowHours:24,limit:2}]});const saved=h.stored().loops[0].queries[0];assert.deepEqual(saved,{source:'calendar',operation:'upcoming',rollingWindowHours:24,limit:2});assert.equal(h.calls.reads[0].from,at);assert.equal(h.calls.reads[0].to,new Date(current+86400000).toISOString());assert.equal(h.calls.reads[0].rollingWindowHours,undefined);current+=3600000;const next=await h.service.check(owner,{project:root,loopId:first.loopId});assert.equal(h.calls.reads.at(-1).from,new Date(current).toISOString());assert.equal(h.calls.reads.at(-1).to,new Date(current+86400000).toISOString());assert.equal(next.quiet,true);assert.equal(h.calls.models.length,1);assert.match(first.text,/滚动未来24小时/);});
 test('fixed calendar dates stay fixed, and rolling intent cannot be attached to another operation',async t=>{let current=Date.parse(at);const h=fixture(t,{clock:()=>new Date(current)}),first=await h.brief({queries:[{source:'calendar',operation:'upcoming',from:at,to:'2026-10-27T10:00:00.000Z',limit:2}]});current+=3600000;await h.service.check(owner,{project:root,loopId:first.loopId});assert.equal(h.calls.reads.at(-1).from,at);for(const q of [{source:'gmail',operation:'search',query:'x',rollingWindowHours:24},{source:'calendar',operation:'upcoming',rollingWindowHours:48},{source:'calendar',operation:'upcoming',from:at,to:'2026-10-28T10:00:00.000Z',rollingWindowHours:24}])await assert.rejects(h.brief({queries:[q]}));});
 test('one bounded query per five personal sources fits one brief; duplicates and larger limits do not',async t=>{const h=fixture(t),five=[{source:'gmail',operation:'search',query:'x',limit:3},{source:'calendar',operation:'upcoming',limit:3},{source:'drive',operation:'search',query:'x',limit:3},{source:'flomo',operation:'search',query:'x',limit:3},{source:'dida',operation:'projects',limit:3}];const r=await h.brief({queries:five});assert.ok(r.loopId);assert.equal(h.calls.reads.length,5);for(const bad of [[...five,five[0]],[five[0],five[0]],[{...five[0],limit:4}]])await assert.rejects(h.brief({queries:bad}));});
