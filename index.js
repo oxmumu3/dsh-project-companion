@@ -38,6 +38,7 @@ import {createFamilyOwnerDelegation} from './src/family-owner-delegation.js';
 import {createFamilyContextAdapter} from './src/family-context-adapter.js';
 import {familyIntentAllowed,familyReadOnlyIntent,familySelectedItemAllowed,familyUnverifiedPlanAction,familyActionAllowed,familyNormalizeCalendar} from './src/family-intent.js';
 import {parseFamilyReminder} from './src/family-reminder.js';
+import {deriveFamilyPlan,familyPlanAction} from './src/family-plan.js';
 import {createFamilyReadAdapter} from './src/family-read-adapter.js';
 import {createContextRoute,registerContextRoute} from './src/context-route.js';
 import {createWorkbench,registerWorkbenchRoute} from './src/workbench.js';
@@ -499,12 +500,26 @@ export async function installCompanion(ctx,options={}){
   if(typeof ctx.inject==='function')ctx.inject(['connection'],scope=>{if(!disposed)registerContextRoute(scope,contextRoute);});
   if(typeof ctx.inject==='function')ctx.inject(['connection'],scope=>{if(!disposed)registerOnboardingRoute(scope,onboarding);});
 
+  async function familyPlanFor(scope,args){
+    const project=await service.coordinationTarget(args.project);
+    if(!project)throw new Error('请明确要跟进的已关注项目；本次未更改计划。');
+    const watched=await service.watchedProjects();let registry;try{registry=ctx.get('workspaceRegistry',false)?.list?.();}catch{}
+    if(!Array.isArray(registry))throw new Error('无法确认项目名称，本次未更改计划。');
+    const aliases=row=>[row.label,row.root?.split('/').at(-1),...registry.filter(r=>r.path===row.root).map(r=>r.title)].filter(name=>typeof name==='string'&&name.trim().length>=2).map(name=>name.trim());
+    const text=scope.userText??'',trusted=/(?:刚才|继续|这份简报)/u.test(text)&&typeof scope.previousUserText==='string'?scope.previousUserText+'。'+text:text;
+    const matches=watched.filter(row=>aliases(row).some(name=>{const escaped=name.replace(/[.*+?^${}()|[\]\\]/g,'\\$&');return new RegExp('(?<![A-Za-z0-9_])'+escaped+'(?![A-Za-z0-9_])','iu').test(trusted);}));
+    if(matches.length!==1||matches[0].root!==project.root)throw new Error('请明确唯一的目标项目；本次未更改计划。');
+    const timeZone=typeof options.hostTimeZone==='function'?options.hostTimeZone():options.hostTimeZone??Intl.DateTimeFormat().resolvedOptions().timeZone;
+    return{...deriveFamilyPlan(scope,{action:args.action,aliases:aliases(project),now:options.clock?.()??new Date(),timeZone,activeCallVerified:true}),root:project.root,requestedAction:args.action};
+  }
   async function selectedProject(agent,args){
     const caller=owner(ctx,agent);
     const project=await service.coordinationTarget(args.project??caller.cwd);
     if(!project)throw new Error('项目尚未关注。请先告诉我关注哪个已知项目，再保存记忆或设置跟进。');
     const scope=familyContext.activeScope();
-    if(scope&&!(args.action==='context_check'&&!scope.userText)){
+    if(scope?.familyPlan){
+      if(scope.familyPlan.root!==project.root)throw new Error('项目范围已变化，本次未更改计划。');
+    }else if(scope&&!(args.action==='context_check'&&!scope.userText)){
       const text=scope.userText??'';
       const trusted=/(?:刚才|继续|上一|那份|上次)/.test(text)&&typeof scope.previousUserText==='string'?scope.previousUserText+'。'+text:text;
       const watched=await service.watchedProjects();let registry;
@@ -541,7 +556,15 @@ export async function installCompanion(ctx,options={}){
   async function memoryOrFollowup(agent,args){
     try{
       const {project,caller}=await selectedProject(agent,args);
-      const input={root:project.root,sessionId:caller.sessionId};
+      const planScope=familyContext.activeScope(),trustedPlan=planScope?.familyPlan;
+      const authorizeMutation=trustedPlan?async()=>{
+        if(disposed||await service.isPaused()&&['check_once','configure_followup'].includes(args.action))return false;
+        const fresh=await familyDelegate.resolve({sessionId:caller.sessionId,callId:planScope.callId,signal:planScope.signal});
+        if(!fresh||fresh.bindingRevision!==planScope.bindingRevision||fresh.sourceRequestId!==trustedPlan.sourceRequestId)return false;
+        const parsed=await familyPlanFor(fresh,{action:trustedPlan.requestedAction,project:project.root});
+        return JSON.stringify(parsed)===JSON.stringify(trustedPlan)&&familyDelegate.current(fresh);
+      }:null;
+      const input={root:project.root,sessionId:caller.sessionId,...(trustedPlan?{authorizeMutation,...(['cancel_once','cancel_followup'].includes(args.action)?{authorizeMutationSync:()=>familyDelegate.current(planScope)&&!planScope.signal?.aborted}: {})}: {})};
       if(args.action==='memory')return{...await memory.read(input),projectLabel:project.label};
       if(args.action==='correct_memory'||args.action==='forget_memory'){
         const method=args.action==='correct_memory'?'revise':'forget';
@@ -562,9 +585,9 @@ export async function installCompanion(ctx,options={}){
         return{...await memory.remember({...input,kind:args.memoryKind,text:args.memoryText,source:{kind:args.sourceKind,reference}}),projectLabel:project.label};
       }
       let loop;
-      if(['check_once','configure_followup'].includes(args.action)&&args.loopId!==undefined){
+      if(['check_once','configure_followup'].includes(args.action)&&(args.loopId!==undefined||trustedPlan)){
         loop=await contextLoop.inspect(caller,{project:project.root});
-        if(loop.loopId!==args.loopId)throw new Error('这份个人资料简报已变化，请先查看当前简报再安排跟进。');
+        if(args.loopId!==undefined&&loop.loopId!==args.loopId)throw new Error('这份个人资料简报已变化，请先查看当前简报再安排跟进。');
       }
       if(args.action==='check_once'){
         if(args.dueAt!==undefined&&args.delaySeconds!==undefined)throw new Error('检查时间只能指定绝对时间或相对延迟中的一种。');
@@ -574,7 +597,7 @@ export async function installCompanion(ctx,options={}){
         if(!route||!['bound','unbound'].includes(route.kind))throw new Error('无法确认当前回复通道，未创建检查；稍后核对连接状态。');
         const familyScope=familyContext.activeScope();
         if(familyScope&&!loop)throw new Error('请先整理需要跟进的资料简报，再安排一次检查。');
-        const plan=await followup.checkOnce({...input,...(loop?{loopId:loop.loopId}:{}),projectLabel:project.label,...(args.dueAt?{dueAt:args.dueAt}:{delaySeconds:args.delaySeconds??60}),delivery:familyScope?'family':route.kind==='bound'?'wechat':'native'});
+        const plan=await followup.checkOnce({...input,...(loop?{loopId:loop.loopId}:{}),projectLabel:project.label,...(trustedPlan?{sourceRequestId:trustedPlan.sourceRequestId}:{}),...(args.dueAt?{dueAt:args.dueAt}:{delaySeconds:args.delaySeconds??60}),delivery:familyScope?'family':route.kind==='bound'?'wechat':'native'});
         if(!['queued','running'].includes(plan.status))return{...plan,text:'本次检查未进入等待或运行状态，请按实际检查状态核对；没有创建周期计划。'};
         return{...plan,text:`已安排只读检查「${project.label}」一次，结果回到当前对话；检查结束后不再重复。${loop?'只读取这份简报已选的个人资料范围和项目状态':'只读取记忆和项目资料'}，不修改文件或派工；有值得告知的新情况时只回一份结果。设置确认后立即结束本轮，稍后用户主动问起时再查状态。`};
       }
@@ -589,13 +612,13 @@ export async function installCompanion(ctx,options={}){
         if(await service.isPaused())throw new Error('项目助理已暂停，未创建跟进计划。请先明确恢复助理，再设置跟进频率。');
         const familyScope=familyContext.activeScope();
         if(familyScope&&!loop)throw new Error('请先整理需要跟进的资料简报，再设置跟进。');
-        const plan=await followup.configure({...input,...(loop?{loopId:loop.loopId}:{}),everyMinutes:args.everyMinutes,projectLabel:project.label,...(familyScope?{delivery:'family'}:{})});
-        return{...plan,text:plan.blocked?`计划已保存，但暂不能启动：${plan.blocked}`:`已安排每${plan.everyMinutes}分钟只读核对「${project.label}」的新变化，遵守免打扰和消息预算；没有值得告知的变化时保持安静。电脑与DSH需在线；本次设置不是送达或长期可靠性的证明。`};
+        const plan=await followup.configure({...input,...(loop?{loopId:loop.loopId}:{}),everyMinutes:args.everyMinutes,...(trustedPlan?{sourceRequestId:trustedPlan.sourceRequestId,...(trustedPlan.dailyTime?{dailyTime:trustedPlan.dailyTime,timeZone:trustedPlan.timeZone}: {})}:{}),projectLabel:project.label,...(familyScope?{delivery:'family'}:{})});
+        return{...plan,text:plan.blocked?`计划已保存，但暂不能启动：${plan.blocked}`:`已安排${plan.dailyTime?`每天 ${plan.dailyTime}（${plan.timeZone}）`:`每${plan.everyMinutes}分钟`}只读核对「${project.label}」的新变化，遵守免打扰和消息预算；没有值得告知的变化时保持安静。电脑与DSH需在线；本次设置不是送达或长期可靠性的证明。`};
       }
-      if(args.action==='cancel_followup'){const plan=await followup.cancel(input);return{...plan,text:'这个项目的主动跟进已关闭。已开始的检查或已交给微信的消息可能无法撤回；其他项目和原有提醒不变。'};}
+      if(args.action==='cancel_followup'){if(trustedPlan?.scheduleKind==='daily'){const existing=await followup.status(input);if(existing.enabled&&!existing.dailyTime)throw new Error('当前是间隔跟进，不是日报；请明确要关闭的计划。');}const plan=await followup.cancel(input);return{...plan,text:'这个项目的主动跟进已关闭。已开始的检查或已交给微信的消息可能无法撤回；其他项目和原有提醒不变。'};}
       const plan=await followup.status(input);
       const paused=await service.isPaused();
-      return{...plan,paused,text:plan.enabled?`「${project.label}」已安排每${plan.everyMinutes}分钟只读跟进。${paused?'助理当前已暂停，恢复后才继续检查。':plan.blocked?'当前未运行，需核对原微信绑定。':'没有必要的新情况时不主动汇报。'}`:`「${project.label}」没有开启主动跟进；不会因为安装或查询创建推送计划。`};
+      return{...plan,paused,text:plan.enabled?`「${project.label}」已安排${plan.dailyTime?`每天 ${plan.dailyTime}（${plan.timeZone}）`:`每${plan.everyMinutes}分钟`}只读跟进。${paused?'助理当前已暂停，恢复后才继续检查。':plan.blocked?'当前未运行，需核对原微信绑定。':'没有必要的新情况时不主动汇报。'}`:`「${project.label}」没有开启主动跟进；不会因为安装或查询创建推送计划。`};
     }catch(error){return{status:'blocked',accepted:false,text:String(error?.message??error)};}
   }
   function syncTimer(){
@@ -697,16 +720,18 @@ export async function installCompanion(ctx,options={}){
       scope=await familyDelegate.resolve(call);
     }
     if(!scope)throw new Error('家庭 Owner 身份或资料委托不可用。');
-    if(!protectedWake)scope={...scope,callId:execution.callId};
+    if(!protectedWake)scope={...scope,callId:execution.callId,signal:execution.signal};
     let familyReminder=false;
     if(args.action==='remind'&&familyReminderEnabled()&&typeof getFamilyBridge()?.remindOwnerOnce==='function'){
       try{parseFamilyReminder(scope,options.clock?.()??new Date());familyReminder=true;}catch{}
     }
-    if(familyUnverifiedPlanAction(args.action)&&!familyReminder){const error=new Error('家庭微信入口暂不能安全核验提醒或推送的具体时间和内容，本次未创建、发送或取消计划。');error.code='FAMILY_PLAN_UNAVAILABLE';throw error;}
-    if(!protectedWake&&!familyReminder&&!familyActionAllowed(args)){const error=new Error('家庭微信入口暂不支持这项操作，本次未读取资料或更改计划。');error.code='FAMILY_ACTION_UNAVAILABLE';throw error;}
+    const trustedPlan=!protectedWake&&familyPlanAction(args.action)?await familyPlanFor(scope,args):null;
+    if(trustedPlan)scope={...scope,familyPlan:trustedPlan};
+    if(familyUnverifiedPlanAction(args.action)&&!familyReminder&&!trustedPlan){const error=new Error('家庭微信入口暂不能安全核验提醒或推送的具体时间和内容，本次未创建、发送或取消计划。');error.code='FAMILY_PLAN_UNAVAILABLE';throw error;}
+    if(!protectedWake&&!familyReminder&&!trustedPlan&&!familyActionAllowed(args)){const error=new Error('家庭微信入口暂不支持这项操作，本次未读取资料或更改计划。');error.code='FAMILY_ACTION_UNAVAILABLE';throw error;}
     const now=options.clock?.()??new Date();
-    const admittedArgs=protectedWake||familyReminder?args:familyNormalizeCalendar(args,scope.userText,now,scope.previousUserText);
-    if(!protectedWake&&!familyReminder&&!familyIntentAllowed('family',admittedArgs,scope.userText,scope.previousUserText,now)){const error=new Error('实际 Owner 消息没有授权这项操作。');if(['query','brief','context_brief'].includes(args.action))error.code='FAMILY_SCOPE_UNSUPPORTED';throw error;}
+    const admittedArgs=trustedPlan?{...args,action:trustedPlan.action,project:trustedPlan.root,userRequested:true,dueAt:trustedPlan.dueAt,delaySeconds:undefined,everyMinutes:trustedPlan.everyMinutes,time:trustedPlan.dailyTime,timeZone:trustedPlan.timeZone}:protectedWake||familyReminder?args:familyNormalizeCalendar(args,scope.userText,now,scope.previousUserText);
+    if(!protectedWake&&!familyReminder&&!trustedPlan&&!familyIntentAllowed('family',admittedArgs,scope.userText,scope.previousUserText,now)){const error=new Error('实际 Owner 消息没有授权这项操作。');if(['query','brief','context_brief'].includes(args.action))error.code='FAMILY_SCOPE_UNSUPPORTED';throw error;}
     if(familyReminder){
       const authorize=()=>{try{parseFamilyReminder(scope,options.clock?.()??new Date());return familyReminderEnabled()&&familyDelegate.current(scope)&&!execution.signal?.aborted;}catch{return false;}};
       if(!authorize()||!await familyDelegate.recheck(scope)||!authorize())return{status:'blocked',accepted:false,text:'当前消息的提醒时间或绑定不可确认，本次未安排。'};
@@ -729,7 +754,7 @@ export async function installCompanion(ctx,options={}){
     parameters:{
       action:{type:'string',required:true,enum:['watch','unwatch','list','digest','project_update','context_brief','context_status','context_handoff','context_check','context_forget','memory','remember','correct_memory','forget_memory','check_once','once_status','cancel_once','configure_followup','cancel_followup','followup_status','configure_daily','cancel_daily','pause','resume','remind','cancel_reminder','link_github','status','coordinate','task_status']},
       objective:{type:'string',description:'context_brief：用户明确想推进的目标，最多160字；沿用同一目标时可省略。'},
-      queries:{type:'array',items:{type:'object',additionalProperties:false,properties:{source:{type:'string',enum:CONTEXT_SOURCES,required:true},operation:{type:'string',required:true},query:{type:'string'},id:{type:'string'},ids:{type:'array',items:{type:'string'}},projectId:{type:'string'},range:{type:'string'},from:{type:'string'},to:{type:'string'},calendarId:{type:'string'},limit:{type:'number'}}},description:'context_brief：用户明确限定的最多4项来源查询，每项最多3条。每源独立参数，沿用当前简报范围时省略；不因已连接而扫描全部账号。'},
+      queries:{type:'array',items:{type:'object',additionalProperties:false,properties:{source:{type:'string',enum:CONTEXT_SOURCES,required:true},operation:{type:'string',required:true},query:{type:'string'},id:{type:'string'},ids:{type:'array',items:{type:'string'}},projectId:{type:'string'},range:{type:'string'},from:{type:'string'},to:{type:'string'},calendarId:{type:'string'},limit:{type:'number'}}},description:'context_brief：用户明确限定的最多5项来源查询（每个来源一次），每项最多3条。每源独立参数，沿用当前简报范围时省略；不因已连接而扫描全部账号。'},
       loopId:{type:'string',description:'context_brief/context_status返回的内部标识；仅用于已授权的check_once/configure_followup及受限自动context_check。不让用户输入。'},
       revision:{type:'number',description:'context_handoff：引用当前简报的revision，必须来自工具结果；旧简报不可派工。'},
       itemId:{type:'string',description:'context_handoff：从当前简报items将用户所指编号或内容映射为itemId，不让用户输入ID。'},
