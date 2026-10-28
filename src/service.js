@@ -436,7 +436,7 @@ export function createService(options = {}) {
   const coordinationTarget = projectId => serial(async()=>{await load();return structuredClone(projectMatch(state.projects,projectId,{optional:true}));});
   // Final inbox admission cannot yield: read only this service's initialized current state.
   const canCoordinate = scope => {
-    if(!coordinationReady||!Array.isArray(state?.projects)||typeof scope?.projectId!=='string'||!scope.projectId||typeof scope.projectRoot!=='string'||!isAbsolute(scope.projectRoot)||resolve(scope.projectRoot)!==scope.projectRoot||typeof scope.sessionId!=='string'||!scope.sessionId)return false;
+    if(!coordinationReady||state?.paused||!Array.isArray(state?.projects)||typeof scope?.projectId!=='string'||!scope.projectId||typeof scope.projectRoot!=='string'||!isAbsolute(scope.projectRoot)||resolve(scope.projectRoot)!==scope.projectRoot||typeof scope.sessionId!=='string'||!scope.sessionId)return false;
     const project=state.projects.find(candidate=>candidate?.id===scope.projectId&&candidate.root===scope.projectRoot);
     return !!project&&Array.isArray(project.sessionIds)&&project.sessionIds.includes(scope.sessionId);
   };
@@ -454,5 +454,5 @@ export function createService(options = {}) {
   const canReadProjectUpdate=scope=>coordinationReady&&!state?.paused&&typeof scope?.projectRoot==='string'&&state.projects.some(p=>p.id===scope.projectId&&p.root===scope.projectRoot);
   const watchedProjects = () => serial(async()=>{await load();return structuredClone(state.projects);});
   const isPaused = () => serial(async()=>{await load();return state.paused;});
-  return { ready, act, record, tick, needsTimer, coordinationTarget, canCoordinate, watchedProjects, isPaused, fixedProjectAnalysis, canReadProjectUpdate };
+  return { ready, act, record, tick, needsTimer, coordinationTarget, canCoordinate, coordinationPausedSync:()=>!coordinationReady||state?.paused===true, watchedProjects, isPaused, fixedProjectAnalysis, canReadProjectUpdate };
 }

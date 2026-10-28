@@ -20,7 +20,7 @@ const taskEffects=[/(删除|清空|清除|销毁|抹除|\brm\b|\bdrop\b)/i,/(修
 export function familyUnverifiedPlanAction(action){return ['check_once','configure_followup','configure_daily','remind','send_now','configure','cancel_once','cancel_followup','cancel_daily','cancel_reminder','cancel'].includes(action);}
 // Only audited Owner entry points are reachable; new tool actions do not
 // silently inherit Family authority when other plugins add capabilities.
-export function familyActionAllowed(args){return ['connections','query','context_brief','context_handoff','coordinate'].includes(args?.action)||(args?.action==='task_status'&&typeof args.id==='string'&&args.id.startsWith('family-read-'));}
+export function familyActionAllowed(args){return ['connections','query','context_brief','context_handoff','coordinate'].includes(args?.action)||(args?.action==='task_status'&&typeof args.id==='string'&&(args.id.startsWith('family-read-')||/^task_[a-f0-9-]{36}$/.test(args.id)));}
 // Derive a rolling calendar window from the verified Owner message, not the
 // model's clock. All source, qualifier, count and denial checks still run below.
 export function familyNormalizeCalendar(args,userText,now=new Date(),previousUserText){
