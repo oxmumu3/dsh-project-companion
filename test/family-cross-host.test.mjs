@@ -197,8 +197,8 @@ test('synthetic internal scheduler with real Family outbox: quiet, one changed p
  const tick=async seconds=>{now=new Date(now.getTime()+seconds*1000);for(const scheduler of schedulers)scheduler.requestDrive();await drain();};
  await adapter.checkOnce(args);await drain();online=false;family.store.setConnection('owner',{status:'error'});await tick(60);
  assert.equal(tools.length,0,'offline must not wake or read');assert.equal(sent.length,0);
- online=true;family.store.setConnection('owner',{status:'connected'});await tick(30);assert.equal((await adapter.onceStatus(args)).status,'completed');assert.equal(tools.length,1);assert.equal(sent.length,0,'quiet check must not send');
- quiet=false;await adapter.checkOnce(args);await drain();await tick(60);assert.equal((await adapter.onceStatus(args)).status,'completed');assert.equal(tools.length,2);assert.deepEqual(sent,[{personId:'owner',text:'Synthetic new change'}]);
+ online=true;family.store.setConnection('owner',{status:'connected'});await tick(30);assert.equal((await adapter.onceStatus(args)).status,'completed');assert.equal(tools.length,1);assert.equal(sent.length,0,'quiet check must not send');assert.equal((await adapter.onceStatus(args)).lastCheckOutcome,'quiet');assert.equal((await adapter.onceStatus(args)).lastReviewedAt,now.toISOString());
+ quiet=false;await adapter.checkOnce(args);await drain();await tick(60);assert.equal((await adapter.onceStatus(args)).status,'completed');assert.equal(tools.length,2);assert.deepEqual(sent,[{personId:'owner',text:'Synthetic new change'}]);assert.equal((await adapter.onceStatus(args)).lastCheckOutcome,'reviewed');assert.equal((await adapter.onceStatus(args)).lastReviewedAt,now.toISOString());
  await adapter.checkOnce(args);await drain();assert.equal((await adapter.cancelOnce(args)).status,'cancelled');await tick(120);assert.equal(tools.length,2);assert.equal(sent.length,1);
  await adapter.checkOnce(args);await drain();family.store.bindPerson('owner',{accountId:'changed-account',peerId:'changed-peer'});await tick(60);assert.equal((await adapter.onceStatus(args)).status,'blocked');assert.equal(tools.length,2);assert.equal(sent.length,1);
 });

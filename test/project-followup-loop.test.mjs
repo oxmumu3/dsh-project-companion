@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {mkdtemp,mkdir,readFile,writeFile,rm,realpath,access} from 'node:fs/promises';
 import {join} from 'node:path';
 import {tmpdir} from 'node:os';
+import {createHash} from 'node:crypto';
 import {Context} from '@deepseek-ai/cordis';
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt';
 import ToolRuntime,{defineTool} from '@deepseek-ai/dsh-tools';
@@ -281,13 +282,14 @@ test('loop wake only permits exact action/root/ID once and exposes its loop to t
 test('one-off loop check needs one successful context_check, quiet result reclaims, and no recurrence remains',async t=>{
   const h=await harness(t,{toolResult:()=>({ok:true,quiet:true}),onWake:async h=>{{const outcome=await h.invoke(exact(h));assert.equal(outcome.isError,false,JSON.stringify(outcome));}assert.equal((await h.reclaim()).isError,false);}});
   await h.adapter.checkOnce({...h.args,delivery:'wechat',delaySeconds:60});await h.drain();await h.tick(60);
-  const status=await h.adapter.onceStatus(h.args);assert.equal(status.status,'completed');assert.equal(status.loopId,h.args.loopId);assert.equal(status.lastReviewedAt,'2026-10-18T16:01:00.000Z');assert.equal(status.nextDueAt,null);assert.equal(h.tools.length,1);
+  const status=await h.adapter.onceStatus(h.args);assert.equal(status.status,'completed');assert.equal(status.loopId,h.args.loopId);assert.equal(status.lastReviewedAt,'2026-10-18T16:01:00.000Z');assert.equal(status.nextDueAt,null);assert.equal(h.tools.length,1);assert.equal(status.lastCheckOutcome,'quiet');
+  const inspected=await h.adapter.inspect({...h.args,expectedBinding:{sessionId:h.owner.id,bindingKey:'d'.repeat(64)}});assert.equal(inspected.once.lastCheckOutcome,'quiet');
 });
 
-for(const value of [{ok:false},{accepted:false},{status:'blocked'},{code:'invalid_action'}])test('failed context_check does not mark review complete: '+JSON.stringify(value),async t=>{
+for(const value of [{ok:false,quiet:true},{accepted:false,quiet:true},{status:'blocked',quiet:true},{code:'invalid_action',quiet:true}])test('failed context_check does not mark review complete: '+JSON.stringify(value),async t=>{
   const h=await harness(t,{toolResult:()=>value,onWake:async h=>{await h.invoke(exact(h));h.reply('不可冒充成功');}});
   await h.adapter.checkOnce({...h.args,delivery:'wechat',delaySeconds:60});await h.drain();await h.tick(60);
-  assert.equal((await h.adapter.onceStatus(h.args)).status,'failed');assert.equal((await h.adapter.onceStatus(h.args)).lastReviewedAt,null);
+  assert.equal((await h.adapter.onceStatus(h.args)).status,'failed');assert.equal((await h.adapter.onceStatus(h.args)).lastReviewedAt,null);assert.equal((await h.adapter.onceStatus(h.args)).lastCheckOutcome,undefined);
 });
 
 test('quiet result followed by ordinary text is not accepted as a completed review',async t=>{
@@ -377,4 +379,58 @@ for(const stage of ['before-wake','before-read','after-read'])test('loop route c
  const h=await harness(t,{onWake:async h=>{if(stage==='before-read')h.setBinding({...binding,userHash:'c'.repeat(64)});await h.invoke(exact(h));if(stage==='after-read')h.setBinding({...binding,userHash:'c'.repeat(64)});await h.reclaim();}});
  await h.adapter.configure(h.args);await h.drain();if(stage==='before-wake')h.setBinding({...binding,userHash:'c'.repeat(64)});await h.tick();
  const status=await h.adapter.status(h.args);assert.equal(status.enabled,false);assert.equal(status.running,false);assert.ok(status.blocked);assert.equal(status.lastReviewedAt,null);const count=h.messages.length;await h.tick();assert.equal(h.messages.length,count);
+});
+
+
+test('lastCheckOutcome retains verified quiet checks through passive inspect and same-loop reconfiguration',async t=>{
+ const h=await harness(t,{toolResult:()=>({ok:true,quiet:true}),onWake:async h=>{await h.invoke(exact(h));await h.reclaim();}});
+ await h.adapter.configure(h.args);await h.drain();await h.tick();
+ const status=await h.adapter.status(h.args);assert.equal(status.lastCheckOutcome,'quiet');assert.equal(status.lastReviewedAt,'2026-10-18T16:30:00.000Z');
+ await h.reopen();const path=join(h.root,'.dsh/dot-followup/scope.json'),before=await readFile(path,'utf8');
+ const inspection=await h.adapter.inspect({...h.args,expectedBinding:{sessionId:h.owner.id,bindingKey:'d'.repeat(64)}});assert.equal(inspection.followup.lastCheckOutcome,'quiet');assert.equal(await readFile(path,'utf8'),before);
+ const changedCadence=await h.adapter.configure({...h.args,everyMinutes:60});assert.equal(changedCadence.lastCheckOutcome,'quiet');assert.equal(changedCadence.lastReviewedAt,status.lastReviewedAt);
+ const changedLoop=await h.adapter.configure({...h.args,loopId:'loop_other'});assert.equal(changedLoop.lastReviewedAt,null);assert.equal(Object.hasOwn(changedLoop,'lastCheckOutcome'),false);
+});
+
+test('lastCheckOutcome calls ordinary silent source review reviewed without inferring quiet from reclaim',async t=>{
+ const h=await harness(t,{toolResult:()=>({ok:true,quiet:true}),onWake:async h=>{for(const action of ['memory','digest'])await h.invoke({action,project:h.root});await h.reclaim();}});
+ await h.adapter.configure({...h.args,loopId:undefined});await h.drain();await h.tick();
+ const status=await h.adapter.status(h.args);assert.equal(status.lastCheckOutcome,'reviewed');assert.equal(status.lastReviewedAt,'2026-10-18T16:30:00.000Z');
+});
+
+test('lastCheckOutcome records reviewed for a verified reply without claiming a new result or delivery',async t=>{
+ const h=await harness(t,{toolResult:()=>({ok:true,quiet:false}),onWake:async h=>{await h.invoke(exact(h));h.reply('已有来源已核对，内容仍由用户验收。');}});
+ await h.adapter.checkOnce({...h.args,delivery:'wechat',delaySeconds:60});await h.drain();await h.tick(60);
+ const status=await h.adapter.onceStatus(h.args);assert.equal(status.lastCheckOutcome,'reviewed');assert.equal(status.lastReviewedAt,'2026-10-18T16:01:00.000Z');
+});
+
+for(const once of [false,true])test('lastCheckOutcome stays optional for legacy '+(once?'one-off':'recurring')+' metadata and never invents history',async t=>{
+ const h=await harness(t);await h.adapter[once?'checkOnce':'configure']({...h.args,delivery:'wechat',delaySeconds:60});await h.drain();await h.reopen();
+ const path=join(h.root,'.dsh',once?'dot-checks/'+createHash('sha256').update(h.owner.id).digest('hex'):'dot-followup','scope.json');
+ const meta=JSON.parse(await readFile(path,'utf8'));meta.lastReviewedAt='2026-10-18T15:00:00.000Z';delete meta.lastCheckOutcome;await writeFile(path,JSON.stringify(meta));const before=await readFile(path,'utf8');
+ const view=await h.adapter.inspect({...h.args,expectedBinding:{sessionId:h.owner.id,bindingKey:'d'.repeat(64)}});assert.equal(Object.hasOwn(view[once?'once':'followup'],'lastCheckOutcome'),false);assert.equal(view[once?'once':'followup'].lastReviewedAt,meta.lastReviewedAt);assert.equal(await readFile(path,'utf8'),before);
+});
+
+for(const once of [false,true])for(const outcome of ['reported_sent',true,null])test('lastCheckOutcome rejects unsupported '+JSON.stringify(outcome)+' in '+(once?'one-off':'recurring')+' metadata',async t=>{
+ const h=await harness(t);await h.adapter[once?'checkOnce':'configure']({...h.args,delivery:'wechat',delaySeconds:60});await h.drain();await h.reopen();
+ const path=join(h.root,'.dsh',once?'dot-checks/'+createHash('sha256').update(h.owner.id).digest('hex'):'dot-followup','scope.json'),meta=JSON.parse(await readFile(path,'utf8'));meta.lastCheckOutcome=outcome;meta.lastReviewedAt='2026-10-18T15:00:00.000Z';await writeFile(path,JSON.stringify(meta));
+ await assert.rejects(h.adapter[once?'onceStatus':'status'](h.args),/outcome|metadata/i);
+});
+
+test('lastCheckOutcome is not created by a cancelled context read even when its late result says quiet',async t=>{
+ let h,cancellation;h=await harness(t,{toolResult:async()=>{cancellation=h.adapter.cancel(h.args);return{ok:true,quiet:true};},onWake:async h=>{await h.invoke(exact(h));await h.reclaim();}});
+ await h.adapter.configure(h.args);await h.drain();await h.tick();await cancellation;
+ const status=await h.adapter.status(h.args);assert.equal(status.lastReviewedAt,null);assert.equal(Object.hasOwn(status,'lastCheckOutcome'),false);
+});
+
+for(const quiet of [false,'true',1])test('lastCheckOutcome does not infer quiet from non-true context value '+JSON.stringify(quiet),async t=>{
+ const h=await harness(t,{toolResult:()=>({ok:true,quiet}),onWake:async h=>{await h.invoke(exact(h));await h.reclaim();}});
+ await h.adapter.checkOnce({...h.args,delivery:'wechat',delaySeconds:60});await h.drain();await h.tick(60);
+ assert.equal((await h.adapter.onceStatus(h.args)).lastCheckOutcome,'reviewed');
+});
+
+test('lastCheckOutcome remains paired with its previous successful check when a later attempt fails',async t=>{
+ let succeeds=true;const h=await harness(t,{toolResult:()=>succeeds?{ok:true,quiet:true}:{ok:false,quiet:true},onWake:async h=>{await h.invoke(exact(h));await h.reclaim();}});
+ await h.adapter.configure(h.args);await h.drain();await h.tick();const previous=await h.adapter.status(h.args);assert.equal(previous.lastCheckOutcome,'quiet');
+ succeeds=false;await h.tick();const failed=await h.adapter.status(h.args);assert.equal(failed.lastCheckOutcome,'quiet');assert.equal(failed.lastReviewedAt,previous.lastReviewedAt,'failure cannot fabricate a newer successful quiet check');
 });
