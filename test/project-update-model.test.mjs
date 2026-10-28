@@ -285,3 +285,157 @@ test('diagnostics use a whitelist and do not attach to unrelated errors',()=>{
 test('shared diagnostic sanitizer only returns safe fixed enums',()=>{
  assert.equal(safeValidationDiagnostic('JSON_SYNTAX'),'JSON_SYNTAX');assert.equal(safeValidationDiagnostic('PRIVATE_DIAGNOSTIC'),'UNKNOWN');assert.equal(safeValidationDiagnostic({private:'secret'}),'UNKNOWN');
 });
+
+const wrongQuote = () => { const value = summary(); value.changes[0].text = '界面改造已经完成。'; return value; };
+const accountedStream = (value, usage = { outputTokens: 1200, reasoningTokens: 300 }) => async function* () {
+  yield { type: 'text-delta', index: 0, text: typeof value === 'string' ? value : JSON.stringify(value) };
+  yield { type: 'usage', usage };
+  yield { type: 'finish', reason: { kind: 'stop' } };
+};
+
+test('repairs one quote mismatch with the identical bounded sources and selection, not the rejected answer', async () => {
+  const supplied = source(); let guards = 0;
+  const f = fixture([accountedStream(wrongQuote()), JSON.stringify(summary())]);
+  const result = await f.model.summarize({ project: { label: '项目' }, sources: [supplied], beforeRequest: async () => {
+    guards++; await Promise.resolve();
+    assert.equal(f.calls.length, Math.floor(guards / 2));
+    if (guards === 3) { supplied.text = 'REPLACEMENT_PRIVATE_SOURCE'; f.selection.model = 'other-model'; }
+  } });
+  assert.deepEqual(result, summary()); assert.equal(guards, 4); assert.equal(f.calls.length, 2);
+  const [first, repair] = f.calls;
+  assert.equal(first.request.messages[0].content[0].text, repair.request.messages[0].content[0].text);
+  assert.equal(first.config.model, repair.config.model); assert.equal(first.signal, repair.signal);
+  assert.equal(first.config.maxTokens, 6000); assert.equal(repair.config.maxTokens, 4500);
+  assert.deepEqual(repair.request.tools, []); assert.equal(repair.request.messages.length, 1);
+  assert.match(repair.request.system, /QUOTE_MISMATCH/);
+  assert.match(repair.request.system, /连续.*原文|原文.*连续/);
+  assert.doesNotMatch(JSON.stringify(repair.request), /界面改造已经完成|REPLACEMENT_PRIVATE_SOURCE/);
+  assert.doesNotMatch(first.request.system, /quote 或 inference|\[同格式\]/);
+  f.model.close();
+});
+
+test('a second quote mismatch or different validation failure is still rejected without a third call', async () => {
+  const unknown = summary(); unknown.changes[0].sourceIds = ['file:unknown'];
+  for (const [second, diagnostic] of [[wrongQuote(), 'QUOTE_MISMATCH'], [unknown, 'UNKNOWN_SOURCE_ID']]) {
+    const f = fixture([accountedStream(wrongQuote()), accountedStream(second), JSON.stringify(summary())]);
+    await assert.rejects(f.model.summarize({ project: { label: '项目' }, sources: [source()] }), { code: 'MODEL_INVALID_OUTPUT', validationDiagnostic: diagnostic });
+    assert.equal(f.calls.length, 2); f.model.close();
+  }
+});
+
+test('only a quote mismatch is eligible for repair; JSON, schema, claim and citation failures are not', async () => {
+  const unknown = summary(); unknown.changes[0].sourceIds = ['file:unknown'];
+  const claim = summary(); claim.blockers[0].text = '我已验收成功。';
+  for (const output of ['{', { ...summary(), extra: true }, unknown, claim]) {
+    const f = fixture([accountedStream(output), JSON.stringify(summary())]);
+    await assert.rejects(f.model.summarize({ project: { label: '项目' }, sources: [source()] }), { code: 'MODEL_INVALID_OUTPUT' });
+    assert.equal(f.calls.length, 1); f.model.close();
+  }
+});
+
+test('repair never invents a new output budget when usage is unknown, empty or exhausted', async () => {
+  for (const output of [JSON.stringify(wrongQuote()), accountedStream(wrongQuote(), {}),
+    accountedStream(wrongQuote(), { outputTokens: 0 }), accountedStream(wrongQuote(), { outputTokens: 6000 }),
+    accountedStream(wrongQuote(), { outputTokens: 5700, reasoningTokens: 300 })]) {
+    const f = fixture([output, JSON.stringify(summary())]);
+    await assert.rejects(f.model.summarize({ project: { label: '项目' }, sources: [source()] }), { code: 'MODEL_INVALID_OUTPUT', validationDiagnostic: 'QUOTE_MISMATCH' });
+    assert.equal(f.calls.length, 1); f.model.close();
+  }
+});
+
+test('beforeRequest is awaited on each request and its refusal is preserved without sending another request', async () => {
+  for (const failAt of [1, 2, 3, 4]) {
+    let guards = 0; const refused = Object.assign(new Error('CONTEXT_SCOPE_CHANGED'), { code: 'CONTEXT_SCOPE_CHANGED' });
+    const f = fixture([accountedStream(wrongQuote()), JSON.stringify(summary())]);
+    await assert.rejects(f.model.summarize({ project: { label: '项目' }, sources: [source()], beforeRequest: async () => {
+      guards++; await Promise.resolve(); if (guards === failAt) throw refused;
+    } }), error => error === refused);
+    assert.equal(guards, failAt); assert.equal(f.calls.length, Math.floor(failAt / 2)); assert.equal(f.calls.filter(call => call.request).length, Math.floor((failAt - 1) / 2)); f.model.close();
+  }
+  const f = fixture();
+  await assert.rejects(f.model.summarize({ project: { label: '项目' }, sources: [source()], beforeRequest: {} }), { code: 'MODEL_INVALID_INPUT' });
+  assert.equal(f.calls.length, 0); f.model.close();
+  const g = fixture(); const quoteShapedRefusal = new ProjectUpdateModelError('MODEL_INVALID_OUTPUT', 'QUOTE_MISMATCH');
+  await assert.rejects(g.model.summarize({ project: { label: '项目' }, sources: [source()], beforeRequest: async () => { throw quoteShapedRefusal; } }), error => error === quoteShapedRefusal);
+  assert.equal(g.calls.length, 0); g.model.close();
+});
+
+test('abort after the first answer or while awaiting its guard prevents any repair request', async () => {
+  const controller = new AbortController(); let guards = 0;
+  const f = fixture([accountedStream(wrongQuote()), JSON.stringify(summary())]);
+  await assert.rejects(f.model.summarize({ project: { label: '项目' }, sources: [source()], signal: controller.signal, beforeRequest: async () => {
+    if (++guards === 3) controller.abort(new Error('PRIVATE_ABORT_REASON'));
+  } }), { code: 'MODEL_ABORTED', message: 'MODEL_ABORTED' });
+  assert.equal(guards, 3); assert.equal(f.calls.length, 1); f.model.close();
+  const g = fixture([], { timeoutMs: 15 });
+  await assert.rejects(g.model.summarize({ project: { label: '项目' }, sources: [source()], beforeRequest: () => new Promise(() => {}) }), { code: 'MODEL_TIMEOUT' });
+  assert.equal(g.calls.length, 0); g.model.close();
+});
+
+test('repair shares the initial deadline instead of starting a second timeout', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  let releaseFirst, enteredFirst, enteredSecond;
+  const firstEntered = new Promise(resolve => { enteredFirst = resolve; });
+  const secondEntered = new Promise(resolve => { enteredSecond = resolve; });
+  const release = new Promise(resolve => { releaseFirst = resolve; });
+  const first = async function* () {
+    enteredFirst(); await release;
+    yield* accountedStream(wrongQuote())();
+  };
+  const second = () => { enteredSecond(); return stalledStream(); };
+  const f = fixture([first, second], { timeoutMs: 30 });
+  const pending = f.model.summarize({ project: { label: '项目' }, sources: [source()] });
+  // Attach the rejection handler before advancing timers.
+  const rejection = assert.rejects(pending, { code: 'MODEL_TIMEOUT' });
+  await firstEntered; t.mock.timers.tick(15); releaseFirst(); await secondEntered;
+  t.mock.timers.tick(15);
+  try { assert.equal(f.calls[1].signal.aborted, true); await rejection; }
+  finally { f.model.close(); }
+  assert.equal(f.calls.length, 2);
+});
+
+test('revocation while prepareCall is pending blocks the first or repair stream before any source transmission', async () => {
+  for (const revokeAt of [2, 1]) {
+    let prepared = 0, streams = 0, guards = 0, allowed = true, unauthorizedStreams = 0;
+    const refused = Object.assign(new Error('LOOP_AUTH_CHANGED'), { code: 'LOOP_AUTH_CHANGED' });
+    const llm = { async prepareCall(config) {
+      const call = ++prepared; await Promise.resolve(); if (call === revokeAt) allowed = false;
+      return { config, stream() { streams++; if (!allowed) unauthorizedStreams++; return accountedStream(call === 1 ? wrongQuote() : summary())(); } };
+    } };
+    const m = createProjectUpdateModel({ get: name => name === 'llm' ? llm : { currentSelection: () => ({ provider: 'p', model: 'm' }) } });
+    await assert.rejects(m.summarize({ project: { label: '项目' }, sources: [source()], beforeRequest: async () => {
+      guards++; if (!allowed) throw refused;
+    } }), error => error === refused);
+    assert.equal(prepared, revokeAt); assert.equal(streams, revokeAt - 1); assert.equal(unauthorizedStreams, 0); assert.equal(guards, revokeAt * 2);
+    m.close();
+  }
+});
+
+test('the final synchronous guard closes the microtask gap after the asynchronous pre-stream authorization', async () => {
+  let allowed = true, guards = 0, syncGuards = 0, streams = 0;
+  const refused = Object.assign(new Error('LOOP_AUTH_CHANGED'), { code: 'LOOP_AUTH_CHANGED' });
+  const llm = { async prepareCall(config) { return { config, stream() { streams++; return textStream(JSON.stringify(summary()))(); } }; } };
+  const m = createProjectUpdateModel({ get: name => name === 'llm' ? llm : { currentSelection: () => ({ provider: 'p', model: 'm' }) } });
+  await assert.rejects(m.summarize({ project: { label: '项目' }, sources: [source()], beforeRequest: async () => {
+    if (!allowed) throw refused;
+    if (++guards === 2) queueMicrotask(() => { allowed = false; });
+  }, beforeRequestSync: () => { syncGuards++; if (!allowed) throw refused; } }), error => error === refused);
+  assert.equal(guards, 2); assert.equal(syncGuards, 1); assert.equal(streams, 0); m.close();
+});
+
+test('pre-stream authorization shares the original deadline and cannot send after timing out', async () => {
+  let guards = 0; const f = fixture([JSON.stringify(summary())], { timeoutMs: 15 });
+  await assert.rejects(f.model.summarize({ project: { label: '项目' }, sources: [source()], beforeRequest: async () => {
+    if (++guards === 2) await new Promise(() => {});
+  } }), { code: 'MODEL_TIMEOUT' });
+  assert.equal(guards, 2); assert.equal(f.calls.length, 1); assert.equal(f.calls[0].request, undefined); assert.equal(f.calls[0].signal.aborted, true); f.model.close();
+});
+
+test('synchronous final guard refusal or upstream abort cannot create a stream', async () => {
+  const f = fixture(), controller = new AbortController();
+  await assert.rejects(f.model.summarize({ project: { label: '项目' }, sources: [source()], signal: controller.signal, beforeRequestSync: () => controller.abort() }), { code: 'MODEL_ABORTED' });
+  assert.equal(f.calls.length, 1); assert.equal(f.calls[0].request, undefined); f.model.close();
+  const g = fixture();
+  await assert.rejects(g.model.summarize({ project: { label: '项目' }, sources: [source()], beforeRequestSync: {} }), { code: 'MODEL_INVALID_INPUT' });
+  assert.equal(g.calls.length, 0); g.model.close();
+});

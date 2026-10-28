@@ -101,7 +101,7 @@ test('brief returns scoped excerpts on model failure without private exception d
  await h.tool({action:'connect',source:'flomo',userRequested:true});
  const root=h.agent.session.header.cwd;await h.project({action:'watch',project:root});
  const result=await h.project({action:'context_brief',project:root,objective:'整理项目简报',queries:[{source:'flomo',operation:'search',query:'DeepSeek',limit:2}],userRequested:true});
- assert.equal(result.status,'partial',JSON.stringify(result));assert.equal(result.modelDiagnostic,'MODEL_UNAVAILABLE');assert.match(result.text,/原文摘录/);assert.ok(!result.loopId);assert.doesNotMatch(JSON.stringify(result),/PRIVATE_MODEL_SECRET/);
+ assert.equal(result.status,'partial',JSON.stringify(result));assert.equal(result.modelDiagnostic,'MODEL_UNAVAILABLE');assert.match(result.text,/原文摘录/);assert.ok(result.loopId);assert.equal(result.analysisState,'source_only');assert.deepEqual(result.items,[]);assert.deepEqual(result.executions,[]);assert.doesNotMatch(JSON.stringify(result),/PRIVATE_MODEL_SECRET/);
 });
 
 test('Family Owner scoped brief does not admit project handoff until a turn guard is available',async t=>{
@@ -199,8 +199,8 @@ test('invalid model output returns separate bounded internal read and format dia
  const h=await fixture(t,{contextLoop:{summarize:async()=>{throw Object.assign(Error('SYNTHETIC_PRIVATE_MODEL'),{code:'MODEL_INVALID_OUTPUT',validationDiagnostic:'JSON_SYNTAX'});}}});
  await h.tool({action:'connect',source:'flomo',userRequested:true});const root=h.agent.session.header.cwd;await h.project({action:'watch',project:root});
  const response=await h.ctx.tools.execute({callId:'format-probe',name:'project_companion',arguments:{action:'context_brief',project:root,objective:'整理项目简报',queries:[{source:'flomo',operation:'search',query:'DeepSeek',limit:2}],userRequested:true},agent:h.agent,signal:new AbortController().signal});
- assert.equal(response.isError,false);const value=response.value;assert.equal(value.modelDiagnostic,'MODEL_INVALID_OUTPUT');assert.equal(value.validationDiagnostic,'JSON_SYNTAX');assert.ok(value.readSummary.some(row=>row.source==='flomo'&&row.count===1));assert.ok(!value.loopId);
- const rendered=JSON.stringify(response.content??response.message??response);assert.match(rendered,/内部脱敏读取概况/);assert.match(rendered,/内部脱敏格式诊断/);const summaries=rendered.match(/内部脱敏读取概况[^\n]*/)?.[0]??'';assert.doesNotMatch(summaries,/SYNTHETIC_PRIVATE_MODEL|Synthetic DeepSeek note|sourceId|m1/);
+ assert.equal(response.isError,false);const value=response.value;assert.equal(value.modelDiagnostic,'MODEL_INVALID_OUTPUT');assert.equal(value.validationDiagnostic,'JSON_SYNTAX');assert.ok(value.readSummary.some(row=>row.source==='flomo'&&row.count===1));assert.ok(value.loopId);assert.equal(value.analysisState,'source_only');assert.deepEqual(value.items,[]);
+ const rendered=JSON.stringify(response.content??response.message??response);assert.match(rendered,/内部脱敏读取概况/);assert.match(rendered,/本次读取范围和状态已保存/);assert.match(rendered,/不要.*清除旧简报/);assert.match(rendered,/内部脱敏格式诊断/);const summaries=rendered.match(/内部脱敏读取概况[^\n]*/)?.[0]??'';assert.doesNotMatch(summaries,/SYNTHETIC_PRIVATE_MODEL|Synthetic DeepSeek note|sourceId|m1/);
 });
 test('brief rendering guides bounded counts and direct delivery without recycling source instructions',async t=>{
  const h=await fixture(t,{contextLoop:{summarize:async input=>({changes:[{kind:'inference',text:'示例进展',sourceIds:[input.sources.find(s=>s.role==='file').sourceId]}],blockers:[],nextSteps:[]})}});

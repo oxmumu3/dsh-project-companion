@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 import { Context } from '@deepseek-ai/cordis';
 import LlmRuntime, { LlmAdapter } from '@deepseek-ai/dsh-llm';
-import { createNewsModel } from '../src/news-model.js';
+import { createNewsModel, runNewsModel } from '../src/news-model.js';
 
 const article = (id, extra = {}) => ({ id, title: `AI builder ${id}`, excerpt: 'A public RSS excerpt.', sourceName: 'Public engineering blog', publishedAt: '2026-10-19T10:00:00Z', url: `https://example.com/${id}`, sourceUrl: 'https://example.com/feed', ...extra });
 const textStream = text => async function* () {
@@ -269,4 +269,25 @@ test('generic model input does not include an absent reader focus', async () => 
   const f = fixture(['{"ids":["a"]}']);
   await f.model.selectArticles({ articles: [article('a')] });
   assert.equal('readerFocus' in JSON.parse(f.calls[0].request.messages[0].content[0].text), false);
+});
+
+test('optional native pre-stream guards run after preparation with no await between final guard and stream', async () => {
+  const order = [], controller = new AbortController();
+  const llm = { async prepareCall(config) { order.push('prepare'); await Promise.resolve(); return { config, stream() { order.push('stream'); return textStream('{"ok":true}')(); } }; } };
+  const result = await runNewsModel({ llm, selection: { provider: 'p', model: 'm' }, system: 'Synthetic system', data: '{}', signal: controller.signal, maxTokens: 100,
+    beforeStream: async () => { order.push('async-start'); await Promise.resolve(); order.push('async-end'); },
+    beforeStreamSync: () => { order.push('sync'); queueMicrotask(() => order.push('after-sync-microtask')); },
+  });
+  assert.equal(result.text, '{"ok":true}');
+  assert.deepEqual(order, ['prepare', 'async-start', 'async-end', 'sync', 'stream', 'after-sync-microtask']);
+});
+
+test('native guard argument errors and asynchronous final guards fail before creating a stream', async () => {
+  let prepared = 0, streams = 0;
+  const llm = { async prepareCall(config) { prepared++; return { config, stream() { streams++; return textStream('{}')(); } }; } };
+  const base = { llm, selection: { provider: 'p', model: 'm' }, system: 'Synthetic system', data: '{}', signal: new AbortController().signal, maxTokens: 100 };
+  for (const guards of [{ beforeStream: {} }, { beforeStreamSync: {} }]) await assert.rejects(runNewsModel({ ...base, ...guards }), { code: 'MODEL_INVALID_INPUT' });
+  assert.equal(prepared, 0);
+  await assert.rejects(runNewsModel({ ...base, beforeStreamSync: async () => {} }), { code: 'MODEL_INVALID_INPUT' });
+  assert.equal(prepared, 1); assert.equal(streams, 0);
 });
