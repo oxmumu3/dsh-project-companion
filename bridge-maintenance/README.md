@@ -3,7 +3,7 @@
 DSH Dot 的统一安装候选包使用 `dsh-wechat@0.11.1-dot.2` 本地维护版。pan17/dsh-wechat 原作者版权和 MIT 许可保持完整；维护责任归 DSH Dot。此版本未发布到上游或 npm，不代表原作者背书。
 
 - 上游仓库：https://github.com/pan17/dsh-wechat
-- 源码基线：`v0.11.0`，commit `218537511681be7637589f5ae0eab84f80267dc8`。
+- 源码基线：`v0.11.0`，commit `218537511681be7557589f5ae0eab84f80267dc8`。
 - 本地审核源码 commit：`19c3f40c85bcdd49525a09d07007978e61521f83`。复建只需上游基线与本目录差异，不依赖远端存在此本地 commit。
 - 精确包：`dsh-wechat-0.11.1-dot.2.tgz`，SHA256 `b0f811e7f3d4746fe27d12460f7f188d4ad8d0b5f6be44f442636ce6db3538f7`。
 - 原始 npm `0.11.0` 包独立固定为 SHA256 `993e1e1afce3c0dcd2610bf9e84ffbfd6d08768f5c4b4fa30eeec50dc2e97d3f`。源码 tag 和 npm 包分别固定，不宣称二者逐字节等同。
@@ -18,7 +18,7 @@ DSH Dot 的统一安装候选包使用 `dsh-wechat@0.11.1-dot.2` 本地维护版
 ```sh
 git clone https://github.com/pan17/dsh-wechat.git dsh-wechat-dot-rebuild
 cd dsh-wechat-dot-rebuild
-git checkout --detach 218537511681be7637589f5ae0eab84f80267dc8
+git checkout --detach 218537511681be7557589f5ae0eab84f80267dc8
 git apply --check /absolute/path/bridge-maintenance/dsh-wechat-0.11.1-dot.2.patch
 git apply /absolute/path/bridge-maintenance/dsh-wechat-0.11.1-dot.2.patch
 npm ci --ignore-scripts --no-audit --no-fund

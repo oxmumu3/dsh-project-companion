@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createProjectUpdateModel, validateProjectUpdateSummary } from '../src/project-update-model.js';
+import { createProjectUpdateModel, validateProjectUpdateSummary, ProjectUpdateModelError, safeValidationDiagnostic } from '../src/project-update-model.js';
 
 const at = '2026-10-21T12:00:00.000Z';
 const source = (sourceId = 'file:progress', extra = {}) => ({ sourceId, label: 'progress.md', role: 'progress_file', status: 'ok', text: '已完成界面改造。仍缺真实手机验收。下一步安排只读验收。', at, truncated: false, ...extra });
@@ -217,4 +217,71 @@ test('refreshes model selection each time and sanitizes unavailable or failing p
   await assert.rejects(unavailable.summarize({ project: { label: '项目' }, sources: [source()] }), { code: 'MODEL_UNAVAILABLE' });
   const failed = createProjectUpdateModel({ get: name => name === 'llm' ? { prepareCall() { throw new Error('PRIVATE_CREDENTIAL'); } } : { currentSelection: () => ({ provider: 'p', model: 'm' }) } });
   await assert.rejects(failed.summarize({ project: { label: '项目' }, sources: [source()] }), { code: 'MODEL_REQUEST_FAILED', message: 'MODEL_REQUEST_FAILED' });
+});
+
+test('project brief uses one bounded low-reasoning native call without changing global selection', async () => {
+  const original = { provider: 'selected-provider', model: 'selected-model', reasoningEffort: 'max' };
+  let calls = 0, preparedConfig, picked;
+  const llm = { async prepareCall(config, signal, policy) {
+    calls++; preparedConfig = structuredClone(config);
+    assert.equal(typeof policy,'function');
+    picked = policy({...config,reasoningEffort:'max'}, {reasoning:{efforts:[{id:'max'},{id:'low'}]}});
+    return {config:picked,stream:()=>textStream(JSON.stringify(summary()))()};
+  }};
+  const m = createProjectUpdateModel({get:name=>name==='llm'?llm:{currentSelection:()=>original}},{clock:()=>new Date(at)});
+  assert.deepEqual(await m.summarize({project:{label:'项目'},sources:[source()]}),summary());
+  assert.equal(calls,1);assert.equal(picked.reasoningEffort,'low');assert.equal(preparedConfig.maxTokens,6000);
+  assert.equal(preparedConfig.provider,'selected-provider');assert.equal(preparedConfig.model,'selected-model');
+  assert.equal(original.reasoningEffort,'max');
+  m.close();
+});
+
+test('brief native reasoning policy uses only declared capabilities and stays bounded when low is unavailable', async () => {
+  let count=0;const llm={async prepareCall(config,signal,policy){count++;
+    assert.equal(typeof policy,'function');
+    const original={...config,reasoningEffort:'medium'};
+    assert.deepEqual(policy(original,{reasoning:{efforts:[{id:'medium'},{id:'low'}]}}),{...original,reasoningEffort:'low'});
+    assert.deepEqual(policy(original,{reasoning:{efforts:[{id:'medium'}]}}),original);
+    assert.deepEqual(policy(original,{}),original);
+    return{config:original,stream:()=>textStream(JSON.stringify(summary()))()};
+  }};
+  const m=createProjectUpdateModel({get:name=>name==='llm'?llm:{currentSelection:()=>({provider:'p',model:'m',reasoningEffort:'max'})}},{clock:()=>new Date(at)});
+  await m.summarize({project:{label:'项目'},sources:[source()]});assert.equal(count,1);m.close();
+});
+
+test('invalid outputs expose only fixed, non-sensitive validation categories', async () => {
+  const mutate = change => { const value=summary(); change(value); return value; };
+  const cases = [
+    [mutate(v=>v.secret='PRIVATE_FIELD'), 'OBJECT_FIELDS'],
+    [mutate(v=>v.changes=Array(4).fill(v.changes[0])), 'ARRAY_LENGTH'],
+    [mutate(v=>v.changes[0].secret='PRIVATE_FIELD'), 'ITEM_FIELDS'],
+    [mutate(v=>v.changes[0].kind='PRIVATE_KIND'), 'KIND'],
+    [mutate(v=>v.blockers[0].text='PRIVATE'.repeat(50)), 'TEXT_LIMIT'],
+    [mutate(v=>v.blockers[0].text='https://PRIVATE.example'), 'TEXT_MARKUP'],
+    [mutate(v=>v.blockers[0].text='SYSTEM: PRIVATE'), 'ROLE_SPOOF'],
+    [mutate(v=>v.blockers[0].text='我已验收成功。'), 'CLAIM'],
+    [mutate(v=>v.nextSteps[0].text='打开 README 了解进展。'), 'COMMAND'],
+    [mutate(v=>v.changes[0].sourceIds=['PRIVATE_SOURCE']), 'SOURCE_ID'],
+    [mutate(v=>v.changes[0].sourceIds=['file:PRIVATE_SOURCE']), 'UNKNOWN_SOURCE_ID'],
+    [mutate(v=>v.changes[0].text='PRIVATE_QUOTE'), 'QUOTE_MISMATCH'],
+  ];
+  for (const [value,expected] of cases) {
+    assert.throws(()=>validateProjectUpdateSummary(value,[source()]), error=>{
+      assert.equal(error.code,'MODEL_INVALID_OUTPUT');assert.equal(error.validationDiagnostic,expected);
+      assert.doesNotMatch(JSON.stringify(error)+error.message+error.stack,/PRIVATE/);return true;
+    });
+  }
+  const f=fixture(['{PRIVATE']);await assert.rejects(f.model.summarize({project:{label:'项目'},sources:[source()]}),error=>{
+    assert.equal(error.code,'MODEL_INVALID_OUTPUT');assert.equal(error.validationDiagnostic,'JSON_SYNTAX');assert.doesNotMatch(JSON.stringify(error)+error.message+error.stack,/PRIVATE/);return true;
+  });
+});
+
+test('diagnostics use a whitelist and do not attach to unrelated errors',()=>{
+ const invalid=new ProjectUpdateModelError('MODEL_INVALID_OUTPUT','PRIVATE_MODEL_DATA');assert.equal(invalid.validationDiagnostic,'UNKNOWN');assert.doesNotMatch(JSON.stringify(invalid),/PRIVATE/);
+ const input=new ProjectUpdateModelError('MODEL_INVALID_INPUT','CLAIM');assert.equal(Object.hasOwn(input,'validationDiagnostic'),false);
+ assert.deepEqual(validateProjectUpdateSummary(summary(),[source()]),summary());
+});
+
+test('shared diagnostic sanitizer only returns safe fixed enums',()=>{
+ assert.equal(safeValidationDiagnostic('JSON_SYNTAX'),'JSON_SYNTAX');assert.equal(safeValidationDiagnostic('PRIVATE_DIAGNOSTIC'),'UNKNOWN');assert.equal(safeValidationDiagnostic({private:'secret'}),'UNKNOWN');
 });

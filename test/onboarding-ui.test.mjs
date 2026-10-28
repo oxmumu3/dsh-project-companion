@@ -32,7 +32,7 @@ const snapshot=(connection,extra={})=>({version:1,completed:false,connection,pro
 
 test('client registers owned settings and onboarding surfaces; opening only reads sanitized state',async()=>{
   const c=await loadClient();c.context.snapshot=snapshot({state:'waiting-qr',qrAvailable:true,qrRevision:'1234567890abcdef'});
-  assert.equal(c.descriptor.id,'@oxmumu3/dsh-project-companion');
+  assert.equal(c.descriptor.id,'dsh-project-companion');
   assert.equal(c.registrations.length,2);
   c.render();await c.flush();const view=c.render();
   assert.equal(c.requests.length,1);assert.equal(c.requests[0].url,endpoint);assert.equal(c.requests[0].options.method??'GET','GET');

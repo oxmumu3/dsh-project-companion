@@ -152,13 +152,18 @@ test('rejects every tool attempt and every non-stop or missing finish outcome', 
     const f = fixture([async function* () { yield before; yield* textStream('{"ids":["a"]}')(); }]);
     await assert.rejects(f.model.selectArticles({ articles: [article('a')] }), { code: 'MODEL_TOOL_OUTPUT' });
   }
-  for (const kind of ['max-tokens', 'tool-calls', 'error', 'aborted', 'future-reason', null]) {
+  for (const kind of ['tool-calls', 'error', 'aborted', 'future-reason', null]) {
     const f = fixture([async function* () {
       yield { type: 'block-end', index: 0, block: { type: 'text', text: '{"ids":["a"]}' } };
       if (kind) yield { type: 'finish', reason: { kind, failure: { message: 'SENSITIVE_PROVIDER_BODY' } } };
     }]);
     await assert.rejects(f.model.selectArticles({ articles: [article('a')] }), { code: 'MODEL_INCOMPLETE' });
   }
+});
+
+test('token-limit finish is distinguishable from malformed or missing stream completion', async () => {
+ const f=fixture([async function* () {yield {type:'finish',reason:{kind:'max-tokens',failure:{message:'SENSITIVE_PROVIDER_BODY'}}};}]);
+ await assert.rejects(f.model.selectArticles({articles:[article('a')]}),e=>e.code==='MODEL_TOKEN_LIMIT'&&!/SENSITIVE_PROVIDER_BODY/.test(e.message));
 });
 
 test('bounds response text and rejects content after a terminal finish', async () => {
@@ -204,7 +209,7 @@ test('default selection is refreshed per call and missing host capability is a b
 
 test('the official SDK adapter and llm waterfall accept the sessionless request contract', async t => {
   const require = createRequire(import.meta.url);
-  assert.equal(require('@deepseek-ai/dsh-llm/package.json').version, process.env.DSH_TEST_SDK_VERSION ?? '0.2.1-rc.3');
+  assert.equal(require('@deepseek-ai/dsh-llm/package.json').version, process.env.DSH_TEST_SDK_VERSION ?? '0.2.0-rc.2');
   const ctx = new Context();
   t.after(() => ctx.fiber.dispose());
   await ctx.plugin(LlmRuntime);

@@ -9,6 +9,9 @@ const TERMINAL = new Set(['queued', 'reported_sent', 'failed', 'uncertain', 'exp
 const snippet = (value, n = 300) => String(value ?? '').replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, '').replace(/\s+/g, ' ').slice(0, n);
 const errorText = error => snippet(error instanceof Error ? error.message : error, 250);
 const freshState = () => ({ id: 'profile', version: 1, projects: [], daily: null, paused: false, reminders: [], outbox: [] });
+const validExpectedBinding = value => value && typeof value === 'object' && !Array.isArray(value) &&
+  Object.keys(value).sort().join(',') === 'botHash,userHash' &&
+  /^[a-f0-9]{64}$/.test(value.userHash ?? '') && /^[a-f0-9]{64}$/.test(value.botHash ?? '');
 
 function requireOwner(owner) {
   if (!owner?.sessionId || typeof owner.cwd !== 'string' || !isAbsolute(owner.cwd)) throw new Error('A real current local session is required / 需要当前真实本地会话');
@@ -146,6 +149,7 @@ export function createService(options = {}) {
   // Cancellation intent must be visible while a serialized tick awaits I/O.
   // Configurations keep their request-time version so queued ordering survives.
   let dailyCancellationVersion=0,dailyConfigurationVersion=0;
+  const reminderCancellations = new Map();
   const dailyAllowed=()=>dailyConfigurationVersion===dailyCancellationVersion;
   let queue = Promise.resolve();
   const serial = work => { const run = queue.then(work); queue = run.catch(() => {}); return run; };
@@ -249,8 +253,8 @@ export function createService(options = {}) {
     }
     return output;
   }
-  function enqueue(kind, sessionId, text, expiresAt) {
-    const item = { id: randomUUID(), kind, sessionId, text, createdAt: clock().toISOString(), expiresAt: new Date(expiresAt).toISOString(), status: 'pending', detail: '' };
+  function enqueue(kind, sessionId, text, expiresAt, expectedBinding) {
+    const item = { id: randomUUID(), kind, sessionId, text, createdAt: clock().toISOString(), expiresAt: new Date(expiresAt).toISOString(), status: 'pending', detail: '', ...(expectedBinding ? {expectedBinding:structuredClone(expectedBinding)} : {}) };
     state.outbox.push(item);
     // Pending jobs are bounded by five projects / fifty reminders; discard only terminal history.
     while (state.outbox.length > 100) {
@@ -269,7 +273,13 @@ export function createService(options = {}) {
       item.status = 'dispatching'; await save();
       if (clock().getTime() >= Date.parse(item.expiresAt)) { item.status = 'expired'; item.detail = 'Sending window elapsed during persistence; not dispatched'; await save(); continue; }
       try {
-        const result = await send(structuredClone(item));
+        const authorize=()=>{
+          if(state.paused||item.status!=='dispatching'||clock().getTime()>=Date.parse(item.expiresAt))return false;
+          if(item.kind==='daily')return dailyAllowed();
+          const reminder=state.reminders.find(row=>row.outboxId===item.id);
+          return !!reminder && reminder.status==='enqueued' && !reminderCancellations.has(reminder.id);
+        };
+        const result = await send(structuredClone(item),{authorize});
         item.status = ['blocked', 'queued', 'reported_sent', 'failed', 'uncertain'].includes(result?.status) ? result.status : 'uncertain';
         item.detail = snippet(result?.detail ?? 'Unrecognized bridge result', 300);
       } catch (error) { item.status = 'uncertain'; item.detail = errorText(error); }
@@ -282,10 +292,20 @@ export function createService(options = {}) {
       try{cancellationOwner=requireOwner(caller);}catch(error){return Promise.reject(error);}
       dailyCancellationVersion++;
     }
+    let cancellingReminder;
+    if(input.action==='cancel_reminder'){
+      try{cancellationOwner=requireOwner(caller);}catch(error){return Promise.reject(error);}
+      if(typeof input.id==='string'&&state?.reminders.some(row=>row.id===input.id)){
+        cancellingReminder=input.id;
+        reminderCancellations.set(input.id,(reminderCancellations.get(input.id)??0)+1);
+      }
+    }
     const requestedDailyVersion=dailyCancellationVersion;
     return serial(async () => {
     await load();
     const owner = cancellationOwner??requireOwner(caller);
+    if(input.expectedBinding!==undefined&&(!['configure_daily','remind'].includes(input.action)||!validExpectedBinding(input.expectedBinding)))throw new Error('Invalid expected delivery binding');
+    if(input.expectedBinding!==undefined&&input.userRequested!==true)throw new Error('需要用户明确要求才可安排 Family 提醒或日报。');
     switch (input.action) {
       case 'watch': {
         const known = await candidates(owner);
@@ -319,10 +339,10 @@ export function createService(options = {}) {
         const timeZoneDefaulted=input.timeZone===undefined;
         const value = schedule(input.time, timeZoneDefaulted?computerTimeZone():input.timeZone);
         const prior = state.daily;
-        state.daily = { ...value, sessionId: owner.sessionId, enabled: true, lastDate: prior?.lastDate ?? null };
+        state.daily = { ...value, sessionId: owner.sessionId, enabled: true, lastDate: prior?.lastDate ?? null, ...(input.expectedBinding ? {expectedBinding:structuredClone(input.expectedBinding)} : {}) };
         dailyConfigurationVersion=requestedDailyVersion;
         state.paused = false;
-        for (const item of state.outbox) if (item.kind === 'daily' && ['pending', 'blocked'].includes(item.status)) item.sessionId = owner.sessionId;
+        for (const item of state.outbox) if (item.kind === 'daily' && ['pending', 'blocked'].includes(item.status) && !item.expectedBinding && !input.expectedBinding) item.sessionId = owner.sessionId;
         await save(); return { ...view(), timeZoneDefaulted, text: `已设置每日 ${value.time} 汇报，${timeZoneDefaulted?'本次按电脑时区':'时区为'} ${value.timeZone}。电脑和宿主在线时检查；晚于6小时不补发。` };
       }
       case 'cancel_daily': {
@@ -356,7 +376,7 @@ export function createService(options = {}) {
         if (Date.parse(dueAt) <= now) throw new Error('Reminder must be in the future');
         if (typeof input.title !== 'string' || !input.title.trim() || input.title.length > 200) throw new Error('Reminder title must be 1-200 characters');
         if (state.reminders.filter(activeReminder).length >= 50) throw new Error('At most 50 active reminders');
-        const reminder = { id: `r_${randomUUID().slice(0, 8)}`, title: input.title.trim(), dueAt, sessionId: owner.sessionId, status: 'scheduled' };
+        const reminder = { id: `r_${randomUUID().slice(0, 8)}`, title: input.title.trim(), dueAt, sessionId: owner.sessionId, status: 'scheduled', ...(input.expectedBinding ? {expectedBinding:structuredClone(input.expectedBinding)} : {}) };
         state.reminders = [...state.reminders.filter(activeReminder).slice(-50), ...state.reminders.filter(r => !activeReminder(r)).slice(-49), reminder].slice(-100);
         state.paused = false; await save(); return { reminder: structuredClone(reminder), text: relative?`已记下，${input.delayMinutes}分钟后提醒你「${reminder.title}」。电脑和宿主需保持在线；你也可以随时告诉我取消。`:`已记下，将按电脑当前时区在${new Intl.DateTimeFormat('zh-CN',{timeZone:computerTimeZone(),dateStyle:'medium',timeStyle:'short'}).format(new Date(reminder.dueAt))}提醒你「${reminder.title}」。电脑和宿主需保持在线；你也可以随时告诉我取消。` };
       }
@@ -371,6 +391,8 @@ export function createService(options = {}) {
       case 'status': {const snapshot=view();return{...snapshot,text:statusText(snapshot)};}
       default: throw new Error('Unknown companion action');
     }
+    }).finally(()=>{
+      if(cancellingReminder){const n=reminderCancellations.get(cancellingReminder)??0;if(n<=1)reminderCancellations.delete(cancellingReminder);else reminderCancellations.set(cancellingReminder,n-1);}
     });
   };
   const record = event => serial(async () => {
@@ -396,7 +418,7 @@ export function createService(options = {}) {
         state.daily.lastDate = due.date;
         if (elapsed <= SIX_HOURS) {
           const output = await digest();
-          if(dailyAllowed())enqueue('daily', state.daily.sessionId, output.wechatText, due.at + SIX_HOURS);
+          if(dailyAllowed())enqueue('daily', state.daily.sessionId, output.wechatText, due.at + SIX_HOURS, state.daily.expectedBinding);
         }
         await save();
       }
@@ -405,7 +427,7 @@ export function createService(options = {}) {
       if (reminder.status !== 'scheduled' || Date.parse(reminder.dueAt) > now.getTime()) continue;
       const expiry = Date.parse(reminder.dueAt) + REMINDER_GRACE;
       if (now.getTime() > expiry) reminder.status = 'expired';
-      else { reminder.status = 'enqueued'; reminder.outboxId = enqueue('reminder', reminder.sessionId, formatWechatReminder({title:reminder.title,dueAt:reminder.dueAt,timeZone:computerTimeZone()}), expiry).id; }
+      else { reminder.status = 'enqueued'; reminder.outboxId = enqueue('reminder', reminder.sessionId, formatWechatReminder({title:reminder.title,dueAt:reminder.dueAt,timeZone:computerTimeZone()}), expiry, reminder.expectedBinding).id; }
       await save();
     }
     await flush();

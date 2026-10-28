@@ -120,7 +120,7 @@ test('the authenticated route saves an existing 1999-astral-character memory wit
 
 test('explicit writes activate only the original owner and map opaque IDs to watched roots',async()=>{
   const f=await fixture();f.cold();await f.adapter.action({action:'followup_configure',projectId,everyMinutes:45,userRequested:true});
-  assert.deepEqual(f.calls[0],['activate','original-owner']);assert.deepEqual(f.calls[1],['configure',{root:project.root,sessionId:'original-owner',everyMinutes:45,projectLabel:project.label}]);
+  assert.deepEqual(f.calls[0],['activate','original-owner']);assert.deepEqual(f.calls.find(row=>row[0]==='configure'),['configure',{root:project.root,sessionId:'original-owner',everyMinutes:45,projectLabel:project.label}]);
   const receipt=await f.adapter.action({action:'memory_update',projectId,id:'memory-1',text:'修正后的内容',userRequested:true});assert.equal(receipt.record.text,'修正后的内容');assert.equal(receipt.record.verified,false);assert.equal(JSON.stringify(receipt).includes('never export'),false);
   assert.deepEqual(f.calls.find(row=>row[0]==='revise'),['revise',{root:project.root,sessionId:'original-owner',id:'memory-1',text:'修正后的内容',userRequested:true}]);
   await f.adapter.action({action:'memory_forget',projectId,id:'memory-1',userRequested:true});assert.deepEqual(f.calls.find(row=>row[0]==='forget'),['forget',{root:project.root,sessionId:'original-owner',id:'memory-1',userRequested:true}]);
@@ -128,7 +128,7 @@ test('explicit writes activate only the original owner and map opaque IDs to wat
 
 test('one-off accepts an explicit future time or a short delay and uses the original WeChat route',async()=>{
   const f=await fixture();const dueAt='2026-10-20T15:00:00.000Z';
-  await f.adapter.action({action:'check_once',projectId,dueAt,userRequested:true});assert.deepEqual(f.calls[0],['checkOnce',{root:project.root,sessionId:'original-owner',projectLabel:project.label,delivery:'wechat',dueAt}]);
+  await f.adapter.action({action:'check_once',projectId,dueAt,userRequested:true});assert.deepEqual(f.calls.find(row=>row[0]==='checkOnce'),['checkOnce',{root:project.root,sessionId:'original-owner',projectLabel:project.label,delivery:'wechat',dueAt}]);
   await f.adapter.action({action:'cancel_once',projectId,userRequested:true});assert.ok(f.calls.some(row=>row[0]==='cancelOnce'&&row[1].sessionId==='original-owner'));
   await f.adapter.action({action:'followup_cancel',projectId,userRequested:true});assert.ok(f.calls.some(row=>row[0]==='cancel'&&row[1].root===project.root));
 });
@@ -150,7 +150,7 @@ test('binding changes and unwatch during activation prevent all writes',async()=
 for(const [action,method] of [['memory_update','revise'],['memory_forget','forget'],['followup_configure','configure'],['followup_cancel','cancel'],['check_once','checkOnce'],['cancel_once','cancelOnce']])test(action+' passes a final mutation guard that rejects binding revocation during delegate awaits',async()=>{
   const gate=deferred(),entered=deferred();let mutations=0,captured;
   const delegate=async args=>{captured=args;entered.resolve();await gate.promise;assert.equal(await args.authorizeMutation(),true);mutations++;return{};};
-  const f=await fixture(action.startsWith('memory_')?{memory:{[method]:delegate}}:{followup:{[method]:delegate}});
+  const f=await fixture(action.startsWith('memory_')?{memory:{[method]:delegate}}:{followup:{inspect:async()=>({followup:null,once:null}),[method]:delegate}});
   const input={action,projectId,userRequested:true,...(action==='memory_update'?{id:'memory-1',text:'correction'}:action==='memory_forget'?{id:'memory-1'}:action==='followup_configure'?{everyMinutes:30}:action==='check_once'?{delaySeconds:60}:{})};
   const pending=f.adapter.action(input);await entered.promise;f.setBinding({...binding,bindingKey:'b'.repeat(64)});gate.resolve();await assert.rejects(pending);assert.equal(mutations,0);
   assert.equal(typeof captured.authorizeMutation,'function');if(!action.startsWith('memory_'))assert.deepEqual(captured.expectedBinding,{sessionId:'original-owner',bindingKey:binding.bindingKey});

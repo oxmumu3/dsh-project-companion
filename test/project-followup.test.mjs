@@ -13,6 +13,9 @@ import {ProactiveScheduler} from '../vendor/proactive/lib/scheduler.js';
 async function api(){const m=await import('../src/project-followup.js').catch(()=>({}));assert.equal(typeof m.createProjectFollowup,'function','scoped real proactive adapter must exist');return m;}
 const binding={userHash:'a'.repeat(64),botHash:'b'.repeat(64)};
 const deferred=()=>{let resolve;const promise=new Promise(done=>resolve=done);return{promise,resolve};};
+// 0.2.0 supports both; 0.2.1 exposes the reserved transport through ptc only.
+// Ask the loaded SDK schema instead of inferring support from a matrix label.
+const codeTransportMode=(()=>{try{return ToolRuntime.Config({mode:'both'}).mode;}catch{return ToolRuntime.Config({mode:'ptc'}).mode;}})();
 async function harness(t,options={}){
   const {createProjectFollowup}=await api();
   const temp=await realpath(await mkdtemp(join(tmpdir(),'dot-followup-')));
@@ -43,10 +46,10 @@ async function harness(t,options={}){
   ctx.provide('agents',registry);ctx.provide('agentDefaultModel',{currentSelection:()=>({provider:'synthetic',model:'synthetic'})});
   ctx.provide('agentPresets',{mount:async(_scope,id)=>mounts.push(id)});
   for(const name of ['project_companion','send_wechat','bash'])ctx.tools.register(defineTool({name,description:'Synthetic capability only, no external effects',parameters:{action:{type:'string'},project:{type:'string'}},output:{schema:{type:'object',additionalProperties:true},render:()=>[]},execute:args=>{tools.push({name,args});return options.toolResult?.(name,args)??{ok:true};}}));
-  const optionsForAdapter={ctx,clock:()=>now,hostTimeZone:()=> 'America/Mexico_City',authorizeRoot:async r=>allow&&authorizedRoots.has(r),canRun:async()=>allowedRun,readBinding:async sessionId=>options.readBinding?options.readBinding(sessionId):currentBinding,readConnection:async()=>options.readConnection?options.readConnection():{state:'bound',sessionId:owner.id,bindingKey:'d'.repeat(64)},readNativeRoute:async sessionId=>options.readNativeRoute?options.readNativeRoute(sessionId):(currentBinding===null?{kind:'unbound'}:{kind:'bound',binding:currentBinding}),createScheduler:deps=>{const scheduler=new ProactiveScheduler(deps);schedulers.push(scheduler);return scheduler;}};
+  const optionsForAdapter={ctx,clock:()=>now,hostTimeZone:()=> 'America/Mexico_City',authorizeRoot:async r=>allow&&authorizedRoots.has(r),canRun:async()=>allowedRun,readBinding:async sessionId=>options.readBinding?options.readBinding(sessionId):currentBinding,readConnection:async()=>options.readConnection?options.readConnection():{state:'bound',sessionId:owner.id,bindingKey:'d'.repeat(64)},readNativeRoute:async sessionId=>options.readNativeRoute?options.readNativeRoute(sessionId):(currentBinding===null?{kind:'unbound'}:{kind:'bound',binding:currentBinding}),createScheduler:deps=>{const scheduler=new ProactiveScheduler(deps);schedulers.push(scheduler);options.onSchedulerCreated?.();return scheduler;}};
   let adapter=createProjectFollowup(optionsForAdapter);
   const args={root,sessionId:owner.id,everyMinutes:30,projectLabel:'测试项目'};
-  const drain=async()=>{let chains;do{chains=schedulers.map(s=>s.driveChain);await Promise.all(chains);}while(schedulers.some((s,i)=>s.driveChain!==chains[i]));};
+  const drain=async()=>{for(const s of schedulers)await s.driveChain;};
   const tick=async()=>{for(const s of schedulers)s.requestDrive();await drain();};
   t.after(async()=>{await adapter.close();await owner.scopeDispose();await ctx.fiber.dispose();await rm(temp,{recursive:true,force:true});});
   return{root,temp,ctx,agents,owner,schedulers,messages,mounts,resumes,tools,args,drain,tick,get adapter(){return adapter;},transportRuns:()=>transportRuns,authorize:r=>authorizedRoots.add(r),advance:minutes=>{now=new Date(now.getTime()+minutes*60000);},advanceSeconds:seconds=>{now=new Date(now.getTime()+seconds*1000);},setBinding:b=>{currentBinding=b;},deny:()=>{allow=false;},pause:()=>{allowedRun=false;},unpause:()=>{allowedRun=true;},reopen:async()=>{await adapter.close();adapter=createProjectFollowup(optionsForAdapter);return adapter;}};
@@ -263,7 +266,7 @@ test('cancelling an active wake still permits its reclaim tool to end silently',
 });
 
 test('autonomous wake denies the reserved code transport before any PTC execution',async t=>{
-  const mode=process.env.DSH_TEST_SDK_VERSION==='0.2.0-rc.2'?'both':'ptc';
+  const mode=codeTransportMode;
   let result;const h=await harness(t,{mode,onWake:async({agent,ctx})=>{
     result=await ctx.tools.execute({callId:'autonomous-code-transport',name:'run_code',arguments:{code:'return "must not execute";',description:'Synthetic code transport deny regression'},agent,signal:new AbortController().signal});
   }});
@@ -323,6 +326,12 @@ test('closing a cancelled active wake retains its guards until that old driver s
   try{await new Promise(resolve=>setTimeout(resolve,20));early=settled;}finally{release();await running;await closing;}
   assert.equal(early,false,'close must retain read-only guards until the retired driver is actually settled');
 });
+test('close drains the unawaited scheduler boot persistence before returning',async t=>{
+ const {ProactiveStore}=await import('../vendor/proactive/lib/store.js');const original=ProactiveStore.prototype.persist;
+ let hold=false,release,entered;const arrived=new Promise(resolve=>{entered=resolve;});const waiting=new Promise(resolve=>{release=resolve;});
+ ProactiveStore.prototype.persist=function(...args){if(hold){hold=false;entered();return waiting.then(()=>original.apply(this,args));}return original.apply(this,args);};
+ try{const h=await harness(t,{onSchedulerCreated:()=>{hold=true;}});await h.adapter.configure(h.args);await arrived;let settled=false;const closing=h.adapter.close().then(()=>{settled=true;});await new Promise(resolve=>setTimeout(resolve,20));const early=settled;release();await closing;assert.equal(early,false,'close must wait for boot persistence even though upstream does not await it');}finally{release?.();ProactiveStore.prototype.persist=original;}
+});
 
 test('copying a plan directory into another watched project cannot transfer its authorization',async t=>{
   const h=await harness(t);await h.adapter.configure(h.args);await h.drain();const second=join(h.temp,'other-watched');await mkdir(second);h.authorize(second);
@@ -344,7 +353,10 @@ test('explicit native once uses the real upstream once scheduler and completes w
   const first=await h.adapter.checkOnce(args);assert.equal(first.status,'queued');assert.equal(first.delivery,'native');assert.equal(first.enabled,true);assert.equal(h.messages.length,0);
   await h.drain();h.advanceSeconds(30);await h.tick();assert.equal(h.messages.length,0);h.advanceSeconds(30);await h.tick();
   const done=await h.adapter.onceStatus(args);assert.equal(done.status,'completed');assert.equal(done.enabled,false);assert.equal(done.runCount,1);assert.equal(done.lastReviewedAt,'2026-10-18T16:01:00.000Z');assert.equal(h.messages.length,1);
-  const stored=JSON.parse(await readFile(join(onceDirectory(h),'alarms.json'),'utf8'));assert.equal(stored.alarms.length,1);assert.equal(stored.alarms[0].type,'once');assert.equal(stored.alarms[0].status,'completed');assert.equal(stored.alarms[0].respectQuietHours,false);
+  // Upstream advances its in-memory alarm first and persists asynchronously.
+  // Wait for the actual file instead of assuming driveChain awaited that write.
+  let stored;for(let i=0;i<100;i++){stored=JSON.parse(await readFile(join(onceDirectory(h),'alarms.json'),'utf8'));if(stored.alarms[0]?.status==='completed')break;await new Promise(resolve=>setTimeout(resolve,10));}
+  assert.equal(stored.alarms.length,1);assert.equal(stored.alarms[0].type,'once');assert.equal(stored.alarms[0].status,'completed');assert.equal(stored.alarms[0].respectQuietHours,false);
   const runs=(await readFile(join(onceDirectory(h),'runs.jsonl'),'utf8')).trim().split('\n').map(JSON.parse);assert.equal(runs.length,1);assert.equal(runs[0].decision,'reply');
   h.advance(60);await h.tick();assert.equal(h.messages.length,1);assert.equal(h.resumes.length,0);
 });
@@ -423,7 +435,7 @@ test('one-off requested checks run inside quiet hours while existing recurring a
 
 test('a native once enforces read-only tools and checks its route again before source reads',async t=>{
   let changedResult;const outcomes=[];
-  const mode=process.env.DSH_TEST_SDK_VERSION==='0.2.0-rc.2'?'both':'ptc';
+  const mode=codeTransportMode;
   const h=await harness(t,{mode,onWake:async({agent,ctx})=>{
     for(const [name,args] of [['send_wechat',{}],['bash',{}],['project_companion',{action:'coordinate',project:h.root}],['project_companion',{action:'remember',project:h.root}],['run_code',{code:'return \"denied\";',description:'deny one-off code'}]]){
       outcomes.push(await ctx.tools.execute({callId:'once-deny-'+outcomes.length,name,arguments:args,agent,signal:new AbortController().signal}));

@@ -1,3 +1,4 @@
+import {withAuthDiagnostic,oauthHttpDiagnostic} from './auth-diagnostics.js';
 import { createServer } from 'node:http';
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { readContextConfig } from './context-config.js';
@@ -72,7 +73,7 @@ export function createContextAccountAuth({ source, readConfig, saveCredentials, 
       const abort = () => { cleanup(); reject(error()); };
       const cleanup = () => signal.removeEventListener('abort', abort);
       signal.addEventListener('abort', abort, { once: true });
-      Promise.resolve(promise).then(value => { cleanup(); signal.aborted ? reject(error()) : resolve(value); }, () => { cleanup(); reject(error()); });
+      Promise.resolve(promise).then(value => { cleanup(); signal.aborted ? reject(error()) : resolve(value); }, reason => { cleanup(); reject(reason?.authDiagnostic ? withAuthDiagnostic(error(),reason.authDiagnostic) : error()); });
     });
   }
   async function requestJson(url, fields, jsonBody, external) {
@@ -82,10 +83,12 @@ export function createContextAccountAuth({ source, readConfig, saveCredentials, 
     else external?.addEventListener('abort', cancel, { once: true });
     controllers.add(controller);
     const timer = setTimeout(cancel, REQUEST_TIMEOUT);
+    let stage='network';
     try {
       const response = await bounded(Promise.resolve().then(() => fetchImpl(url, { method: 'POST', redirect: 'error', headers: { accept: 'application/json', 'content-type': jsonBody ? 'application/json' : 'application/x-www-form-urlencoded' }, body: jsonBody ? JSON.stringify(fields) : new URLSearchParams(fields).toString(), signal: controller.signal })), controller.signal);
-      if (!response.ok || closed || Number(response.headers?.get?.('content-length')) > MAX_BODY) throw error();
-      let body;
+      if (!response.ok) throw withAuthDiagnostic(error(),await oauthHttpDiagnostic(response,controller.signal));
+      if (closed || Number(response.headers?.get?.('content-length')) > MAX_BODY) throw withAuthDiagnostic(error(),{stage:'parse'});
+      stage='parse';let body;
       if (response.body?.getReader) {
         const reader = response.body.getReader(), chunks = []; let size = 0;
         try {
@@ -105,16 +108,16 @@ export function createContextAccountAuth({ source, readConfig, saveCredentials, 
       const value = JSON.parse(body);
       if (!plain(value) || controller.signal.aborted || closed) throw error();
       return value;
-    } catch { throw error(closed || external?.aborted ? `${provider.label} 连接请求已取消。` : undefined); }
+    } catch (failure) { throw withAuthDiagnostic(error(closed || external?.aborted ? `${provider.label} 连接请求已取消。` : undefined), failure?.authDiagnostic??{stage}); }
     finally { clearTimeout(timer); controllers.delete(controller); external?.removeEventListener('abort', cancel); }
   }
   async function exchange(fields, signal, previousRefresh = '') {
     const value = await requestJson(provider.token, { ...fields, resource: provider.resource }, false, signal);
-    if (!text(value.access_token) || typeof value.token_type !== 'string' || value.token_type.toLowerCase() !== 'bearer') throw error();
+    if (!text(value.access_token) || typeof value.token_type !== 'string' || value.token_type.toLowerCase() !== 'bearer') throw withAuthDiagnostic(error(),{stage:'parse'});
     // A missing expires_in gets a one-hour local reuse lease, never unlimited persistence.
     const ttl = value.expires_in === undefined ? 3600 : Number(value.expires_in);
-    if (!Number.isFinite(ttl) || ttl <= 0 || (value.scope !== undefined && (typeof value.scope !== 'string' || value.scope.trim().split(/\s+/).length !== 1 || value.scope.trim() !== provider.scope))) throw error();
-    if (value.refresh_token !== undefined && !text(value.refresh_token)) throw error();
+    if (!Number.isFinite(ttl) || ttl <= 0 || (value.scope !== undefined && (typeof value.scope !== 'string' || value.scope.trim().split(/\s+/).length !== 1 || value.scope.trim() !== provider.scope))) throw withAuthDiagnostic(error(),{stage:'parse'});
+    if (value.refresh_token !== undefined && !text(value.refresh_token)) throw withAuthDiagnostic(error(),{stage:'parse'});
     return { accessToken: value.access_token, refreshToken: provider.refresh ? value.refresh_token ?? previousRefresh : '', expiresAt: now() + Math.min(ttl, 31_536_000) * 1000, scope: provider.scope };
   }
   function stopServer(flow) {
@@ -222,7 +225,7 @@ export function createContextAccountAuth({ source, readConfig, saveCredentials, 
   async function getTokenInner({ signal, authorizeMutation: guard } = {}) {
     open();
     if (signal?.aborted) throw error();
-    await authorizeMutation(guard, signal);
+    try{await authorizeMutation(guard, signal);}catch{throw withAuthDiagnostic(error(),{stage:'guard'});}
     const config = read(), current = credentials(config), configKey = key(config);
     if (!current) {
       if (text(config[legacyField])) return config[legacyField];
@@ -239,8 +242,8 @@ export function createContextAccountAuth({ source, readConfig, saveCredentials, 
       const flight = { key: configKey, promise }; refreshing = flight;
       promise.then(() => { if (refreshing === flight) refreshing = null; }, () => { if (refreshing === flight) refreshing = null; });
     }
-    const token = await (signal ? bounded(refreshing.promise, signal) : refreshing.promise);
-    await authorizeMutation(guard, signal);
+    let token;try{token=await (signal ? bounded(refreshing.promise, signal) : refreshing.promise);}catch(failure){throw withAuthDiagnostic(error(),failure?.authDiagnostic??{stage:'persist'});}
+    try{await authorizeMutation(guard, signal);}catch{throw withAuthDiagnostic(error(),{stage:'guard'});}
     return token;
   }
   return {
