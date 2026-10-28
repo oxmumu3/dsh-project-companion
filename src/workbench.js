@@ -33,7 +33,7 @@ const limitations=[
 export function createWorkbench({service,taskResults,memory,followup,readBinding,readState=async()=>null,readConnection=async()=>({state:'unknown'}),readContextConnection,readProject=readProjectFiles,clock=()=>new Date(),hostTimeZone=()=>Intl.DateTimeFormat().resolvedOptions().timeZone,isClosed=()=>false}={}){
   let closed=false;
   const open=()=>{if(closed||isClosed())throw new Error('项目工作台已关闭。');};
-  const connection=async()=>{open();try{const value=await readConnection();open();if(!CONNECTION_STATES.has(value?.state)||(value.state==='bound'&&!bound(value)))return{state:'unknown'};return bound(value)?{state:'bound',sessionId:value.sessionId,bindingKey:value.bindingKey,...(value.readOnly===true?{readOnly:true}:{})}:{state:value.state};}catch(error){open();return{state:'unknown'};}};
+  const connection=async()=>{open();try{const value=await readConnection();open();if(!CONNECTION_STATES.has(value?.state)||(value.state==='bound'&&!bound(value)))return{state:'unknown'};return bound(value)?{state:'bound',sessionId:value.sessionId,bindingKey:value.bindingKey,...(value.readOnly===true?{readOnly:true}:{})}:{state:value.state,...(value.readOnly===true?{readOnly:true}:{})};}catch(error){open();return{state:'unknown'};}};
   async function snapshot(){
     open();
     const issues=[...limitations];
@@ -148,9 +148,9 @@ export function createWorkbench({service,taskResults,memory,followup,readBinding
       }catch(error){open();availability.jobs=false;jobs=[];issues.push('当前绑定会话的交办状态暂不可用。');}
       current=await connection();
     }
-    if(bound(expected)&&!same(expected,current)){jobs=[];availability.jobs=false;for(const project of projects)project.followup=emptyFollowup();current={state:'unknown'};issues.push('读取时原绑定已变化，已丢弃交办和跟进内容；请刷新核对。');}
+    if(bound(expected)&&!same(expected,current)){jobs=[];availability.jobs=false;for(const project of projects)project.followup=emptyFollowup();current={state:'unknown',...(expected.readOnly===true||current.readOnly===true?{readOnly:true}:{})};issues.push('读取时原绑定已变化，已丢弃交办和跟进内容；请刷新核对。');}
     // An initially unbound snapshot never adopts a newly bound session midway.
-    if(!bound(expected))current={state:expected.state};
+    if(!bound(expected))current={state:expected.state,...(expected.readOnly===true?{readOnly:true}:{})};
     const outbox=list(state?.outbox,100);
     const reminders=list(state?.reminders,100).filter(row=>identity(row?.id)&&at(row.dueAt)&&REMINDER_STATES.has(row.status)).map(row=>{
       const deliveryStatus=row.outboxId?outbox.find(item=>item?.id===row.outboxId)?.status??'history_pruned':null;
@@ -160,7 +160,7 @@ export function createWorkbench({service,taskResults,memory,followup,readBinding
     let zone='unknown';try{const value=typeof hostTimeZone==='function'?hostTimeZone():hostTimeZone;if(typeof value==='string'&&value.length<=100){new Intl.DateTimeFormat('en',{timeZone:value});zone=value;}}catch{}
     open();
     return{version:1,generatedAt:clock().toISOString(),hostTimeZone:zone,paused:typeof storedState?.paused==='boolean'?storedState.paused:null,availability,bindingRevision:bindingRevision(current),
-      ...(contextRevision!==undefined?{contextBindingRevision:contextRevision}:{}),connection:{state:current.state,...(bound(current)?{sessionId:current.sessionId,...(current.readOnly===true?{readOnly:true}:{})}:{})},projects,jobs,reminders:reminders.slice(0,20),daily:daily?{time:daily.time,timeZone:daily.timeZone,enabled:daily.enabled===true}:null,
+      ...(contextRevision!==undefined?{contextBindingRevision:contextRevision}:{}),connection:{state:current.state,...(bound(current)?{sessionId:current.sessionId}:{}),...(current.readOnly===true?{readOnly:true}:{})},projects,jobs,reminders:reminders.slice(0,20),daily:daily?{time:daily.time,timeZone:daily.timeZone,enabled:daily.enabled===true}:null,
       counts:{projects:projects.length,activeReminders:reminders.length},limitations:issues};
   }
   return{snapshot,close(){closed=true;}};

@@ -1,0 +1,13 @@
+{
+  "url": "https://api.github.com/repos/HKUDS/nanobot/commits/HEAD",
+  "status": 200,
+  "fetchedAt": "2026-10-28T13:27:12.060Z",
+  "data": {
+    "sha": "8f7a7d17590de7ab187650381894dba2b9e060ab",
+    "commit": {
+      "committer": {
+        "date": "2026-10-28T09:28:59Z"
+      }
+    }
+  }
+}

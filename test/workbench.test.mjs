@@ -271,3 +271,14 @@ test('Family projection uses its own result scope while legacy source and remind
  assert.equal(value.contextBindingRevision,bindingRevision(legacy));assert.notEqual(value.bindingRevision,value.contextBindingRevision);assert.equal(value.connection.readOnly,true);
  assert.equal(value.availability.plans,false);assert.deepEqual(value.reminders,[]);assert.equal(value.daily,null);assert.equal(value.paused,true);assert.doesNotMatch(JSON.stringify(value),/OTHER OWNER/);adapter.close();
 });
+
+
+test('offline paired Family view never projects legacy reminders or daily plans',async()=>{
+ const f=await fixture({connection:{state:'unknown',readOnly:true},state:{paused:false,reminders:[{id:'r-legacy',title:'LEGACY_PLAN_SENTINEL',dueAt:now,status:'scheduled'}],daily:{time:'09:00',timeZone:'UTC',enabled:true},outbox:[]}});
+ const value=await f.adapter.snapshot();assert.equal(value.connection.readOnly,true);assert.equal(value.availability.plans,false);assert.deepEqual(value.reminders,[]);assert.equal(value.daily,null);assert.doesNotMatch(JSON.stringify(value),/LEGACY_PLAN_SENTINEL/);
+});
+
+
+test('Family mode remains read-only when its binding disappears midway through a snapshot',async()=>{
+ let f;f=await fixture({connection:{...binding,readOnly:true},readProject:async()=>{f.setConnection({state:'unknown',readOnly:true});return[];}});const result=await f.adapter.snapshot();assert.equal(result.connection.state,'unknown');assert.equal(result.connection.readOnly,true);assert.deepEqual(result.jobs,[]);assert.deepEqual(result.reminders,[]);
+});

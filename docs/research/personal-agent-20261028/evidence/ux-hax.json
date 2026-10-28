@@ -1,0 +1,10 @@
+{
+  "fetchedAt": "2026-10-28T13:30:46.725Z",
+  "title": "Microsoft",
+  "url": "https://www.microsoft.com/en-us/research/publication/guidelines-for-human-ai-interaction/",
+  "classification": "unavailable_primary_page",
+  "observedExcerpt": "Thank you for your patience",
+  "note": "微软 HAX 与 Research 官方页出现空页/timeout/high-demand，本轮不引用其正文结论。",
+  "observedTextSha256": "0c49f3c2b731bf5dd4a2e566d9130039eabcf4b576fc2f524f4f84c73c6938ec",
+  "observedTextCharacters": 207
+}

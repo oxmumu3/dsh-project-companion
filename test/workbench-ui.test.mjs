@@ -553,3 +553,16 @@ test('a newer running or blocked task stays current instead of an older complete
   try{h.render();await h.flush();const view=h.render(),current=nodes(view,n=>n.props['data-dot-current-result'])[0];assert.equal(current.props['data-dot-current-result'],'new-job');assert.match(text(current),/NEW_TASK_SENTINEL/);assert.doesNotMatch(text(current),/OLDER_RESULT_SENTINEL/);assert.equal(nodes(nodes(view,n=>n.props['data-dot-history'])[0],n=>n.props['data-dot-job']==='j1').length,1);assert.deepEqual(actionPosts(h),[]);}finally{h.dispose();}
  }
 });
+
+
+test('shared Family workbench is an honest read-only return path, never a native Owner draft shortcut',async()=>{
+ const h=await harness();h.context.snapshot.connection.readOnly=true;h.context.snapshot.contextBindingRevision=null;h.context.snapshot.projects[0].followup={available:true,followup:null,once:null};seedMemory(h,memoryRow('m1','context','已有背景'));
+ try{h.render();await h.flush();let view=h.render();assert.match(text(view),/原微信.*交代/);assert.equal(nodes(view,n=>n.type==='textarea'&&n.props['aria-label']==='交代给 Dot 的事情').length,0);assert.equal(button(view,'和 Dot 接着聊'),undefined);assert.equal(button(view,'安排提醒'),undefined);button(view,'公开项目 A').props.onClick();view=h.render();assert.equal(button(view,'和 Dot 聊这个项目'),undefined);button(view,'记住的事').props.onClick();view=h.render();assert.equal(button(view,'纠正或忘记'),undefined);assert.equal(button(view,'告诉 Dot 要记住什么'),undefined);
+  button(view,'连接').props.onClick();view=h.render();const panel=nodes(view,n=>n.props?.bindingRevision===null&&typeof n.type==='function')[0];assert.ok(panel);assert.equal(panel.props.onFirstValue,undefined);assert.equal(panel.props.bound,false);assert.equal(h.opened.length,0);assert.deepEqual(actionPosts(h),[]);
+ }finally{h.dispose();}
+});
+
+test('offline shared Family mode preserves the return-to-WeChat path instead of offering legacy re-pairing',async()=>{
+ const h=await harness();h.context.snapshot.connection={state:'unknown',readOnly:true};
+ try{h.render();await h.flush();const view=h.render();assert.match(text(view),/原微信/);assert.equal(button(view,'连接微信'),undefined);assert.equal(button(view,'选择关注项目'),undefined);assert.equal(nodes(view,n=>n.type==='textarea'&&n.props['aria-label']==='交代给 Dot 的事情').length,0);assert.equal(h.opened.length,0);}finally{h.dispose();}
+});

@@ -8,7 +8,7 @@ const messages=Object.freeze({
   client_configuration:'Google 应用配置暂不可用，未保存新授权。请返回 DeepSeek Dot；这需要产品方检查配置，反复授权不能解决。',
   network:'与 Google 交换授权时连接未完成，未保存新授权。请返回 DeepSeek Dot，确认网络可用后重新连接。',
   permissions:'Google 未返回可用的只读授权，未保存新授权。请返回 DeepSeek Dot 重新连接并核对权限。',
-  storage:'授权结果未能在本机保存。请返回 DeepSeek Dot 核对连接状态后重试。',
+  storage:'本机保存结果尚未确认。请返回 DeepSeek Dot 刷新连接状态，再决定是否重新连接；系统不会自动重试或回滚。',
   response:'Google 授权返回内容未通过校验，未保存新授权。请返回 DeepSeek Dot 重新连接。',
   unknown:'本次 Google 连接未完成。请返回 DeepSeek Dot 核对连接状态后重新授权。',
 });
@@ -20,6 +20,7 @@ export function safeGoogleAuthAttempt(value){
 export function googleAuthAttemptMessage(reason){return messages[reason]??messages.unknown;}
 export function googleAuthFailureReason(error,stage){
   const diagnostic=error?.authDiagnostic;
+  if(stage==='persist')return'storage';
   if(diagnostic?.oauthError==='invalid_grant')return'code_rejected';
   if(['invalid_client','unauthorized_client'].includes(diagnostic?.oauthError))return'client_configuration';
   if(diagnostic?.stage==='network')return'network';

@@ -1,0 +1,13 @@
+{
+  "url": "https://api.github.com/repos/pan17/dsh-wechat/commits/HEAD",
+  "status": 200,
+  "fetchedAt": "2026-10-28T13:27:12.324Z",
+  "data": {
+    "sha": "312e9834831ab840c3a48f88f0fe95ee33ef2cda",
+    "commit": {
+      "committer": {
+        "date": "2026-10-26T12:34:37Z"
+      }
+    }
+  }
+}

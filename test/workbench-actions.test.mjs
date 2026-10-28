@@ -228,3 +228,17 @@ test('authenticated POST route rejects redirects, query scope, invalid JSON and 
   assert.equal((await route.fetch(new Request('http://localhost/api/project_companion/workbench/actions'))).status,405);assert.equal(reads,1);
   stop();assert.equal(stops,1);assert.equal((await route.fetch(req())).status,503);assert.equal(registerWorkbenchActionsRoute({get:()=>null},{}),null);assert.equal(effects.length,1);
 });
+
+
+test('shared Family read-only surface cannot fall through to legacy writes when revision is omitted',async()=>{
+ const f=await fixture({readReadonlyConnection:async()=>({state:'bound',sessionId:'family_owner_fixture',bindingKey:'b'.repeat(64),readOnly:true})});
+ await assert.rejects(f.adapter.action({action:'memory_update',projectId,id:'m1',text:'NEW',userRequested:true}));assert.equal(f.calls.length,0);
+});
+test('becoming a shared read-only surface during an awaited write guard stops the legacy mutation',async()=>{
+ let shared=false,writes=0;const f=await fixture({readReadonlyConnection:async()=>shared?{state:'bound',sessionId:'family_owner_fixture',bindingKey:'b'.repeat(64),readOnly:true}:binding,service:{watchedProjects:async()=>{shared=true;return[project];},isPaused:async()=>false},memory:{revise:async()=>{writes++;}}});
+ await assert.rejects(f.adapter.action({action:'memory_update',projectId,id:'m1',text:'NEW',userRequested:true}));assert.equal(writes,0);
+});
+
+test('paired Family offline surface cannot bypass a legacy write by omitting revision',async()=>{
+ const f=await fixture({readReadonlyConnection:async()=>({state:'unknown'})});await assert.rejects(f.adapter.action({action:'memory_update',projectId,id:'m1',text:'NEW',userRequested:true}));assert.equal(f.calls.length,0);
+});

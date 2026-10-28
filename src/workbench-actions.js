@@ -29,10 +29,10 @@ export function createWorkbenchActions({service,memory,followup,taskResults,read
   const connection=async(readonly=false)=>{
     open();const value=await (readonly?readReadonlyConnection:readConnection)?.();open();
     // Never retain a mutable carrier object across another await.
-    const result=bound(value)?{state:'bound',sessionId:value.sessionId,bindingKey:value.bindingKey}:{state:'unknown'};
+    const result=bound(value)?{state:'bound',sessionId:value.sessionId,bindingKey:value.bindingKey,...(value.readOnly===true?{readOnly:true}:{})}:{state:'unknown'};
     connectionReaders.set(result,readonly);return result;
   };
-  const checkBinding=async expected=>{if(!same(expected,await connection(connectionReaders.get(expected))))unavailable();};
+  const checkBinding=async expected=>{const readonly=connectionReaders.get(expected);if(!readonly){const visible=await connection(true);if(visible.readOnly===true||!same(expected,visible))unavailable();}if(!same(expected,await connection(readonly)))unavailable();};
   async function scope(expected,projectId){
     open();const projects=await service.watchedProjects();await checkBinding(expected);
     if(!Array.isArray(projects)||projects.length>5||projects.some(row=>!rootValid(row?.root)))unavailable();

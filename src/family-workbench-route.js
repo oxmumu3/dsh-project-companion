@@ -13,16 +13,16 @@ export function createFamilyWorkbenchConnection({isEnabled,readLegacyConnection,
     // route, which could now belong to another Owner.
     try{
       const sessionId=delegation.registeredSessionId();
-      if(!owner(sessionId))return{state:'unknown'};
+      if(!owner(sessionId))return{state:'unknown',readOnly:true};
       const scope=structuredClone(delegation.scopeFor(sessionId));
-      if(scope?.familySessionId!==sessionId||!hex(scope.bindingRevision)||!hex(scope.leaseFingerprint))return{state:'unknown'};
+      if(scope?.familySessionId!==sessionId||!hex(scope.bindingRevision)||!hex(scope.leaseFingerprint))return{state:'unknown',readOnly:true};
       const current=()=>isEnabled()&&delegation.registeredSessionId()===sessionId&&delegation.current(scope)===true&&delegation.routeState({sessionId,bindingRevision:scope.bindingRevision})==='current';
-      if(!current()||!await delegation.recheck(scope)||!current())return{state:'unknown'};
+      if(!current()||!await delegation.recheck(scope)||!current())return{state:'unknown',readOnly:true};
       const native=await readNativeRoute(sessionId);
       const botHash=createHash('sha256').update('family-dot:'+scope.bindingRevision).digest('hex');
-      if(!current()||native?.kind!=='bound'||native.binding?.userHash!==scope.bindingRevision||native.binding?.botHash!==botHash)return{state:'unknown'};
-      if(!await delegation.recheck(scope)||!current())return{state:'unknown'};
+      if(!current()||native?.kind!=='bound'||native.binding?.userHash!==scope.bindingRevision||native.binding?.botHash!==botHash)return{state:'unknown',readOnly:true};
+      if(!await delegation.recheck(scope)||!current())return{state:'unknown',readOnly:true};
       return{state:'bound',sessionId,bindingKey:digest(['dsh-dot-family-workbench-v1',sessionId,scope.bindingRevision,scope.leaseFingerprint]),readOnly:true};
-    }catch{return{state:'unknown'};}
+    }catch{return{state:'unknown',readOnly:true};}
   };
 }

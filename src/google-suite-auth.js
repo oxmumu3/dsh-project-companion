@@ -69,7 +69,7 @@ export function createGoogleSuiteAuth({publisher,readConfig,saveCredentials,fetc
  }
  function stop(flow){clearTimeout(flow.timer);if(pending===flow)pending=null;if(flow.stopped)return flow.stopped;flow.stopped=new Promise(resolve=>{flow.server.close(resolve);flow.server.closeIdleConnections?.();});servers.add(flow.stopped);flow.stopped.then(()=>servers.delete(flow.stopped));return flow.stopped;}
  function drop(flow){flow.used=true;flow.abort.abort();return stop(flow);}
- function respond(res,status,success=false,reason='unknown'){res.writeHead(status,{'content-type':'text/plain; charset=utf-8','cache-control':'no-store','content-security-policy':"default-src 'none'; frame-ancestors 'none'",'x-content-type-options':'nosniff',connection:'close'});res.end(success?'Google 授权已保存。返回 DeepSeek Dot，选择启用已授权的来源，即可询问邮件、日程或文件。本次尚未读取私人资料。':googleAuthAttemptMessage(reason)+' 本次失败不会清除已有连接。');}
+ function respond(res,status,success=false,reason='unknown'){res.writeHead(status,{'content-type':'text/plain; charset=utf-8','cache-control':'no-store','content-security-policy':"default-src 'none'; frame-ancestors 'none'",'x-content-type-options':'nosniff',connection:'close'});res.end(success?'Google 授权已保存。返回 DeepSeek Dot，选择启用已授权的来源，即可询问邮件、日程或文件。本次尚未读取私人资料。':googleAuthAttemptMessage(reason)+(reason==='storage'?'':' 本次失败不会清除已有连接。'));}
  async function persist(record,expected,guard,signal){
   const expectedKey=configKey(expected),serialized=JSON.stringify(record);if(serialized.length>32768)throw error();
   const commit=async()=>{await guarded(guard,signal);if(configKey(read())!==expectedKey)throw error();return true;};
