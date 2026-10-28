@@ -1,4 +1,5 @@
 import {safeAuthDiagnostic} from './auth-diagnostics.js';
+import {safeGoogleAuthAttempt} from './google-auth-attempt.js';
 import {createContextSummaryProbe} from './context-summary-probe.js';
 import {bindingRevision,matchesBindingRevision} from './workbench-scope.js';
 const bound = value => value?.state === 'bound' && typeof value.sessionId === 'string' && value.sessionId.length > 0 && value.sessionId.length <= 200 && /^[a-f0-9]{64}$/.test(value.bindingKey ?? '');
@@ -35,7 +36,7 @@ export function createContextRoute({context,googleAuth,googleCalendarAuth,google
   }
   function authStatus(controller=googleAuth){
     const status=controller?.status?.()??{};
-    return{clientConfigured:status.clientConfigured===true,refreshConfigured:status.refreshConfigured===true,authInProgress:status.authInProgress===true,...(typeof status.expiresAt==='string'&&status.expiresAt.length<=40?{expiresAt:status.expiresAt}:{})};
+    return{clientConfigured:status.clientConfigured===true,refreshConfigured:status.refreshConfigured===true,authInProgress:status.authInProgress===true,...(controller===googleSuiteAuth&&safeGoogleAuthAttempt(status.lastAttempt)?{lastAttempt:safeGoogleAuthAttempt(status.lastAttempt)}:{}),...(typeof status.expiresAt==='string'&&status.expiresAt.length<=40?{expiresAt:status.expiresAt}:{})};
   }
   async function snapshot(){
     const current=await connection();

@@ -545,3 +545,11 @@ test('applied project shortcut cannot clear a different home draft when native o
   try{h.render();await h.flush();nodes(h.render(),n=>n.type==='textarea')[0].props.onChange({target:{value:'另一个首页问题仍然保留'}});button(h.render(),'公开项目 A').props.onClick();await button(h.render(),'和 Dot 聊这个项目').props.onClick();h.render();await h.flush();assert.equal(nodes(h.render(),n=>n.type==='textarea')[0].props.value,'另一个首页问题仍然保留');
   }finally{h.dispose();}
 });
+
+
+test('a newer running or blocked task stays current instead of an older completed result',async()=>{
+ for(const status of ['running','blocked']){
+  const h=await harness();h.context.snapshot.jobs[0].result={available:true,text:'OLDER_RESULT_SENTINEL',truncated:false};h.context.snapshot.jobs.push({id:'new-job',projectLabel:'公开项目 A',task:'NEW_TASK_SENTINEL',status,createdAt:'2026-10-19T16:30:00.000Z'});
+  try{h.render();await h.flush();const view=h.render(),current=nodes(view,n=>n.props['data-dot-current-result'])[0];assert.equal(current.props['data-dot-current-result'],'new-job');assert.match(text(current),/NEW_TASK_SENTINEL/);assert.doesNotMatch(text(current),/OLDER_RESULT_SENTINEL/);assert.equal(nodes(nodes(view,n=>n.props['data-dot-history'])[0],n=>n.props['data-dot-job']==='j1').length,1);assert.deepEqual(actionPosts(h),[]);}finally{h.dispose();}
+ }
+});

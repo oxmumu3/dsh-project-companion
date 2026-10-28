@@ -355,3 +355,9 @@ test('a first-value draft cannot cross a changed connection binding',async()=>{
   try{c.render();await c.flush();nodes(c.render(),n=>n.type==='button'&&text(n).includes('找回笔记背景'))[0].props.onClick();assert.equal(drafts.length,0);assert.match(text(c.render()),/来源与工作台的绑定不同/);assert.equal(c.requests.length,1);
   }finally{c.dispose();}
 });
+
+
+test('Google card explains the manual unverified consent route and distinguishes failed reconnect from saved access',async()=>{
+ const c=await load();c.context.snapshot.googleSuiteAuth={clientConfigured:true,refreshConfigured:true,authInProgress:false,grantedSources:['gmail','calendar','drive'],lastAttempt:{status:'failed',reason:'code_rejected'}};
+ try{c.render();await c.flush();const view=c.render(),card=nodes(view,n=>n.props['data-google-suite-connect'])[0];assert.match(text(card),/Advanced.*Go to DSH Dot.*unsafe/);assert.match(text(card),/本次.*未完成/);assert.match(text(card),/原有.*保留/);assert.doesNotMatch(text(card),/授权已保存，请启用/);assert.equal(c.opened.length,0);assert.deepEqual(c.requests.filter(r=>r.options.method==='POST'),[]);}finally{c.dispose();}
+});

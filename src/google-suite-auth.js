@@ -3,6 +3,7 @@ import {createServer} from 'node:http';
 import {createHash,randomBytes,timingSafeEqual} from 'node:crypto';
 import {readContextConfig} from './context-config.js';
 import {readGooglePublisher} from './google-publisher.js';
+import {safeGoogleAuthAttempt,googleAuthAttemptMessage,googleAuthFailureReason} from './google-auth-attempt.js';
 
 export const GOOGLE_SUITE_SCOPES=Object.freeze(['https://www.googleapis.com/auth/gmail.readonly','https://www.googleapis.com/auth/calendar.events.readonly','https://www.googleapis.com/auth/drive.readonly']);
 const SOURCE_SCOPE=Object.freeze({gmail:GOOGLE_SUITE_SCOPES[0],calendar:GOOGLE_SUITE_SCOPES[1],drive:GOOGLE_SUITE_SCOPES[2],docs:GOOGLE_SUITE_SCOPES[2],sheets:GOOGLE_SUITE_SCOPES[2],slides:GOOGLE_SUITE_SCOPES[2]});
@@ -26,7 +27,7 @@ function parseRecord(serialized,publisher){
  */
 export function createGoogleSuiteAuth({publisher,readConfig,saveCredentials,fetch:fetchImpl=globalThis.fetch,clock=Date.now}={}){
  const client=readGooglePublisher(publisher);
- let closed=false,pending=null,starting=null,cache=null;
+ let closed=false,pending=null,starting=null,cache=null,lastAttempt=null;
  const flights=new Set(),controllers=new Set(),servers=new Set();
  const now=()=>Number(clock()),open=()=>{if(closed)throw error('Google连接已关闭。');};
  const read=()=>{try{return readContextConfig(readConfig?.());}catch{throw error();}};
@@ -68,7 +69,7 @@ export function createGoogleSuiteAuth({publisher,readConfig,saveCredentials,fetc
  }
  function stop(flow){clearTimeout(flow.timer);if(pending===flow)pending=null;if(flow.stopped)return flow.stopped;flow.stopped=new Promise(resolve=>{flow.server.close(resolve);flow.server.closeIdleConnections?.();});servers.add(flow.stopped);flow.stopped.then(()=>servers.delete(flow.stopped));return flow.stopped;}
  function drop(flow){flow.used=true;flow.abort.abort();return stop(flow);}
- function respond(res,status,success=false){res.writeHead(status,{'content-type':'text/plain; charset=utf-8','cache-control':'no-store','content-security-policy':"default-src 'none'; frame-ancestors 'none'",'x-content-type-options':'nosniff',connection:'close'});res.end(success?'Google 授权已保存。返回 DeepSeek Dot，选择启用已授权的来源，即可询问邮件、日程或文件。本次尚未读取私人资料。':'Google连接未完成，请返回 DeepSeek Dot 重新授权。');}
+ function respond(res,status,success=false,reason='unknown'){res.writeHead(status,{'content-type':'text/plain; charset=utf-8','cache-control':'no-store','content-security-policy':"default-src 'none'; frame-ancestors 'none'",'x-content-type-options':'nosniff',connection:'close'});res.end(success?'Google 授权已保存。返回 DeepSeek Dot，选择启用已授权的来源，即可询问邮件、日程或文件。本次尚未读取私人资料。':googleAuthAttemptMessage(reason)+' 本次失败不会清除已有连接。');}
  async function persist(record,expected,guard,signal){
   const expectedKey=configKey(expected),serialized=JSON.stringify(record);if(serialized.length>32768)throw error();
   const commit=async()=>{await guarded(guard,signal);if(configKey(read())!==expectedKey)throw error();return true;};
@@ -81,36 +82,39 @@ export function createGoogleSuiteAuth({publisher,readConfig,saveCredentials,fetc
   let url;try{url=new URL(req.url,flow.redirectUri);}catch{respond(res,400);return;}
   if(req.method!=='GET'||url.pathname!=='/oauth2/callback'){respond(res,404);return;}
   if(req.headers.host!==flow.host||url.origin!==new URL(flow.redirectUri).origin){respond(res,400);return;}
-  if(closed||pending!==flow||flow.used||now()>=flow.expiresAt||configKey(read())!==flow.configKey){respond(res,400);if(pending===flow&&!flow.used)void drop(flow);return;}
+  if(closed||pending!==flow||flow.used||now()>=flow.expiresAt||configKey(read())!==flow.configKey){const reason=now()>=flow.expiresAt?'expired':'connection_changed';if(pending===flow&&!flow.used){lastAttempt={status:'failed',reason};void drop(flow);}respond(res,400,false,reason);return;}
   const states=url.searchParams.getAll('state'),codes=url.searchParams.getAll('code'),issuers=url.searchParams.getAll('iss'),errors=url.searchParams.getAll('error');
   if(states.length!==1||!same(states[0],flow.state)||issuers.length>1||(issuers.length===1&&issuers[0]!=='https://accounts.google.com')){respond(res,400);return;}
   // Only a verified callback can end this authorization. A declined consent is
   // terminal, so the next click can create a fresh link without waiting for TTL.
-  if(errors.length){if(errors.length!==1||codes.length||!text(errors[0],256)){respond(res,400);return;}flow.used=true;respond(res,400);void stop(flow);return;}
+  if(errors.length){if(errors.length!==1||codes.length||!text(errors[0],256)){respond(res,400);return;}flow.used=true;const reason=errors[0]==='access_denied'?'consent_not_granted':'unknown';lastAttempt={status:'failed',reason};respond(res,400,false,reason);void stop(flow);return;}
   if(codes.length!==1||!text(codes[0])){respond(res,400);return;}
   flow.used=true;
   const flowGuard=async()=>{await guarded(flow.guard,flow.abort.signal);if(pending!==flow||now()>=flow.expiresAt)throw error();return true;};
+  let stage='guard';
   try{
    await flowGuard();
+   stage='exchange';
    const result=await tokenRequest({code:codes[0],code_verifier:flow.verifier,redirect_uri:flow.redirectUri,grant_type:'authorization_code'},{signal:flow.abort.signal,guard:flowGuard,expectedKey:flow.configKey});
+   stage='permissions';
    if(pending!==flow||now()>=flow.expiresAt||!result.refreshToken)throw error();
    const record={version:1,source:'google-suite',profile:'readonly',connectionId:randomBytes(32).toString('base64url'),clientId:client.clientId,requestedScopes:[...GOOGLE_SUITE_SCOPES],grantedScopes:result.grantedScopes,refreshToken:result.refreshToken,authorizedAt:new Date(now()).toISOString()};
-   const serialized=await persist(record,flow.config,flowGuard,flow.abort.signal);
-   cache={...result,key:configKey({[FIELD]:serialized})};respond(res,200,true);
-  }catch{cache=null;respond(res,400);}finally{void stop(flow);}
+   stage='persist';const serialized=await persist(record,flow.config,flowGuard,flow.abort.signal);
+   cache={...result,key:configKey({[FIELD]:serialized})};lastAttempt={status:'saved'};respond(res,200,true);
+  }catch(failure){cache=null;const reason=googleAuthFailureReason(failure,stage);lastAttempt={status:'failed',reason};respond(res,400,false,reason);}finally{void stop(flow);}
  }
  async function startInner({authorizeMutation:guard,signal}={}){
   open();if(!client)throw error('Google连接准备中：产品方尚未配置自己的 Google 应用。');if(typeof saveCredentials!=='function')throw error();
   await guarded(guard,signal);const config=read(),key=configKey(config);
   if(pending&&!pending.used&&now()<pending.expiresAt&&pending.configKey===key){await guarded(pending.guard,pending.abort.signal);if(configKey(read())!==key||!pending||pending.used||now()>=pending.expiresAt)throw error();return{url:pending.url,expiresAt:new Date(pending.expiresAt).toISOString()};}
   if(pending)await drop(pending);
-  const flow={guard,config,configKey:key,state:randomBytes(32).toString('base64url'),verifier:randomBytes(48).toString('base64url'),expiresAt:now()+TTL,used:false,abort:new AbortController()};
+  lastAttempt=null;const flow={guard,config,configKey:key,state:randomBytes(32).toString('base64url'),verifier:randomBytes(48).toString('base64url'),expiresAt:now()+TTL,used:false,abort:new AbortController()};
   const server=createServer({maxHeaderSize:16384},(req,res)=>track(callback(flow,req,res).catch(()=>{if(!res.headersSent)respond(res,400);else res.end();})));flow.server=server;server.requestTimeout=10000;server.headersTimeout=10000;server.keepAliveTimeout=1000;
   try{
    await new Promise((resolve,reject)=>{server.once('error',()=>reject(error()));server.listen({host:'127.0.0.1',port:0,exclusive:true},resolve);});flow.host=`127.0.0.1:${server.address().port}`;flow.redirectUri=`http://${flow.host}/oauth2/callback`;
    await guarded(guard,signal);if(configKey(read())!==key)throw error();
    const url=new URL(AUTH);for(const[k,v]of Object.entries({client_id:client.clientId,redirect_uri:flow.redirectUri,response_type:'code',scope:GOOGLE_SUITE_SCOPES.join(' '),access_type:'offline',prompt:'consent',state:flow.state,code_challenge:createHash('sha256').update(flow.verifier).digest('base64url'),code_challenge_method:'S256'}))url.searchParams.set(k,v);
-   flow.url=url.toString();pending=flow;flow.timer=setTimeout(()=>{void drop(flow);},TTL);flow.timer.unref?.();server.unref();return{url:flow.url,expiresAt:new Date(flow.expiresAt).toISOString()};
+   flow.url=url.toString();pending=flow;flow.timer=setTimeout(()=>{if(pending===flow&&!flow.used)lastAttempt={status:'failed',reason:'expired'};void drop(flow);},TTL);flow.timer.unref?.();server.unref();return{url:flow.url,expiresAt:new Date(flow.expiresAt).toISOString()};
   }catch{await drop(flow);throw error();}
  }
  async function getTokenInner(source,{signal,authorizeMutation:guard}={}){
@@ -127,7 +131,7 @@ export function createGoogleSuiteAuth({publisher,readConfig,saveCredentials,fetc
  function credentialState(source){let config;try{config=read();const record=parseRecord(config[FIELD],client);return{configured:!closed&&Boolean(client)&&knownSource(source)&&record.grantedScopes.includes(SOURCE_SCOPE[source]),key:hash(['google-suite',source,record.connectionId,record.clientId,record.profile,[...new Set(record.grantedScopes)].sort()])};}catch{return{configured:false,key:hash(['google-suite',source,client,config?.[FIELD]??''])};}}
  return{
   credentialState,
-  status(){const active=!closed&&pending&&now()<pending.expiresAt;return{clientConfigured:Boolean(client),publisherConfigured:Boolean(client),refreshConfigured:['gmail','calendar','drive'].some(s=>credentialState(s).configured),grantedSources:['gmail','calendar','drive'].filter(s=>credentialState(s).configured),authInProgress:Boolean(active),profile:'readonly',...(active?{expiresAt:new Date(pending.expiresAt).toISOString()}:{})};},
+  status(){const active=!closed&&pending&&now()<pending.expiresAt;return{clientConfigured:Boolean(client),publisherConfigured:Boolean(client),refreshConfigured:['gmail','calendar','drive'].some(s=>credentialState(s).configured),grantedSources:['gmail','calendar','drive'].filter(s=>credentialState(s).configured),authInProgress:Boolean(active),lastAttempt:safeGoogleAuthAttempt(lastAttempt),profile:'readonly',...(active?{expiresAt:new Date(pending.expiresAt).toISOString()}:{})};},
   start(options){if(starting)return Promise.reject(error('Google授权正在启动，请稍后重试。'));const call=track(startInner(options));starting=call;call.then(()=>{if(starting===call)starting=null;},()=>{if(starting===call)starting=null;});return call;},
   getToken:(source,options)=>track(getTokenInner(source,options)),
   async close(){closed=true;cache=null;for(const c of controllers)c.abort();if(pending)void drop(pending);await Promise.allSettled([...flights]);await Promise.allSettled([...servers]);},

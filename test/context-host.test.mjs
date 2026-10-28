@@ -282,3 +282,9 @@ test('Google startup disposal observer ignores other fibers and is removed with 
  assert.notEqual((await h.tool({action:'connect',source:'dida',userRequested:true})).status,'blocked');
  await h.plugin.dispose();assert.equal(observerCount(),0);assert.equal(h.routes.has('/api/project_companion/context'),false);
 });
+
+
+test('Google callback attempt status is sanitized independently of an existing saved authorization',async t=>{
+ const suite={status:()=>({clientConfigured:true,refreshConfigured:true,authInProgress:false,grantedSources:['gmail'],lastAttempt:{status:'failed',reason:'code_rejected',secret:'PRIVATE',url:'https://PRIVATE',code:'PRIVATE'}}),credentialState:()=>({configured:false,key:'d'.repeat(64)})};
+ const h=await fixture(t,{googleSuiteAuth:suite});const r=await h.get();assert.deepEqual(r.value.googleSuiteAuth.lastAttempt,{status:'failed',reason:'code_rejected'});assert.equal(r.value.googleSuiteAuth.refreshConfigured,true);assert.doesNotMatch(JSON.stringify(r.value),/PRIVATE|secret|https:\/\/PRIVATE/);
+});

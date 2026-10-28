@@ -48,3 +48,23 @@ for(const stage of ['token exchange','credential CAS'])test(`authorization remai
  finally{release();await completion;}
  assert.equal(h.auth.status().authInProgress,false);assert.equal(h.auth.status().refreshConfigured,true);
 });
+
+
+test('failed reconnect reports this attempt without claiming old saved credentials are new success',async t=>{
+ let fail=false;const h=fixture(t,{fetch:async()=>fail?Response.json({error:'invalid_grant',error_description:'PRIVATE_PROVIDER_TEXT'},{status:400}):Response.json({access_token:'PRIVATE_ACCESS',refresh_token:'PRIVATE_REFRESH',expires_in:3600,token_type:'Bearer',scope})});
+ await connect(h);const original=h.config.googleSuiteOAuthCredentials;fail=true;
+ const next=await h.auth.start({authorizeMutation:h.guard}),response=await fetch(callback(next));
+ assert.equal(response.status,400);assert.match(await response.text(),/授权码.*重新/);
+ assert.equal(h.config.googleSuiteOAuthCredentials,original);assert.equal(h.auth.status().refreshConfigured,true);
+ assert.equal(h.auth.status().lastAttempt.status,'failed');assert.equal(h.auth.status().lastAttempt.reason,'code_rejected');
+ assert.doesNotMatch(JSON.stringify(h.auth.status()),/PRIVATE|state=|code=|clientId/);
+});
+test('matching decline and expiration have recoverable outcomes; invalid callbacks do not finish an attempt',async t=>{
+ const h=fixture(t),one=await h.auth.start({authorizeMutation:h.guard});
+ await fetch(callback(one,{state:'wrong'}));assert.equal(h.auth.status().lastAttempt,null);assert.equal(h.auth.status().authInProgress,true);
+ const denial=callback(one,{error:'access_denied'});denial.searchParams.delete('code');const result=await fetch(denial);
+ assert.match(await result.text(),/取消|未同意/);assert.equal(h.auth.status().lastAttempt.reason,'consent_not_granted');
+ const two=await h.auth.start({authorizeMutation:h.guard});assert.equal(h.auth.status().lastAttempt,null);
+ h.time(1800000300001);await fetch(callback(two));assert.equal(h.auth.status().lastAttempt.reason,'expired');
+ const three=await h.auth.start({authorizeMutation:h.guard});assert.equal(h.auth.status().lastAttempt,null);await fetch(callback(three));assert.equal(h.auth.status().lastAttempt.status,'saved');
+});
