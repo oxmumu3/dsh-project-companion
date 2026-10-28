@@ -236,13 +236,7 @@ export async function installCompanion(ctx,options={}){
       if(!familyScope&&(familyDelegate?.matchesSession(item.sessionId)||item.sessionId.startsWith('family_owner_')))return{status:'failed',detail:'Family Owner route changed; not dispatched'};
       if(familyScope){
         if(item.bindingKey!==familyScope.bindingRevision||typeof item.authorize!=='function'||!await familyDelegate.recheck(familyScope))return{status:'failed',detail:'Family Owner or source grant changed; not dispatched'};
-        const bridge=getFamilyBridge(),origin=item.familyOrigin;
-        if(!origin||origin.sessionId!==item.sessionId||origin.bindingRevision!==familyScope.bindingRevision||typeof bridge?.isOwnerProjectResultCurrent!=='function'||typeof bridge?.beforeOwnerProjectResult!=='function')return{status:'blocked',detail:'Original Owner task authority unavailable; no fallback'};
-        const permitted=()=>familyDelegate.current(familyScope)&&item.authorize()&&bridge.isOwnerProjectResultCurrent(origin)===true;
-        if(!permitted())return{status:'blocked',detail:'Original Owner task was revoked; not dispatched'};
-        const decision=await bridge.beforeOwnerProjectResult(origin);
-        if(!['ready','timeout'].includes(decision)||!permitted())return{status:'blocked',detail:'Original Owner acknowledgement or task authority unavailable'};
-        try{const result=await bridge.sendOwner({sessionId:item.sessionId,bindingRevision:familyScope.bindingRevision,text:item.text,requestId:item.requestId,authorize:permitted});return{status:result?.status==='accepted'?'reported_sent':result?.status==='failed'?'failed':'uncertain',detail:'Family route report only; phone receipt unverified'};}catch{return{status:'uncertain',detail:'Family send outcome unknown; no automatic retry'};}
+        try{const result=await getFamilyBridge()?.sendOwner({sessionId:item.sessionId,bindingRevision:familyScope.bindingRevision,text:item.text,requestId:item.requestId,authorize:()=>familyDelegate.current(familyScope)&&item.authorize()});return{status:result?.status==='accepted'?'reported_sent':result?.status==='failed'?'failed':'uncertain',detail:'Family route report only; phone receipt unverified'};}catch{return{status:'uncertain',detail:'Family send outcome unknown; no automatic retry'};}
       }
       // Read the route last: a slow pause-state lookup must not stale this binding.
       const current=await newsBinding(item.sessionId);
