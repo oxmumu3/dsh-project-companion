@@ -440,7 +440,7 @@ window.__ModuleLoader__.load({
         const suiteFailed=suite?.lastAttempt?.status==='failed'&&!suiteWaiting;
         const suiteConnected=Boolean(suite?.refreshConfigured&&!suiteFailed&&!suiteWaiting);
         const googleEnabled=googleIds.filter(id=>rowFor(id)?.enabled).length;
-        const suiteStatus=suiteFailed?`本次 Google 授权未完成。${attemptHints[suite.lastAttempt.reason]} ${suite.lastAttempt.reason==='storage'?'下方展示当前可确认的权限，不能据此认定本次授权成功。':suite.refreshConfigured?'原有连接仍保留，可继续使用已启用的来源。':'尚未保存新连接。'}`:!suite?'连接状态待确认，请刷新。':!suite.clientConfigured?'Google 连接准备中。':suiteWaiting?'正在等待你完成 Google 授权。':suite.refreshConfigured?googleEnabled===3?'三个来源均已启用，可以在微信或 Dot 会话中按需提问。':suite.grantedSources.length===3?'授权已保存。选择下面要使用的来源；启用后仅按你的请求读取。':'部分 Google 权限已保存。选择已授权的来源即可使用；缺少的权限可在下方重新授权。':'登录一次，连接你的 Gmail、日历和云盘。';
+        const suiteStatus=suiteFailed?`本次 Google 授权未完成。${attemptHints[suite.lastAttempt.reason]} ${suite.lastAttempt.reason==='storage'?'下方展示当前可确认的权限，不能据此认定本次授权成功。':suite.refreshConfigured?'原有连接仍保留，可继续使用已启用的来源。':'尚未保存新连接。'}`:!suite?'连接状态待确认，请刷新。':!suite.clientConfigured?'Google 连接准备中。':suiteWaiting?'正在等待你完成 Google 授权。':suite.refreshConfigured?googleEnabled===3?(props.bound===false?'三个来源均已启用；微信入口状态尚待确认，账号无需重新登录。':'三个来源均已启用，可以在微信或 Dot 会话中按需提问。'):suite.grantedSources.length===3?'授权已保存。选择下面要使用的来源；启用后仅按你的请求读取。':'部分 Google 权限已保存。选择已授权的来源即可使用；缺少的权限可在下方重新授权。':'登录一次，连接你的 Gmail、日历和云盘。';
         const suiteAuthControls=()=>h('div',{'data-google-auth-controls':true},
             h('p',{'data-google-data-use-disclosure':true,className:'pc_connect_notice'},'同意连接后，Dot 仅按你的请求读取 Google 资料，内容会进入 Harness 会话并交给你配置的模型处理；从微信查询时，回复也会经过微信。请仅使用不将这些资料用于通用 AI 训练的模型服务。你可以随时停止来源或撤销授权。'),
             h('p',{className:'pc_muted'},h('a',{'data-google-privacy':true,href:'https://oxmumu3.github.io/dsh-project-companion/privacy.html',target:'_blank',rel:'noopener noreferrer'},'查看隐私说明与撤销授权的方法')),
@@ -451,7 +451,7 @@ window.__ModuleLoader__.load({
           h('div',{className:'pc_connect_heading'},props.compact?null:h('div',null,h('h2',null,'连接你的资料'),h('p',{className:'pc_muted'},'让 Dot 结合邮件、安排和文档，帮你推进手头的事。')),h('button',{type:'button',disabled:busy,onClick:()=>refresh()},busy?'正在更新…':'刷新资料来源状态')),
           props.compact?null:h('p',{className:'pc_muted'},'连接是可选的，本地项目和 AI 资讯可以直接使用。登录不会自动扫描资料或开启推送。'),
           props.compact?null:h('div',{className:'pc_connection_steps','aria-label':'资料使用步骤'},...['1 · 账号授权','2 · 启用所需来源','3 · 在会话中明确提问'].map(label=>h('span',{key:label},label))),
-          props.bound===false?h('p',{className:'pc_connect_notice'},'个人资料来源需要先绑定你的 Dot 微信会话。连接微信后，再启用来源和提出问题。'):null,
+          props.bound===false&&!snapshot?.bindingRevision?h('p',{className:'pc_connect_notice'},'个人资料来源需要先绑定你的 Dot 微信会话。连接微信后，再启用来源和提出问题。'):null,
           error?h('p',{className:'pc_error',role:'alert'},error):null,
           notice?h('p',{className:'pc_connect_notice',role:'status'},notice):null,
           authorization?h('p',{className:'pc_connect_notice',role:'status','data-context-auth-pending':true},`正在完成 ${authNames[authorization.source]} 授权，其他登录按钮暂时不可用。请先完成当前授权；完成或超时后，未成功的来源可重新连接。`):null,

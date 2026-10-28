@@ -1,4 +1,5 @@
 import {createHash} from 'node:crypto';
+import {familyDelegationBinding} from './family-owner-delegation.js';
 
 const hex=value=>typeof value==='string'&&/^[a-f0-9]{64}$/.test(value);
 const owner=value=>typeof value==='string'&&/^family_owner_[A-Za-z0-9._:-]+$/.test(value)&&value.length<=200;
@@ -19,8 +20,8 @@ export function createFamilyWorkbenchConnection({isEnabled,readLegacyConnection,
       const current=()=>isEnabled()&&delegation.registeredSessionId()===sessionId&&delegation.current(scope)===true&&delegation.routeState({sessionId,bindingRevision:scope.bindingRevision})==='current';
       if(!current()||!await delegation.recheck(scope)||!current())return{state:'unknown',readOnly:true};
       const native=await readNativeRoute(sessionId);
-      const botHash=createHash('sha256').update('family-dot:'+scope.bindingRevision).digest('hex');
-      if(!current()||native?.kind!=='bound'||native.binding?.userHash!==scope.bindingRevision||native.binding?.botHash!==botHash)return{state:'unknown',readOnly:true};
+      const binding=familyDelegationBinding(scope);
+      if(!current()||!binding||native?.kind!=='bound'||native.binding?.userHash!==binding.userHash||native.binding?.botHash!==binding.botHash)return{state:'unknown',readOnly:true};
       if(!await delegation.recheck(scope)||!current())return{state:'unknown',readOnly:true};
       return{state:'bound',sessionId,bindingKey:digest(['dsh-dot-family-workbench-v1',sessionId,scope.bindingRevision,scope.leaseFingerprint]),readOnly:true};
     }catch{return{state:'unknown',readOnly:true};}

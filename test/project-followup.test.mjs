@@ -536,3 +536,20 @@ test('passive Family inspection retains only the exact original route and never 
  assert.equal(value.followup.enabled,true);assert.equal(value.followup.running,false);assert.equal(value.once.delivery,'family');assert.equal(h.schedulers.length,count);assert.deepEqual(h.resumes,[]);assert.deepEqual(h.messages,[]);
  current=false;await assert.rejects(h.adapter.inspect(args));assert.equal(await readFile(join(h.root,'.dsh/dot-followup/scope.json'),'utf8'),before);
 });
+
+test('an old project-only Family follow-up cannot borrow a renewed source delegation',async t=>{
+ const {createFamilyOwnerDelegation,familyDelegationBinding}=await import('../src/family-owner-delegation.js');
+ let saved,leases=[{source:'calendar',sessionId:'old-dot',bindingKey:'c'.repeat(64),credentialKey:'d'.repeat(64),grantId:'old-grant'}];
+ const call={sessionId:'session-original',callId:'real-owner-call'},revision='a'.repeat(64);
+ const delegation=createFamilyOwnerDelegation({store:{get:async()=>saved,put:async(_key,value)=>saved=structuredClone(value)},getBridge:()=>({resolveOwnerCall:async()=>({sessionId:call.sessionId,bindingRevision:revision,userText:'更新这个微信的 Dot 资料授权，使用我在电脑上启用的来源。',sourceTimingState:'fresh',sourceRequestId:'synthetic-inbound'}),isOwnerRevisionCurrent:()=>true,ownerRouteStatus:()=> 'current'}),readGrantedLeases:async()=>structuredClone(leases),readGrantedLeasesSync:()=>structuredClone(leases)});
+ await delegation.pair({execution:call,originSessionId:'old-dot',userAuthorized:true});
+ const currentBinding=()=>familyDelegationBinding(delegation.scopeFor(call.sessionId)),sent=[];
+ const familyRoute={getScope:id=>delegation.scopeFor(id),isCurrent:scope=>delegation.current(scope),recheck:scope=>delegation.recheck(scope),routeState:input=>delegation.routeState(input),readDelivery:async()=>({status:'absent'}),send:async item=>{sent.push(item);return{status:'accepted'};}};
+ const h=await harness(t,{familyRoute,readBinding:()=>currentBinding(),readConnection:()=>({state:'bound',sessionId:call.sessionId,bindingKey:'e'.repeat(64),readOnly:true})});
+ const args={...h.args,delivery:'family'};await h.adapter.configure(args);await h.drain();
+ const oldBinding=currentBinding();leases[0]={...leases[0],credentialKey:'f'.repeat(64),grantId:'new-grant'};
+ assert.equal((await delegation.renewIfRequested({execution:call})).status,'renewed');assert.notDeepEqual(currentBinding(),oldBinding);
+ h.advance(30);await h.tick();assert.deepEqual(h.messages,[],'old project-only plan must not wake its model');assert.deepEqual(sent,[],'old plan must not send with renewed authority');
+ await h.reopen();await h.adapter.resume(args);h.advance(30);await h.tick();assert.deepEqual(h.messages,[],'restart must not update a saved plan binding');assert.deepEqual(sent,[]);
+ await delegation.close();
+});

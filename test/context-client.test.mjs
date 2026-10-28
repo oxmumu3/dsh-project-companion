@@ -419,3 +419,13 @@ test('Google preflight failure preserves current sources and offers a fresh clic
  const card=visibleTree(nodes(c.render(),n=>n.props['data-google-suite-connect'])[0]);assert.match(text(card),/正在等待你完成 Google 授权/);assert.doesNotMatch(text(card),/本次 Google 授权未完成|Google 已连接/);assert.equal(c.requests.filter(r=>r.options.method==='POST').length,1);
  }finally{c.dispose();}
 });
+
+test('a valid context binding does not ask to bind WeChat again while the shared workbench is unavailable',async()=>{
+ const c=await load({panelProps:{bound:false}});savedGoogle(c);c.context.snapshot.bindingRevision='confirmed-context-binding';
+ try{c.render();await c.flush();const view=c.render();assert.doesNotMatch(text(view),/个人资料来源需要先绑定/);assert.match(text(view),/Google 已连接/);assert.equal(c.requests.length,1);assert.equal(c.requests[0].options.method,'GET');}finally{c.dispose();}
+});
+
+test('source activation alone does not claim an unavailable WeChat route is ready',async()=>{
+ const c=await load({panelProps:{bound:false}});savedGoogle(c);c.context.snapshot.bindingRevision='binding-1';for(const row of c.context.snapshot.sources.slice(0,3))row.enabled=true;
+ try{c.render();await c.flush();const view=c.render();assert.match(text(view),/已启用 3\/3/);assert.match(text(view),/微信入口状态尚待确认/);assert.doesNotMatch(text(view),/可以在微信或 Dot 会话中按需提问|个人资料来源需要先绑定/);assert.equal(c.requests.length,1);}finally{c.dispose();}
+});
