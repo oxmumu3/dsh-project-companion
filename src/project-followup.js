@@ -24,7 +24,7 @@ const explicitTime=value=>typeof value==='string'&&value.length<=40&&/^\d{4}-\d{
 const familySourceRequest=value=>typeof value==='string'&&/^wechat-[a-f0-9]{64}$/.test(value);
 const dailyTime=value=>typeof value==='string'&&/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(value);
 const dailyCron=value=>{const [hour,minute]=value.split(':').map(Number);return `${minute} ${hour} * * *`;};
-const checkOutcomes=new Set(['quiet','reviewed']);
+const checkOutcomes=new Set(['quiet','reviewed','partial']);
 const familyRequest=value=>typeof value==='string'&&/^family-followup-[a-f0-9]{64}$/.test(value);
 
 /** A watched-project-only composition of the unchanged upstream host library. */
@@ -276,7 +276,7 @@ export function createProjectFollowup(options={}){
     if(result.isError)return;
     if(result.value?.accepted===false||result.value?.ok===false||['blocked','failed','error'].includes(result.value?.status)||typeof result.value?.code==='string')return;
     entry.successfulReads?.add(execution.arguments.action);
-    if(entry.meta.loopId)entry.loopQuiet=result.value?.quiet===true;
+    if(entry.meta.loopId){entry.loopQuiet=result.value?.quiet===true;const coverage=result.value?.coverage;entry.loopPartial=result.value?.status==='partial'||Array.isArray(coverage)&&coverage.some(row=>row?.unavailable===true);entry.loopQuietVerified=entry.loopQuiet&&result.value?.status==='quiet'&&Array.isArray(coverage)&&coverage.length>0&&coverage.every(row=>row?.unavailable===false);}
   }):null;
   const entryFromStep=payload=>{
     const entry=active.get(String(payload.agent?.id));if(!entry)return;
@@ -370,7 +370,7 @@ export function createProjectFollowup(options={}){
           return{outcome:'skipped',skipReason:'Family route changed before wake'};
         }
       }
-      const startedAt=new Date(now()).toISOString();active.set(entry.meta.sessionId,entry);entry.successfulReads=new Set();entry.loopReadPending=false;entry.loopQuiet=false;entry.loopReclaimed=false;
+      const startedAt=new Date(now()).toISOString();active.set(entry.meta.sessionId,entry);entry.successfulReads=new Set();entry.loopReadPending=false;entry.loopQuiet=false;entry.loopQuietVerified=false;entry.loopPartial=false;entry.loopReclaimed=false;
       try{
         const prefix=entry.once?'这是用户明确安排的一次性只读检查，结束后没有下一次；本次明确请求可在免打扰时段执行。':'';
         const suffix='\n跟进设置、状态查询、测试调度指令和上一轮汇报正文均不算新业务进展。首次可报告尚未确认已报过的真实阻塞；已汇报过的阻塞没有实质变化时保持安静。';
@@ -401,7 +401,7 @@ export function createProjectFollowup(options={}){
         }
         // reviewed requires successful exact source reads and a verified wake.
         // Reclaim or silence alone is not evidence of an unchanged context.
-        if(reviewed){entry.meta.lastReviewedAt=startedAt;entry.meta.lastCheckOutcome=entry.meta.loopId&&entry.loopQuiet===true?'quiet':'reviewed';await persistMeta(entry);}
+        if(reviewed){entry.meta.lastReviewedAt=startedAt;entry.meta.lastCheckOutcome=entry.meta.loopId&&entry.loopPartial===true?'partial':entry.meta.loopId&&entry.loopQuietVerified===true?'quiet':'reviewed';await persistMeta(entry);}
         if(entry.once&&result.outcome==='busy')return{outcome:'defer',deferUntilMs:now()+30000};
         if(entry.once&&entry.meta.status!=='blocked'&&entry.meta.status!=='cancelled'&&result.outcome!=='defer'){
           entry.meta.status=reviewed?'completed':'failed';entry.meta.enabled=false;retire(entry);await persistMeta(entry);

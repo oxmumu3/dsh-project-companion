@@ -572,3 +572,9 @@ test('completed quiet checks stay visible without pretending a notification was 
  const h=await harness();h.context.snapshot.projects[0].followup={available:true,followup:null,once:{enabled:false,running:false,status:'completed',delivery:'wechat',lastReviewedAt:'2026-10-19T16:40:00Z',lastCheckOutcome:'quiet',runCount:1}};
  try{h.render();await h.flush();const view=h.render();assert.match(text(view),/上次已核验检查/);assert.match(text(view),/本次可见范围无新变化.*静默/);assert.equal(actionPosts(h).length,0);assert.equal(h.opened.length,0);}finally{h.dispose();}
 });
+
+
+test('partial check history keeps failed-source uncertainty visible instead of claiming no change',async()=>{
+ const h=await harness();h.context.snapshot.projects[0].followup={available:true,followup:null,once:{enabled:false,running:false,status:'completed',delivery:'wechat',lastReviewedAt:'2026-10-19T16:40:00Z',lastCheckOutcome:'partial'}};
+ try{h.render();await h.flush();const view=h.render();assert.match(text(view),/部分来源仍无法确认/);assert.doesNotMatch(text(view),/本次可见范围无新变化，已静默/);assert.equal(actionPosts(h).length,0);}finally{h.dispose();}
+});

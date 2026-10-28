@@ -59,7 +59,7 @@ function familyFixture(overrides={}){
 }
 
 test('family one-off keeps quiet when scoped context did not change',async t=>{
- const f=familyFixture(),h=await harness(t,{familyRoute:f.route,ownerOutside:true,toolResult:()=>({ok:true,quiet:true}),onWake:async h=>{assert.equal((await h.invoke(exact(h))).isError,false);assert.equal((await h.reclaim()).isError,false);}});
+ const f=familyFixture(),h=await harness(t,{familyRoute:f.route,ownerOutside:true,toolResult:()=>({ok:true,status:'quiet',quiet:true,coverage:[{source:'project',unavailable:false}]}),onWake:async h=>{assert.equal((await h.invoke(exact(h))).isError,false);assert.equal((await h.reclaim()).isError,false);}});
  await h.adapter.checkOnce({...h.args,delivery:'family',delaySeconds:60});await h.drain();await h.tick(60);
  assert.equal(f.deliveries.length,0);assert.equal((await h.adapter.onceStatus(h.args)).status,'completed');
 });
@@ -280,7 +280,7 @@ test('loop wake only permits exact action/root/ID once and exposes its loop to t
 });
 
 test('one-off loop check needs one successful context_check, quiet result reclaims, and no recurrence remains',async t=>{
-  const h=await harness(t,{toolResult:()=>({ok:true,quiet:true}),onWake:async h=>{{const outcome=await h.invoke(exact(h));assert.equal(outcome.isError,false,JSON.stringify(outcome));}assert.equal((await h.reclaim()).isError,false);}});
+  const h=await harness(t,{toolResult:()=>({ok:true,status:'quiet',quiet:true,coverage:[{source:'project',unavailable:false}]}),onWake:async h=>{{const outcome=await h.invoke(exact(h));assert.equal(outcome.isError,false,JSON.stringify(outcome));}assert.equal((await h.reclaim()).isError,false);}});
   await h.adapter.checkOnce({...h.args,delivery:'wechat',delaySeconds:60});await h.drain();await h.tick(60);
   const status=await h.adapter.onceStatus(h.args);assert.equal(status.status,'completed');assert.equal(status.loopId,h.args.loopId);assert.equal(status.lastReviewedAt,'2026-10-18T16:01:00.000Z');assert.equal(status.nextDueAt,null);assert.equal(h.tools.length,1);assert.equal(status.lastCheckOutcome,'quiet');
   const inspected=await h.adapter.inspect({...h.args,expectedBinding:{sessionId:h.owner.id,bindingKey:'d'.repeat(64)}});assert.equal(inspected.once.lastCheckOutcome,'quiet');
@@ -293,7 +293,7 @@ for(const value of [{ok:false,quiet:true},{accepted:false,quiet:true},{status:'b
 });
 
 test('quiet result followed by ordinary text is not accepted as a completed review',async t=>{
-  const h=await harness(t,{toolResult:()=>({ok:true,quiet:true}),onWake:async h=>{await h.invoke(exact(h));h.reply('旧汇报不能重复发送');}});
+  const h=await harness(t,{toolResult:()=>({ok:true,status:'quiet',quiet:true,coverage:[{source:'project',unavailable:false}]}),onWake:async h=>{await h.invoke(exact(h));h.reply('旧汇报不能重复发送');}});
   await h.adapter.checkOnce({...h.args,delivery:'wechat',delaySeconds:60});await h.drain();await h.tick(60);
   assert.equal((await h.adapter.onceStatus(h.args)).status,'failed');assert.equal((await h.adapter.onceStatus(h.args)).lastReviewedAt,null);
 });
@@ -329,7 +329,7 @@ test('changing a pending one-off loop replaces it instead of returning the wrong
 });
 
 test('quiet result requires explicit reclaim, not merely an empty model turn',async t=>{
-  const h=await harness(t,{toolResult:()=>({ok:true,quiet:true}),onWake:async h=>{assert.equal((await h.invoke(exact(h))).isError,false);}});
+  const h=await harness(t,{toolResult:()=>({ok:true,status:'quiet',quiet:true,coverage:[{source:'project',unavailable:false}]}),onWake:async h=>{assert.equal((await h.invoke(exact(h))).isError,false);}});
   await h.adapter.checkOnce({...h.args,delivery:'wechat',delaySeconds:60});await h.drain();await h.tick(60);
   const status=await h.adapter.onceStatus(h.args);assert.equal(status.status,'failed');assert.equal(status.lastReviewedAt,null);
 });
@@ -383,7 +383,7 @@ for(const stage of ['before-wake','before-read','after-read'])test('loop route c
 
 
 test('lastCheckOutcome retains verified quiet checks through passive inspect and same-loop reconfiguration',async t=>{
- const h=await harness(t,{toolResult:()=>({ok:true,quiet:true}),onWake:async h=>{await h.invoke(exact(h));await h.reclaim();}});
+ const h=await harness(t,{toolResult:()=>({ok:true,status:'quiet',quiet:true,coverage:[{source:'project',unavailable:false}]}),onWake:async h=>{await h.invoke(exact(h));await h.reclaim();}});
  await h.adapter.configure(h.args);await h.drain();await h.tick();
  const status=await h.adapter.status(h.args);assert.equal(status.lastCheckOutcome,'quiet');assert.equal(status.lastReviewedAt,'2026-10-18T16:30:00.000Z');
  await h.reopen();const path=join(h.root,'.dsh/dot-followup/scope.json'),before=await readFile(path,'utf8');
@@ -393,7 +393,7 @@ test('lastCheckOutcome retains verified quiet checks through passive inspect and
 });
 
 test('lastCheckOutcome calls ordinary silent source review reviewed without inferring quiet from reclaim',async t=>{
- const h=await harness(t,{toolResult:()=>({ok:true,quiet:true}),onWake:async h=>{for(const action of ['memory','digest'])await h.invoke({action,project:h.root});await h.reclaim();}});
+ const h=await harness(t,{toolResult:()=>({ok:true,status:'quiet',quiet:true,coverage:[{source:'project',unavailable:false}]}),onWake:async h=>{for(const action of ['memory','digest'])await h.invoke({action,project:h.root});await h.reclaim();}});
  await h.adapter.configure({...h.args,loopId:undefined});await h.drain();await h.tick();
  const status=await h.adapter.status(h.args);assert.equal(status.lastCheckOutcome,'reviewed');assert.equal(status.lastReviewedAt,'2026-10-18T16:30:00.000Z');
 });
@@ -418,7 +418,7 @@ for(const once of [false,true])for(const outcome of ['reported_sent',true,null])
 });
 
 test('lastCheckOutcome is not created by a cancelled context read even when its late result says quiet',async t=>{
- let h,cancellation;h=await harness(t,{toolResult:async()=>{cancellation=h.adapter.cancel(h.args);return{ok:true,quiet:true};},onWake:async h=>{await h.invoke(exact(h));await h.reclaim();}});
+ let h,cancellation;h=await harness(t,{toolResult:async()=>{cancellation=h.adapter.cancel(h.args);return{ok:true,status:'quiet',quiet:true,coverage:[{source:'project',unavailable:false}]};},onWake:async h=>{await h.invoke(exact(h));await h.reclaim();}});
  await h.adapter.configure(h.args);await h.drain();await h.tick();await cancellation;
  const status=await h.adapter.status(h.args);assert.equal(status.lastReviewedAt,null);assert.equal(Object.hasOwn(status,'lastCheckOutcome'),false);
 });
@@ -430,7 +430,12 @@ for(const quiet of [false,'true',1])test('lastCheckOutcome does not infer quiet 
 });
 
 test('lastCheckOutcome remains paired with its previous successful check when a later attempt fails',async t=>{
- let succeeds=true;const h=await harness(t,{toolResult:()=>succeeds?{ok:true,quiet:true}:{ok:false,quiet:true},onWake:async h=>{await h.invoke(exact(h));await h.reclaim();}});
+ let succeeds=true;const h=await harness(t,{toolResult:()=>succeeds?{ok:true,status:'quiet',quiet:true,coverage:[{source:'project',unavailable:false}]}:{ok:false,quiet:true},onWake:async h=>{await h.invoke(exact(h));await h.reclaim();}});
  await h.adapter.configure(h.args);await h.drain();await h.tick();const previous=await h.adapter.status(h.args);assert.equal(previous.lastCheckOutcome,'quiet');
  succeeds=false;await h.tick();const failed=await h.adapter.status(h.args);assert.equal(failed.lastCheckOutcome,'quiet');assert.equal(failed.lastReviewedAt,previous.lastReviewedAt,'failure cannot fabricate a newer successful quiet check');
+});
+
+
+test('unchanged failed-source coverage is partial history rather than verified quiet',async t=>{
+ const h=await harness(t,{toolResult:()=>({status:'partial',quiet:true,coverage:[{source:'gmail',unavailable:true,truncated:false},{source:'project',unavailable:true,truncated:false}]}),onWake:async h=>{await h.invoke(exact(h));await h.reclaim();}});await h.adapter.checkOnce({...h.args,delaySeconds:60,delivery:'wechat'});await h.drain();await h.tick(60);const r=await h.adapter.onceStatus(h.args);assert.equal(r.lastCheckOutcome,'partial');assert.equal(r.status,'completed');assert.equal(r.lastReviewedAt,'2026-10-18T16:01:00.000Z');
 });

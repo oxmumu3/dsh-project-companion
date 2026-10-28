@@ -85,7 +85,7 @@ export function createWorkbench({service,taskResults,memory,followup,readBinding
       const result={...(value.loopId!==undefined?{loopId:value.loopId}:{}),enabled:value.enabled,running:value.running,delivery:'wechat',...(once?{status:value.status}:{everyMinutes:value.everyMinutes,...projectDailySchedule(value)})};
       for(const key of ['nextDueAt','lastReviewedAt','lastRunAt'])if(value[key]!==undefined&&value[key]!==null){if(!at(value[key]))throw new Error('Invalid follow-up time');result[key]=at(value[key]);}
       if(value.runCount!==undefined){if(!Number.isSafeInteger(value.runCount)||value.runCount<0)throw new Error('Invalid follow-up count');result.runCount=value.runCount;}
-      if(value.lastCheckOutcome!==undefined){if(!['quiet','reviewed'].includes(value.lastCheckOutcome)||!at(value.lastReviewedAt))throw new Error('Invalid last check outcome');result.lastCheckOutcome=value.lastCheckOutcome;}
+      if(value.lastCheckOutcome!==undefined){if(!['quiet','reviewed','partial'].includes(value.lastCheckOutcome)||!at(value.lastReviewedAt))throw new Error('Invalid last check outcome');result.lastCheckOutcome=value.lastCheckOutcome;}
       if(value.blocked)result.blocked='原跟进当前不可运行，请打开安排核对。';
       return result;
     };
