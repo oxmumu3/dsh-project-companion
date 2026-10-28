@@ -17,6 +17,8 @@ export function createProjectCatalogController({catalog,readConnection,readProje
     if(input.action==='list'){const{action,...args}=input;const result=await catalog.page(args);await recheck(c);catalog.assertCurrentRevision(result.revision);return result;}
     if(typeof input.expectedRevision!=='string'||!/^[a-f0-9]{64}$/.test(input.expectedRevision)||await isPaused())unavailable();
     const target=catalog.resolvePublicId(input);await recheck(c);
+    const admitted=catalog.resolvePublicId(input);
+    if(isClosed()||isPausedSync()!==false||admitted.workspaceId!==target.workspaceId||admitted.root!==target.root)unavailable();
     const files=await readProject(target.root);if(await isPaused())unavailable();await recheck(c);
     const current=catalog.resolvePublicId(input);if(isPausedSync()!==false||current.workspaceId!==target.workspaceId||current.root!==target.root)unavailable();
     if(!Array.isArray(files))unavailable();

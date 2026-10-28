@@ -5,6 +5,13 @@ import {familyScopedContextAllowed,normalizeFamilyScopedContext,parseFamilyConte
 const now=new Date('2026-10-28T12:00:00Z');
 const text='Gmail 搜索「subject:预算」最多2条，日历未来24小时最多2条，Drive 搜索「预算」最多2条，flomo 搜索「成长」最多2条，滴答清单列出清单最多2个，生成 Alpha 的项目简报。先不要设置提醒，不要建立计划。';
 const queries=[{source:'gmail',operation:'search',query:'subject:预算',limit:2},{source:'calendar',operation:'upcoming',from:now.toISOString(),to:'2026-10-29T12:00:00.000Z',limit:2},{source:'drive',operation:'search',query:'预算',limit:2},{source:'flomo',operation:'search',query:'成长',limit:2},{source:'dida',operation:'projects',limit:2}];
+test('a continuation can validate a stored semantic calendar range without model-created dates',()=>{
+ const prior='flomo 搜索 DeepSeek 最多2条，日历未来24小时最多2条，生成 Alpha 的项目简报。不要建立计划。';
+ const saved=[{source:'flomo',operation:'search',query:'DeepSeek',limit:2},{source:'calendar',operation:'upcoming',rollingWindowHours:24,limit:2}];
+ assert.equal(familyScopedContextAllowed({action:'context_brief',queries:saved,userRequested:true},'继续刚才的简报',prior,now),true);
+ assert.equal(familyScopedContextAllowed({action:'context_brief',queries:saved,userRequested:true},'继续刚才的简报',prior.replace('24小时','48小时'),now),false);
+ assert.equal(familyScopedContextAllowed({action:'context_brief',queries:saved,userRequested:true},'继续刚才的简报，不要读日历',prior,now),false);
+});
 
 test('five explicit sources are derived without a model, credential, reader or scheduler',()=>{
   const result=parseFamilyContextSelection(text,undefined,now);

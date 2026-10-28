@@ -4,6 +4,15 @@ import {createProjectCatalog} from '../src/project-catalog.js';
 
 async function api(){const m=await import('../src/project-catalog-route.js').catch(()=>({}));assert.equal(typeof m.createProjectCatalogController,'function','authenticated catalog controller must exist');assert.equal(typeof m.registerProjectCatalogRoute,'function');return m;}
 const binding={state:'bound',sessionId:'source',bindingKey:'a'.repeat(64)};
+test('removal or pause during the last Owner check prevents any project file read',async()=>{
+ const {createProjectCatalogController}=await api();
+ for(const change of ['remove','pause']){
+  let rows=[{id:'ws',root:'/SYNTHETIC-NOT-ON-DISK/admission',sessionIds:[]}],checks=0,paused=false,reads=0;
+  const catalog=createProjectCatalog({readRegistered:()=>rows}),page=await catalog.page();
+  const ctl=createProjectCatalogController({catalog,readConnection:async()=>{if(++checks===2){if(change==='remove')rows=[];else paused=true;}return binding;},isPaused:async()=>false,isPausedSync:()=>paused,readProject:async()=>{reads++;return[];}});
+  await assert.rejects(ctl.action({action:'preview',projectId:page.items[0].id,expectedRevision:page.revision}));assert.equal(reads,0,change);
+ }
+});
 async function fixture(){const m=await api();let c=binding,reads=0,previews=0;const catalog={assertCurrentRevision:()=>true,page:async()=>{reads++;return{version:1,revision:'b'.repeat(64),items:[],total:0};},resolvePublicId:()=>({root:'/SYNTHETIC-NOT-ON-DISK/a',label:'A',id:'project_'+'c'.repeat(24)})};const ctl=m.createProjectCatalogController({catalog,readConnection:async()=>c,isPausedSync:()=>false,readProject:async()=>{previews++;return[{path:'README.md',status:'ok',text:'Synthetic only',modifiedAt:'2026-10-28T00:00:00Z'}];}});return{m,ctl,catalog,set:v=>{c=v;},counts:()=>({reads,previews})};}
 test('unbound or changed binding cannot list catalog or read files',async()=>{
  const f=await fixture();f.set({state:'unknown'});await assert.rejects(f.ctl.action({action:'list'}));assert.deepEqual(f.counts(),{reads:0,previews:0});

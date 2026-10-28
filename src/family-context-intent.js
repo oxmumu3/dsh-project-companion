@@ -74,6 +74,10 @@ function matches(query,expected,maximum){
   if(expected.source==='calendar'){
     if(query.query!==undefined||query.calendarId!==undefined&&query.calendarId!=='primary')return false;
     if(query.rollingWindowHours!==undefined&&(query.rollingWindowHours!==24||Date.parse(expected.to)-Date.parse(expected.from)!==86400000))return false;
+    // A saved loop deliberately stores the rolling window's meaning, rather
+    // than yesterday's absolute dates. Only the same trusted 24h request can
+    // authorize its reuse; the internal marker is stripped before provider I/O.
+    if(query.rollingWindowHours===24&&query.from===undefined&&query.to===undefined)return true;
     const from=Date.parse(query.from),to=Date.parse(query.to);return Number.isFinite(from)&&Number.isFinite(to)&&to>from&&Math.abs(from-Date.parse(expected.from))<=3000&&Math.abs(to-Date.parse(expected.to))<=3000;
   }
   if(query.from!==undefined||query.to!==undefined||query.calendarId!==undefined||query.rollingWindowHours!==undefined)return false;
