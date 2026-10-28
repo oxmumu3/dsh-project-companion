@@ -387,7 +387,7 @@ window.__ModuleLoader__.load({
         };
         const request=async body=>{
           const controller=new AbortController();controllers.current.add(controller);
-          try{const response=await fetch(contextEndpoint,{method:body?'POST':'GET',credentials:'same-origin',redirect:'error',cache:'no-store',signal:AbortSignal.any([controller.signal,AbortSignal.timeout(25000)]),...(body?{headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}:{})});if(!response.ok)throw new Error('context operation failed');return await response.json();}
+          try{const response=await fetch(contextEndpoint,{method:body?'POST':'GET',credentials:'same-origin',redirect:'error',cache:'no-store',signal:AbortSignal.any([controller.signal,AbortSignal.timeout(25000)]),...(body?{headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}:{})});if(!response.ok){let detail;try{detail=await response.json();}catch{}const failure=new Error('context operation failed');if(body?.action==='google_suite_authorize'&&response.status===503&&detail?.code==='GOOGLE_CONNECTION_UNAVAILABLE')failure.code='GOOGLE_CONNECTION_UNAVAILABLE';throw failure;}return await response.json();}
           finally{controllers.current.delete(controller);}
         };
         const refresh=async(quiet=false)=>{
@@ -427,7 +427,7 @@ window.__ModuleLoader__.load({
               // Web hosts may block it; always retain the validated click-only link.
               try{window.open?.(url.toString(),'_blank','noopener,noreferrer');}catch{}
             }else accept(value);
-          }catch{if(active.current&&epoch===contextEpoch.current){invalidate();setError('操作结果暂不确定，请刷新状态核对后重试；不会重复提交。');}}
+          }catch(failure){if(active.current&&epoch===contextEpoch.current){if(failure?.code==='GOOGLE_CONNECTION_UNAVAILABLE')setError('尚未打开 Google 授权：本机暂时连不到授权交换接口。已有连接仍保留，请稍后再点连接；不会自动重复授权。');else{invalidate();setError('操作结果暂不确定，请刷新状态核对后重试；不会重复提交。');}}}
           finally{if(epoch===contextEpoch.current){inFlight.current=false;if(active.current)setBusy(false);}}
         };
         const rows=snapshot?.sources??sourceIds.map(id=>({id,name:sourceNames[id],configured:false,enabled:false,lastReadAt:null}));

@@ -361,3 +361,15 @@ test('Google card explains the manual unverified consent route and distinguishes
  const c=await load();c.context.snapshot.googleSuiteAuth={clientConfigured:true,refreshConfigured:true,authInProgress:false,grantedSources:['gmail','calendar','drive'],lastAttempt:{status:'failed',reason:'code_rejected'}};
  try{c.render();await c.flush();const view=c.render(),card=nodes(view,n=>n.props['data-google-suite-connect'])[0];assert.match(text(card),/Advanced.*Go to DSH Dot.*unsafe/);assert.match(text(card),/本次.*未完成/);assert.match(text(card),/原有.*保留/);assert.doesNotMatch(text(card),/授权已保存，请启用/);assert.equal(c.opened.length,0);assert.deepEqual(c.requests.filter(r=>r.options.method==='POST'),[]);}finally{c.dispose();}
 });
+
+test('Google preflight failure preserves current sources and offers a fresh click without browser or auto retry',async()=>{
+ const c=await load();try{
+  c.context.snapshot.googleSuiteAuth.refreshConfigured=true;c.context.snapshot.googleSuiteAuth.grantedSources=['gmail','calendar','drive'];
+  for(const row of c.context.snapshot.sources)if(['gmail','calendar','drive'].includes(row.id)){row.configured=true;row.enabled=true;}
+  c.render();await c.flush();const button=nodes(c.render(),n=>n.type==='button'&&text(n)==='同意并重新连接 Google ')[0]??nodes(c.render(),n=>n.type==='button'&&text(n).includes('同意并重新连接 Google'))[0];assert.ok(button);
+  c.context.onFetch=()=>Response.json({code:'GOOGLE_CONNECTION_UNAVAILABLE',error:'PRIVATE_PROVIDER_TEXT'},{status:503});
+  await button.props.onClick();const view=c.render();assert.match(text(view),/尚未打开.*Google.*授权/);assert.match(text(view),/已有连接.*保留/);assert.doesNotMatch(text(view),/PRIVATE_PROVIDER_TEXT|操作结果暂不确定/);
+  assert.equal(c.external.length,0);assert.equal(c.requests.filter(r=>r.options.method==='POST').length,1);assert.equal(nodes(view,n=>n.props['data-context-source']).length,8);
+  assert.equal(nodes(view,n=>n.type==='button'&&text(n).includes('同意并重新连接 Google'))[0].props.disabled,false);
+ }finally{c.dispose();}
+});

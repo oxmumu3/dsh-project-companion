@@ -25,6 +25,7 @@ import {Config,readContextConfig} from './src/context-config.js';
 import {createGoogleAuth} from './src/context-google-auth.js';
 import {createGoogleCalendarAuth} from './src/google-calendar-auth.js';
 import {createGoogleSuiteAuth} from './src/google-suite-auth.js';
+import {checkGoogleConnection} from './src/google-connection-check.js';
 import {createGoogleSuiteRest} from './src/google-suite-rest.js';
 import {createGoogleCalendarRest} from './src/google-calendar-rest.js';
 import {createDidaRest} from './src/dida-rest.js';
@@ -488,6 +489,7 @@ export async function installCompanion(ctx,options={}){
     },
   });
   contextRoute=createContextRoute({
+    checkGoogleConnection:settings=>checkGoogleConnection({...settings,...(options.context?.fetch?{fetch:options.context.fetch}:{})}),
     summarizeSynthetic:input=>projectUpdateModel.summarize(input),
     context,googleAuth,googleCalendarAuth,googleSuiteAuth,flomoAuth,didaAuth,checkCalendarToken:settings=>useCalendarRecord()?googleCalendarAuth.getToken(settings):googleSuiteAuth.getToken('calendar',settings),readConnection:readSetup,isClosed:()=>disposed,
     canRun:async()=>!disposed&&!await service.isPaused(),

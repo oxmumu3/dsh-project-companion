@@ -10,8 +10,9 @@ const readStages=new Set(['scope','build','catalog','call','projection']);
 const readErrors=new Set(['CONTEXT_AUTH_REQUIRED','CONTEXT_INSUFFICIENT_SCOPE','CONTEXT_TIMEOUT','CONTEXT_HTTP_ERROR','CONTEXT_PROTOCOL_INVALID','CONTEXT_SCHEMA_MISMATCH','CONTEXT_SCOPE_VIOLATION','CONTEXT_BINDING_CHANGED','CONTEXT_NOT_ENABLED','CONTEXT_STOPPED','CONTEXT_INVALID_INPUT','CONTEXT_UNSUPPORTED_OPERATION','CONTEXT_UNAVAILABLE']);
 
 /** Owner-authenticated native settings facade. GET never resumes or queries a source. */
-export function createContextRoute({context,googleAuth,googleCalendarAuth,googleSuiteAuth,flomoAuth,didaAuth,checkCalendarToken,readConnection,resolveOwner,activateOwner,canRun=async()=>true,isClosed=()=>false,authCheckTimeoutMs=30000,readCheckClock=()=>new Date(),summarizeSynthetic,summaryCheckTimeoutMs=60000}={}){
+export function createContextRoute({context,googleAuth,googleCalendarAuth,googleSuiteAuth,flomoAuth,didaAuth,checkGoogleConnection,checkCalendarToken,readConnection,resolveOwner,activateOwner,canRun=async()=>true,isClosed=()=>false,authCheckTimeoutMs=30000,readCheckClock=()=>new Date(),summarizeSynthetic,summaryCheckTimeoutMs=60000}={}){
   let closed=false;
+  const connectionChecks=new Set();
   const open=()=>{if(closed||isClosed())invalid();};
   const connection=async()=>{open();try{const value=await readConnection();return bound(value)?{state:'bound',sessionId:value.sessionId,bindingKey:value.bindingKey}:{state:'unknown'};}catch{return{state:'unknown'};}};
   const check=async expected=>{open();if(!same(expected,await connection()))invalid();};
@@ -121,6 +122,13 @@ export function createContextRoute({context,googleAuth,googleCalendarAuth,google
         await check(expected);
         const controller={google_authorize:googleAuth,google_calendar_authorize:googleCalendarAuth,google_suite_authorize:googleSuiteAuth,flomo_authorize:flomoAuth,dida_authorize:didaAuth}[input.action];
         if(typeof controller?.start!=='function')invalid();
+        if(input.action==='google_suite_authorize'&&typeof checkGoogleConnection==='function'){
+          const checkController=new AbortController();connectionChecks.add(checkController);
+          try{if(await checkGoogleConnection({signal:checkController.signal})!==true)invalid();}
+          catch(failure){await check(expected);if(!await canRun())invalid();throw failure;}
+          finally{connectionChecks.delete(checkController);}
+          await check(expected);if(!await canRun())invalid();
+        }
         const value=await controller.start({authorizeMutation:async()=>{await check(expected);if(!await canRun())invalid();await check(expected);return true;}});
         await check(expected);
         return{url:value.url,expiresAt:value.expiresAt};
@@ -129,7 +137,7 @@ export function createContextRoute({context,googleAuth,googleCalendarAuth,google
       await check(expected);
       return snapshot();
     },
-    close(){closed=true;summaryProbe.close();},
+    close(){closed=true;for(const controller of connectionChecks)controller.abort();connectionChecks.clear();summaryProbe.close();},
   };
 }
 
@@ -148,7 +156,7 @@ export function registerContextRoute(ctx,adapter){
       const body=await request.text();
       if(Buffer.byteLength(body)>4096)return json({error:'请求过大。'},413);
       return json(await adapter.action(JSON.parse(body)));
-    }catch{return json({error:'未完成连接，请刷新状态后重新登录；未自动重试。'},400);}
+    }catch(error){if(error?.code==='GOOGLE_CONNECTION_UNAVAILABLE')return json({code:'GOOGLE_CONNECTION_UNAVAILABLE',error:'尚未打开 Google 授权：本机暂时连不到授权交换接口。已有连接保留，请稍后再点连接；不会自动重复授权。'},503);return json({error:'未完成连接，请刷新状态后重新登录；未自动重试。'},400);}
   }});
   if(typeof stop==='function'&&typeof ctx.effect==='function')ctx.effect(()=>stop);
   return stop;
