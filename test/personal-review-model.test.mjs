@@ -12,6 +12,14 @@ test('private review model uses host adapter without tools and validates grounde
   const f = await fixture(); const result = await f.model.summarize({ evidence, coverage: [{ source: 'gmail', status: 'partial', count: 1 }], previousItems: [], kind: 'daily', now: '2026-10-29T09:00:00.000Z' });
   assert.equal(result.items[0].key, 'service-policy'); assert.deepEqual(f.calls[0].tools, []); assert.match(f.calls[0].system, /不可信|untrusted/); assert.match(f.calls[0].system, /未知|实际生效/); assert.doesNotMatch(JSON.stringify(f.model.usage()), /PRIVATE_BODY_CANARY|policy/); f.model.close();
 });
+test('review prompt limits daily to three and weekly to five within the existing token budget', async () => {
+  for (const kind of ['daily', 'weekly']) {
+    const f = await fixture(); await f.model.summarize({ evidence, kind });
+    assert.match(f.calls[0].system, /daily[^\n；]*最多 3 条候选/);
+    assert.match(f.calls[0].system, /weekly[^\n。]*最多 5 条候选/);
+    assert.equal(f.calls[0].maxTokens, 6500); f.model.close();
+  }
+});
 test('model rejects fabricated citation and arbitrary URL without raw output leakage', async () => {
   for (const patch of [{ evidenceIds: ['unknown'] }, { summary: 'PRIVATE_BODY_CANARY https://evil.test' }]) {
     const f = await fixture({ answer: { items: [{ ...output.items[0], ...patch }] } }); await assert.rejects(f.model.summarize({ evidence, coverage: [], kind: 'daily' }), error => !error.message.includes('PRIVATE_BODY_CANARY')); f.model.close();
