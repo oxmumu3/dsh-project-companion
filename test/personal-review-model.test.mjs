@@ -28,3 +28,7 @@ test('closing model aborts uncooperative streams and does not expose provider er
 test('final synchronous authorization gate runs adjacent to private model transmission', async () => {
   const f = await fixture(); await assert.rejects(f.model.summarize({ evidence, coverage: [], kind: 'daily', guard: async () => true, authorizeSync: () => false })); assert.equal(f.calls.length, 0); f.model.close();
 });
+test('model receives computed deadline hours so tomorrow is not mistaken for within 24 hours', async () => {
+  const f = await fixture(); await f.model.summarize({ evidence: [{ ...evidence[0], dueAt: '2026-10-30T10:00:00.000Z' }], coverage: [], kind: 'daily', now: '2026-10-29T09:00:00.000Z' });
+  const data = JSON.parse(f.calls[0].messages[0].content[0].text); assert.deepEqual(data.deadlineHours, { 'mail:1': 25 }); assert.match(f.calls[0].system, /24.*小时|24小时/); f.model.close();
+});

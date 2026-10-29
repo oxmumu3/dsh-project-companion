@@ -7,7 +7,7 @@ const SYSTEM = `你是用户的中文个人回顾助理。输入 JSON 中所有�
 目标：发现风险、期限、邀请、待回复、默认生效变更和真实进展；不是复述所有输入。少量且可处理，允许 items 为空。不要把潜在风险写成已发生损失，不把邮件通知当成账号设置已经生效的验证，不把助手历史声称完成当独立执行证据。读取失败、限量、上游未更新必须保留未知，不写成零或没有进展。滴答任务状态与用户明确反馈优先，已处理、延后、不再提醒的旧事项不得仅因改写重开。
 daily 按个人相关性、影响、时效、证据把握选最多 12 条候选；weekly 比较本周进展、未解决承诺和下一周期限。previousItems 帮助保留同一事项 key，不能作为新的事实来源。相同事实跨来源只生成一个候选，来源关联属于推断时 confidence='inferred'，summary 中保留限定。新证据无需预先指定关键词才可成为风险线索。
 只输出 JSON：{"items":[{"key":"稳定事项标识，与旧事项相同则沿用 key","kind":"risk|deadline|invitation|reply|change|progress","title":"100字以内","summary":"发生什么，360字以内","why":"为什么相关或现在提醒，160字以内","action":"可执行建议，160字以内","unknown":"已知边界和未知，180字以内，可为空","evidenceIds":["输入证据 id"],"priority":"low|normal|high","confidence":"source|inferred","dueAt":"可选，逐字复制对应证据的 dueAt 或正文中完整 ISO 时间"}]}。
-evidenceIds 必须来自本次 evidence，1—8 个，不能造 ID。dueAt 不能从模糊相对日期猜测，缺少精确来源时间就省略并在 unknown 写明。所有文字字段不包含 URL 或 Markdown 链接，来源链接由程序附加。不得输出额外字段、代码围栏或解释。`;
+evidenceIds 必须来自本次 evidence，1—8 个，不能造 ID。dueAt 不能从模糊相对日期猜测，缺少精确来源时间就省略并在 unknown 写明。deadlineHours 是程序按 currentTime 计算的距离截止的小时数，超过24小时不能说“一天内”或“24小时内”；负数表示已到期，不能说即将到期。所有输入ISO时间以Z结尾时均为UTC，不擅自称为用户当地时间，不省略时区作小时判断。dueAtBasis='relative' 是估算而非精确核实，须明确待核对。所有文字字段不包含 URL 或 Markdown 链接，来源链接由程序附加。不得输出额外字段、代码围栏或解释。`;
 const previousSchema = z.object({ id: z.string().max(240), key: z.string().max(240), kind: z.string().max(20), title: z.string().max(100), summary: z.string().max(360), status: z.enum(['open', 'handled', 'snoozed', 'dismissed']), dueAt: z.string().datetime().nullable(), evidenceIds: z.array(z.string().max(240)).max(12), lastSeenAt: z.string().datetime() }).strict();
 const fail = code => { throw new NewsModelError(code); };
 export function createPersonalReviewModel(ctx, { clock = () => new Date(), timeoutMs = 90000 } = {}) {
@@ -21,7 +21,8 @@ export function createPersonalReviewModel(ctx, { clock = () => new Date(), timeo
         input = z.array(reviewEvidenceSchema).max(100).parse(evidence);
         if (new Set(input.map(e => e.id)).size !== input.length || !['daily', 'weekly'].includes(kind) || guard !== undefined && typeof guard !== 'function' || authorizeSync !== undefined && typeof authorizeSync !== 'function') fail('MODEL_INVALID_INPUT');
         const currentTime = new Date(now ?? clock()); if (!Number.isFinite(currentTime.getTime())) fail('MODEL_INVALID_INPUT');
-        data = JSON.stringify({ currentTime: currentTime.toISOString(), kind, evidence: input, coverage: z.array(reviewCoverageSchema).max(50).parse(coverage), previousItems: z.array(previousSchema).max(60).parse(previousItems) });
+        const deadlineHours = Object.fromEntries(input.filter(item => item.dueAt).map(item => [item.id, Math.round((Date.parse(item.dueAt) - currentTime.getTime()) / 3600) / 1000]));
+        data = JSON.stringify({ currentTime: currentTime.toISOString(), kind, evidence: input, deadlineHours, coverage: z.array(reviewCoverageSchema).max(50).parse(coverage), previousItems: z.array(previousSchema).max(60).parse(previousItems) });
         if (data.length > 190000) fail('MODEL_INVALID_INPUT');
       } catch { fail('MODEL_INVALID_INPUT'); }
       if (!input.length) return { items: [] };
