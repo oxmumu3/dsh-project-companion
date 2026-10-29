@@ -42,7 +42,7 @@ async function openHost(t, options={}){
   const session=ctx.sessions.create(SessionId('synthetic-owner'),{meta:{cwd:workspace}});
   const owner={id:session.id,session,ctx,status:'idle',followup:message=>accepted.push(message)};live.set(owner.id,owner);
   const disableWeChat=ctx.tools.register(defineTool({name:'send_wechat',description:'Synthetic queue only; no real network',parameters:{text:{type:'string',required:true}},output:{schema:{type:'object',additionalProperties:true},render:(_args,value)=>[{type:'text',text:JSON.stringify(value)}]},execute:(_args,execution)=>{sent.push(execution);return options.sendResponse?.(execution)??{ok:true,message:'queued synthetic message; not real WeChat'};}}));
-  const lifecycle=await ctx.plugin({name:'synthetic-companion-mount',inject:['tools','commands','storageDomain','sessions','systemPrompt'],async apply(scope){adapter=await installCompanion(scope,{clock:()=>now,hostTimeZone:()=>options.hostTimeZone??'America/Mexico_City',...(options.family?{family:options.family}:{}),...(options.readBinding?{readBinding:options.readBinding}:{}),...(options.readSetup?{readSetup:options.readSetup}:{}),...(options.readNativeRoute?{readNativeRoute:options.readNativeRoute}:{}),...(options.news?{news:options.news}:{}),...(options.projectUpdates?{projectUpdates:options.projectUpdates}:{}),timers:{setInterval:(fn,ms)=>{intervalMs=ms;timer=fn;timerStarts++;return {unref(){}};},clearInterval:()=>{timer=undefined;timerStops++;}}});}});
+  const lifecycle=await ctx.plugin({name:'synthetic-companion-mount',inject:['tools','commands','storageDomain','sessions','systemPrompt'],async apply(scope){adapter=await installCompanion(scope,{clock:()=>now,hostTimeZone:()=>options.hostTimeZone??'America/Mexico_City',...(options.family?{family:options.family}:{}),...(options.readBinding?{readBinding:options.readBinding}:{}),...(options.readSetup?{readSetup:options.readSetup}:{}),...(options.readNativeRoute?{readNativeRoute:options.readNativeRoute}:{}),...(options.news?{news:options.news}:{}),...(options.projectUpdates?{projectUpdates:options.projectUpdates}:{}),...(options.personalReview?{personalReview:options.personalReview}:{}),...(options.context?{context:options.context}:{}),timers:{setInterval:(fn,ms)=>{intervalMs=ms;timer=fn;timerStarts++;return {unref(){}};},clearInterval:()=>{timer=undefined;timerStops++;}}});}});
   let count=0;const signal=()=>new AbortController().signal;
   const nativeTool=async(args,agent=owner,callId=`synthetic-call-${++count}`)=>{const r=await ctx.tools.execute({callId,name:'project_companion',arguments:args,agent,signal:signal()});assert.equal(r.isError,false,JSON.stringify(r));return r;};
   const tool=async(...args)=>(await nativeTool(...args)).value;
@@ -965,12 +965,12 @@ test('workbench actions register on official owner transport and use real scoped
  const h=await openHost(t);assert.equal(h.timers().active,false);await h.tool({action:'remind',delayMinutes:2,title:'timer budget'});assert.equal(h.interval(),15000);h.time('2026-10-18T15:02:00Z');await h.tick();assert.equal(h.sent.length,1);assert.equal(h.timers().active,false);
  });
 
-test('AI digest host exposes temporary preview topics without enabling subscriptions or private context', async t => {
+test('AI digest host separates temporary preview from explicit persistent topics', async t => {
   const news = newsFixtures(), seen = [];
   const select = news.model.selectArticles, summarize = news.model.summarizeArticles;
   news.model.selectArticles = async input => { seen.push(input.topics); return select(input); };
   news.model.summarizeArticles = async input => { seen.push(input.topics); return summarize(input); };
-  const h = await openHost(t, { news });
+  const h = await openHost(t, { news, readSetup:async()=>({state:'bound',sessionId:'synthetic-owner',bindingKey:'a'.repeat(64)}) });
   const schema = h.ctx.tools.schemas(h.owner).find(tool => tool.name === 'ai_digest');
   assert.ok(schema.parameters.properties.topics, 'preview topics must be exposed in the native tool schema');
   assert.equal(schema.parameters.properties.topics.type, 'array');
@@ -978,15 +978,28 @@ test('AI digest host exposes temporary preview topics without enabling subscript
   const result = await newsTool(h, { action: 'preview', topics: ['DeepSeek 插件', 'Agent 产品'] }, 'synthetic-topic-preview');
   assert.deepEqual(seen, [['DeepSeek 插件', 'Agent 产品'], ['DeepSeek 插件', 'Agent 产品']]);
   assert.match(result.text, /仅本次预览/);
-  const denied = await newsTool(h, { action: 'configure', time: '09:00', timeZone: 'UTC', topics: ['AI'], userRequested: true }, 'synthetic-invalid-topic-configure');
-  assert.equal(denied.status, 'blocked');
-  assert.match(denied.text, /关注点.*仅.*预览/);
+  const saved = await newsTool(h, { action: 'set_topics', topics: ['AI'], userRequested: true }, 'synthetic-saved-topics');
+  assert.notEqual(saved.status, 'blocked', JSON.stringify(saved));
+  assert.deepEqual((await newsTool(h, { action: 'status' })).topics, ['AI']);
   assert.equal((await newsTool(h, { action: 'status' })).schedule, null);
   assert.equal(h.sent.length, 0);
   assert.equal(h.timers().active, false);
   const guidance = (await h.ctx.systemPrompt.assemble({ scope: h.owner, agent: h.owner })).sections.find(section => section.name === 'project-companion:guidance').text;
   assert.match(guidance, /topics/);
-  assert.match(guidance, /不保存.*兴趣|关注点.*不保存/);
+  assert.match(guidance, /set_topics.*持续兴趣/);
 });
 
 test('explicit project_update is sourced, repeat-quiet and passive in the real host tool pipeline',async t=>{const calls=[];const h=await openHost(t,{readSetup:async()=>({state:'bound',sessionId:'synthetic-owner',bindingKey:'a'.repeat(64)}),projectUpdates:{summarize:async input=>{calls.push(input);return{changes:[{kind:'quote',text:'SYNTHETIC host project source',sourceIds:[input.sources.find(s=>s.label==='README.md').sourceId]}],blockers:[],nextSteps:[]};}}});assert.ok(h.ctx.tools.schemas(h.owner).find(s=>s.name==='project_companion').parameters.properties.action.enum.includes('project_update'));await h.tool({action:'watch'});const before=h.timers();assert.equal((await h.tool({action:'project_update',project:'synthetic-project'})).status,'blocked');const first=await h.tool({action:'project_update',project:'synthetic-project',userRequested:true});assert.equal(first.status,'overview');assert.match(first.text,/首次概览/);assert.match(first.text,/README.md/);assert.equal(calls.length,1);const second=await h.nativeTool({action:'project_update',project:'synthetic-project',userRequested:true});assert.equal(second.value.quiet,true);assert.equal(second.value.text,'');assert.equal(calls.length,1);assert.equal(h.sent.length,0);assert.equal(h.accepted.length,0);assert.deepEqual(h.timers(),before);await h.tool({action:'pause'});assert.equal((await h.tool({action:'project_update',project:'synthetic-project',userRequested:true})).status,'blocked');assert.equal(calls.length,1);});
+
+test('personal review default host collector masks configured secrets and paused workbench stays passive',async t=>{
+ let binding='a'.repeat(64);const summaries=[];
+ const h=await openHost(t,{readSetup:async()=>({state:'bound',sessionId:'synthetic-owner',bindingKey:binding}),context:{readConfig:()=>({didaToken:'synthetic-review-private-secret'}),googlePublisher:null,fetch:async()=>assert.fail('project-only preview must not use network')},personalReview:{model:{summarize:async input=>{summaries.push(input);return{items:[]};}}}});
+ const root=h.owner.session.header.cwd;await h.tool({action:'watch'});await writeFile(join(root,'README.md'),'Project status.\nsynthetic-review-private-secret\npassword=not-for-model\n');
+ const invoke=async(args,id)=>{const r=await h.ctx.tools.execute({name:'personal_review',callId:id,arguments:args,agent:h.owner,signal:new AbortController().signal});assert.equal(r.isError,false,JSON.stringify(r));return r.value;};
+ const preview=await invoke({action:'preview',sources:[],projects:[root]},'review-preview');assert.equal(preview.status,'preview',JSON.stringify(preview));assert.equal(summaries.length,1);assert.doesNotMatch(JSON.stringify(summaries),/synthetic-review-private-secret|not-for-model/);assert.match(JSON.stringify(summaries),/已隐藏/);assert.equal(h.sent.length,0);assert.equal(h.timers().active,false);
+ const configured=await invoke({action:'configure',sources:[],projects:[root],schedule:{dailyTime:'09:00',timeZone:'UTC'},userRequested:true},'review-configure');assert.equal(configured.status,'blocked',JSON.stringify(configured));assert.match(configured.text,/可先预览.*共享家庭入口支持/);assert.equal(summaries.length,1);assert.equal(h.timers().active,false);
+  for(const action of ['run_now','resume']){const denied=await invoke({action,sources:[],projects:[root],userRequested:true},'review-native-'+action);assert.equal(denied.status,'blocked');assert.match(denied.text,/授权复核/);}assert.equal(summaries.length,1);assert.equal(h.sent.length,0);
+ const visible=await h.adapter.workbench.snapshot();assert.equal(visible.personalReview.available,true);assert.equal(visible.personalReview.review.status,'off');assert.equal(visible.personalReview.deliverySupported,false);assert.match(visible.personalReview.review.text,/授权复核/);assert.deepEqual(visible.personalReview.review.projects,[]);assert.equal(summaries.length,1);
+ await h.tool({action:'pause'});const paused=await h.adapter.workbench.snapshot();assert.equal(paused.personalReview.available,true);assert.equal(summaries.length,1);
+ binding='b'.repeat(64);const changed=await h.adapter.workbench.snapshot();assert.notEqual(changed.bindingRevision,visible.bindingRevision);assert.deepEqual(changed.personalReview.review.items,[]);assert.equal(summaries.length,1);
+});

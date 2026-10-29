@@ -457,8 +457,11 @@ export function createService(options = {}) {
     return{project:{id:project.id,root:project.root,label:project.label},generatedAt:clock().toISOString(),historyScan:false,sources:files.filter(file=>PROJECT_FILES.includes(file.path)).slice(0,3).map(analysisSource)};
   });
   const canReadProjectUpdate=scope=>coordinationReady&&!state?.paused&&typeof scope?.projectRoot==='string'&&state.projects.some(p=>p.id===scope.projectId&&p.root===scope.projectRoot);
+  // Metadata membership only. Pausing prevents reads through canRun; it does
+  // not revoke the right to inspect this owner's existing paused plan.
+  const isWatchedProjectSync=scope=>coordinationReady&&typeof scope?.projectRoot==='string'&&state.projects.some(p=>p.id===scope.projectId&&p.root===scope.projectRoot);
   const watchedProjects = () => serial(async()=>{await load();return structuredClone(state.projects);});
   const isPaused = () => serial(async()=>{await load();return state.paused;});
   const isPausedSync = () => !coordinationReady||state?.paused!==false;
-  return { ready, act, record, tick, needsTimer, coordinationTarget, canCoordinate, coordinationPausedSync:isPausedSync, watchedProjects, isPaused, isPausedSync, fixedProjectAnalysis, canReadProjectUpdate, registeredProjectTarget, authorizeRegisteredCoordinationSync };
+  return { ready, act, record, tick, needsTimer, coordinationTarget, canCoordinate, coordinationPausedSync:isPausedSync, watchedProjects, isPaused, isPausedSync, fixedProjectAnalysis, canReadProjectUpdate, isWatchedProjectSync, registeredProjectTarget, authorizeRegisteredCoordinationSync };
 }
