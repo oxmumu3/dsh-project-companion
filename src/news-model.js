@@ -215,9 +215,12 @@ export function createNewsModel(ctx, { clock = () => new Date(), timeoutMs = 900
   if (!Number.isFinite(timeoutMs) || timeoutMs <= 0 || timeoutMs > 90000) fail('MODEL_INVALID_INPUT');
   let closed = false;
   const active = new Set(), totals = { requests: 0, successful: 0, failed: 0, tokens: {} };
-  async function request(articles, summarize, upstream, topics) {
+  async function request(articles, summarize, upstream, topics, guard, authorizeSync) {
     if (closed) fail('MODEL_CLOSED');
     if (upstream?.aborted) fail('MODEL_ABORTED');
+    if (guard !== undefined && typeof guard !== 'function' || authorizeSync !== undefined && typeof authorizeSync !== 'function') fail('MODEL_INVALID_INPUT');
+    const check = async () => { if (guard && await guard() === false) fail('MODEL_AUTHORIZATION_CHANGED'); };
+    const checkSync = () => { if (!authorizeSync) return; const allowed = authorizeSync(); if (allowed && typeof allowed.then === 'function') Promise.resolve(allowed).catch(() => {}); if (allowed !== true) fail('MODEL_AUTHORIZATION_CHANGED'); };
     let focus;
     try { focus = normalizeNewsTopics(topics); } catch { fail('MODEL_INVALID_INPUT'); }
     const input = inputArticles(articles, summarize);
@@ -234,11 +237,14 @@ export function createNewsModel(ctx, { clock = () => new Date(), timeoutMs = 900
     try {
       if (upstream?.aborted) stop();
       own.signal.throwIfAborted();
+      await check(); checkSync(); own.signal.throwIfAborted();
       let llm, selection;
       try { llm = ctx.get('llm', false); selection = ctx.get('agentDefaultModel', false)?.currentSelection(); } catch { fail('MODEL_UNAVAILABLE'); }
       totals.requests++;
       const result = await runNewsModel({ llm, selection, system: (summarize ? SUMMARY : SELECTION) + (focus ? `\n${FOCUS}` : ''), data, signal: own.signal, maxTokens: summarize ? 7000 : 1800,
+        beforeStream: check, beforeStreamSync: checkSync,
         onUsage(usage) { for (const [key, count] of Object.entries(usage)) totals.tokens[key] = (totals.tokens[key] ?? 0) + count; } });
+      await check(); checkSync(); own.signal.throwIfAborted();
       const answer = summarize ? summarizedItems(result.text, input) : selectedIds(result.text, input);
       totals.successful++;
       return answer;
@@ -255,8 +261,8 @@ export function createNewsModel(ctx, { clock = () => new Date(), timeoutMs = 900
     }
   }
   return {
-    selectArticles: ({ articles, signal, topics } = {}) => request(articles, false, signal, topics),
-    summarizeArticles: ({ articles, signal, topics } = {}) => request(articles, true, signal, topics),
+    selectArticles: ({ articles, signal, topics, guard, authorizeSync } = {}) => request(articles, false, signal, topics, guard, authorizeSync),
+    summarizeArticles: ({ articles, signal, topics, guard, authorizeSync } = {}) => request(articles, true, signal, topics, guard, authorizeSync),
     usage: () => structuredClone(totals),
     close() {
       if (closed) return;

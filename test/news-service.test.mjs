@@ -394,3 +394,59 @@ test('mutating the submitted preview action cannot bypass admission or change a 
     assert.equal(f.sends.length, 0);
   }
 });
+
+test('manual preview and delivery recheck the original request after fetching public candidates', async () => {
+  for (const action of ['preview', 'send_now']) {
+    let allowed = true, selections = 0;
+    const f = await fixture({ hooks: {
+      fetchCandidates: async () => { allowed = false; return { articles: [article(0)] }; },
+      selectArticles: async ({ articles }) => { selections++; return articles.map(a => a.id); },
+    } });
+    await assert.rejects(f.service.act(owner, { ...mutate(action), guard: async () => { if (!allowed) throw Error('request withdrawn'); }, authorizeSync: () => allowed }), /授权/);
+    assert.equal(selections, 0);
+    assert.equal(f.sends.length, 0);
+  }
+});
+
+test('news model adapters receive live request guards for provider preparation and stream admission', async () => {
+  let allowed = true;
+  const f = await fixture({ hooks: { selectArticles: async ({ guard, authorizeSync }) => {
+    assert.equal(typeof guard, 'function'); assert.equal(typeof authorizeSync, 'function');
+    await guard(); assert.equal(authorizeSync(), true); allowed = false;
+    await assert.rejects(guard(), /授权/); assert.equal(authorizeSync(), false);
+    return [];
+  } } });
+  await assert.rejects(f.service.act(owner, { action: 'preview', guard: async () => { if (!allowed) throw Error('request withdrawn'); }, authorizeSync: () => allowed }), /授权/);
+});
+
+test('a queued manual send checks request withdrawal and pause again at channel dispatch', async () => {
+  for (const change of ['request', 'binding', 'pause']) {
+    const entered = deferred(), release = deferred(); let allowed = true, currentBinding = binding, paused = false, permitted;
+    const f = await fixture({ hooks: { canRunSync: () => !paused, readBinding: async () => ({ bound: true, bindingKey: currentBinding }), send: async item => {
+      entered.resolve(); await release.promise; permitted = item.authorize(); return { status: permitted ? 'reported_sent' : 'failed' };
+    } } });
+    const result = f.service.act(owner, { ...mutate('send_now'), guard: async () => { if (!allowed) throw Error('request withdrawn'); }, authorizeSync: () => allowed && currentBinding === binding });
+    await entered.promise;
+    if (change === 'pause') paused = true; else if (change === 'binding') currentBinding = otherBinding; else allowed = false;
+    release.resolve(); await result;
+    assert.equal(permitted, false, change);
+    assert.equal(f.persisted().jobs.at(-1).status, 'failed');
+    assert.equal(f.persisted().articleHistory.length, 0);
+  }
+});
+
+test('scheduled news retains binding and pause checks but does not reuse a finished configure call', async () => {
+  let callActive = true, paused = false, permit;
+  const f = await fixture({ hooks: { canRunSync: () => !paused, send: async item => { permit = item.authorize(); return { status: permit ? 'reported_sent' : 'failed' }; } } });
+  await f.service.act(owner, { ...mutate('configure', { time: '09:00', timeZone: 'America/Mexico_City' }), guard: async () => { if (!callActive) throw Error('old call ended'); }, authorizeSync: () => callActive });
+  callActive = false;
+  await f.service.tick();
+  assert.equal(permit, true);
+  assert.equal(f.persisted().jobs.at(-1).status, 'reported_sent');
+});
+
+test('a false asynchronous request guard fails closed before any source or state access', async () => {
+  const f = await fixture();
+  await assert.rejects(f.service.act(owner, { action: 'preview', guard: async () => false }), /授权/);
+  assert.equal(f.fetches(), 0); assert.equal(f.writes(), 0);
+});

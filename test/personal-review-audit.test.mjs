@@ -70,9 +70,9 @@ test('audit: partial source failure cannot close an unresolved item or advance t
   const result = await f.service.act(caller, intent('run_now', { requestId: 'partial-again', sources: ['gmail', 'calendar'], projects: [] }));
   assert.equal(f.stored().items[0].status, 'open');
   assert.deepEqual(f.stored().watermarks.gmail, before);
-  assert.match(result.text, /gmail.*未知/);
+  assert.match(result.text, /邮件.*未知/);
   assert.match(result.text, /不代表全账号没有待办或进展/);
-  assert.doesNotMatch(result.text, /已全部处理|gmail 0 条/);
+  assert.doesNotMatch(result.text, /已全部处理|邮件 0 条/);
   assert.equal(f.sends.length, 1);
 });
 

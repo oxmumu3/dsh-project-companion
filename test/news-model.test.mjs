@@ -306,3 +306,24 @@ test('token-limit diagnostics retain only prepared controls and counters, never 
   assert.deepEqual(diagnostics.at(-1), { requestedMaxTokens: 6000, preparedMaxTokens: 1234, reasoningEffort: 'other', finish: 'max-tokens', textChars: 12, reasoningChars: 'PRIVATE_REASONING'.length, outputTokens: 1234, reasoningTokens: 1000 });
   assert.doesNotMatch(JSON.stringify(diagnostics), /PRIVATE/);
 });
+
+test('news selection and summary revalidate the original request after provider preparation', async () => {
+  for (const method of ['selectArticles', 'summarizeArticles']) {
+    let allowed = true;
+    const f = fixture(); const prepare = f.llm.prepareCall.bind(f.llm);
+    f.llm.prepareCall = async (...args) => { const prepared = await prepare(...args); allowed = false; return prepared; };
+    await assert.rejects(f.model[method]({ articles: [article('a', { content: 'Public article body.', coverage: 'article', truncated: false })], guard: async () => { if (!allowed) throw Error('PRIVATE_AUTHORITY'); }, authorizeSync: () => allowed }), error => !error.message.includes('PRIVATE_AUTHORITY'));
+    assert.equal(f.calls.length, 1);
+    assert.equal(f.calls[0].request, undefined);
+    f.model.close();
+  }
+});
+
+test('news models enforce a strict synchronous final gate before the stream', async () => {
+  for (const authorizeSync of [() => false, async () => true, () => undefined]) {
+    const f = fixture();
+    await assert.rejects(f.model.selectArticles({ articles: [article('a')], guard: async () => {}, authorizeSync }));
+    assert.equal(f.calls[0]?.request, undefined);
+    f.model.close();
+  }
+});
