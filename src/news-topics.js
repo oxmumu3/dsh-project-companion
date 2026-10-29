@@ -1,6 +1,6 @@
-// Explicit per-preview reading interests. No inference, storage or external IO.
+// Bounded explicit reading interests. No inference, storage or external IO.
 export function normalizeNewsTopics(value) {
-  const invalid = () => { throw Object.assign(new Error('News preview topics must be 1–8 unique strings, at most 80 characters each and 400 in total'), { code: 'NEWS_INVALID_TOPICS' }); };
+  const invalid = () => { throw Object.assign(new Error('News topics must be 1–8 unique strings, at most 80 characters each and 400 in total'), { code: 'NEWS_INVALID_TOPICS' }); };
   if (value === undefined) return undefined;
   if (!Array.isArray(value) || value.length < 1 || value.length > 8) invalid();
   const topics = [];

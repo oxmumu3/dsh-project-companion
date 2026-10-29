@@ -243,7 +243,7 @@ test('rejects synthetic tool declarations and unknown stream blocks instead of a
   }
 });
 
-test('explicit preview focus reaches both native model stages as separate bounded data', async () => {
+test('explicit focus reaches both native model stages as separate bounded data for preview or delivery', async () => {
   const focus = ['DeepSeek 插件', '创作者生态'];
   const f = fixture(['{"ids":["a"]}', '{"items":[{"id":"a","summary":"据原文说明插件开发方法。","why":"与 DeepSeek 插件关注点相关：包含接口复用实践。"}]}']);
   assert.deepEqual(await f.model.selectArticles({ articles: [article('a')], topics: focus }), ['a']);
@@ -252,6 +252,7 @@ test('explicit preview focus reaches both native model stages as separate bounde
     assert.deepEqual(JSON.parse(call.request.messages[0].content[0].text).readerFocus, { topics: focus });
     assert.deepEqual(call.request.tools, []);
     assert.match(call.request.system, /关注点/);
+    assert.doesNotMatch(call.request.system, /只对本次预览有效/);
     assert.match(call.request.system, /不.*(?:编造|捏造)|不得.*(?:编造|捏造)/);
   }
 });

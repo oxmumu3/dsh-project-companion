@@ -30,3 +30,13 @@ test('generic rendering has no temporary focus metadata and invalid focus does n
   const safe = renderNewsDigest({ items: [], topics: ['**插件** <script>'] });
   assert.doesNotMatch(safe.text, /<script>|\*\*插件/);
 });
+
+test('saved focus delivery does not claim it is an unsent temporary preview', async () => {
+  const { renderNewsDigest } = await api();
+  const r = renderNewsDigest({ items: [item(0)], topics: ['Agent 产品'], topicSource: 'saved', preview: false });
+  assert.match(r.text, /已保存关注点.*Agent 产品/);
+  assert.doesNotMatch(r.text, /仅本次预览|未发送|未创建或修改推送计划/);
+  const preview = renderNewsDigest({ items: [item(0)], topics: ['Agent 产品'], topicSource: 'saved', preview: true });
+  assert.match(preview.text, /已保存关注点/);
+  assert.match(preview.text, /仅本次预览.*未发送/);
+});

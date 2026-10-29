@@ -12,7 +12,7 @@ export function newsPublicUrl(value){
   if(!['https:','http:'].includes(url.protocol)||url.username||url.password||!h.includes('.')||h.includes(':')||/(?:^|\.)(?:localhost|local|internal|invalid)$/.test(h)||/^(?:0|10|127)\.|^169\.254\.|^192\.168\.|^172\.(?:1[6-9]|2\d|3[01])\./.test(h))throw new Error('原文 URL 必须是公开链接');
   return url.href;
 }
-export function renderNewsDigest({items=[],generatedAt=new Date().toISOString(),stats={},timeZone='UTC',topics}={}){
+export function renderNewsDigest({items=[],generatedAt=new Date().toISOString(),stats={},timeZone='UTC',topics,topicSource='temporary',preview=true}={}){
   const focus=normalizeNewsTopics(topics);
   if(!Array.isArray(items)||items.length>10)throw new Error('资讯最多 10 篇');
   const source=items.map(item=>({id:item.id,sourceUrl:item.sourceUrl??null,publishedAt:item.publishedAt??null,truncated:item.truncated===true,url:newsPublicUrl(item.url),title:prose(item.title,54)||'未命名文章',sourceName:ellipsis(prose(item.sourceName,100),22)||'RSS 来源',summary:prose(item.summary,210),why:prose(item.why,70),coverage:item.coverage==='article'?'article':'feed-only'}));
@@ -22,7 +22,8 @@ export function renderNewsDigest({items=[],generatedAt=new Date().toISOString(),
   function render(rows,summaryLimit,whyLimit){
     const deep=Math.min(3,rows.length),brief=Math.max(0,rows.length-3);
     const lines=[`## AI 资讯日报 · ${displayDate}`,`${deep} 篇重点 · ${brief} 篇速览`];
-    if(focus)lines.push(`本次关注点：${focus.map(topic=>prose(topic,80)||'（关注点文字已过滤）').join('、')}`,'仅本次预览；未发送、未创建或修改推送计划。');
+    if(focus)lines.push(`${topicSource==='saved'?'已保存关注点':'本次关注点'}：${focus.map(topic=>prose(topic,80)||'（关注点文字已过滤）').join('、')}`);
+    if(focus&&preview)lines.push('仅本次预览；未发送、未创建或修改推送计划。');
     if(rows.length<10)lines.push(`本次仅有 ${rows.length} 篇可用，来源不足 10 篇或受单条消息长度限制，不补凑。`);
     if(!rows.length)lines.push('没有符合本次窗口及去重条件的可用文章。');
     if(Number.isInteger(stats.totalFeeds))lines.push(`来源：${stats.succeededFeeds??0}/${stats.totalFeeds} 个获取成功${stats.failedFeeds?`；${stats.failedFeeds} 个未获取`:''}${stats.skippedFeeds?`，其中${stats.skippedFeeds}个未及扫描（45秒上限）`:''}。`);

@@ -66,14 +66,15 @@ test('temporary topics leave an existing daily subscription byte-for-byte unchan
   assert.deepEqual(f.persisted(), before);
   assert.equal(f.writes(), writes);
   assert.equal(f.sends.length, 0);
-  assert.doesNotMatch(JSON.stringify(f.persisted()), /Agent 产品|topics|readerFocus/);
+  assert.doesNotMatch(JSON.stringify(f.persisted()), /Agent 产品|readerFocus/);
+  assert.equal(f.persisted().preferences, null);
 });
 
-test('topics on every non-preview action reject without cancelling work or mutating schedules', async () => {
+test('topics on unsupported actions reject without cancelling work or mutating schedules', async () => {
   const f = await fixture();
   await f.service.act(owner, mutate('configure', { time: '10:00', timeZone: 'America/Mexico_City' }));
   const before = structuredClone(f.persisted()), writes = f.writes();
-  for (const action of ['status', 'configure', 'cancel', 'send_now']) {
+  for (const action of ['status', 'cancel', 'send_now', 'clear_topics']) {
     await assert.rejects(f.service.act(owner, mutate(action, { topics: ['AI'], time: '09:00', timeZone: 'America/Mexico_City' })));
     await assert.rejects(f.service.act(owner, mutate(action, { topics: undefined, time: '09:00', timeZone: 'America/Mexico_City' })));
   }
@@ -81,6 +82,254 @@ test('topics on every non-preview action reject without cancelling work or mutat
   assert.equal(f.writes(), writes);
   assert.equal(f.fetches(), 0);
   assert.equal(f.sends.length, 0);
+});
+
+test('saved explicit topics survive restart and status returns only sanitized preference metadata', async () => {
+  const f = await fixture();
+  const topics = [' DeepSeek 插件 ', '创作者生态'];
+  await f.service.act(owner, mutate('set_topics', { topics }));
+  topics[0] = 'Changed after call';
+  assert.equal(f.fetches(), 0);
+  assert.equal(f.sends.length, 0);
+  assert.equal(f.persisted().version, 2);
+  const reboot = await fixture({ persisted: f.persisted() });
+  const r = await reboot.service.act(owner, { action: 'status' });
+  assert.deepEqual(r.topics, ['DeepSeek 插件', '创作者生态']);
+  assert.equal(r.topicSource, 'explicit');
+  assert.equal(r.topicsEditable, true);
+  assert.equal(r.schedule, null);
+  for (const secret of [owner.sessionId, owner.cwd, binding]) assert.ok(!JSON.stringify(r).includes(secret));
+  assert.match(r.text, /已保存关注点.*DeepSeek 插件/);
+});
+
+test('scheduled and immediate delivery use saved topics in both stages and freeze them in each job', async () => {
+  const seen = [];
+  const hooks = {
+    selectArticles: async ({ articles, topics }) => { seen.push(['select', structuredClone(topics)]); topics?.push('adapter mutation'); return articles.slice(0, 3).map(a => a.id); },
+    summarizeArticles: async ({ articles, topics }) => { seen.push(['summary', topics]); return { items: articles.map(a => ({ id: a.id, summary: '公开资料摘要', why: '与明确关注点有关' })) }; },
+  };
+  const f = await fixture({ hooks });
+  await f.service.act(owner, mutate('configure', { time: '09:00', timeZone: 'America/Mexico_City', topics: ['Agent 产品'] }));
+  await f.service.tick();
+  await f.service.act(owner, mutate('send_now'));
+  assert.deepEqual(seen, [['select', ['Agent 产品']], ['summary', ['Agent 产品']], ['select', ['Agent 产品']], ['summary', ['Agent 产品']]]);
+  assert.equal(f.sends.length, 2);
+  for (const job of f.persisted().jobs) assert.deepEqual(job.topics, ['Agent 产品']);
+  for (const message of f.sends) {
+    assert.match(message.text, /已保存关注点.*Agent 产品/);
+    assert.doesNotMatch(message.text, /仅本次预览|未发送/);
+  }
+});
+
+test('preview defaults to saved topics and an explicit override neither persists nor sends', async () => {
+  const seen = [];
+  const f = await fixture({ hooks: { selectArticles: async ({ topics }) => { seen.push(topics); return []; } } });
+  await f.service.act(owner, mutate('set_topics', { topics: ['Agent 产品'] }));
+  const before = structuredClone(f.persisted()), writes = f.writes();
+  const saved = await f.service.act(owner, { action: 'preview' });
+  const override = await f.service.act(owner, { action: 'preview', topics: ['开发工具'] });
+  assert.deepEqual(seen, [['Agent 产品'], ['开发工具']]);
+  assert.match(saved.text, /已保存关注点/);
+  assert.match(saved.text, /仅本次预览.*未发送/);
+  assert.match(override.text, /本次关注点.*开发工具/);
+  assert.deepEqual(f.persisted(), before);
+  assert.equal(f.writes(), writes);
+  assert.equal(f.sends.length, 0);
+});
+
+test('clear_topics returns to general AI coverage without disabling the schedule and replay cannot restore topics', async () => {
+  const f = await fixture();
+  const setting = mutate('set_topics', { topics: ['Agent 产品'] });
+  await f.service.act(owner, setting);
+  await f.service.act(owner, mutate('configure', { time: '09:00', timeZone: 'America/Mexico_City' }));
+  const result = await f.service.act(owner, mutate('clear_topics'));
+  assert.equal(result.topics, null);
+  assert.equal(result.topicSource, 'default');
+  assert.equal(f.service.needsTimer(), true);
+  assert.equal((await f.service.act(owner, setting)).duplicate, true);
+  assert.equal(f.persisted().preferences, null);
+  await f.service.tick();
+  assert.equal(f.sends.length, 1);
+  assert.equal(f.persisted().jobs[0].topics, null);
+});
+
+test('preference mutations require real caller, explicit intent, real request ID and current binding', async () => {
+  for (const input of [{ action: 'set_topics', topics: ['AI'] }, { action: 'clear_topics' }, { action: 'set_topics', topics: ['AI'], userRequested: true }]) {
+    const f = await fixture();
+    await assert.rejects(f.service.act(owner, input));
+    assert.equal(f.writes(), 0);
+  }
+  for (const action of ['set_topics', 'clear_topics']) {
+    const f = await fixture();
+    await assert.rejects(f.service.act({ sessionId: 'synthetic' }, mutate(action, action === 'set_topics' ? { topics: ['AI'] } : {})));
+    f.bind(null);
+    await assert.rejects(f.service.act(owner, mutate(action, action === 'set_topics' ? { topics: ['AI'] } : {})), /绑定/);
+    assert.equal(f.writes(), 0);
+  }
+});
+
+test('another binding cannot read or overwrite saved topics or carry them into a delivery', async () => {
+  const f = await fixture();
+  await f.service.act(owner, mutate('set_topics', { topics: ['Synthetic private interest'] }));
+  const before = structuredClone(f.persisted());
+  const other = { sessionId: 'different-session', cwd: '/synthetic/other' };
+  f.bind(otherBinding);
+  const status = await f.service.act(other, { action: 'status' });
+  assert.equal(status.topics, null);
+  assert.equal(status.topicSource, 'unavailable');
+  assert.equal(status.topicsEditable, false);
+  assert.doesNotMatch(JSON.stringify(status), /Synthetic private interest/);
+  await assert.rejects(f.service.act(other, { action: 'preview' }), /绑定|关注点/);
+  for (const action of ['set_topics', 'clear_topics', 'configure', 'send_now']) {
+    await assert.rejects(f.service.act(other, mutate(action, { ...(action === 'set_topics' ? { topics: ['Overwrite'] } : {}), ...(action === 'configure' ? { time: '09:00', timeZone: 'UTC' } : {}) })), /绑定/);
+  }
+  const explicit = await f.service.act(other, { action: 'preview', topics: ['公开技术'] });
+  assert.deepEqual(explicit.topics, ['公开技术']);
+  assert.deepEqual(f.persisted(), before);
+  assert.equal(f.sends.length, 0);
+});
+
+test('a v1 subscription migrates with history and receipts intact but no inferred topics', async () => {
+  const legacy = { id: 'profile', version: 1, schedule: { time: '09:00', timeZone: 'America/Mexico_City', sessionId: owner.sessionId, bindingKey: binding, createdAt: '2026-10-19T14:00:00.000Z' }, jobs: [], articleHistory: [{ id: 'old-article', at: '2026-10-18T15:00:00.000Z' }], dailyDates: ['2026-10-18'], receipts: [{ sessionId: owner.sessionId, requestId: 'legacy-configure', action: 'configure', createdAt: '2026-10-19T14:00:00.000Z' }] };
+  const { newsRowSchema } = await api();
+  assert.equal(newsRowSchema.safeParse(legacy).success, true);
+  const f = await fixture({ persisted: legacy });
+  await f.service.ready();
+  assert.equal(f.persisted().version, 2);
+  assert.equal(f.persisted().preferences, null);
+  for (const key of ['schedule', 'articleHistory', 'dailyDates', 'receipts']) assert.deepEqual(f.persisted()[key], legacy[key]);
+  await f.service.tick();
+  assert.equal(f.sends.length, 1);
+  assert.equal(f.persisted().jobs[0].topics, null);
+});
+
+test('changing topics aborts older generation and late adapters cannot dispatch stale content', async () => {
+  const started = deferred(), gate = deferred(), seen = [];
+  const f = await fixture({ hooks: { selectArticles: async ({ articles, topics }) => { seen.push(topics); if (seen.length === 1) { started.resolve(); await gate.promise; } return articles.slice(0, 1).map(a => a.id); } } });
+  await f.service.act(owner, mutate('set_topics', { topics: ['旧主题'] }));
+  const pending = f.service.act(owner, mutate('send_now'));
+  await started.promise;
+  const updating = f.service.act(owner, mutate('set_topics', { requestId: 'new-topics', topics: ['新主题'] }));
+  await assert.rejects(pending, /取消|停止/);
+  await updating;
+  gate.resolve();
+  assert.equal(f.sends.length, 0);
+  assert.deepEqual(f.persisted().jobs[0].topics, ['旧主题']);
+  assert.equal(f.persisted().jobs[0].status, 'cancelled');
+  await f.service.act(owner, mutate('send_now', { requestId: 'new-send' }));
+  assert.deepEqual(seen, [['旧主题'], ['新主题']]);
+  assert.equal(f.sends.length, 1);
+});
+
+test('preference replays and foreign mutations do not cancel an authorized in-flight job', async () => {
+  const started = deferred(), gate = deferred();
+  const f = await fixture({ hooks: { selectArticles: async ({ articles }) => { started.resolve(); await gate.promise; return articles.slice(0, 1).map(a => a.id); }, readBinding: async sessionId => ({ bound: true, bindingKey: sessionId === owner.sessionId ? binding : otherBinding }) } });
+  const setting = mutate('set_topics', { topics: ['Agent 产品'] });
+  await f.service.act(owner, setting);
+  const pending = f.service.act(owner, mutate('send_now'));
+  await started.promise;
+  const replay = f.service.act(owner, setting);
+  await assert.rejects(f.service.act({ sessionId: 'foreign', cwd: '/synthetic/foreign' }, mutate('clear_topics')), /绑定/);
+  gate.resolve();
+  assert.equal((await pending).status, 'reported_sent');
+  assert.equal((await replay).duplicate, true);
+  assert.equal(f.sends.length, 1);
+});
+
+test('a late first configure authorization cannot re-enable after a newer explicit cancel', async () => {
+  const entered = deferred(), gate = deferred();
+  let reads = 0;
+  const f = await fixture({ hooks: { readBinding: async () => { if (++reads === 1) { entered.resolve(); await gate.promise; } return { bound: true, bindingKey: binding }; } } });
+  const configuring = f.service.act(owner, mutate('configure', { time: '09:00', timeZone: 'UTC', topics: ['旧配置'] }));
+  await entered.promise;
+  await f.service.act(owner, mutate('cancel'));
+  gate.resolve();
+  await assert.rejects(configuring, /取消|停止/);
+  const result = await f.service.act(owner, { action: 'status' });
+  assert.equal(result.schedule, null);
+  assert.equal(result.topics, null);
+});
+
+test('a current binding loss suppresses saved focus from status and preview without modifying it', async () => {
+  const f = await fixture();
+  await f.service.act(owner, mutate('set_topics', { topics: ['绑定范围内的主题'] }));
+  const before = structuredClone(f.persisted());
+  f.bind(null);
+  const result = await f.service.act(owner, { action: 'status' });
+  assert.equal(result.topicSource, 'unavailable');
+  assert.equal(result.topics, null);
+  assert.doesNotMatch(JSON.stringify(result), /绑定范围内的主题/);
+  await assert.rejects(f.service.act(owner, { action: 'preview' }), /绑定/);
+  assert.deepEqual(f.persisted(), before);
+});
+
+test('a preference write failure is fail-closed for later preview and delivery', async () => {
+  const f = await fixture({ store: { get: async () => undefined, put: async () => { throw new Error('private disk path'); } } });
+  await assert.rejects(f.service.act(owner, mutate('set_topics', { topics: ['AI'] })), /存储/);
+  for (const input of [{ action: 'preview' }, { action: 'status' }, mutate('send_now')]) await assert.rejects(f.service.act(owner, input), /存储/);
+  assert.equal(f.fetches(), 0);
+  assert.equal(f.sends.length, 0);
+});
+
+test('invalid saved preferences and invalid configure topics never change existing plans', async () => {
+  const f = await fixture();
+  await f.service.act(owner, mutate('configure', { time: '09:00', timeZone: 'UTC' }));
+  const before = structuredClone(f.persisted());
+  for (const action of ['set_topics', 'configure']) for (const topics of [undefined, null, [], ['x'.repeat(81)], ['AI', ' AI ']]) {
+    await assert.rejects(f.service.act(owner, mutate(action, { topics, time: '10:00', timeZone: 'UTC' })), { code: 'NEWS_INVALID_TOPICS' });
+  }
+  assert.deepEqual(f.persisted(), before);
+  const invalid = { ...before, preferences: { topics: [' AI '], source: 'explicit', sessionId: owner.sessionId, bindingKey: binding, updatedAt: '2026-10-19T15:00:00.000Z' } };
+  const reboot = await fixture({ persisted: invalid });
+  await assert.rejects(reboot.service.ready(), /损坏|不兼容/);
+  assert.equal(reboot.writes(), 0);
+});
+
+test('legacy interrupted jobs retain dedupe and terminal outcomes during upgrade', async () => {
+  const f = await fixture();
+  await f.service.act(owner, mutate('send_now'));
+  const legacy = structuredClone(f.persisted());
+  legacy.version = 1;delete legacy.preferences;
+  for (const job of legacy.jobs) { delete job.topics; delete job.timeZone; job.status = 'dispatching'; }
+  legacy.articleHistory = [];
+  const reboot = await fixture({ persisted: legacy });
+  await reboot.service.ready();
+  assert.equal(reboot.persisted().jobs[0].status, 'uncertain');
+  assert.equal(reboot.persisted().jobs[0].topics, null);
+  assert.equal(reboot.persisted().articleHistory.length, 10);
+  assert.equal((await reboot.service.act(owner, mutate('send_now'))).duplicate, true);
+  assert.equal(reboot.sends.length, 0);
+});
+
+test('a queued old tick does not claim the day after preferences were reconfigured', async () => {
+  const started = deferred(), gate = deferred();
+  let hold = false;
+  const f = await fixture({ hooks: { selectArticles: async ({ articles }) => { if (hold) { started.resolve(); await gate.promise; } return articles.slice(0, 1).map(a => a.id); } } });
+  await f.service.act(owner, mutate('configure', { time: '09:00', timeZone: 'America/Mexico_City', topics: ['旧主题'] }));
+  hold = true;
+  const preview = f.service.act(owner, { action: 'preview' });
+  await started.promise;
+  const staleTick = f.service.tick();
+  const change = f.service.act(owner, mutate('set_topics', { topics: ['新主题'] }));
+  await assert.rejects(preview, /取消|停止/);
+  await staleTick;
+  await change;
+  gate.resolve();hold = false;
+  assert.equal(f.persisted().jobs.length, 0);
+  await f.service.tick();
+  assert.equal(f.sends.length, 1);
+  assert.deepEqual(f.persisted().jobs[0].topics, ['新主题']);
+});
+
+test('stored preferences cannot be joined to a schedule with a different binding', async () => {
+  const f = await fixture();
+  await f.service.act(owner, mutate('configure', { time: '09:00', timeZone: 'America/Mexico_City', topics: ['只有原绑定可见'] }));
+  const mismatched = structuredClone(f.persisted());
+  mismatched.schedule.bindingKey = otherBinding;
+  const reboot = await fixture({ persisted: mismatched });
+  await assert.rejects(reboot.service.ready(), /不兼容|损坏/);
+  assert.equal(reboot.fetches(), 0);
+  assert.equal(reboot.sends.length, 0);
 });
 
 test('invalid preview topics reject before source fetch or storage IO', async () => {
