@@ -450,3 +450,16 @@ test('a false asynchronous request guard fails closed before any source or state
   await assert.rejects(f.service.act(owner, { action: 'preview', guard: async () => false }), /授权/);
   assert.equal(f.fetches(), 0); assert.equal(f.writes(), 0);
 });
+
+test('suspending news cancels a hung request recheck and releases the serial queue', async () => {
+  let checking = false, timer;
+  const entered = deferred();
+  const f = await fixture({ hooks: { fetchCandidates: async () => { checking = true; return { articles: [article(0)] }; } } });
+  const pending = f.service.act(owner, { action: 'preview', guard: async () => { if (checking) { entered.resolve(); await new Promise(() => {}); } } });
+  const settled = pending.then(() => 'returned', () => 'cancelled');
+  await entered.promise; f.service.suspend();
+  try { assert.equal(await Promise.race([settled, new Promise(resolve => { timer = setTimeout(() => resolve('still-blocked'), 1000); })]), 'cancelled'); }
+  finally { clearTimeout(timer); }
+  assert.equal((await f.service.act(owner, { action: 'status' })).schedule, null);
+  await f.service.close();
+});

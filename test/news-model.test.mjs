@@ -188,9 +188,10 @@ test('external abort and close stop only owned calls, reject future calls and do
   const pending = f.model.selectArticles({ articles: [article('a')], signal: controller.signal });
   controller.abort(new Error('PRIVATE_ABORT_REASON'));
   await assert.rejects(pending, { code: 'MODEL_ABORTED' });
-  const g = fixture([() => ({ [Symbol.asyncIterator]() { return this; }, next() { return new Promise(() => {}); } })]);
+  let entered; const streaming = new Promise(resolve => { entered = resolve; });
+  const g = fixture([() => ({ [Symbol.asyncIterator]() { return this; }, next() { entered(); return new Promise(() => {}); } })]);
   const active = g.model.selectArticles({ articles: [article('a')] });
-  await Promise.resolve();
+  await streaming;
   await g.model.close();
   await assert.rejects(active, { code: 'MODEL_CLOSED' });
   await assert.rejects(g.model.selectArticles({ articles: [article('a')] }), { code: 'MODEL_CLOSED' });
@@ -326,4 +327,15 @@ test('news models enforce a strict synchronous final gate before the stream', as
     assert.equal(f.calls[0]?.request, undefined);
     f.model.close();
   }
+});
+
+test('closing a news model interrupts a hung original-request guard', async () => {
+  let entered, timer; const started = new Promise(resolve => { entered = resolve; });
+  const f = fixture();
+  const pending = f.model.selectArticles({ articles: [article('a')], guard: async () => { entered(); await new Promise(() => {}); } });
+  const settled = pending.then(() => 'returned', () => 'cancelled');
+  await started; f.model.close();
+  try { assert.equal(await Promise.race([settled, new Promise(resolve => { timer = setTimeout(() => resolve('still-blocked'), 1000); })]), 'cancelled'); }
+  finally { clearTimeout(timer); }
+  assert.equal(f.calls.length, 0);
 });
