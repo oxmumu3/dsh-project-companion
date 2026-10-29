@@ -455,7 +455,10 @@ export class ProactiveScheduler {
             if (alarm.status !== "scheduled" || !firesAlarm(alarm.type))
                 continue;
             const due = instantEpoch(alarm.nextDueAt);
-            if (due > now && due < next)
+            // DSH Dot maintenance: the deadline may pass after drive() selected
+            // its due set. Keep that alarm armed for the next asynchronous tick;
+            // an inline requestDrive() would be coalesced into the current drive.
+            if (due < next)
                 next = due;
         }
         if (!Number.isFinite(next))

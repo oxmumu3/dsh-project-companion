@@ -26,10 +26,10 @@ DSH Project Companion / DeepSeek专属Dot is a community project by 牛村木木
 - Upstream: https://github.com/john-walks-slow/dsh-proactive
 - Version 0.3.1; associated research commit: `7a959839f6486aa521e6024a67425b33f098aa0b`.
 - Copyright (c) 2026 dsh-proactive contributors. MIT; full text: `third-party-licenses/dsh-proactive.txt` and `vendor/proactive/LICENSE`.
-- Runtime is the integrity-verified npm 0.3.1 distribution, independently pinned by tar integrity and per-file hashes in `vendor/proactive/SOURCE.json`. The npm archive is not claimed byte-equivalent to an unavailable gitHead mapping.
-- Reuse: ProactiveStore, ProactiveScheduler, WakeDriver, alarm validation and their dependency closure. Upstream compiled runtime files are unchanged.
+- Runtime starts from the integrity-verified npm 0.3.1 distribution, independently pinned by tar integrity and original per-file hashes in `vendor/proactive/SOURCE.json`. The scheduler has one DSH Dot maintenance patch, recorded separately with original and patched hashes in that manifest and `vendor/proactive/PATCHES.md`. The npm archive is not claimed byte-equivalent to an unavailable gitHead mapping.
+- Reuse: ProactiveStore, ProactiveScheduler, WakeDriver, alarm validation and their dependency closure. All selected runtime files except the explicitly recorded scheduler patch preserve their upstream bytes.
 - Adaptation: our adapter provides an explicit project-local data directory, exact original-session target, current watched-root checks, binding checks, pause/cancel gates and a read-only tool policy for autonomous wakes. No upstream global tool/panel/settings registration, dynamic workspace target or default schedule is enabled.
-- This package's tested SDK range describes the composed adapter. It does not alter or claim that the unmodified upstream plugin's peer range accepts SDK0.2.1.
+- This package's tested SDK range describes the composed adapter. It does not alter or claim that the upstream plugin's peer range accepts SDK0.2.1.
 
 ## Distribution
 

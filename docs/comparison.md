@@ -17,7 +17,7 @@
 
 ## 复用与许可
 
-微信桥接仍是独立 bundle；维护差异、固定来源与复建方法见[桥接来源说明](../bridge-maintenance/README.md)，维护责任归本项目，不代表原作者背书。YOLO 与 proactive 采用固定版本库模块组合；YOLO 去除 TypeScript 类型并调整导入后缀，proactive 使用完整性验证后的 npm 编译文件，未修改其运行逻辑。完整 MIT 许可、版权、来源与逐文件 hash 见[第三方声明](../THIRD_PARTY_NOTICES.md)及 vendor 中的 `SOURCE.json`。项目署名不代表 DeepSeek 或上游作者背书。
+微信桥接仍是独立 bundle；维护差异、固定来源与复建方法见[桥接来源说明](../bridge-maintenance/README.md)，维护责任归本项目，不代表原作者背书。YOLO 与 proactive 采用固定版本库模块组合；YOLO 去除 TypeScript 类型并调整导入后缀，proactive 以完整性验证后的 npm 编译文件为基线，仅对调度截止时刻的定时器重设增加一项维护补丁；原始及维护版 hash、改动说明见 `vendor/proactive/SOURCE.json` 与 `PATCHES.md`。完整 MIT 许可、版权、来源与逐文件 hash 见[第三方声明](../THIRD_PARTY_NOTICES.md)及 vendor 中的 `SOURCE.json`。项目署名不代表 DeepSeek 或上游作者背书。
 
 项目记忆只操作已关注根目录下的独立数据库，不导入全部历史。主动跟进默认关闭；用户明确安排后绑定项目和原来源会话，只允许该项目的记忆、资料读取与静默结束。写入、派工、直接微信发送及任意代码执行在自主回合中被拒绝，后续普通用户回合恢复原权限。
 
