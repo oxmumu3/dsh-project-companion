@@ -8,6 +8,17 @@ const TOKEN_KEYS = ['inputTokens', 'outputTokens', 'totalTokens', 'cacheReadToke
 const CONTROL = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/u;
 const hasOwn = (value, key) => Object.prototype.hasOwnProperty.call(value, key);
 const record = value => value !== null && typeof value === 'object' && !Array.isArray(value);
+const diagnosticCount = value => Number.isSafeInteger(value) && value >= 0 && value <= 1000000000 ? value : null;
+const diagnosticEfforts = new Set(['off', 'none', 'minimal', 'low', 'medium', 'high', 'max', 'other', 'unset']);
+/** Fixed controls and counts only; never accept response/provider strings. */
+export function safeModelCallDiagnostic(value) {
+  if (!record(value)) return undefined;
+  return { requestedMaxTokens: diagnosticCount(value.requestedMaxTokens), preparedMaxTokens: diagnosticCount(value.preparedMaxTokens),
+    reasoningEffort: value.reasoningEffort === undefined ? 'unset' : diagnosticEfforts.has(value.reasoningEffort) ? value.reasoningEffort : 'other',
+    finish: ['none', 'stop', 'max-tokens', 'other'].includes(value.finish) ? value.finish : value.finish === undefined ? 'none' : 'other',
+    textChars: diagnosticCount(value.textChars), reasoningChars: diagnosticCount(value.reasoningChars),
+    outputTokens: diagnosticCount(value.outputTokens), reasoningTokens: diagnosticCount(value.reasoningTokens) };
+}
 
 export class NewsModelError extends Error {
   constructor(code) {
@@ -124,13 +135,21 @@ function cancellable(promise, signal) {
 }
 
 /** One native adapter call; no Agent or durable transcript is created. */
-export async function runNewsModel({ llm, selection, system, data, signal, maxTokens, onUsage = () => {}, preparePolicy, beforeStream, beforeStreamSync }) {
+export async function runNewsModel({ llm, selection, system, data, signal, maxTokens, onUsage = () => {}, onDiagnostic = () => {}, preparePolicy, beforeStream, beforeStreamSync }) {
   if (beforeStream !== undefined && typeof beforeStream !== 'function' || beforeStreamSync !== undefined && typeof beforeStreamSync !== 'function') fail('MODEL_INVALID_INPUT');
   if (!llm || typeof llm.prepareCall !== 'function' || !record(selection) || typeof selection.provider !== 'string' || !selection.provider.trim() || typeof selection.model !== 'string' || !selection.model.trim()) fail('MODEL_UNAVAILABLE');
   const config = { provider: selection.provider, model: selection.model,
     ...(typeof selection.reasoningEffort === 'string' && selection.reasoningEffort ? { reasoningEffort: selection.reasoningEffort } : {}), maxTokens };
-  const prepared = await cancellable(Promise.resolve().then(() => llm.prepareCall(config, signal, preparePolicy)), signal);
+  const blocks = new Map(), reasoningLengths = new Map();
+  let prepared, finish, usage, length = 0, ended = false;
+  const diagnostic = () => safeModelCallDiagnostic({ requestedMaxTokens: maxTokens, preparedMaxTokens: prepared?.config?.maxTokens,
+    reasoningEffort: prepared?.config?.reasoningEffort, finish, textChars: length, reasoningChars: [...reasoningLengths.values()].reduce((sum, count) => sum + count, 0),
+    outputTokens: usage?.outputTokens, reasoningTokens: usage?.reasoningTokens });
+  const emitDiagnostic = () => { try { onDiagnostic(diagnostic()); } catch { /* Diagnostics cannot change request execution. */ } };
+  emitDiagnostic();
+  prepared = await cancellable(Promise.resolve().then(() => llm.prepareCall(config, signal, preparePolicy)), signal);
   if (!prepared || !record(prepared.config) || typeof prepared.stream !== 'function') fail('MODEL_UNAVAILABLE');
+  emitDiagnostic();
   const request = { ...prepared.config, system, messages: [{ role: 'user', content: [{ type: 'text', text: data }] }], tools: [], signal };
   // Provider preparation can await routing/configuration. Recheck permission
   // after it, then make the last synchronous check adjacent to transmission.
@@ -144,8 +163,6 @@ export async function runNewsModel({ llm, selection, system, data, signal, maxTo
   const iterable = prepared.stream(request);
   const iterator = iterable?.[Symbol.asyncIterator]?.();
   if (!iterator || typeof iterator.next !== 'function') fail('MODEL_INCOMPLETE');
-  const blocks = new Map();
-  let finish, usage, length = 0, ended = false;
   const setBlock = (index, text, append) => {
     if (!Number.isSafeInteger(index) || index < 0 || index > 1000 || typeof text !== 'string') fail('MODEL_INCOMPLETE');
     const previous = blocks.get(index) ?? '';
@@ -166,6 +183,8 @@ export async function runNewsModel({ llm, selection, system, data, signal, maxTo
         || (chunk.type === 'block-end' && !['text', 'reasoning'].includes(chunk.block?.type))) fail('MODEL_INCOMPLETE');
       if (chunk.type === 'text-delta') setBlock(chunk.index, chunk.text, true);
       else if (chunk.type === 'block-end' && chunk.block?.type === 'text') setBlock(chunk.index, chunk.block.text, false);
+      else if (chunk.type === 'reasoning-delta' && Number.isSafeInteger(chunk.index) && chunk.index >= 0 && chunk.index <= 1000 && typeof chunk.text === 'string') reasoningLengths.set(chunk.index, (reasoningLengths.get(chunk.index) ?? 0) + chunk.text.length);
+      else if (chunk.type === 'block-end' && chunk.block?.type === 'reasoning' && Number.isSafeInteger(chunk.index) && chunk.index >= 0 && chunk.index <= 1000 && typeof chunk.block.text === 'string') reasoningLengths.set(chunk.index, chunk.block.text.length);
       else if (chunk.type === 'usage') {
         if (usage !== undefined || !record(chunk.usage)) fail('MODEL_INCOMPLETE');
         usage = {};
@@ -182,6 +201,7 @@ export async function runNewsModel({ llm, selection, system, data, signal, maxTo
     if (!text.trim()) fail('MODEL_INCOMPLETE');
     return { text, ...(usage === undefined ? {} : { usage }) };
   } finally {
+    emitDiagnostic();
     // Provider adapters honor signal and close their wire stream. Never await an
     // uncooperative return() after the caller's total deadline has elapsed.
     if (!ended && typeof iterator.return === 'function') {

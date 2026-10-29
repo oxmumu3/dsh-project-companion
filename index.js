@@ -18,7 +18,7 @@ import {createWelcomeGuard} from './src/welcome-guard.js';
 import {createNewsService,newsRowSchema} from './src/news-service.js';
 import {fetchNewsCandidates,readNewsArticle} from './src/news-feeds.js';
 import {createNewsModel} from './src/news-model.js';
-import {createProjectUpdateModel,safeValidationDiagnostic} from './src/project-update-model.js';
+import {createProjectUpdateModel,safeValidationDiagnostic,safeModelRunDiagnostic} from './src/project-update-model.js';
 import {createContextLoop,contextLoopRowSchema} from './src/context-loop.js';
 import {createProjectUpdateService,projectUpdateRowSchema} from './src/project-updates.js';
 import {Config,readContextConfig} from './src/context-config.js';
@@ -491,7 +491,7 @@ export async function installCompanion(ctx,options={}){
   });
   contextRoute=createContextRoute({
     checkGoogleConnection:settings=>checkGoogleConnection({...settings,...(options.context?.fetch?{fetch:options.context.fetch}:{})}),
-    summarizeSynthetic:input=>projectUpdateModel.summarize(input),
+    summarizeSynthetic:input=>projectUpdateModel.summarize(input),readSummaryConnection:readWorkbenchConnection,
     context,googleAuth,googleCalendarAuth,googleSuiteAuth,flomoAuth,didaAuth,checkCalendarToken:settings=>useCalendarRecord()?googleCalendarAuth.getToken(settings):googleSuiteAuth.getToken('calendar',settings),readConnection:readSetup,isClosed:()=>disposed,
     canRun:async()=>!disposed&&!await service.isPaused(),
     resolveOwner:sessionId=>{const agent=ctx.get('agents')?.get?.(sessionId);const cwd=effectiveCwd(ctx,agent);return !disposed&&agent&&String(agent.id)===sessionId&&cwd?{sessionId,cwd}:null;},
@@ -844,6 +844,7 @@ export async function installCompanion(ctx,options={}){
       if(args.action.startsWith('context_')&&value.analysisState==='source_only'&&value.loopId)content.push({type:'text',text:'本次读取范围和状态已保存，但分析尚未通过。不要把资料摘录称为分析结论，也不要要求用户清除旧简报或重复授权。可以承接本人明确提出的同范围单次检查；本次工具没有建立检查或周期计划。当前没有可按编号交办的分析事项，历史分析不能代替当前结果。'});
       if(args.action==='context_brief'&&['MODEL_UNAVAILABLE','MODEL_TIMEOUT','MODEL_REQUEST_FAILED','MODEL_INCOMPLETE','MODEL_OUTPUT_LIMIT','MODEL_TOOL_OUTPUT','MODEL_TOKEN_LIMIT','MODEL_INVALID_OUTPUT'].includes(value.modelDiagnostic))content.push({type:'text',text:`内部脱敏诊断代码：${value.modelDiagnostic}；不包含来源内容或错误原文，仅帮助排查模型整理，不要据此断言原因。`});
       if(args.action==='context_brief'&&value.modelDiagnostic==='MODEL_INVALID_OUTPUT'&&typeof value.validationDiagnostic==='string')content.push({type:'text',text:`内部脱敏格式诊断：${safeValidationDiagnostic(value.validationDiagnostic)}；不包含模型原文或来源标识。`});
+      if(args.action==='context_brief'&&value.modelRunDiagnostic){const diagnostic=safeModelRunDiagnostic(value.modelRunDiagnostic);if(diagnostic)content.push({type:'text',text:`内部脱敏模型计数：${JSON.stringify(diagnostic)}；仅含请求轮次、预算、推理档位、结束类别及计数，不含来源或模型正文。不要把字符数当作token数量。`});}
       if(args.action==='context_brief'&&Array.isArray(value.readSummary)){
         const allowedSources=new Set(['gmail','calendar','drive','docs','sheets','slides','dida','flomo','project','memory']),allowedCodes=new Set(['CONTEXT_AUTH_REQUIRED','CONTEXT_INSUFFICIENT_SCOPE','CONTEXT_TIMEOUT','CONTEXT_HTTP_ERROR','CONTEXT_PROTOCOL_INVALID','CONTEXT_SCHEMA_MISMATCH','CONTEXT_SCOPE_VIOLATION','CONTEXT_BINDING_CHANGED','CONTEXT_NOT_ENABLED','CONTEXT_STOPPED','CONTEXT_INVALID_INPUT','CONTEXT_UNSUPPORTED_OPERATION','CONTEXT_UNAVAILABLE']);
         const rows=value.readSummary.filter(r=>allowedSources.has(r?.source)&&['ok','partial','unavailable'].includes(r?.status)&&(r.count===null||Number.isInteger(r.count)&&r.count>=0&&r.count<=20)&&typeof r.truncated==='boolean'&&(r.code===null||allowedCodes.has(r.code))).slice(0,6).map(r=>({source:r.source,status:r.status,count:r.count,truncated:r.truncated,code:r.code}));

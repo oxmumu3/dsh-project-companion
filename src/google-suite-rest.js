@@ -11,11 +11,27 @@ const plain=v=>v!==null&&typeof v==='object'&&!Array.isArray(v);
 const READ_OPERATIONS=new Set(['gmail_list','gmail_metadata','gmail_read','drive_list','drive_metadata','drive_content','sheets_values','unknown']);
 const READ_STAGES=new Set(['token','request','response_headers','body_read','utf8_decode','json_parse','list_shape','message_shape','file_shape','values_shape','unknown']);
 const READ_REASONS=new Set(['auth_failed','transport_failed','response_shape','redirect','http_status','content_type','size_limit','stream_failed','utf8_invalid','json_invalid','list_invalid','message_invalid','file_invalid','values_invalid','cancelled','timeout','unexpected','unknown']);
+const BODY_SHAPES=new Set(['null','stream','other','missing']),HEADERS_SHAPES=new Set(['get','other','missing']),RESPONSE_SHAPES=new Set(['missing','object','other']);
+const UNREADABLE=Symbol('unreadable');
+const property=(value,key)=>{try{return value?.[key];}catch{return UNREADABLE;}};
+const owns=(value,key)=>{try{return Object.hasOwn(value,key);}catch{return false;}};
+const statusNumber=value=>Number.isInteger(value)&&value>=0&&value<=599?value:null;
 // These fields are diagnostic categories, never provider strings, resource IDs,
 // URLs, query values, headers, response bodies or credentials.
 export function safeGoogleReadDiagnostic(value){
  if(!plain(value))return;
- return{operation:READ_OPERATIONS.has(value.operation)?value.operation:'unknown',stage:READ_STAGES.has(value.stage)?value.stage:'unknown',reason:READ_REASONS.has(value.reason)?value.reason:'unknown'};
+ const operation=property(value,'operation'),stage=property(value,'stage'),reason=property(value,'reason');
+ const result={operation:READ_OPERATIONS.has(operation)?operation:'unknown',stage:READ_STAGES.has(stage)?stage:'unknown',reason:READ_REASONS.has(reason)?reason:'unknown'};
+ if(owns(value,'responseStatus'))result.responseStatus=statusNumber(property(value,'responseStatus'));
+ for(const[key,allowed]of [['bodyShape',BODY_SHAPES],['headersShape',HEADERS_SHAPES],['responseShape',RESPONSE_SHAPES]])if(owns(value,key)){const field=property(value,key);result[key]=allowed.has(field)?field:'other';}
+ return result;
+}
+// Failure-only shape telemetry: never invokes a reader, header get(), json(), or
+// text(), and never retains any provider value. Throwing accessors stay bounded.
+function responseDiagnostic(response){
+ const responseShape=response==null?'missing':typeof response==='object'?'object':'other';
+ const status=responseShape==='object'?property(response,'status'):undefined,headers=responseShape==='object'?property(response,'headers'):undefined,body=responseShape==='object'?property(response,'body'):undefined;
+ return{responseStatus:statusNumber(status),bodyShape:body===undefined?'missing':body===null?'null':typeof property(body,'getReader')==='function'?'stream':'other',headersShape:headers===undefined?'missing':typeof property(headers,'get')==='function'?'get':'other',responseShape};
 }
 const error=(code,previous,diagnostic)=>{
  const result=Object.assign(new Error(code),{code}),readDiagnostic=safeGoogleReadDiagnostic(diagnostic??previous?.readDiagnostic);
@@ -112,11 +128,15 @@ function message(raw,expected,full,coverage){
 }
 async function readBody(response,signal,budget,kind='json',operation='unknown'){
  const cancel=()=>{try{void response?.body?.cancel().catch(()=>{});}catch{}};
- if(!response||typeof response.status!=='number'||typeof response.headers?.get!=='function'||typeof response.body?.getReader!=='function')readFail('CONTEXT_PROTOCOL_INVALID',operation,'response_headers','response_shape');
+ if(!response||typeof response.status!=='number'||typeof response.headers?.get!=='function')readFail('CONTEXT_PROTOCOL_INVALID',operation,'response_headers','response_shape');
  if(signal.aborted){cancel();fail('CONTEXT_ABORTED');}
  if(response.redirected||response.status>=300&&response.status<400){cancel();readFail('CONTEXT_REDIRECT',operation,'response_headers','redirect');}
  if([401,403].includes(response.status)){cancel();readFail('CONTEXT_AUTH_REQUIRED',operation,'response_headers','http_status');}
  if(!response.ok){cancel();readFail('CONTEXT_HTTP_ERROR',operation,'response_headers','http_status');}
+ // A Fetch Response may legally have no body (including HTTP refusals). Classify
+ // the status first; successful reads still require a bounded byte stream and
+ // never turn a missing body into an empty provider result.
+ if(typeof response.body?.getReader!=='function'){cancel();readFail('CONTEXT_PROTOCOL_INVALID',operation,'body_read','response_shape');}
  const type=(response.headers.get('content-type')??'').split(';')[0].trim().toLowerCase();
  if(kind==='json'?type!=='application/json':!type.startsWith('text/')){cancel();readFail('CONTEXT_PROTOCOL_INVALID',operation,'response_headers','content_type');}
  const length=Number(response.headers.get('content-length'));if(Number.isFinite(length)&&(length>MAX_BYTES||budget.bytes+length>MAX_TOTAL_BYTES)){cancel();readFail('CONTEXT_RESPONSE_TOO_LARGE',operation,'response_headers','size_limit');}
@@ -163,7 +183,11 @@ export function createGoogleSuiteRest({getToken,fetch:fetchImpl=globalThis.fetch
      let response;try{const pending=Promise.resolve(fetchImpl(url.href,{method:'GET',redirect:'manual',headers:{authorization:`Bearer ${bearer}`,accept:kind==='json'?'application/json':'text/plain'},signal}));
       const owned=pending.then(r=>{if(signal.aborted){try{void r.body?.cancel().catch(()=>{});}catch{}}return r;});response=await wait(owned,signal);
      }catch(e){throw error(CODES.has(e?.code)?e.code:'CONTEXT_HTTP_ERROR',e,{operation,stage:'request',reason:'transport_failed'});}
-     const value=await readBody(response,signal,budget,kind,operation);await authorized(settings,signal);cancelled(settings);return value;
+     let value;try{value=await readBody(response,signal,budget,kind,operation);}catch(failure){
+      const diagnostic=safeGoogleReadDiagnostic(failure?.readDiagnostic)??{operation,stage:'response_headers',reason:'response_shape'};
+      throw error(CODES.has(failure?.code)?failure.code:'CONTEXT_PROTOCOL_INVALID',failure,{...diagnostic,...responseDiagnostic(response)});
+     }
+     await authorized(settings,signal);cancelled(settings);return value;
     };
     const gmail='https://gmail.googleapis.com',google='https://www.googleapis.com';
     const getMessage=async(id,full)=>{

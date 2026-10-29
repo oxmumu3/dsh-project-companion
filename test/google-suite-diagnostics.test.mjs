@@ -9,6 +9,7 @@ const args=buildContextCall('gmail',{operation:'search',query:'subject:DeepSeek'
 const json=value=>new Response(JSON.stringify(value),{headers:{'content-type':'application/json; charset=UTF-8'}});
 const invoke=t=>t.call('gmail',args.name,args.args,gates);
 const make=fetch=>rest.createGoogleSuiteRest({getToken:async()=>'synthetic',fetch});
+const httpShape={responseStatus:200,bodyShape:'stream',headersShape:'get',responseShape:'object'};
 
 test('Google REST distinguishes safe Gmail protocol stages without retaining provider data',async()=>{
  const cases=[
@@ -17,7 +18,7 @@ test('Google REST distinguishes safe Gmail protocol stages without retaining pro
   ['utf8_decode','utf8_invalid',()=>new Response(new Uint8Array([0xc3,0x28]),{headers:{'content-type':'application/json'}})],
   ['list_shape','list_invalid',()=>json({messages:'SYNTHETIC_PRIVATE'})],
  ];
- for(const[stage,reason,response]of cases){let calls=0;const t=make(async()=>{calls++;return response();});try{await assert.rejects(invoke(t),error=>{assert.equal(error.code,'CONTEXT_PROTOCOL_INVALID');assert.deepEqual(error.readDiagnostic,{operation:'gmail_list',stage,reason});assert.doesNotMatch(JSON.stringify(error),/SYNTHETIC_PRIVATE|subject:DeepSeek|googleapis/);return true;});assert.equal(calls,1);}finally{await t.close();}}
+ for(const[stage,reason,response]of cases){let calls=0;const t=make(async()=>{calls++;return response();});try{await assert.rejects(invoke(t),error=>{assert.equal(error.code,'CONTEXT_PROTOCOL_INVALID');assert.deepEqual(error.readDiagnostic,{operation:'gmail_list',stage,reason,...(stage==='list_shape'?{}:httpShape)});assert.doesNotMatch(JSON.stringify(error),/SYNTHETIC_PRIVATE|subject:DeepSeek|googleapis/);return true;});assert.equal(calls,1);}finally{await t.close();}}
 });
 
 test('Gmail metadata validation identifies the second request without exposing the id',async()=>{
@@ -28,13 +29,13 @@ test('Gmail metadata validation identifies the second request without exposing t
 test('confirmed response-stream network errors are HTTP failures and are never replayed',async()=>{
  for(const failure of [Object.assign(new Error('SYNTHETIC_PRIVATE'),{code:'ECONNRESET'}),new TypeError('SYNTHETIC_PRIVATE',{cause:Object.assign(new Error('SYNTHETIC_PRIVATE'),{code:'UND_ERR_SOCKET'})})]){
   let calls=0;const t=make(async()=>{calls++;return new Response(new ReadableStream({start(c){c.error(failure);}}),{headers:{'content-type':'application/json'}});});
-  try{await assert.rejects(invoke(t),error=>{assert.equal(error.code,'CONTEXT_HTTP_ERROR');assert.deepEqual(error.readDiagnostic,{operation:'gmail_list',stage:'body_read',reason:'stream_failed'});assert.doesNotMatch(JSON.stringify(error),/SYNTHETIC_PRIVATE|ECONNRESET|UND_ERR_SOCKET/);return true;});assert.equal(calls,1);}finally{await t.close();}
+  try{await assert.rejects(invoke(t),error=>{assert.equal(error.code,'CONTEXT_HTTP_ERROR');assert.deepEqual(error.readDiagnostic,{operation:'gmail_list',stage:'body_read',reason:'stream_failed',...httpShape});assert.doesNotMatch(JSON.stringify(error),/SYNTHETIC_PRIVATE|ECONNRESET|UND_ERR_SOCKET/);return true;});assert.equal(calls,1);}finally{await t.close();}
  }
 });
 
 test('unknown response-stream errors remain protocol failures with a bounded stage',async()=>{
  const t=make(async()=>new Response(new ReadableStream({start(c){c.error(new Error('SYNTHETIC_PRIVATE'));}}),{headers:{'content-type':'application/json'}}));
- try{await assert.rejects(invoke(t),error=>{assert.equal(error.code,'CONTEXT_PROTOCOL_INVALID');assert.deepEqual(error.readDiagnostic,{operation:'gmail_list',stage:'body_read',reason:'stream_failed'});return true;});}finally{await t.close();}
+ try{await assert.rejects(invoke(t),error=>{assert.equal(error.code,'CONTEXT_PROTOCOL_INVALID');assert.deepEqual(error.readDiagnostic,{operation:'gmail_list',stage:'body_read',reason:'stream_failed',...httpShape});return true;});}finally{await t.close();}
 });
 
 test('Google REST retains allowlisted token diagnostics but never arbitrary OAuth fields',async()=>{
@@ -42,7 +43,7 @@ test('Google REST retains allowlisted token diagnostics but never arbitrary OAut
  try{await assert.rejects(invoke(t),error=>{assert.equal(error.code,'CONTEXT_AUTH_REQUIRED');assert.deepEqual(error.authDiagnostic,{stage:'token_endpoint_http',statusClass:'400',oauthError:'invalid_grant'});assert.deepEqual(error.readDiagnostic,{operation:'gmail_list',stage:'token',reason:'auth_failed'});assert.doesNotMatch(JSON.stringify(error),/SYNTHETIC_PRIVATE/);return true;});assert.equal(calls,0);}finally{await t.close();}
 });
 
-test('read diagnostic sanitizer accepts only three fixed enum values',()=>{
+test('read diagnostic sanitizer accepts only fixed allowlisted fields',()=>{
  assert.equal(typeof rest.safeGoogleReadDiagnostic,'function');
  assert.deepEqual(rest.safeGoogleReadDiagnostic({operation:'gmail_list',stage:'body_read',reason:'stream_failed',url:'SYNTHETIC_PRIVATE',body:'SYNTHETIC_PRIVATE'}),{operation:'gmail_list',stage:'body_read',reason:'stream_failed'});
  assert.deepEqual(rest.safeGoogleReadDiagnostic({operation:'SYNTHETIC_PRIVATE',stage:'SYNTHETIC_PRIVATE',reason:'SYNTHETIC_PRIVATE'}),{operation:'unknown',stage:'unknown',reason:'unknown'});
@@ -58,7 +59,7 @@ test('context service carries only sanitized provider read diagnostics through b
 test('Drive text export diagnostics identify content rather than the successful metadata request',async()=>{
  let calls=0;const t=make(async()=>++calls===1?json({id:'synthetic',name:'Synthetic',mimeType:'application/vnd.google-apps.document'}):new Response('SYNTHETIC_PRIVATE',{headers:{'content-type':'application/json'}}));
  const request=buildContextCall('drive',{operation:'read',id:'synthetic'});
- try{await assert.rejects(t.call('drive',request.name,request.args,gates),error=>{assert.deepEqual(error.readDiagnostic,{operation:'drive_content',stage:'response_headers',reason:'content_type'});return true;});assert.equal(calls,2);}finally{await t.close();}
+ try{await assert.rejects(t.call('drive',request.name,request.args,gates),error=>{assert.deepEqual(error.readDiagnostic,{operation:'drive_content',stage:'response_headers',reason:'content_type',...httpShape});return true;});assert.equal(calls,2);}finally{await t.close();}
 });
 
 test('optional Gmail fields remain accepted under diagnostic instrumentation',async()=>{

@@ -373,7 +373,7 @@ window.__ModuleLoader__.load({
             const row=matches[0];if(typeof row.configured!=='boolean'||typeof row.enabled!=='boolean')throw new Error('invalid context access');
             return{id,name:sourceNames[id],configured:row.configured,enabled:row.enabled,status:row.status??row.state,lastReadAt:typeof row.lastReadAt==='string'&&row.lastReadAt.length<=80&&Number.isFinite(Date.parse(row.lastReadAt))?row.lastReadAt:null};
           });
-          const state={sources:rows,googleAuth:authStatus(value.googleAuth),bindingRevision:typeof value.bindingRevision==='string'?value.bindingRevision:null};
+          const state={sources:rows,googleAuth:authStatus(value.googleAuth),bindingRevision:typeof value.bindingRevision==='string'?value.bindingRevision:null,summaryBindingRevision:typeof value.summaryBindingRevision==='string'?value.summaryBindingRevision:null};
           for(const field of ['flomoAuth','didaAuth','googleCalendarAuth','googleSuiteAuth'])state[field]=authStatus(value[field]);
           if(state.googleSuiteAuth){const granted=value.googleSuiteAuth.grantedSources;if(!Array.isArray(granted)||granted.some(id=>!googleIds.includes(id))||new Set(granted).size!==granted.length)throw new Error('invalid Google service grants');state.googleSuiteAuth.grantedSources=[...granted];}
           if(active.current){

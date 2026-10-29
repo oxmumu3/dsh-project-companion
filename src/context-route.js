@@ -1,5 +1,6 @@
 import {safeAuthDiagnostic} from './auth-diagnostics.js';
 import {safeGoogleAuthAttempt} from './google-auth-attempt.js';
+import {safeGoogleReadDiagnostic} from './google-suite-rest.js';
 import {createContextSummaryProbe} from './context-summary-probe.js';
 import {bindingRevision,matchesBindingRevision} from './workbench-scope.js';
 const bound = value => value?.state === 'bound' && typeof value.sessionId === 'string' && value.sessionId.length > 0 && value.sessionId.length <= 200 && /^[a-f0-9]{64}$/.test(value.bindingKey ?? '');
@@ -8,21 +9,26 @@ const invalid = () => { throw new Error('Context 操作未完成，请刷新连�
 const sourceIds = new Set(['gmail','calendar','drive','docs','sheets','slides','dida','flomo']);
 const readStages=new Set(['scope','build','catalog','call','projection']);
 const readErrors=new Set(['CONTEXT_AUTH_REQUIRED','CONTEXT_INSUFFICIENT_SCOPE','CONTEXT_TIMEOUT','CONTEXT_HTTP_ERROR','CONTEXT_PROTOCOL_INVALID','CONTEXT_SCHEMA_MISMATCH','CONTEXT_SCOPE_VIOLATION','CONTEXT_BINDING_CHANGED','CONTEXT_NOT_ENABLED','CONTEXT_STOPPED','CONTEXT_INVALID_INPUT','CONTEXT_UNSUPPORTED_OPERATION','CONTEXT_UNAVAILABLE']);
+const summaryProbeHints={closed:'简报检查已关闭，请返回 Dot 刷新页面。',paused:'Dot 已暂停，恢复后才能检查简报整理。',binding_unavailable:'原绑定暂不可用，无法继续检查，请先刷新 Dot 的连接状态。',binding_changed:'绑定状态已变化，无法继续检查，请刷新 Dot 后再检查。',owner_unavailable:'原绑定的 Dot 会话尚未载入，请在 Harness 打开原有会话后再检查；未自动启动会话。'};
+const rejectSummaryProbe=stage=>{throw Object.assign(new Error('SUMMARY_PROBE_UNAVAILABLE'),{code:'SUMMARY_PROBE_UNAVAILABLE',summaryProbeStage:stage});};
 
 /** Owner-authenticated native settings facade. GET never resumes or queries a source. */
-export function createContextRoute({context,googleAuth,googleCalendarAuth,googleSuiteAuth,flomoAuth,didaAuth,checkGoogleConnection,checkCalendarToken,readConnection,resolveOwner,activateOwner,canRun=async()=>true,isClosed=()=>false,authCheckTimeoutMs=30000,readCheckClock=()=>new Date(),summarizeSynthetic,summaryCheckTimeoutMs=60000}={}){
+export function createContextRoute({context,googleAuth,googleCalendarAuth,googleSuiteAuth,flomoAuth,didaAuth,checkGoogleConnection,checkCalendarToken,readConnection,readSummaryConnection=readConnection,resolveOwner,activateOwner,canRun=async()=>true,isClosed=()=>false,authCheckTimeoutMs=30000,readCheckClock=()=>new Date(),summarizeSynthetic,summaryCheckTimeoutMs=60000}={}){
   let closed=false;
   const connectionChecks=new Set();
   const open=()=>{if(closed||isClosed())invalid();};
   const connection=async()=>{open();try{const value=await readConnection();return bound(value)?{state:'bound',sessionId:value.sessionId,bindingKey:value.bindingKey}:{state:'unknown'};}catch{return{state:'unknown'};}};
+  // Diagnostics may use the strictly derived shared Owner route. Account
+  // credentials and source operations retain their existing legacy binding.
+  const summaryConnection=async()=>{open();try{const value=await readSummaryConnection();return bound(value)?{state:'bound',sessionId:value.sessionId,bindingKey:value.bindingKey}:{state:'unknown'};}catch{return{state:'unknown'};}};
   const check=async expected=>{open();if(!same(expected,await connection()))invalid();};
   const summaryProbe=createContextSummaryProbe({summarize:summarizeSynthetic,timeoutMs:summaryCheckTimeoutMs,guard:async input=>{
-    open();if(!await canRun())invalid();const expected=await connection();
-    if(!bound(expected)||!matchesBindingRevision(input,expected))invalid();
+    if(closed||isClosed())rejectSummaryProbe('closed');if(!await canRun())rejectSummaryProbe('paused');const expected=await summaryConnection();
+    if(!bound(expected))rejectSummaryProbe('binding_unavailable');if(!matchesBindingRevision(input,expected))rejectSummaryProbe('binding_changed');
     // The probe must not activate/resume a session just to run a diagnostic.
     const owner=resolveOwner(expected.sessionId);
-    if(!owner||owner.sessionId!==expected.sessionId||typeof owner.cwd!=='string'||!owner.cwd.startsWith('/'))invalid();
-    await check(expected);if(!await canRun())invalid();
+    if(!owner||owner.sessionId!==expected.sessionId||typeof owner.cwd!=='string'||!owner.cwd.startsWith('/'))rejectSummaryProbe('owner_unavailable');
+    if(!same(expected,await summaryConnection()))rejectSummaryProbe('binding_changed');if(!await canRun())rejectSummaryProbe('paused');
   }});
   async function readyOwner(expected){
     let owner=resolveOwner(expected.sessionId);
@@ -41,12 +47,15 @@ export function createContextRoute({context,googleAuth,googleCalendarAuth,google
   }
   async function snapshot(){
     const current=await connection();
+    const summaryCurrent=await summaryConnection();
     const owner=bound(current)?{sessionId:current.sessionId}:null;
     const value=await context.snapshot(owner);
     open();
+    const summaryAfter=await summaryConnection();
+    const summaryRevision=bindingRevision(summaryCurrent)===bindingRevision(summaryAfter)?bindingRevision(summaryAfter):null;
     const after=await connection();
     if(bindingRevision(current)!==bindingRevision(after))invalid();
-    return{bindingRevision:bindingRevision(current),sources:value.sources,googleAuth:authStatus(),...(googleCalendarAuth?{googleCalendarAuth:authStatus(googleCalendarAuth)}:{}),...(googleSuiteAuth?{googleSuiteAuth:{...authStatus(googleSuiteAuth),grantedSources:['gmail','calendar','drive'].filter(source=>googleSuiteAuth.status?.().grantedSources?.includes(source))}}:{}),...(flomoAuth?{flomoAuth:authStatus(flomoAuth)}:{}),...(didaAuth?{didaAuth:authStatus(didaAuth)}:{})};
+    return{bindingRevision:bindingRevision(current),summaryBindingRevision:summaryRevision,sources:value.sources,googleAuth:authStatus(),...(googleCalendarAuth?{googleCalendarAuth:authStatus(googleCalendarAuth)}:{}),...(googleSuiteAuth?{googleSuiteAuth:{...authStatus(googleSuiteAuth),grantedSources:['gmail','calendar','drive'].filter(source=>googleSuiteAuth.status?.().grantedSources?.includes(source))}}:{}),...(flomoAuth?{flomoAuth:authStatus(flomoAuth)}:{}),...(didaAuth?{didaAuth:authStatus(didaAuth)}:{})};
   }
   async function checkAuthorization(input){
     if(!Number.isFinite(authCheckTimeoutMs)||authCheckTimeoutMs<=0||authCheckTimeoutMs>30000)invalid();
@@ -73,17 +82,18 @@ export function createContextRoute({context,googleAuth,googleCalendarAuth,google
       };
       await guard();
       if(input.action==='check_read'){
-        let result,code,stage;
+        let result,code,stage,readDiagnostic,authDiagnostic;const limit=source==='gmail'?1:2;
         try{
           let query;
           if(source==='flomo')query={action:'query',source,operation:'search',query:input.query,limit:2,userRequested:true,signal};
+          else if(source==='gmail')query={action:'query',source,operation:'search',query:'subject:DeepSeek',limit:1,userRequested:true,signal};
           else{const start=new Date(readCheckClock());if(!Number.isFinite(start.getTime()))invalid();const end=new Date(start.getTime()+86400000);if(!Number.isFinite(end.getTime()))invalid();query={action:'query',source,operation:'upcoming',from:start.toISOString(),to:end.toISOString(),limit:2,userRequested:true,signal};}
           const value=await bounded(()=>context.act(owner,query));
           if(value?.source!==source||!Array.isArray(value.items)||typeof value.truncated!=='boolean'){code='CONTEXT_PROTOCOL_INVALID';stage='projection';}
-          else if(value.items.length>2){code='CONTEXT_SCOPE_VIOLATION';stage='projection';}
+          else if(value.items.length>limit){code='CONTEXT_SCOPE_VIOLATION';stage='projection';}
           else result={source,readAvailable:true,returnedCount:value.items.length,truncated:value.truncated};
-        }catch(error){code=readErrors.has(error?.code)?error.code:'CONTEXT_UNAVAILABLE';if(readStages.has(error?.readStage))stage=error.readStage;}
-        await guard();return result??{source,readAvailable:false,code,...(stage?{stage}:{})};
+        }catch(error){code=readErrors.has(error?.code)?error.code:'CONTEXT_UNAVAILABLE';if(readStages.has(error?.readStage))stage=error.readStage;readDiagnostic=safeGoogleReadDiagnostic(error?.readDiagnostic);if(error?.authDiagnostic!==undefined)authDiagnostic=safeAuthDiagnostic(error.authDiagnostic);}
+        await guard();return result??{source,readAvailable:false,code,...(stage?{stage}:{}),...(readDiagnostic?{readDiagnostic}:{}),...(authDiagnostic?{authDiagnostic}:{})};
       }
       let available=false,diagnostic;
       try{
@@ -104,12 +114,12 @@ export function createContextRoute({context,googleAuth,googleCalendarAuth,google
       if(['google_authorize','google_calendar_authorize','google_suite_authorize','flomo_authorize','dida_authorize'].includes(input.action)){
         if(keys.length!==1||!await canRun())invalid();
       }else if(input.action==='check_summary'){
-        if(keys.length!==1||typeof input.expectedBindingRevision!=='string')invalid();
+        if(keys.some(key=>!['action','preset'].includes(key))||typeof input.expectedBindingRevision!=='string'||Object.hasOwn(input,'preset')&&!['basic','five_source_complex'].includes(input.preset))invalid();
       }else if(input.action==='check_authorization'){
         if(keys.length!==2||!keys.includes('source')||!['calendar','flomo'].includes(input.source)||typeof input.expectedBindingRevision!=='string')invalid();
       }else if(input.action==='check_read'){
-        if(typeof input.expectedBindingRevision!=='string'||!['calendar','flomo'].includes(input.source)||!keys.includes('source'))invalid();
-        if(input.source==='flomo'?(keys.length!==3||input.query!=='DeepSeek'):(keys.length!==2||Object.hasOwn(input,'query')))invalid();
+        if(typeof input.expectedBindingRevision!=='string'||!['calendar','flomo','gmail'].includes(input.source)||!keys.includes('source'))invalid();
+        if(['flomo','gmail'].includes(input.source)?(keys.length!==3||input.query!==(input.source==='gmail'?'subject:DeepSeek':'DeepSeek')):(keys.length!==2||Object.hasOwn(input,'query')))invalid();
       }else if(!['connect','disconnect'].includes(input.action)||keys.length!==2||!keys.includes('source')||!sourceIds.has(input.source))invalid();
       if(input.action==='connect'&&!await canRun())invalid();
       if(input.action==='check_summary')return summaryProbe.check(input);
@@ -156,7 +166,7 @@ export function registerContextRoute(ctx,adapter){
       const body=await request.text();
       if(Buffer.byteLength(body)>4096)return json({error:'请求过大。'},413);
       return json(await adapter.action(JSON.parse(body)));
-    }catch(error){if(error?.code==='GOOGLE_CONNECTION_UNAVAILABLE')return json({code:'GOOGLE_CONNECTION_UNAVAILABLE',error:'尚未打开 Google 授权：本机暂时连不到授权交换接口。已有连接保留，请稍后再点连接；不会自动重复授权。'},503);return json({error:'未完成连接，请刷新状态后重新登录；未自动重试。'},400);}
+    }catch(error){if(error?.code==='SUMMARY_PROBE_UNAVAILABLE'&&Object.hasOwn(summaryProbeHints,error.summaryProbeStage))return json({code:'SUMMARY_PROBE_UNAVAILABLE',stage:error.summaryProbeStage,error:summaryProbeHints[error.summaryProbeStage]},409);if(error?.code==='GOOGLE_CONNECTION_UNAVAILABLE')return json({code:'GOOGLE_CONNECTION_UNAVAILABLE',error:'尚未打开 Google 授权：本机暂时连不到授权交换接口。已有连接保留，请稍后再点连接；不会自动重复授权。'},503);return json({error:'未完成连接，请刷新状态后重新登录；未自动重试。'},400);}
   }});
   if(typeof stop==='function'&&typeof ctx.effect==='function')ctx.effect(()=>stop);
   return stop;

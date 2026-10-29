@@ -439,3 +439,20 @@ test('synchronous final guard refusal or upstream abort cannot create a stream',
   await assert.rejects(g.model.summarize({ project: { label: '项目' }, sources: [source()], beforeRequestSync: {} }), { code: 'MODEL_INVALID_INPUT' });
   assert.equal(g.calls.length, 0); g.model.close();
 });
+
+test('a token-limited repair exposes both bounded attempt counters without source or model text', async () => {
+  const limited = async function* () {
+    yield { type: 'reasoning-delta', index: 0, text: 'PRIVATE_REASONING' };
+    yield { type: 'usage', usage: { outputTokens: 4500 } };
+    yield { type: 'finish', reason: { kind: 'max-tokens' } };
+  };
+  const f = fixture([accountedStream(wrongQuote()), limited]);
+  await assert.rejects(f.model.summarize({ project: { label: 'PRIVATE_LABEL' }, sources: [source()] }), error => {
+    assert.equal(error.code, 'MODEL_TOKEN_LIMIT');
+    assert.equal(error.modelRunDiagnostic.attempts.length, 2);
+    assert.deepEqual(error.modelRunDiagnostic.attempts.map(row => [row.attempt, row.requestedMaxTokens, row.preparedMaxTokens, row.finish, row.outputTokens]), [[1, 6000, 6000, 'stop', 1200], [2, 4500, 4500, 'max-tokens', 4500]]);
+    assert.equal(error.modelRunDiagnostic.attempts[1].textChars, 0); assert.equal(error.modelRunDiagnostic.attempts[1].reasoningChars, 'PRIVATE_REASONING'.length);
+    assert.doesNotMatch(JSON.stringify(error), /PRIVATE|界面|file:progress/); return true;
+  });
+  f.model.close();
+});

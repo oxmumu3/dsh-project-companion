@@ -439,3 +439,69 @@ test('lastCheckOutcome remains paired with its previous successful check when a 
 test('unchanged failed-source coverage is partial history rather than verified quiet',async t=>{
  const h=await harness(t,{toolResult:()=>({status:'partial',quiet:true,coverage:[{source:'gmail',unavailable:true,truncated:false},{source:'project',unavailable:true,truncated:false}]}),onWake:async h=>{await h.invoke(exact(h));await h.reclaim();}});await h.adapter.checkOnce({...h.args,delaySeconds:60,delivery:'wechat'});await h.drain();await h.tick(60);const r=await h.adapter.onceStatus(h.args);assert.equal(r.lastCheckOutcome,'partial');assert.equal(r.status,'completed');assert.equal(r.lastReviewedAt,'2026-10-18T16:01:00.000Z');
 });
+
+const onceScopeFile=h=>join(h.root,'.dsh/dot-checks',createHash('sha256').update(h.owner.id).digest('hex'),'scope.json');
+for(const code of ['LOOP_MODEL_UNAVAILABLE','LOOP_MODEL_INVALID_OUTPUT','LOOP_MODEL_INVALID_INPUT','LOOP_STORE_UNAVAILABLE','CONTEXT_LOOP_UNAVAILABLE'])test('one-off Family '+code+' ends failed with one fixed notice and preserves the context scope',async t=>{
+ const f=familyFixture(),h=await harness(t,{familyRoute:f.route,ownerOutside:true,toolResult:()=>({status:'blocked',quiet:false,code,text:'untrusted provider body must never be relayed'}),onWake:async h=>{await h.invoke(exact(h));assert.equal((await h.invoke(exact(h))).isError,true);await h.reclaim();}});
+ f.route.send=async value=>{const saved=JSON.parse(await readFile(onceScopeFile(h),'utf8'));assert.equal(saved.checkFailure.code,code);assert.equal(saved.checkFailure.notification,'pending');assert.equal(saved.checkFailure.requestId,value.requestId);assert.equal(value.authorize(),true);f.deliveries.push(value);return{status:'accepted'};};
+ await h.adapter.checkOnce({...h.args,delivery:'family',delaySeconds:60});await h.drain();await h.tick(60);
+ const done=await h.adapter.onceStatus(h.args);assert.equal(done.status,'failed');assert.equal(done.enabled,false);assert.equal(done.lastReviewedAt,null);assert.equal(done.lastCheckOutcome,undefined);assert.equal(done.lastFailureCode,code);assert.equal(done.lastAttemptAt,'2026-10-18T16:01:00.000Z');assert.equal(done.failureNotificationStatus,'accepted');assert.equal(done.nextDueAt,null);assert.deepEqual(h.invalidated,[]);
+ assert.equal(f.deliveries.length,1);assert.match(f.deliveries[0].text,/检查.*未能完成|检查没有完成/);assert.match(f.deliveries[0].text,/不能.*判断.*变化|无法判断.*变化/);assert.doesNotMatch(f.deliveries[0].text,/untrusted|provider|无变化|授权.*变化/);
+ const folder=join(h.root,'.dsh/dot-checks',createHash('sha256').update(h.owner.id).digest('hex'));const meta=JSON.parse(await readFile(onceScopeFile(h),'utf8'));assert.equal(meta.blockedCode,undefined);assert.equal(meta.familyInflight,undefined);assert.equal(meta.familyCompleted,meta.checkFailure.requestId);
+ const runs=(await readFile(join(folder,'runs.jsonl'),'utf8')).trim().split('\n').map(JSON.parse);assert.equal(runs.at(-1).decision,'failed');assert.ok(runs.at(-1).note.includes(code));
+ const alarms=JSON.parse(await readFile(join(folder,'alarms.json'),'utf8'));assert.match(JSON.stringify(alarms),/"status":"failed"/);
+ await h.tick(120);assert.equal(h.messages.length,1);assert.equal(f.deliveries.length,1);await h.reopen();const restored=await h.adapter.recoverFamilyOnce(h.args);assert.equal(restored.status,'failed');assert.equal(restored.lastFailureCode,code);await h.tick(120);assert.equal(h.messages.length,1);assert.equal(f.deliveries.length,1);
+});
+
+test('one-off Family failure delivery uncertainty never replays or invalidates its brief',async t=>{
+ const f=familyFixture({send:async value=>{f.deliveries.push(value);return{status:'uncertain'};}}),h=await harness(t,{familyRoute:f.route,ownerOutside:true,toolResult:()=>({status:'blocked',quiet:false,code:'LOOP_MODEL_UNAVAILABLE'}),onWake:async h=>{await h.invoke(exact(h));await h.reclaim();}});
+ await h.adapter.checkOnce({...h.args,delivery:'family',delaySeconds:60});await h.drain();await h.tick(60);const done=await h.adapter.onceStatus(h.args);assert.equal(done.status,'failed');assert.equal(done.failureNotificationStatus,'uncertain');assert.equal(done.lastReviewedAt,null);assert.deepEqual(h.invalidated,[]);assert.equal(f.deliveries.length,1);await h.reopen();await h.adapter.recoverFamilyOnce(h.args);await h.tick(120);assert.equal(f.deliveries.length,1);assert.equal(h.messages.length,1);
+});
+
+for(const stop of ['cancel','grant','route'])test('one-off Family model failure followed by '+stop+' sends no failure notice',async t=>{
+ const f=familyFixture(),h=await harness(t,{familyRoute:f.route,ownerOutside:true,toolResult:()=>({status:'blocked',quiet:false,code:'LOOP_MODEL_UNAVAILABLE'}),onWake:async h=>{await h.invoke(exact(h));if(stop==='cancel')await h.adapter.cancelOnce(h.args);else f.state[stop==='grant'?'grant':'current']=false;await h.reclaim();}});
+ await h.adapter.checkOnce({...h.args,delivery:'family',delaySeconds:60});await h.drain();await h.tick(60);assert.equal(f.deliveries.length,0);assert.equal((await h.adapter.onceStatus(h.args)).status,stop==='cancel'?'cancelled':'blocked');
+});
+
+for(const receiptStatus of ['accepted','absent','uncertain'])test('interrupted Family failure notification recovery '+receiptStatus+' remains failed without a second wake or send',async t=>{
+ const f=familyFixture({readDelivery:async()=>({status:receiptStatus})}),h=await harness(t,{familyRoute:f.route,ownerOutside:true});await h.adapter.checkOnce({...h.args,delivery:'family',delaySeconds:60});await h.drain();await h.reopen();
+ const file=onceScopeFile(h),meta=JSON.parse(await readFile(file,'utf8'));meta.familyInflight='family-followup-'+'5'.repeat(64);meta.checkFailure={code:'LOOP_MODEL_UNAVAILABLE',at:'2026-10-18T16:00:30.000Z',requestId:meta.familyInflight,notification:'pending'};await writeFile(file,JSON.stringify(meta));
+ const invalidations=h.invalidated.length,done=await h.adapter.recoverFamilyOnce(h.args);assert.equal(done.status,'failed');assert.equal(done.lastReviewedAt,null);assert.equal(done.failureNotificationStatus,receiptStatus==='accepted'?'accepted':'uncertain');assert.equal(h.invalidated.length,invalidations);await h.tick(120);assert.equal(h.messages.length,0);assert.equal(f.deliveries.length,0);
+});
+
+test('assistant failure text without a typed exact tool failure cannot authorize a notice',async t=>{
+ const f=familyFixture(),h=await harness(t,{familyRoute:f.route,ownerOutside:true,toolResult:()=>({status:'blocked',quiet:false,text:'简报整理服务暂不可用，本次未生成简报。'}),onWake:async h=>{await h.invoke(exact(h));h.reply('简报整理服务暂不可用，本次未生成简报。');}});
+ await h.adapter.checkOnce({...h.args,delivery:'family',delaySeconds:60});await h.drain();await h.tick(60);assert.equal(f.deliveries.length,0);assert.equal((await h.adapter.onceStatus(h.args)).lastFailureCode,undefined);
+});
+
+for(const notification of ['received',true,null])test('failure metadata rejects unsupported notification '+JSON.stringify(notification),async t=>{
+ const f=familyFixture(),h=await harness(t,{familyRoute:f.route,ownerOutside:true});await h.adapter.checkOnce({...h.args,delivery:'family',delaySeconds:60});await h.drain();await h.reopen();
+ const file=onceScopeFile(h),meta=JSON.parse(await readFile(file,'utf8'));meta.familyInflight='family-followup-'+'6'.repeat(64);meta.checkFailure={code:'LOOP_MODEL_UNAVAILABLE',at:'2026-10-18T16:00:30.000Z',requestId:meta.familyInflight,notification};await writeFile(file,JSON.stringify(meta));await assert.rejects(h.adapter.onceStatus(h.args),/failure metadata/);
+});
+
+test('failure metadata rejects provider strings, extras and mismatched receipt keys',async t=>{
+ for(const change of [value=>({...value,code:'token=private'}),value=>({...value,providerResponse:'private body'}),value=>({...value,requestId:'family-followup-'+'7'.repeat(64)})]){
+  const f=familyFixture(),h=await harness(t,{familyRoute:f.route,ownerOutside:true});await h.adapter.checkOnce({...h.args,delivery:'family',delaySeconds:60});await h.drain();await h.reopen();
+  const file=onceScopeFile(h),meta=JSON.parse(await readFile(file,'utf8'));meta.familyInflight='family-followup-'+'6'.repeat(64);meta.checkFailure=change({code:'LOOP_MODEL_UNAVAILABLE',at:'2026-10-18T16:00:30.000Z',requestId:meta.familyInflight,notification:'pending'});await writeFile(file,JSON.stringify(meta));await assert.rejects(h.adapter.onceStatus(h.args),/failure metadata/);
+ }
+});
+
+test('a failed failure-receipt write cannot send a notification',async t=>{
+ const f=familyFixture(),h=await harness(t,{familyRoute:f.route,ownerOutside:true,toolResult:()=>({status:'blocked',quiet:false,code:'LOOP_MODEL_UNAVAILABLE'}),onWake:async h=>{await h.invoke(exact(h));await rm(onceScopeFile(h));await mkdir(onceScopeFile(h));await h.reclaim();}});
+ await h.adapter.checkOnce({...h.args,delivery:'family',delaySeconds:60});await h.drain();await h.tick(60);assert.equal(f.deliveries.length,0);assert.deepEqual(h.invalidated,[]);await h.tick(120);assert.equal(h.messages.length,1);
+});
+
+test('cancel after failure is recorded but before sending cannot issue a notice',async t=>{
+ const f=familyFixture(),h=await harness(t,{familyRoute:f.route,ownerOutside:true,toolResult:()=>({status:'blocked',quiet:false,code:'LOOP_MODEL_UNAVAILABLE'}),onWake:async h=>{await h.invoke(exact(h));await h.reclaim();}});
+ let cancel=false;f.route.recheck=async()=>{if(!cancel){const meta=JSON.parse(await readFile(onceScopeFile(h),'utf8').catch(()=> '{}'));if(meta.checkFailure){cancel=true;await h.adapter.cancelOnce(h.args);}}return true;};
+ await h.adapter.checkOnce({...h.args,delivery:'family',delaySeconds:60});await h.drain();await h.tick(60);assert.equal(f.deliveries.length,0);assert.equal((await h.adapter.onceStatus(h.args)).status,'cancelled');
+});
+
+test('a replacement one-off owns its durable scope while the old failure notice is awaiting delivery',async t=>{
+ let enter,release;const entered=new Promise(resolve=>enter=resolve),held=new Promise(resolve=>release=resolve);
+ const f=familyFixture({send:async value=>{enter();await held;if(!value.authorize())return{status:'blocked'};f.deliveries.push(value);return{status:'accepted'};}}),h=await harness(t,{familyRoute:f.route,ownerOutside:true,toolResult:()=>({status:'blocked',quiet:false,code:'LOOP_MODEL_UNAVAILABLE'}),onWake:async h=>{await h.invoke(exact(h));await h.reclaim();}});
+ await h.adapter.checkOnce({...h.args,delivery:'family',delaySeconds:60});await h.drain();const firing=h.tick(60);await entered;
+ const replacement=await h.adapter.checkOnce({...h.args,loopId:'loop_replacement',delivery:'family',delaySeconds:120});assert.equal(replacement.status,'queued');release();await firing;
+ const saved=JSON.parse(await readFile(onceScopeFile(h),'utf8'));assert.equal(saved.loopId,'loop_replacement');assert.equal(saved.alarmId,replacement.alarmId);assert.equal(saved.status,'queued');assert.equal(saved.checkFailure,undefined);assert.equal(saved.familyInflight,undefined);assert.equal(f.deliveries.length,0);assert.equal((await h.adapter.onceStatus(h.args)).loopId,'loop_replacement');
+ await h.reopen();const recovered=await h.adapter.recoverFamilyOnce(h.args);assert.equal(recovered.loopId,'loop_replacement');assert.equal(recovered.status,'queued');
+});

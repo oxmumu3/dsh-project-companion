@@ -1,4 +1,4 @@
-import {lstat,mkdir,readFile,writeFile,rename,realpath} from 'node:fs/promises';
+import {lstat,mkdir,readFile,writeFile,rename,realpath,rm} from 'node:fs/promises';
 import {isAbsolute,join,parse,resolve} from 'node:path';
 import {randomUUID,createHash} from 'node:crypto';
 import {defineTool} from '@deepseek-ai/dsh-tools';
@@ -26,11 +26,18 @@ const dailyTime=value=>typeof value==='string'&&/^(?:[01]\d|2[0-3]):[0-5]\d$/.te
 const dailyCron=value=>{const [hour,minute]=value.split(':').map(Number);return `${minute} ${hour} * * *`;};
 const checkOutcomes=new Set(['quiet','reviewed','partial']);
 const familyRequest=value=>typeof value==='string'&&/^family-followup-[a-f0-9]{64}$/.test(value);
+const checkFailureCodes=new Set(['LOOP_MODEL_UNAVAILABLE','LOOP_MODEL_INVALID_OUTPUT','LOOP_MODEL_INVALID_INPUT','LOOP_STORE_UNAVAILABLE','CONTEXT_LOOP_UNAVAILABLE']);
+const failureNotice='这次定时检查未能完成，不能据此判断资料是否有变化。\n本次检查已结束，不会自动重试，也没有建立周期计划。原资料范围保留；你可以稍后再请我检查。';
+function verifyCheckFailure(meta){
+  const value=meta.checkFailure;if(value===undefined)return;
+  if(meta.kind!=='once'||meta.delivery!=='family'||!validLoopId(meta.loopId)||!value||typeof value!=='object'||Array.isArray(value)||Object.keys(value).sort().join(',')!=='at,code,notification,requestId'||!checkFailureCodes.has(value.code)||!explicitTime(value.at)||!familyRequest(value.requestId)||!['pending','accepted','uncertain','not_sent'].includes(value.notification)||meta.familyInflight!==value.requestId&&meta.familyCompleted!==value.requestId)throw new Error('Invalid scoped check failure metadata');
+}
+const failureView=meta=>meta.checkFailure?{lastAttemptAt:meta.checkFailure.at,lastFailureCode:meta.checkFailure.code,failureNotificationStatus:meta.checkFailure.notification}:{};
 
 /** A watched-project-only composition of the unchanged upstream host library. */
 export function createProjectFollowup(options={}){
   const {ctx}=options;
-  const scopes=new Map(),ones=new Map(),intents=new Map(),active=new Map(),runtimes=new Set(),draining=new Set(),persisting=new Set(),trackedStores=new WeakSet();
+  const scopes=new Map(),ones=new Map(),intents=new Map(),active=new Map(),runtimes=new Set(),draining=new Set(),persisting=new Set(),trackedStores=new WeakSet(),metaWrites=new Map();
   function trackStore(store){
     if(trackedStores.has(store))return;
     const persist=store.persist.bind(store);
@@ -92,6 +99,7 @@ export function createProjectFollowup(options={}){
   const requireSession=id=>{if(typeof id!=='string'||!isValidSessionId(id))throw new Error('Invalid original source session');};
   const safeEntry=entry=>safe(entry.root,entry.once?{sessionId:entry.meta.sessionId}:{});
   function verifyMeta(meta,root){
+    verifyCheckFailure(meta??{});
     if(!meta||meta.version!==1||!isValidSessionId(meta.sessionId)||typeof meta.alarmId!=='string'||!meta.alarmId.startsWith('alarm_')||!Number.isSafeInteger(meta.everyMinutes)||meta.everyMinutes<30||meta.everyMinutes>1440||typeof meta.projectLabel!=='string'||meta.projectLabel.length>80||!validBinding(meta.binding)||typeof meta.enabled!=='boolean')throw new Error('Invalid scoped follow-up ownership metadata');
     if(meta.dailyTime!==undefined&&(!dailyTime(meta.dailyTime)||meta.everyMinutes!==1440||typeof meta.timeZone!=='string'||canonicalizeTimeZone(meta.timeZone)!==meta.timeZone)||meta.dailyTime===undefined&&meta.timeZone!==undefined)throw new Error('Invalid daily scoped follow-up');
     if(meta.sourceRequestId!==undefined&&(meta.delivery!=='family'||!familySourceRequest(meta.sourceRequestId)))throw new Error('Invalid Family source request');
@@ -122,10 +130,23 @@ export function createProjectFollowup(options={}){
     entry.blocking=(async()=>{await entry.store.persist();await persistMeta(entry);})();
     return entry.blocking;
   }
-  async function persistMeta(entry){
-    await safe(entry.root,{create:true,...(entry.once?{sessionId:entry.meta.sessionId}:{})});
-    const temporary=join(entry.dir,`scope.json.tmp.${randomUUID()}`);
-    await writeFile(temporary,JSON.stringify(entry.meta)+'\n',{mode:0o600,flag:'wx'});await rename(temporary,join(entry.dir,'scope.json'));
+  async function persistMeta(entry,authorize=()=>true){
+    // Different generations share one path. Serialize renames so a late old
+    // write cannot land after its replacement; guarded writes also drop stale
+    // snapshots before rename without obstructing cancellation's own write.
+    const work=(metaWrites.get(entry.dir)??Promise.resolve()).catch(()=>{}).then(async()=>{
+      if(!authorize())return false;
+      await safe(entry.root,{create:true,...(entry.once?{sessionId:entry.meta.sessionId}:{})});
+      if(!authorize())return false;
+      const temporary=join(entry.dir,`scope.json.tmp.${randomUUID()}`);
+      try{
+        await writeFile(temporary,JSON.stringify(entry.meta)+'\n',{mode:0o600,flag:'wx'});
+        if(!authorize())return false;
+        await rename(temporary,join(entry.dir,'scope.json'));return true;
+      }finally{await rm(temporary,{force:true}).catch(()=>{});}
+    });
+    metaWrites.set(entry.dir,work);persisting.add(work);
+    try{return await work;}finally{persisting.delete(work);if(metaWrites.get(entry.dir)===work)metaWrites.delete(entry.dir);}
   }
   async function load(root,{cache=true}={}){
     const path=await safe(root);
@@ -148,7 +169,7 @@ export function createProjectFollowup(options={}){
         alarm?.status==='completed'?'blocked':alarm?.status==='failed'?'failed':
         !entry.scheduler&&entry.enabled?'blocked':alarm?.status==='in-flight'?'running':
         entry.enabled&&alarm?.status==='scheduled'?'queued':entry.meta.status??'cancelled';
-      return{...(entry.meta.loopId?{loopId:entry.meta.loopId}:{}),status,enabled:entry.enabled&&['queued','running'].includes(status),running:status==='running',delivery:entry.meta.delivery,sessionId:entry.meta.sessionId,originSessionId:entry.meta.sessionId,projectLabel:entry.meta.projectLabel,alarmId:entry.meta.alarmId,nextDueAt:['queued','running'].includes(status)?alarm?.nextDueAt:null,lastReviewedAt:entry.meta.lastReviewedAt??null,...(entry.meta.lastCheckOutcome!==undefined?{lastCheckOutcome:entry.meta.lastCheckOutcome}:{}),runCount:alarm?.runCount??0,...(entry.blocked?{blocked:entry.blocked}:status==='blocked'?{blocked:'One-off runtime is inactive; explicitly request a new check'}:{})};
+      return{...(entry.meta.loopId?{loopId:entry.meta.loopId}:{}),status,enabled:entry.enabled&&['queued','running'].includes(status),running:status==='running',delivery:entry.meta.delivery,sessionId:entry.meta.sessionId,originSessionId:entry.meta.sessionId,projectLabel:entry.meta.projectLabel,alarmId:entry.meta.alarmId,nextDueAt:['queued','running'].includes(status)?alarm?.nextDueAt:null,lastReviewedAt:entry.meta.lastReviewedAt??null,...(entry.meta.lastCheckOutcome!==undefined?{lastCheckOutcome:entry.meta.lastCheckOutcome}:{}),...failureView(entry.meta),runCount:alarm?.runCount??0,...(entry.blocked?{blocked:entry.blocked}:status==='blocked'?{blocked:'One-off runtime is inactive; explicitly request a new check'}:{})};
     }
     return{...(entry.meta.loopId?{loopId:entry.meta.loopId}:{}),enabled:entry.enabled&&!!alarm,sessionId:entry.meta.sessionId,originSessionId:entry.meta.sessionId,everyMinutes:entry.meta.everyMinutes,...(entry.meta.dailyTime?{dailyTime:entry.meta.dailyTime,timeZone:entry.meta.timeZone}:{}),projectLabel:entry.meta.projectLabel,running:!!entry.scheduler,alarmId:entry.meta.alarmId,lastReviewedAt:entry.meta.lastReviewedAt??null,...(entry.meta.lastCheckOutcome!==undefined?{lastCheckOutcome:entry.meta.lastCheckOutcome}:{}),...(!alarm?{nextDueAt:null}:{}),...(alarm?{nextDueAt:alarm.nextDueAt,lastRunAt:alarm.lastRunAt,runCount:alarm.runCount}:{}),...(entry.blocked?{blocked:entry.blocked}:{})};
   }
@@ -210,6 +231,28 @@ export function createProjectFollowup(options={}){
     if(entry.meta.status==='cancelled')return;
     entry.blocked=reason;entry.enabled=false;entry.meta.enabled=false;entry.meta.status='blocked';entry.scheduler?.stop();await persistMeta(entry);
   }
+  // A known check failure is not a successful review and is not revocation.
+  // Persist its exact receipt key before sending a fixed, data-free notice.
+  // A crash after this write may inspect that receipt but must never replay it.
+  async function notifyCheckFailure(entry,{scope,requestId,version,startedAt}){
+    const owns=()=>!closed&&intent(intentKey(entry))===version&&ones.get(intentKey(entry))===entry;
+    const current=()=>owns()&&entry.enabled&&!entry.loopInvalidated&&!!familyScope(entry)&&options.familyRoute.isCurrent(scope)===true;
+    if(!current())return;
+    const code=entry.loopFailureCode;
+    entry.meta.checkFailure={code,at:startedAt,requestId,notification:'pending'};
+    if(!await persistMeta(entry,owns)||!owns())return;
+    if(current()&&await canRun(entry)&&await routeAllowed(entry)&&current()){
+      let sent;try{sent=await options.familyRoute.send({scope,text:failureNotice,requestId,authorize:current});}catch{sent={status:'uncertain'};}
+      const valid=current()&&await routeAllowed(entry)&&current();
+      if(!owns())return;
+      entry.meta.checkFailure.notification=sent?.status==='accepted'&&valid?'accepted':'uncertain';
+      if(sent?.status==='accepted'&&valid){entry.meta.familyCompleted=requestId;delete entry.meta.familyInflight;}
+    }else{if(!owns())return;entry.meta.checkFailure.notification='not_sent';}
+    if(entry.meta.status!=='cancelled'&&entry.meta.status!=='blocked'){
+      entry.meta.status='failed';entry.meta.enabled=false;retire(entry);
+    }
+    await persistMeta(entry,owns);
+  }
   async function loadOnce(root,sessionId,{cache=true}={}){
     requireSession(sessionId);const path=await safe(root,{sessionId});const key=onceKey(root,sessionId);
     if(ones.has(key)){const entry=ones.get(key);owned(entry);return entry;}
@@ -223,6 +266,7 @@ export function createProjectFollowup(options={}){
     if(meta.blockedCode!==undefined&&(!meta.loopId||!terminalLoopCodes.has(meta.blockedCode)))throw new Error('Invalid blocked context loop metadata');
     if(meta.lastReviewedAt!==null&&(typeof meta.lastReviewedAt!=='string'||!Number.isFinite(Date.parse(meta.lastReviewedAt))||new Date(meta.lastReviewedAt).toISOString()!==meta.lastReviewedAt))throw new Error('Invalid one-off source-review watermark');
     if(meta.lastCheckOutcome!==undefined&&(!checkOutcomes.has(meta.lastCheckOutcome)||meta.lastReviewedAt===null))throw new Error('Invalid last check outcome metadata');
+    verifyCheckFailure(meta);
     const loaded=await ProactiveStore.load(path.dir);if(loaded.corrupt)throw new Error('Corrupt scoped one-off store');
     const entry={once:true,root,dir:path.dir,meta,enabled:meta.enabled,store:loaded.store,scheduler:null,driver:null,...(meta.blockedCode?{blocked:blockedLoopReason}:{})};owned(entry);if(cache)ones.set(key,entry);return entry;
   }
@@ -248,7 +292,7 @@ export function createProjectFollowup(options={}){
     if(entry.meta.delivery==='family'&&!familyScope(entry))return 'Family Owner permission or destination changed';
     // Arbitrary code is denied too: the prototype supports native read tools.
     if(!isAllowedRead(entry,execution))return 'Autonomous follow-up is restricted to its exact watched project read; no sends, writes or handoffs';
-    if(entry.meta.loopId&&(entry.loopReadPending&&entry.loopReadPending!==execution||entry.successfulReads?.has('context_check')))return 'Context loop already checked in this wake; do not repeat its read or report';
+    if(entry.meta.loopId&&(entry.loopReadPending&&entry.loopReadPending!==execution||entry.loopFailureCode||entry.successfulReads?.has('context_check')))return 'Context loop already checked in this wake; do not repeat its read or report';
   };
   const disposeGuard=typeof ctx?.tools?.guard==='function'?ctx.tools.guard(guard):null;
   const disposePolicy=typeof ctx?.on==='function'?ctx.on('tools/pre-execute',async(execution,next)=>{
@@ -258,7 +302,7 @@ export function createProjectFollowup(options={}){
     await safeEntry(entry);if((entry.once||entry.meta.loopId)&&!await routeAllowed(entry)){if(entry.meta.loopId)await blockLoop(entry,'LOOP_SCOPE_CHANGED');else await blockOnce(entry,'One-off destination route or current project changed');return{kind:'deny',reason:entry.blocked};}
     if(closed||!entry.enabled||entry.loopInvalidated)return{kind:'deny',reason:'Project follow-up was cancelled or closed'};
     if(entry.meta.loopId){
-      if(!isAllowedRead(entry,execution)||entry.loopReadPending||entry.successfulReads?.has('context_check'))return{kind:'deny',reason:'Only one exact context check is allowed in this wake'};
+      if(!isAllowedRead(entry,execution)||entry.loopReadPending||entry.loopFailureCode||entry.successfulReads?.has('context_check'))return{kind:'deny',reason:'Only one exact context check is allowed in this wake'};
       // Host monotonic guards run after pre-execute. Keep this exact execution
       // eligible there while denying a second concurrent call.
       entry.loopReadPending=execution;
@@ -273,6 +317,7 @@ export function createProjectFollowup(options={}){
     if(closed||!entry.enabled||entry.loopInvalidated)return;
     const code=result.value?.code??result.error?.code??result.error?.info?.code;
     if(entry.meta.loopId&&terminalLoopCodes.has(code)){void blockLoop(entry,code).catch(()=>{});return;}
+    if(entry.meta.loopId&&checkFailureCodes.has(code)&&(result.isError||result.value?.ok===false||['blocked','failed','error'].includes(result.value?.status))){entry.loopFailureCode=code;return;}
     if(result.isError)return;
     if(result.value?.accepted===false||result.value?.ok===false||['blocked','failed','error'].includes(result.value?.status)||typeof result.value?.code==='string')return;
     entry.successfulReads?.add(execution.arguments.action);
@@ -370,7 +415,7 @@ export function createProjectFollowup(options={}){
           return{outcome:'skipped',skipReason:'Family route changed before wake'};
         }
       }
-      const startedAt=new Date(now()).toISOString();active.set(entry.meta.sessionId,entry);entry.successfulReads=new Set();entry.loopReadPending=false;entry.loopQuiet=false;entry.loopQuietVerified=false;entry.loopPartial=false;entry.loopReclaimed=false;
+      const startedAt=new Date(now()).toISOString();active.set(entry.meta.sessionId,entry);entry.successfulReads=new Set();entry.loopReadPending=false;entry.loopFailureCode=null;entry.loopQuiet=false;entry.loopQuietVerified=false;entry.loopPartial=false;entry.loopReclaimed=false;
       try{
         const prefix=entry.once?'这是用户明确安排的一次性只读检查，结束后没有下一次；本次明确请求可在免打扰时段执行。':'';
         const suffix='\n跟进设置、状态查询、测试调度指令和上一轮汇报正文均不算新业务进展。首次可报告尚未确认已报过的真实阻塞；已汇报过的阻塞没有实质变化时保持安静。';
@@ -378,6 +423,13 @@ export function createProjectFollowup(options={}){
         if(entry.blocking)await entry.blocking;
         if(entry.enabled&&(entry.once||entry.meta.loopId)&&!await routeAllowed(entry)){if(entry.meta.loopId)await blockLoop(entry,'LOOP_SCOPE_CHANGED');else await blockOnce(entry,'One-off destination changed before result was observed');}
         let reviewed=result.outcome==='ok'&&['reply','no_reply'].includes(result.analysis?.decision)&&(entry.meta.loopId?entry.successfulReads.size===1&&entry.successfulReads.has('context_check')&&(!entry.loopQuiet||result.analysis.decision==='no_reply'&&entry.loopReclaimed):entry.successfulReads.size===2)&&await canRun(entry)&&intent(intentKey(entry))===version;
+        if(scope&&entry.once&&entry.loopFailureCode&&entry.enabled&&!reviewed&&result.outcome!=='busy'){
+          await notifyCheckFailure(entry,{scope,requestId,version,startedAt});
+          // The upstream exception path records a failed terminal alarm without
+          // retrying. Returning ok/no_reply here would falsely mark it complete.
+          if(entry.meta.status==='failed')throw new Error('Scheduled context check failed: '+entry.loopFailureCode);
+          return result;
+        }
         if(scope&&result.outcome==='busy'){delete entry.meta.familyInflight;await persistMeta(entry);}
         if(scope&&reviewed&&result.analysis.decision==='reply'){
           // Recover the actual wake turn's final text, not the upstream 200-char run summary.
@@ -397,7 +449,7 @@ export function createProjectFollowup(options={}){
         }
         if(scope&&reviewed){entry.meta.familyCompleted=requestId;delete entry.meta.familyInflight;await persistMeta(entry);}
         else if(scope&&result.outcome!=='busy'&&entry.enabled){
-          if(entry.meta.loopId)await blockLoop(entry,'LOOP_SCOPE_CHANGED');else if(entry.once)await blockOnce(entry,'Family follow-up outcome not confirmed; no automatic retry');else{entry.enabled=false;entry.meta.enabled=false;entry.blocked='Family follow-up outcome not confirmed; no automatic retry';await persistMeta(entry);}
+          if(entry.once)await blockOnce(entry,'Family follow-up outcome not confirmed; no automatic retry');else if(entry.meta.loopId)await blockLoop(entry,'LOOP_SCOPE_CHANGED');else{entry.enabled=false;entry.meta.enabled=false;entry.blocked='Family follow-up outcome not confirmed; no automatic retry';await persistMeta(entry);}
         }
         // reviewed requires successful exact source reads and a verified wake.
         // Reclaim or silence alone is not evidence of an unchanged context.
@@ -408,7 +460,8 @@ export function createProjectFollowup(options={}){
         }
         return result;
       }catch(error){
-        if(entry.once&&entry.meta.status!=='blocked'&&entry.meta.status!=='cancelled'){entry.meta.status='failed';entry.meta.enabled=false;retire(entry);await persistMeta(entry);}
+        const owns=()=>intent(intentKey(entry))===version&&ones.get(intentKey(entry))===entry;
+        if(entry.once&&owns()&&entry.meta.status!=='blocked'&&entry.meta.status!=='cancelled'){entry.meta.status='failed';entry.meta.enabled=false;retire(entry);await persistMeta(entry,owns);}
         throw error;
       }finally{active.delete(entry.meta.sessionId);entry.successfulReads=null;}
     }};
@@ -486,6 +539,16 @@ export function createProjectFollowup(options={}){
         requireSession(sessionId);
         const entry=await loadOnce(root,sessionId);if(!entry)return{status:'absent',enabled:false,running:false};
         if(entry.meta.delivery!=='family'||!entry.enabled||entry.scheduler)return view(entry);
+        if(entry.meta.checkFailure){
+          // The operation already failed before the interruption. A delivery
+          // receipt can confirm only its notice, never a successful check.
+          const scope=familyScope(entry);let receipt;
+          if(scope&&await routeAllowed(entry))try{receipt=await options.familyRoute?.readDelivery?.({scope,requestId:entry.meta.checkFailure.requestId});}catch{}
+          if(receipt?.status==='accepted'&&scope&&options.familyRoute?.isCurrent?.(scope)===true&&await routeAllowed(entry)){
+            entry.meta.checkFailure.notification='accepted';entry.meta.familyCompleted=entry.meta.checkFailure.requestId;delete entry.meta.familyInflight;
+          }else entry.meta.checkFailure.notification='uncertain';
+          entry.meta.status='failed';entry.meta.enabled=false;retire(entry);entry.store.removeAlarm(entry.meta.alarmId);await entry.store.persist();await persistMeta(entry);return view(entry);
+        }
         // A persisted future deadline is needed by the outer recovery timer;
         // view() otherwise hides it while the scheduler is not running. Once
         // the deadline passes, an unstarted wake expires even if offline.

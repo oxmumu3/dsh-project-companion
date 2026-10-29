@@ -202,6 +202,14 @@ test('invalid model output returns separate bounded internal read and format dia
  assert.equal(response.isError,false);const value=response.value;assert.equal(value.modelDiagnostic,'MODEL_INVALID_OUTPUT');assert.equal(value.validationDiagnostic,'JSON_SYNTAX');assert.ok(value.readSummary.some(row=>row.source==='flomo'&&row.count===1));assert.ok(value.loopId);assert.equal(value.analysisState,'source_only');assert.deepEqual(value.items,[]);
  const rendered=JSON.stringify(response.content??response.message??response);assert.match(rendered,/内部脱敏读取概况/);assert.match(rendered,/本次读取范围和状态已保存/);assert.match(rendered,/不要.*清除旧简报/);assert.match(rendered,/内部脱敏格式诊断/);const summaries=rendered.match(/内部脱敏读取概况[^\n]*/)?.[0]??'';assert.doesNotMatch(summaries,/SYNTHETIC_PRIVATE_MODEL|Synthetic DeepSeek note|sourceId|m1/);
 });
+test('source HTTP structure diagnostics survive the native tool boundary without provider data',async t=>{
+ const readDiagnostic={operation:'gmail_list',stage:'body_read',reason:'response_shape',responseStatus:204,bodyShape:'null',headersShape:'get',responseShape:'object'};
+ const h=await fixture(t,{call:async()=>{throw Object.assign(Error('PRIVATE_BODY'),{code:'CONTEXT_PROTOCOL_INVALID',readDiagnostic:{...readDiagnostic,url:'PRIVATE_URL',body:'PRIVATE_BODY'}});},contextLoop:{summarize:async()=>{throw Object.assign(Error('PRIVATE_MODEL'),{code:'MODEL_INVALID_OUTPUT'});}}});
+ await h.tool({action:'connect',source:'flomo',userRequested:true});const root=h.agent.session.header.cwd;await h.project({action:'watch',project:root});
+ const response=await h.ctx.tools.execute({callId:'response-shape-probe',name:'project_companion',arguments:{action:'context_brief',project:root,queries:[{source:'flomo',operation:'search',query:'DeepSeek',limit:2}],userRequested:true},agent:h.agent,signal:new AbortController().signal});
+ assert.equal(response.isError,false);assert.deepEqual(response.value.sourceDiagnostics[0].readDiagnostic,readDiagnostic);
+ const rendered=JSON.stringify(response.content??response.message??response);assert.match(rendered,/内部脱敏来源诊断/);assert.match(rendered,/responseStatus/);assert.match(rendered,/bodyShape/);assert.doesNotMatch(rendered,/PRIVATE_BODY|PRIVATE_URL|PRIVATE_MODEL/);
+});
 test('brief rendering guides bounded counts and direct delivery without recycling source instructions',async t=>{
  const h=await fixture(t,{contextLoop:{summarize:async input=>({changes:[{kind:'inference',text:'示例进展',sourceIds:[input.sources.find(s=>s.role==='file').sourceId]}],blockers:[],nextSteps:[]})}});
  await h.tool({action:'connect',source:'flomo',userRequested:true});const root=h.agent.session.header.cwd;await h.project({action:'watch',project:root});

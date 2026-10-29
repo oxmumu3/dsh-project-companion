@@ -1,6 +1,8 @@
+> 本机修复候选 0.15.0-preview.8：单次检查失败应明确反馈，只有成功确认无变化才静默。已安排不等于已检查，资料摘录不等于分析成功。18:00 的 preview.7 手机实测仍有 Gmail 读取和模型预算失败；实际能力以最新验证记录为准。
+
 # 把个人资料接到项目下一步
 
-当前源码为 `0.15.0-preview.7` 候选；实际安装版本以本地交付证据为准。作者牛村木木山；公开下载仍为 [`0.14.1-preview.11`](https://github.com/oxmumu3/dsh-project-companion/releases/tag/v0.14.1-preview.11)。0.15 尚未公开，已有的手机通过项与剩余缺口见下文。
+当前源码为 `0.15.0-preview.8` 候选；实际安装版本以本地交付证据为准。作者牛村木木山；公开下载仍为 [`0.14.1-preview.11`](https://github.com/oxmumu3/dsh-project-companion/releases/tag/v0.14.1-preview.11)。0.15 尚未公开，已有的手机通过项与剩余缺口见下文。
 
 ## 先沿用自己的入口
 

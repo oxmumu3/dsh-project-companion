@@ -291,3 +291,17 @@ test('native guard argument errors and asynchronous final guards fail before cre
   await assert.rejects(runNewsModel({ ...base, beforeStreamSync: async () => {} }), { code: 'MODEL_INVALID_INPUT' });
   assert.equal(prepared, 1); assert.equal(streams, 0);
 });
+
+test('token-limit diagnostics retain only prepared controls and counters, never response or reasoning content', async () => {
+  const diagnostics = [];
+  const llm = { async prepareCall(config) { return { config: { ...config, maxTokens: 1234, reasoningEffort: 'PRIVATE_EFFORT' }, stream: async function* () {
+    yield { type: 'reasoning-delta', index: 0, text: 'PRIVATE_REASONING' };
+    yield { type: 'block-end', index: 0, block: { type: 'reasoning', text: 'PRIVATE_REASONING' } };
+    yield { type: 'text-delta', index: 1, text: 'PRIVATE_TEXT' };
+    yield { type: 'usage', usage: { outputTokens: 1234, reasoningTokens: 1000, secret: 'PRIVATE_USAGE' } };
+    yield { type: 'finish', reason: { kind: 'max-tokens', secret: 'PRIVATE_FINISH' } };
+  } }; } };
+  await assert.rejects(runNewsModel({ llm, selection: { provider: 'p', model: 'm' }, system: 'Synthetic', data: '{}', signal: new AbortController().signal, maxTokens: 6000, onDiagnostic: value => diagnostics.push(value) }), { code: 'MODEL_TOKEN_LIMIT' });
+  assert.deepEqual(diagnostics.at(-1), { requestedMaxTokens: 6000, preparedMaxTokens: 1234, reasoningEffort: 'other', finish: 'max-tokens', textChars: 12, reasoningChars: 'PRIVATE_REASONING'.length, outputTokens: 1234, reasoningTokens: 1000 });
+  assert.doesNotMatch(JSON.stringify(diagnostics), /PRIVATE/);
+});

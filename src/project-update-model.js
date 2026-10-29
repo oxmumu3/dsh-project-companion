@@ -1,5 +1,5 @@
 /** Sessionless project summaries through the host's existing model adapter. */
-import { runNewsModel } from './news-model.js';
+import { runNewsModel, safeModelCallDiagnostic } from './news-model.js';
 
 const SOURCE_ROLES = ['progress_file', 'context_file', 'product_documentation', 'user', 'assistant', 'file', 'coverage'];
 const SOURCE_STATUSES = ['ok', 'missing', 'rejected', 'unavailable'];
@@ -11,6 +11,16 @@ const ROLE_SPOOF = /(?:^|[\r\n])\s*(?:system|assistant|user|developer|tool|ç³»ç»
 const record = value => value !== null && typeof value === 'object' && !Array.isArray(value);
 const VALIDATION_DIAGNOSTICS = new Set(['JSON_SYNTAX', 'OBJECT_FIELDS', 'ARRAY_LENGTH', 'ITEM_FIELDS', 'KIND', 'TEXT_LIMIT', 'TEXT_MARKUP', 'ROLE_SPOOF', 'CLAIM', 'COMMAND', 'SOURCE_ID', 'UNKNOWN_SOURCE_ID', 'QUOTE_MISMATCH', 'UNKNOWN']);
 export const safeValidationDiagnostic = value => typeof value === 'string' && VALIDATION_DIAGNOSTICS.has(value) ? value : 'UNKNOWN';
+export function safeModelRunDiagnostic(value) {
+  if (!record(value) || !Array.isArray(value.attempts) || value.attempts.length < 1 || value.attempts.length > 2) return undefined;
+  const attempts = [];
+  for (let i = 0; i < value.attempts.length; i++) {
+    const row = value.attempts[i], projected = safeModelCallDiagnostic(row);
+    if (!projected || row.attempt !== i + 1) return undefined;
+    attempts.push({ attempt: i + 1, ...projected });
+  }
+  return { attempts };
+}
 export class ProjectUpdateModelError extends Error {
   constructor(code, diagnostic) { super(code); this.name = 'ProjectUpdateModelError'; this.code = code; if (code === 'MODEL_INVALID_OUTPUT') this.validationDiagnostic = safeValidationDiagnostic(diagnostic); }
 }
@@ -170,6 +180,8 @@ export function createProjectUpdateModel(ctx, { clock = () => new Date(), timeou
       signal?.addEventListener('abort', stop, { once: true });
       const timer = setTimeout(() => controller.abort(failure('MODEL_TIMEOUT')), timeoutMs);
       let guardFailed = false, guardError;
+      const attempts = [];
+      const diagnosed = error => { const value = safeModelRunDiagnostic({ attempts }); if (value) error.modelRunDiagnostic = value; return error; };
       try {
         if (signal?.aborted) stop();
         controller.signal.throwIfAborted();
@@ -196,8 +208,10 @@ export function createProjectUpdateModel(ctx, { clock = () => new Date(), timeou
         };
         const request = async (system, maxTokens) => {
           await checkRequest();
+          const attempt = attempts.length + 1;
           return runNewsModel({ llm, selection, system, data, signal: controller.signal, maxTokens, preparePolicy: briefModelControls,
-            ...(beforeRequest ? { beforeStream: checkRequest } : {}), beforeStreamSync: checkRequestSync });
+            ...(beforeRequest ? { beforeStream: checkRequest } : {}), beforeStreamSync: checkRequestSync,
+            onDiagnostic: value => { attempts[attempt - 1] = { attempt, ...value }; } });
         };
         const result = await request(SYSTEM, OUTPUT_TOKEN_BUDGET);
         try { return parseSummary(result, input); }
@@ -210,11 +224,11 @@ export function createProjectUpdateModel(ctx, { clock = () => new Date(), timeou
           return parseSummary(await request(`${SYSTEM}\n${QUOTE_REPAIR}`, remaining), input);
         }
       } catch (error) {
-        if (controller.signal.aborted) throw controller.signal.reason;
+        if (controller.signal.aborted) throw diagnosed(controller.signal.reason);
         if (guardFailed && error === guardError) throw error;
-        if (error instanceof ProjectUpdateModelError) throw error;
-        if (typeof error?.code === 'string' && /^MODEL_(?:UNAVAILABLE|INCOMPLETE|OUTPUT_LIMIT|TOOL_OUTPUT|TOKEN_LIMIT)$/u.test(error.code)) throw failure(error.code);
-        throw failure('MODEL_REQUEST_FAILED');
+        if (error instanceof ProjectUpdateModelError) throw diagnosed(error);
+        if (typeof error?.code === 'string' && /^MODEL_(?:UNAVAILABLE|INCOMPLETE|OUTPUT_LIMIT|TOOL_OUTPUT|TOKEN_LIMIT)$/u.test(error.code)) throw diagnosed(failure(error.code));
+        throw diagnosed(failure('MODEL_REQUEST_FAILED'));
       } finally {
         clearTimeout(timer);
         signal?.removeEventListener('abort', stop);
