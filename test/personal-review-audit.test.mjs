@@ -75,3 +75,79 @@ test('audit: partial source failure cannot close an unresolved item or advance t
   assert.doesNotMatch(result.text, /已全部处理|gmail 0 条/);
   assert.equal(f.sends.length, 1);
 });
+
+test('audit: rejected configure leaves no latent plan for a later background tick', async () => {
+  let rejections = 0;
+  for (let denyAt = 1; denyAt <= 8; denyAt++) {
+    let reads = 0, checks = 0;
+    const f = fixture({ collect: async () => { reads++; return { evidence: [], coverage: [{ source: 'gmail', status: 'ok', count: 0 }] }; } });
+    try {
+      await f.service.act(caller, intent('configure', { sources: ['gmail'], projects: [], schedule: { dailyTime: '09:00', timeZone: 'UTC' }, authorizeSync: () => ++checks < denyAt }));
+    } catch {
+      rejections++;
+      assert.equal((await f.service.snapshot(caller)).status, 'off', `rejected authorization checkpoint ${denyAt} must not publish a plan`);
+      await f.service.tick();
+      assert.equal(reads, 0);
+      assert.equal(f.stored()?.subscription ?? null, null);
+    }
+    await f.service.close();
+  }
+  assert.ok(rejections > 0);
+});
+
+test('audit: rejected resume cannot enable a paused plan in memory', async () => {
+  let rejections = 0;
+  for (let denyAt = 1; denyAt <= 8; denyAt++) {
+    let checks = 0;
+    const f = fixture();
+    await f.service.act(caller, intent('configure', { sources: ['gmail'], projects: [], schedule: { dailyTime: '09:00', timeZone: 'UTC' } }));
+    await f.service.act(caller, intent('pause'));
+    try { await f.service.act(caller, intent('resume', { authorizeSync: () => ++checks < denyAt })); }
+    catch { rejections++; assert.equal((await f.service.snapshot(caller)).status, 'paused', `rejected authorization checkpoint ${denyAt} must preserve pause`); assert.equal(f.stored().subscription.paused, true); }
+    await f.service.close();
+  }
+  assert.ok(rejections > 0);
+});
+
+test('audit: rejected feedback cannot silently acknowledge a source item', async () => {
+  let rejections = 0;
+  for (let denyAt = 1; denyAt <= 9; denyAt++) {
+    let checks = 0;
+    const f = fixture();
+    await f.service.act(caller, intent('run_now', { sources: ['gmail'], projects: [] }));
+    const id = f.stored().items[0].id;
+    try { await f.service.act(caller, intent('feedback', { itemId: id, feedback: 'handled', authorizeSync: () => ++checks < denyAt })); }
+    catch { rejections++; assert.equal((await f.service.snapshot(caller)).items[0].status, 'open', `rejected authorization checkpoint ${denyAt} must preserve feedback`); assert.equal(f.stored().items[0].status, 'open'); }
+    await f.service.close();
+  }
+  assert.ok(rejections > 0);
+});
+
+test('audit: rejected pause and cancel preserve the authorized subscription', async () => {
+  for (const action of ['pause', 'cancel']) {
+    let rejections = 0;
+    for (let denyAt = 1; denyAt <= 6; denyAt++) {
+      let checks = 0;
+      const f = fixture();
+      await f.service.act(caller, intent('configure', { sources: ['gmail'], projects: [], schedule: { dailyTime: '09:00', timeZone: 'UTC' } }));
+      try { await f.service.act(caller, intent(action, { authorizeSync: () => ++checks < denyAt })); }
+      catch { rejections++; assert.equal((await f.service.snapshot(caller)).status, 'enabled', `rejected ${action} checkpoint ${denyAt} must preserve subscription`); assert.equal(f.stored().subscription.paused, false); }
+      await f.service.close();
+    }
+    assert.ok(rejections > 0);
+  }
+});
+
+test('audit: a configuration awaiting durable persistence does not expose an enabled scheduler', async () => {
+  let entered, release, stored;
+  const writing = new Promise(resolve => { entered = resolve; }), pending = new Promise(resolve => { release = resolve; });
+  const f = fixture({ store: { get: async () => stored, put: async (_key, value) => { entered(); await pending; stored = structuredClone(value); } } });
+  const configure = f.service.act(caller, intent('configure', { sources: ['gmail'], projects: [], schedule: { dailyTime: '09:00', timeZone: 'UTC' } }));
+  await writing;
+  assert.equal(f.service.needsTimer(), false);
+  release();
+  await configure;
+  assert.equal(f.service.needsTimer(), true);
+  assert.equal(stored.subscription.paused, false);
+  await f.service.close();
+});
