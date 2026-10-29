@@ -26,12 +26,12 @@ async function fixture(t,options={}){
  const ownerAgent={ensureControlWorkspace:async()=>rows[0],listWorkspaces:async()=>rows,start:async input=>{intents.push(structuredClone(input));return{state:'running'};},observe:async input=>({workspaceId:input.workspaceId,sessionId:input.sessionId,requestId:input.requestId,cwd:input.cwd,state:'running',requestSeen:true,queued:false,foreign:false,turn:1,activeTurn:1,activeRequestIds:[input.requestId],events:[{type:'tool/call',seq:3,turn:1,callId:activeCall,status:'running'}]})};
  ctx.provide('agents',{get:id=>agents.get(id),list:()=>[...agents.values()]});ctx.provide('workingDirectory',{get:s=>s.header.cwd});ctx.provide('workspaceRegistry',{list:()=>rows});
  const familyFiber=await ctx.plugin({name:'synthetic-family-personal-review',apply(scope){
-  family=createRuntime({directory:join(root,'family'),ownerAgent,now:()=>instant,intervalMs:1000000,channelFactory:()=>({status:()=>({status:'connected'}),connect:async()=>{},disconnect:async()=>{},close:async()=>{},send:async(route,text,options)=>{assert.equal(options.authorize(),true);sent.push({personId:route.personId,text});return{status:'api_accepted'};}})});
+  family=createRuntime({directory:join(root,'family'),ownerAgent,now:()=>instant,intervalMs:1000000,channelFactory:()=>({status:()=>({status:'connected'}),connect:async()=>{},disconnect:async()=>{},close:async()=>{},send:async(route,text,sendOptions)=>{if(options.beforeSend)await options.beforeSend({family,text});if(sendOptions.authorize()!==true)throw Object.assign(Error('synthetic authorization changed'),{sendOutcome:'failed'});sent.push({personId:route.personId,text});return{status:'api_accepted'};}})});
   scope.provide('familyDotBridge',family.familyDotBridge);const guard=installOwnerDotReadGuard({ctx:scope,getTasks:()=>family.ownerTasksForToolGuard()});scope.effect(()=>async()=>{await guard.close();await family.close();});
  }});
  const dotFiber=await ctx.plugin({name:'synthetic-dot-personal-review',inject:['tools','commands','storageDomain','sessions','systemPrompt'],async apply(scope){adapter=await installCompanion(scope,{clock:()=>new Date(instant),hostTimeZone:'America/Mexico_City',family:{enabled:true},readSetup:async()=>({state:'bound',sessionId:'legacy-owner',bindingKey:'a'.repeat(64)}),readNativeRoute:async()=>({kind:'unbound'}),readBinding:async()=>null,
   context:{readConfig:()=>({didaToken:'synthetic-token-not-real'}),googlePublisher:null,fetch:async()=>assert.fail('synthetic test must not use network'),transport:{catalog:async()=>({tools:[{name:'list_projects',inputSchema:{type:'object',properties:{}}}]}),call:async()=>{reads.push('provider');assert.fail('settings must not read personal data');},close:async()=>{}}},
-  news:{fetchCandidates:async()=>assert.fail('settings must not fetch public feeds')},...(options.personalReview?{personalReview:options.personalReview}:{}),timers:{setInterval(){return{unref(){}};},clearInterval(){}}});}});
+  news:{fetchCandidates:async()=>assert.fail('settings must not fetch public feeds'),...(options.news??{})},...(options.personalReview?{personalReview:options.personalReview}:{}),timers:{setInterval(){return{unref(){}};},clearInterval(){}}});}});
  t.after(async()=>{await dotFiber.dispose();await familyFiber.dispose();await ctx.fiber.dispose();await rm(root,{recursive:true,force:true});});
  const makeAgent=(id,cwd)=>{const session=ctx.sessions.create(SessionId(id),{meta:{cwd}}),agent={id,session,ctx,status:'idle'};agents.set(id,agent);return agent;};
  const old=makeAgent('legacy-owner',ownerRoot);makeAgent('synthetic-project',targetRoot);
@@ -39,9 +39,9 @@ async function fixture(t,options={}){
  const enabled=await invoke(old,'personal_context',{action:'connect',source:'dida',userRequested:true});assert.notEqual(enabled?.status,'blocked',JSON.stringify(enabled));
  await invoke(old,'project_companion',{action:'watch',project:targetRoot});assert.equal((await adapter.service.watchedProjects()).length,1);
  for(const [id,role]of[['owner','owner'],['mom','elder']]){family.store.addPerson({id,role,label:id});family.store.bindPerson(id,{accountId:'synthetic-'+id,peerId:'peer-'+id});}await family.start();
- let agent;const message=async text=>{await family.receive('owner',{id:'source-'+(++counter),peerId:'peer-owner',text,sourceTiming:{receivedAt:instant,providerCreatedAt:instant}});await family.settled();if(!agent)agent=makeAgent(intents.at(-1).sessionId,ownerRoot);return agent;};
+ let agent;const message=async(text,{settle=true}={})=>{await family.receive('owner',{id:'source-'+(++counter),peerId:'peer-owner',text,sourceTiming:{receivedAt:instant,providerCreatedAt:instant}});if(settle)await family.settled();if(!agent)agent=makeAgent(intents.at(-1).sessionId,ownerRoot);return agent;};
  await message('请查看项目资料的来源连接状态。');assert.ok((await invoke(agent,'personal_context',{action:'connections'})).sources);
- return{adapter,family,reads,sent,targetRoot,message,tool:async(name,args)=>invoke(agent,name,args),member:async(name,args)=>invoke({...agent,id:'family_member_synthetic'},name,args),forged:async(name,args)=>(await ctx.tools.execute({name,callId:'not-the-observed-call',arguments:args,agent,signal:new AbortController().signal})).value,time:value=>instant=value};
+ return{adapter,family,reads,sent,intents,targetRoot,message,tool:async(name,args)=>invoke(agent,name,args),member:async(name,args)=>invoke({...agent,id:'family_member_synthetic'},name,args),forged:async(name,args)=>(await ctx.tools.execute({name,callId:'not-the-observed-call',arguments:args,agent,signal:new AbortController().signal})).value,time:value=>instant=value};
 }
 test('real Family and Dot accept only verified original schedule and server-selected scope',{skip:!familyRoot},async t=>{
  const f=await fixture(t);await f.message(complete);
@@ -75,4 +75,32 @@ test('scheduled review re-enters persisted Family scope and delivers once withou
  const f=await fixture(t,{personalReview});await f.message(complete);assert.equal((await f.tool('personal_review',{action:'configure'})).status,'enabled');assert.equal(collected.length,0);
  f.time('2026-10-29T15:00:00.000Z');await f.adapter.personalReview.tick();await f.adapter.personalReview.tick();assert.equal(collected.length,1);assert.equal(models.length,1);assert.equal(f.sent.length,1);assert.equal(f.sent[0].personId,'owner');assert.match(f.sent[0].text,/实际服务设置未知/);
  f.family.store.bindPerson('owner',{accountId:'replacement',peerId:'replacement'});f.time('2026-10-30T15:00:00.000Z');await f.adapter.personalReview.tick();assert.equal(collected.length,1);assert.equal(f.sent.length,1);
+});
+const defer=()=>{let resolve;return{promise:new Promise(r=>{resolve=r;}),resolve:()=>resolve()};};
+function publicNews(calls,overrides={}){return{fetchCandidates:async({now})=>({articles:[{id:'synthetic-'+now.toISOString().slice(0,10),title:'Synthetic public AI release',excerpt:'Synthetic public source',sourceName:'Synthetic RSS',url:'https://example.com/ai-news',publishedAt:new Date(now.getTime()-3600000).toISOString()}]}),readArticle:async()=>({content:'Synthetic public article',coverage:'article'}),model:{selectArticles:async input=>{calls.push({stage:'select',topics:input.topics});return input.articles.map(a=>a.id);},summarizeArticles:async input=>{calls.push({stage:'summary',topics:input.topics});return{items:input.articles.map(a=>({id:a.id,summary:'公开资料的合成资讯摘要。',why:'与明确兴趣有关。'}))};}},...overrides};}
+test('Owner AI digest shortcut uses saved interests in both model stages and preview has no second delivery',{skip:!familyRoot},async t=>{
+ const calls=[],f=await fixture(t,{news:publicNews(calls)});
+ await f.message('AI 日报关注：Agent 产品、插件生态。');assert.notEqual((await f.tool('ai_digest',{action:'set_topics',topics:['model override']})).status,'blocked');
+ await f.message('AI 日报');const preview=await f.tool('ai_digest',{action:'preview',topics:['model override']});assert.equal(preview.status,'preview',JSON.stringify(preview));assert.match(preview.text,/合成资讯摘要/);assert.deepEqual(calls.map(x=>x.topics),[['Agent 产品','插件生态'],['Agent 产品','插件生态']]);assert.deepEqual(f.sent,[],'preview returns to normal native reply, never calls bridge send');
+ assert.match(f.intents.at(-1).prompt,/默认 preview/);
+ assert.equal((await f.tool('ai_digest',{action:'send_now'})).status,'blocked','bare request cannot authorize extra send');
+ await f.message('给我发送一份AI日报');const send=await f.tool('ai_digest',{action:'send_now'});assert.equal(send.status,'reported_sent',JSON.stringify(send));assert.equal(f.sent.length,1);assert.equal((await f.tool('ai_digest',{action:'send_now'})).duplicate,true);assert.equal(f.sent.length,1);
+ assert.deepEqual(calls.map(x=>x.topics),Array.from({length:4},()=>['Agent 产品','插件生态']));assert.deepEqual(f.reads,[]);
+});
+test('Owner daily news uses original time, persists the same interest and stops after a real cancel request',{skip:!familyRoot},async t=>{
+ const calls=[],f=await fixture(t,{news:publicNews(calls)});
+ await f.message('AI 日报关注：Agent 产品、插件生态。');await f.tool('ai_digest',{action:'set_topics'});
+ await f.message('每天早上9点发AI日报');const config=await f.tool('ai_digest',{action:'configure',time:'23:00',timeZone:'UTC',topics:['model override']});assert.deepEqual(config.schedule,{time:'09:00',timeZone:'America/Mexico_City'});assert.deepEqual(config.topics,['Agent 产品','插件生态']);assert.equal(calls.length,0);assert.equal(f.sent.length,0);
+ f.time('2026-10-29T15:00:00.000Z');await f.adapter.news.tick();await f.adapter.news.tick();assert.equal(f.sent.length,1);assert.deepEqual(calls.map(x=>x.topics),[['Agent 产品','插件生态'],['Agent 产品','插件生态']]);
+ await f.message('取消我的AI日报');const cancelled=await f.tool('ai_digest',{action:'cancel'});assert.equal(cancelled.schedule,null);assert.deepEqual(cancelled.topics,['Agent 产品','插件生态']);f.time('2026-10-30T15:00:00.000Z');await f.adapter.news.tick();assert.equal(f.sent.filter(row=>row.text.includes('公开资料的合成资讯摘要')).length,1);assert.equal(calls.length,2);
+});
+test('Owner manual saved-interest digest cannot deliver after a binding changes during generation',{skip:!familyRoot},async t=>{
+ const calls=[];let f;f=await fixture(t,{news:publicNews(calls,{readArticle:async()=>{f.family.store.bindPerson('owner',{accountId:'new-owner-route',peerId:'new-peer'});return{content:'Synthetic public article',coverage:'article'};}})});
+ await f.message('AI 日报关注：Agent 产品。');await f.tool('ai_digest',{action:'set_topics'});await f.message('给我发送一份AI日报');assert.equal((await f.tool('ai_digest',{action:'send_now'})).status,'blocked');assert.equal(f.sent.length,0);assert.equal(calls.filter(x=>x.stage==='summary').length,0);
+});
+test('Owner actual cancel request invalidates a saved-interest digest waiting at the Family channel',{skip:!familyRoot},async t=>{
+ const entered=defer(),release=defer(),calls=[],f=await fixture(t,{news:publicNews(calls),beforeSend:async()=>{entered.resolve();await release.promise;}});
+ await f.message('AI 日报关注：Agent 产品。');await f.tool('ai_digest',{action:'set_topics'});await f.message('给我发送一份AI日报');const pending=f.tool('ai_digest',{action:'send_now'});
+ assert.equal(await Promise.race([entered.promise.then(()=>true),pending.then(()=>false)]),true);
+ await f.message('取消我的AI日报',{settle:false});const cancel=f.tool('ai_digest',{action:'cancel'});await new Promise(resolve=>setImmediate(resolve));release.resolve();await pending;const result=await cancel;assert.equal(result.schedule,null,JSON.stringify(result));assert.equal(f.sent.length,0);
 });

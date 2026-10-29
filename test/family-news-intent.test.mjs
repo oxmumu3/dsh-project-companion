@@ -17,3 +17,13 @@ test('private-context extraction, hypothetical changes, unknown effects and fore
  for(const text of ['根据我的邮件设置资讯兴趣','不要把资讯兴趣设为：AI','如果可以把资讯兴趣设为：AI','把妈妈的资讯兴趣设为：AI','把资讯兴趣设为：AI。并发送给爸爸','把资讯兴趣设为：','把资讯兴趣设为：AI、AI'])assert.throws(()=>parse(text,'set_topics'));
  assert.throws(()=>parse('查看我的资讯兴趣','clear_topics'));
 });
+test('Owner digest requests derive bounded preview, sending and saved-interest schedule only from the original',()=>{
+ for(const text of ['AI 日报','看一下AI日报','预览一份AI日报，使用已保存的关注点'])assert.equal(parse(text,'preview').action,'preview');
+ assert.equal(parse('给我发送一份AI日报','send_now').action,'send_now');
+ assert.equal(parse('取消我的AI日报','cancel').action,'cancel');
+ assert.equal(parse('查看AI日报状态','status').action,'status');
+ assert.deepEqual(parse('每天早上9点发AI日报','configure'),{action:'configure',time:'09:00',timeZone:'UTC',sourceRequestId:owner.sourceRequestId});
+ assert.deepEqual(parse('北京时间每天晚上九点，按我的关注点发AI日报','configure'),{action:'configure',time:'21:00',timeZone:'Asia/Shanghai',sourceRequestId:owner.sourceRequestId});
+ assert.equal(parse('开启AI日报','configure').status,'needs_confirmation');
+ for(const [text,action] of [['AI日报','send_now'],['发给妈妈一份AI日报','send_now'],['每天9点发AI日报，顺便读我的邮件','configure'],['不要每天9点发AI日报','configure'],['从本地日报文件发送AI日报','send_now'],['如果每天9点发AI日报','configure']])assert.throws(()=>parse(text,action),text);
+});

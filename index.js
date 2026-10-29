@@ -247,6 +247,7 @@ export async function installCompanion(ctx,options={}){
     summarizeArticles:input=>newsModel.summarizeArticles(input),
     readBinding:newsBinding,
     canRun:async()=>!disposed&&!lifecycle.signal.aborted&&!await service.isPaused(),
+    canRunSync:()=>!disposed&&!lifecycle.signal.aborted&&!service.isPausedSync(),
     ...(options.clock?{clock:options.clock}:{}),
     ...(options.hostTimeZone?{hostTimeZone:options.hostTimeZone}:{}),
     async send(item){
