@@ -16,8 +16,8 @@
 - [x] Collector: src/personal-review-collect.js. Construct recent-source queries within visible budgets, collect fixed project docs and memory, include coverage and provenance. Add tightly bounded recent Drive/flomo contracts without weakening search/read contracts. Tests use fake transport only.
 - [x] Host: register personal_review tool and storage domain, original Owner delegation, timer and shutdown, sources/project scope explanation and UI draft entry. Synthetic official Host tests cover configure without reads, due review, pause/revoke and no duplicate return.
 - [x] Family: extend intent routing and tool admission for personal review/news preferences, verify cross-host synthetic Owner/member separation without bypassing existing gates.
-- [ ] Verification: focused regressions then required SDK matrices, independent review, freeze candidate package, isolated official Host/UI. Preserve state and installed combinations if daily upgrade is safe; otherwise keep candidate and explain exact blocker.
-- [ ] Delivery: update docs and evidence, provide one concise phone acceptance batch only after computer verification. Do not conflate synthetic delivery with phone receipt.
+- [x] Verification: SDK 020/021/021rc3 each 1676/1676, independent review, immutable candidate package, isolated official Host/UI and normal daily upgrade. Strict restart difference retained and separately classified as two existing reconnect timestamp caches only.
+- [x] Delivery: update docs and evidence; four exact phone acceptance sentences passed final parsers and real wrappers. Fresh phone requests and natural multi-day/weekly acceptance remain explicitly pending, not replaced by synthetic delivery.
 
 ## Stable interfaces
 
