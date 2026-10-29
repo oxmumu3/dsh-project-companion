@@ -151,3 +151,12 @@ test('derived relative deadlines are explicitly estimated, and changed source de
   const first = await f.service.act(owner, intent('run_now', scope)); assert.equal(first.items[0].confidence, 'inferred'); assert.match(first.text, /估算期限.*核对原文/);
   dueAt = '2026-11-02T10:00:00.000Z'; await f.service.act(owner, intent('run_now', { ...scope, requestId: 'deadline-change' })); assert.equal(f.sends.length, 2); await f.service.act(owner, intent('run_now', { ...scope, requestId: 'deadline-repeat' })); assert.equal(f.sends.length, 2);
 });
+test('one-off scope does not misrepresent a saved subscription, and feedback checks its own item scope', async () => {
+  const authorizations = [];
+  const f = await fixture({ hooks: { authorization: async (_caller, sources) => { authorizations.push([...sources]); return grant; }, collect: async ({ sources }) => ({ evidence: [evidence({ id: `${sources[0]}:1`, source: sources[0] })], coverage: [{ source: sources[0], status: 'ok', count: 1 }] }), summarize: async ({ evidence: rows }) => ({ items: [candidate({ key: rows[0].source, title: `${rows[0].source} 待处理`, evidenceIds: [rows[0].id] })] }) } });
+  await f.service.act(owner, intent('configure', { ...scope, schedule: { dailyTime: '09:00', timeZone: 'UTC' } }));
+  const daily = await f.service.act(owner, intent('run_now')); const manual = await f.service.act(owner, intent('run_now', { sources: ['calendar'], projects: [], requestId: 'calendar-only' }));
+  const status = await f.service.snapshot(owner); assert.deepEqual(status.sources, ['gmail']); assert.deepEqual(status.items.map(i => i.id), [daily.items[0].id]);
+  await f.service.act(owner, intent('feedback', { itemId: daily.items[0].id, feedback: 'handled', requestId: 'feedback-gmail' })); assert.deepEqual(authorizations.at(-1), ['gmail']);
+  await f.service.act(owner, intent('feedback', { itemId: manual.items[0].id, feedback: 'handled', requestId: 'feedback-calendar' })); assert.deepEqual(authorizations.at(-1), ['calendar']);
+});

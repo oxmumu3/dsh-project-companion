@@ -15,7 +15,8 @@ const referenceSchema = reviewEvidenceSchema.omit({ text: true });
 export const reviewItemSchema = reviewCandidateSchema.omit({ evidenceIds: true }).extend({ id: reviewId, aliases: z.array(reviewId).max(20), evidence: z.array(referenceSchema).max(12), evidenceDigests: z.array(z.object({ locator: z.string().max(1900), source: z.enum(reviewEvidenceSources), digest: z.string().length(64) }).strict()).max(12), revision: z.number().int().min(1), notifiedRevision: z.number().int().min(0), dueAtBasis: z.enum(['source', 'relative']).optional(), firstSeenAt: reviewInstant, lastSeenAt: reviewInstant, status: z.enum(['open', 'handled', 'snoozed', 'dismissed']), snoozeUntil: reviewInstant.nullable(), lastNotifiedAt: reviewInstant.nullable(), notifications: z.array(z.string().max(100)).max(12), scopeKey: z.string().length(64) }).strict();
 export const hashReview = value => createHash('sha256').update(value).digest('hex');
 const canon = value => value.normalize('NFKC').trim().toLowerCase().replace(/\s+/g, ' ');
-const locator = evidence => evidence.url ? `url:${evidence.url.replace(/#.*$/, '')}` : `${evidence.source}:${evidence.id}`;
+// URL fragments can identify the resource itself (for example Gmail #all/messageId).
+const locator = evidence => evidence.url ? `url:${evidence.url}` : `${evidence.source}:${evidence.id}`;
 
 /** Model claims must point at supplied evidence; only structured or verbatim dates may become reminders. */
 export function validatePersonalReviewSummary(value, evidence) {

@@ -103,9 +103,11 @@ export function createPersonalReviewService({ store, readBinding, readBindingSyn
     await requestGuard(run.request);
     if (!authorizeSync(run, allowPaused)) throw new Error('个人回顾已取消或停止，授权不可用'); return true;
   }
+  const displayScope = () => state.subscription ?? state.scope;
   function view(includeScope = true) {
+    const scope = displayScope();
     return { status: state.subscription ? state.subscription.paused ? 'paused' : 'enabled' : 'off', schedule: state.subscription ? copy(state.subscription.schedule) : null,
-      sources: includeScope ? state.scope?.sources ?? [] : [], projects: includeScope ? state.scope?.projects ?? [] : [], items: includeScope ? state.items.filter(i => i.scopeKey === state.scope?.key).map(i => ({ id: i.id, title: i.title, status: i.status, dueAt: i.dueAt ?? null, snoozeUntil: i.snoozeUntil })) : [],
+      sources: includeScope ? scope?.sources ?? [] : [], projects: includeScope ? scope?.projects ?? [] : [], items: includeScope ? state.items.filter(i => i.scopeKey === scope?.key).map(i => ({ id: i.id, title: i.title, status: i.status, dueAt: i.dueAt ?? null, snoozeUntil: i.snoozeUntil })) : [],
       jobs: state.jobs.slice(-8).map(j => ({ kind: j.kind, status: j.status, createdAt: j.createdAt, detail: labels[j.status] })),
       text: `个人回顾：${state.subscription ? state.subscription.paused ? '已暂停' : '已启用' : '未启用定时计划'}。${state.jobs.length ? `最近一次：${labels[state.jobs.at(-1).status]}。` : ''}只读取已确认的来源与项目；电脑与宿主须在线。` };
   }
@@ -148,14 +150,16 @@ export function createPersonalReviewService({ store, readBinding, readBindingSyn
     if (existing) return result(existing, [], undefined, true);
     if (state.occurrences.includes(occurrence)) return { status: 'quiet', kind, duplicate: true, items: [], text: '此回顾请求已处理，不重复读取或发送。' };
     const job = { id: `review_job_${randomUUID()}`, sessionId: scope.caller.sessionId, requestId, kind, occurrence, createdAt: now().toISOString(), status: expired ? 'expired' : 'generating', itemIds: [] };
-    state.jobs.push(job); state.jobs = state.jobs.slice(-60); if (!state.occurrences.includes(occurrence)) state.occurrences.push(occurrence); state.occurrences = state.occurrences.slice(-800);
+    const draft = copy(state); if (input.action === 'run_now') setScope(scope, draft);
+    draft.jobs.push(job); draft.jobs = draft.jobs.slice(-60); if (!draft.occurrences.includes(occurrence)) draft.occurrences.push(occurrence); draft.occurrences = draft.occurrences.slice(-800);
     const run = execution(scope, signal, input);
+    let journaled = false;
     try {
-      await save(); if (expired) return result(job);
+      if (!expired) await guard(run); await persist(draft, input); state = draft; journaled = true; if (expired) return result(job);
       const generated = await generate(run, kind, occurrence); await guard(run);
       state.items = generated.ledger;
       // A failed or truncated scan never claims a complete incremental watermark.
-      for (const coverage of generated.coverage) if (coverage.status === 'ok' && !coverage.truncated && !generated.coverage.some(c => c.source === coverage.source && (c.status !== 'ok' || c.truncated))) state.watermarks[coverage.source] = { ...state.watermarks[coverage.source], [kind]: generated.at };
+      for (const coverage of generated.coverage) if (state.scope?.key === run.key && coverage.status === 'ok' && !coverage.truncated && !generated.coverage.some(c => c.source === coverage.source && (c.status !== 'ok' || c.truncated))) state.watermarks[coverage.source] = { ...state.watermarks[coverage.source], [kind]: generated.at };
       if (!generated.items.length) { job.status = generated.unknown ? 'unknown' : 'quiet'; await save(); return result(job, [], generated.text); }
       job.itemIds = generated.items.map(i => i.id); job.status = 'dispatching';
       // Persist both claim and fact notification before entering a side-effecting adapter.
@@ -164,6 +168,7 @@ export function createPersonalReviewService({ store, readBinding, readBindingSyn
       try { delivery = await race(() => send({ sessionId: scope.caller.sessionId, bindingKey: scope.bindingKey, text: generated.text, requestId: `personal-${job.id}`, signal: run.signal, authorize: () => authorizeSync(run), authorizeSync: () => authorizeSync(run), authorizeAsync: async () => { try { return await guard(run); } catch { return false; } } }), run.signal, '发送结果不确定'); } catch { job.status = 'uncertain'; await save(); return result(job, generated.items); }
       job.status = ['reported_sent', 'queued'].includes(delivery?.status) ? delivery.status : delivery?.status === 'failed' || delivery?.status === 'blocked' ? 'failed' : 'uncertain'; await save(); return result(job, generated.items, `${generated.text}\n\n${labels[job.status]}`);
     } catch (error) {
+      if (!journaled) throw error;
       if (job.status === 'generating') job.status = run.signal.aborted || run.generation !== generation ? 'cancelled' : 'failed';
       else if (job.status === 'dispatching') job.status = 'uncertain';
       if (!storageFailed) await save(); throw error;
@@ -187,12 +192,12 @@ export function createPersonalReviewService({ store, readBinding, readBindingSyn
       await load(); if (closed) throw new Error('个人回顾服务已关闭');
       if (state.scope && !sameCaller(caller, state.scope.caller)) throw new Error('需要原本人会话');
       if (state.receipts.some(r => r.sessionId === caller.sessionId && r.requestId === input.requestId)) {
-        if (!['cancel', 'pause'].includes(action) && state.scope) { const run = execution(state.scope, input.signal, input); try { await guard(run); } finally { run.dispose(); } }
+        if (!['cancel', 'pause'].includes(action) && displayScope()) { const run = execution(displayScope(), input.signal, input); try { await guard(run); } finally { run.dispose(); } }
         return { ...view(!['cancel', 'pause'].includes(action)), duplicate: true };
       }
-      if (action === 'status') { if (state.scope) { const run = execution(state.scope, input.signal, input); try { await guard(run, { allowPaused: true }); } finally { run.dispose(); } } return view(); }
+      if (action === 'status') { if (displayScope()) { const run = execution(displayScope(), input.signal, input); try { await guard(run, { allowPaused: true }); } finally { run.dispose(); } } return view(); }
       if (action === 'configure') {
-        const schedule = scheduleInput(input.schedule), scope = await buildScope(caller, input, state.scope); if (!await canRun()) throw new Error('助理已暂停');
+        const schedule = scheduleInput(input.schedule), scope = await buildScope(caller, input, displayScope()); if (!await canRun()) throw new Error('助理已暂停');
         const run = execution(scope, input.signal, input); try { await guard(run); } finally { run.dispose(); }
         await commitMutation(input, admission, draft => { setScope(scope, draft); draft.subscription = { ...copy(scope), schedule, createdAt: now().toISOString(), paused: false }; }); return view();
       }
@@ -201,16 +206,16 @@ export function createPersonalReviewService({ store, readBinding, readBindingSyn
         if (!state.subscription) throw new Error('尚无个人回顾计划'); const run = execution(state.subscription, input.signal, input); try { await guard(run); await commitMutation(input, admission, draft => { draft.subscription.paused = false; draft.subscription.createdAt = now().toISOString(); }); return view(); } finally { run.dispose(); }
       }
       if (action === 'feedback') {
-        const feedback = z.enum(['handled', 'snoozed', 'dismissed']).parse(input.feedback), item = state.items.find(i => i.id === input.itemId && i.scopeKey === state.scope?.key); if (!item) throw new Error('未找到同一授权范围内的事项');
-        const run = execution(state.scope, input.signal, input); try { await guard(run); } finally { run.dispose(); }
+        const feedback = z.enum(['handled', 'snoozed', 'dismissed']).parse(input.feedback), scopes = [state.scope, state.subscription].filter(Boolean), item = state.items.find(i => i.id === input.itemId && scopes.some(scope => scope.key === i.scopeKey)); if (!item) throw new Error('未找到同一授权范围内的事项');
+        const run = execution(scopes.find(scope => scope.key === item.scopeKey), input.signal, input); try { await guard(run); } finally { run.dispose(); }
         let snoozeUntil = null; if (feedback === 'snoozed') { snoozeUntil = reviewInstant.parse(input.snoozeUntil); if (Date.parse(snoozeUntil) <= now().getTime()) throw new Error('稍后提醒时间须在未来'); }
-        await requestGuard(input); await commitMutation(input, admission, draft => { const target = draft.items.find(i => i.id === item.id); target.status = feedback; target.snoozeUntil = snoozeUntil; }); return { ...view(), text: feedback === 'handled' ? '已标记处理，后续不再催促。' : feedback === 'dismissed' ? '此事项不再提醒。' : '已延后此事项。' };
+        await requestGuard(input); await commitMutation(input, admission, draft => { const target = draft.items.find(i => i.id === item.id); target.status = feedback; target.snoozeUntil = snoozeUntil; }); return { ...view(false), text: feedback === 'handled' ? '已标记处理，后续不再催促。' : feedback === 'dismissed' ? '此事项不再提醒。' : '已延后此事项。' };
       }
-      const scope = await buildScope(caller, input, state.scope), kind = input.kind ?? 'daily';
+      const scope = await buildScope(caller, input, displayScope()), kind = input.kind ?? 'daily';
       if (admission !== generation) throw new Error('个人回顾本次请求已取消');
       if (action === 'preview') { const run = execution(scope, input.signal, input); try { const generated = await generate(run, kind, `preview:${now().toISOString()}`); return { status: generated.unknown ? 'unknown' : 'preview', items: generated.items, coverage: generated.coverage, text: generated.text }; } finally { run.dispose(); } }
       const existing = state.jobs.find(j => j.sessionId === caller.sessionId && j.requestId === input.requestId); if (existing) return result(existing, [], undefined, true);
-      setScope(scope); return runJob(scope, { requestId: input.requestId, kind, occurrence: `manual:${hashReview(`${caller.sessionId}:${input.requestId}`)}`, signal: input.signal, input, admission });
+      return runJob(scope, { requestId: input.requestId, kind, occurrence: `manual:${hashReview(`${caller.sessionId}:${input.requestId}`)}`, signal: input.signal, input, admission });
     });
   }
   return { act, snapshot: caller => act(caller, { action: 'status' }), ready: () => serial(load), needsTimer: () => !closed && !storageFailed && Boolean(state?.subscription && !state.subscription.paused), suspend: invalidate,
