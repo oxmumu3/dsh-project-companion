@@ -1,3 +1,13 @@
+## 2026-10-29 01:24 · 0.15.0-preview.14 日常安装与原生界面验收
+
+- 发现好插件任务完成后，核对日常 Host 的167个会话均空闲，建立全新0700私有备份；通过原生菜单正常退出App，确认进程已退出，再运行冻结的统一安装器升级并重开。没有停止其他Host或绕过安装保护。
+- 原生插件页确认Dot v0.15.0-preview.14已启用、共1组件且1运行中。工作台识别原家庭微信入口，连接页Google已启用3/3，flomo与滴答均保持启用，本次启动未读取私人来源。没有覆盖原Owner草稿。
+- 重开前严格核对：Dot与Family精确tgz一致，状态、配置、授权、依赖与旅行全部保留。重开后严格NEEDS_REVIEW原结果保留；独立逐字段分类确认仅Family两个最近消息时间戳移除、已过期.13单次检查queued/enabled变为blocked/disabled。4绑定身份/路由、5源授权关联、家人权限、其他计划及消息/水位均保留，无补跑；Finder与番茄钟等依赖按本轮新备份保留。详见daily-restart-state-diff.json，不能笼统称所有状态字节未变。
+- .14包包含95个冻结运行/静态文件；调度修复电脑证据：020及rc3各369/369；021初跑368/369的既有Family提示时序失败保留，原样失败场景单独1/1，未改断言或超时。独审193/193；真实120秒合成timer自动一次、误差7ms、结束后清除timer。以上不代表手机收到。
+- 重开的原生UI与精确文件核对已通过；只读RPC辅助检查因新Host的对应cookie尚不可用未执行，未复制旧cookie或绕过认证。没有重跑已过期00:23真实检查、发送微信、建立计划、重读私人来源或代用户授权。
+- 公开仍为0.15.0-preview.12，.14未发布、不覆盖原六资产。有变化时的真实微信推送仍需本人一条新消息和手机确认；既有简报、交办、普通提醒的手机证据保留。Google已正式提交，最后已知UNDER_REVIEW，独立自动化继续。
+- 证据：output/dsh-dot-release-readiness-2026-10-28/release-candidate-01514/ 的desktop-proof.json、native-ui-proof.json、daily-upgrade-before-reopen-proof.json、daily-upgrade-file-proof.json、daily-restart-state-diff.json与scheduler-fix/。升级tgz SHA256：5849a79b69f491b05490863eec75510c506630c34fa819093465bdc0a597c613。
+
 ## 2026-10-29 00:35 · 0.15.0-preview.14 调度边界修复候选
 
 - .13本人新一次检查创建06:21:41Z、到期06:23:35.909Z；到期310秒后仍queued/scheduled，0次本轮run和outbound。精确Owner事件中06:21:48设置回合结束后没有新wake。官方只读工作台确认内存计划queued/enabled、助理未暂停，两插件active；这次没有进入来源读取或整理模型。
