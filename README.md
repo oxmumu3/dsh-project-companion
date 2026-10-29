@@ -6,8 +6,8 @@
 
 ## 当前版本与入口（2026-10-29）
 
-- **本地修复候选：`0.15.0-preview.14`；当前公开预览：`0.15.0-preview.12`**。固定版本安装包与使用说明见下方；这是预览版本，验收边界逐项记录。
-- **当前限制**：公开.12的变化整理可能耗尽本次输出上限；.13修复了这一模型策略，并在真实手机检查中发现到期后仍等待的问题。.14正在修复已复现的计时边界，变化推送的手机验收仍未完成。
+- **本次社区预览：`0.15.0-preview.14`**。固定版本安装包与使用说明见下方；这是预览版本，验收边界逐项记录。
+- **本版修复**：调整单次简报的模型推理策略，减少输出预算耗尽；修复调度器到期边界漏计时器的问题。电脑回归、真实计时测试、日常安装与界面核对已完成；变化推送的手机收件仍待确认。
 - **维护者共用家庭微信入口已实测**：五源分析简报、独立只读项目交办的一份结果、普通提醒，以及同范围单次无变化静默。
 - **电脑端已实测**：有变化只回传一次，取消或撤权后不读不发；新目录经官方初始化后真实安装成功。变化推送的手机收件、首次扫码授权及多日/休眠恢复仍分别验收，不保证所有场景都已稳定。
 
@@ -24,16 +24,16 @@ Google Gmail、Calendar、Drive 的数据权限已正式提交，当前 **`UNDER
 
 先连接需要的资料，再生成一份带来源的项目简报；随后可以交办任务，或只检查一次有没有变化。连接页区分授权成功、来源启用与实际读取，首页保留最近交办和检查结果。共用家庭微信入口只展示当前 Owner 的记录，交办和改计划继续在原微信完成；家人的权限保持独立。
 
-具体取舍及一手来源见[本轮迭代](docs/personal-agent-iteration.md)、[竞品与复用研究](https://github.com/oxmumu3/dsh-project-companion/blob/v0.15.0-preview.12/docs/research/personal-agent-20261028/README.md)和[交互依据](https://github.com/oxmumu3/dsh-project-companion/blob/v0.15.0-preview.12/docs/research/personal-agent-20261028/UX.md)。
+具体取舍及一手来源见[本轮迭代](docs/personal-agent-iteration.md)、[竞品与复用研究](https://github.com/oxmumu3/dsh-project-companion/blob/v0.15.0-preview.14/docs/research/personal-agent-20261028/README.md)和[交互依据](https://github.com/oxmumu3/dsh-project-companion/blob/v0.15.0-preview.14/docs/research/personal-agent-20261028/UX.md)。
 
 ## 安装
 
-[下载 0.15.0-preview.12 macOS 完整包](https://github.com/oxmumu3/dsh-project-companion/releases/download/v0.15.0-preview.12/dsh-dot-0.15.0-preview.12-macos.zip) · [固定版本发布页](https://github.com/oxmumu3/dsh-project-companion/releases/tag/v0.15.0-preview.12) · [安装说明](docs/install.md)。
+[下载 0.15.0-preview.14 macOS 完整包](https://github.com/oxmumu3/dsh-project-companion/releases/download/v0.15.0-preview.14/dsh-dot-0.15.0-preview.14-macos.zip) · [固定版本发布页](https://github.com/oxmumu3/dsh-project-companion/releases/tag/v0.15.0-preview.14) · [安装说明](docs/install.md)。
 
 先保存并正常退出 Harness，把下面一行粘贴到 macOS「终端」：
 
 ```sh
-(dsh_dot_dir="$(mktemp -d)" && cd "$dsh_dot_dir" && curl -fLO "https://github.com/oxmumu3/dsh-project-companion/releases/download/v0.15.0-preview.12/dsh-dot-0.15.0-preview.12-macos.zip" && curl -fLO "https://github.com/oxmumu3/dsh-project-companion/releases/download/v0.15.0-preview.12/dsh-dot-0.15.0-preview.12-macos.zip.sha256" && shasum -a 256 -c "dsh-dot-0.15.0-preview.12-macos.zip.sha256" && ditto -x -k "dsh-dot-0.15.0-preview.12-macos.zip" . && open "dsh-dot-0.15.0-preview.12-macos/Install.command")
+(dsh_dot_dir="$(mktemp -d)" && cd "$dsh_dot_dir" && curl -fLO "https://github.com/oxmumu3/dsh-project-companion/releases/download/v0.15.0-preview.14/dsh-dot-0.15.0-preview.14-macos.zip" && curl -fLO "https://github.com/oxmumu3/dsh-project-companion/releases/download/v0.15.0-preview.14/dsh-dot-0.15.0-preview.14-macos.zip.sha256" && shasum -a 256 -c "dsh-dot-0.15.0-preview.14-macos.zip.sha256" && ditto -x -k "dsh-dot-0.15.0-preview.14-macos.zip" . && open "dsh-dot-0.15.0-preview.14-macos/Install.command")
 ```
 
 命令会下载、校验并打开安装入口；安装结束后打开 Harness。Google 数据权限仍在审核，已知累计 100 个账号上限尚未解除，flomo 需要 MAX，均为可选来源。
@@ -109,7 +109,7 @@ AI 资讯抓取只访问固定公开来源，候选标题、摘要及选中文�
 
 ## 开发与许可
 
-MIT。默认开发环境为 Node.js 22.13+；SDK 回归、独立审读、隔离官方 Host、日常安装与界面核验按各自版本记录；本版已完成日常安装、原生界面核对及固定虚构五源变化的真实模型检查。上文列出的手机场景已实测；这些记录不代表新用户完整开箱、所有变化推送或长期稳定性均已通过。当前证据层级见[闭环说明](docs/context-loop.md)，此前有限读取与手机证据见[历史验证记录](docs/verification.md)。请通过官方插件管理器安装与启用，不手改 profile 或宿主 bundle 绕过管理器。
+MIT。默认开发环境为 Node.js 22.13+；SDK 回归、独立审读、隔离官方 Host、日常安装与界面核验按各自版本记录；本版已完成日常安装与原生界面核对；沿用的.13整理模型已用固定虚构五源完成真实模型检查，.14调度改动另有真实计时测试。上文列出的手机场景已实测；这些记录不代表新用户完整开箱、所有变化推送或长期稳定性均已通过。当前证据层级见[闭环说明](docs/context-loop.md)，此前有限读取与手机证据见[历史验证记录](docs/verification.md)。请通过官方插件管理器安装与启用，不手改 profile 或宿主 bundle 绕过管理器。
 
 ## 后续迭代
 

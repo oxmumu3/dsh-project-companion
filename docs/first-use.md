@@ -1,10 +1,10 @@
 # 第一次使用 DSH Dot
 
-牛村木木山制作的社区项目，给已有官方 DeepSeek Harness 增加项目与微信流程。本页对应 `0.15.0-preview.12` macOS 社区预览，非 DeepSeek 或 OpenAI 官方产品。
+牛村木木山制作的社区项目，给已有官方 DeepSeek Harness 增加项目与微信流程。本页对应 `0.15.0-preview.14` macOS 社区预览，非 DeepSeek 或 OpenAI 官方产品。
 
 ## 选择已有入口，开始第一个项目
 
-1. **新装公开版**：按[安装说明](install.md)准备官方 Harness，从[固定发布页](https://github.com/oxmumu3/dsh-project-companion/releases/tag/v0.15.0-preview.12)下载完整包。首次安装官方 Harness 后先打开一次以初始化桌面环境；保存并正常退出 Harness 后打开 `Install.command`，安装后重开。模型登录配置由本人完成；没有 Harness 时入口只指引安装官方应用。
+1. **新装公开版**：按[安装说明](install.md)准备官方 Harness，从[固定发布页](https://github.com/oxmumu3/dsh-project-companion/releases/tag/v0.15.0-preview.14)下载完整包。首次安装官方 Harness 后先打开一次以初始化桌面环境；保存并正常退出 Harness 后打开 `Install.command`，安装后重开。模型登录配置由本人完成；没有 Harness 时入口只指引安装官方应用。
 2. 打开左侧「DSH Dot」。独立 Dot 已有兼容微信绑定直接沿用；第一次才点「连接微信」扫码，再从微信发一句「你好」建立会话。已有工作对话不会被首次引导抢走。
 3. **已有共用家庭入口**：继续在原家庭微信对话使用，不重新扫码。Owner 委托须另行配置；当前 0.15 精确配套 Family `0.2.0-preview.33-diary.6-dot.3`。普通公开安装包只处理 Dot 与独立微信桥接，不自动安装或升级 Family。家人成员权限独立。
 4. 按引导选一个持续关注项目，点「保存关注并预览简报」。最多关注五个；已有关注保留。0.15「项目」页另有全部已登记项目的搜索、分页和「单次查看」，不占关注名额。没有项目时在 Harness 左侧工作区添加一个本地项目文件夹，再点「已添加，刷新项目」；列目录不读正文，也不扫描电脑。
