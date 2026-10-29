@@ -93,6 +93,17 @@ export function createNewsService({store,fetchCandidates,selectArticles,readArti
   async function deliver(job,scope){await active(scope);if(now().getTime()>=Date.parse(job.expiresAt)){job.status='expired';job.detail=deliveryLabels.expired;await save();return jobView(job);}job.status='dispatching';job.detail=deliveryLabels.dispatching;await save();await active(scope);const authorize=()=>!closing&&!storageFailed&&!scope.signal.aborted&&scope.generation===generation&&job.status==='dispatching'&&now().getTime()<Date.parse(job.expiresAt);let result;try{result=await external(()=>send({sessionId:job.sessionId,bindingKey:job.bindingKey,text:job.text,signal:scope.signal,requestId:'news-'+job.id,authorize}),scope.signal);}catch{result={status:'uncertain'};}job.status=['reported_sent','queued','uncertain','failed'].includes(result?.status)?result.status:'uncertain';job.detail=deliveryLabels[job.status];if(['reported_sent','queued','uncertain'].includes(job.status))history(job);await save();return jobView(job);}
   async function runJob(job,signal,requestedGeneration=generation){const scope=scopeFor(job.sessionId,job.bindingKey,signal,requestedGeneration,job.timeZone);try{await active(scope);const output=await generate(scope,job.topics??undefined,{preview:false,topicSource:'saved'});await active(scope);job.text=output.text;job.articleIds=output.items.map(a=>a.id);if(!job.articleIds.length){job.status='failed';job.detail='没有符合窗口与去重条件的可用文章，本次未发送';await save();return jobView(job);}job.status='pending';await save();return await deliver(job,scope);}catch(error){if(!storageFailed&&job.status!=='uncertain'&&!['reported_sent','queued','failed','expired'].includes(job.status)){job.status=scope.signal.aborted||closing||scope.generation!==generation?'cancelled':'failed';job.detail=deliveryLabels[job.status];await save();}throw error;}finally{scope.dispose();}}
   const changes=new Set(['configure','cancel','set_topics','clear_topics']);
+  const authorizationError=()=>Object.assign(new Error('本次资讯操作授权已变化或不可用'),{code:'NEWS_AUTHORIZATION_CHANGED'});
+  function authorizeSync(input){
+    if(!input.authorizeSync)return;
+    let allowed;try{allowed=input.authorizeSync();}catch{throw authorizationError();}
+    if(allowed&&typeof allowed.then==='function')Promise.resolve(allowed).catch(()=>{});
+    if(allowed!==true)throw authorizationError();
+  }
+  async function authorizeRequest(input){
+    try{if(input.guard)await input.guard();}catch{throw authorizationError();}
+    authorizeSync(input);
+  }
   const duplicateSetting=(owner,input)=>state.receipts.some(r=>r.sessionId===owner.sessionId&&r.requestId===input.requestId);
   function acceptChange(sequence){if(sequence<lastAcceptedChange)throw new Error('已有更新的用户设置，本次操作已取消或停止');lastAcceptedChange=sequence;invalidate();return generation;}
   function stopped(input,expectedGeneration){if(closing||input.signal?.aborted||expectedGeneration!==generation)throw new Error('操作已取消或停止');}
@@ -113,39 +124,47 @@ export function createNewsService({store,fetchCandidates,selectArticles,readArti
       if(input.action==='send_now'||changes.has(input.action))mutation(input);
       if(input.action==='configure')value=scheduleInput(input);
       if(input.signal!==undefined&&!(input.signal instanceof AbortSignal))throw new Error('无效取消信号');
+      if(input.guard!==undefined&&typeof input.guard!=='function'||input.authorizeSync!==undefined&&typeof input.authorizeSync!=='function')throw authorizationError();
+      authorizeSync(input);
       if(input.signal?.aborted)throw new Error('操作已取消或停止');
       if(changes.has(input.action))sequence=++changeSequence;
       // Original callers may stop their own outstanding work immediately. A
       // different caller must first prove the same live binding; replays never
       // invalidate generation. The actual write is still rechecked below.
-      if(changes.has(input.action)&&state&&!duplicateSetting(owner,input)&&ownsKnownRoute(owner)){
+      if(changes.has(input.action)&&!input.guard&&state&&!duplicateSetting(owner,input)&&ownsKnownRoute(owner)){
         requestedGeneration=acceptChange(sequence);invalidated=true;
       }
     }catch(error){return Promise.reject(error);}
     const admit=async()=>{
       await load();
       if(closing)throw new Error('资讯服务已关闭');
+      await authorizeRequest(input);
       if(changes.has(input.action)&&!duplicateSetting(owner,input)){
         await authorizedKey(owner);
         if(input.action==='configure'&&!await canRun())throw new Error('助理已暂停，未启用日报');
         if(closing||input.signal?.aborted)throw new Error('操作已停止');
+        await authorizeRequest(input);
         if(!invalidated){requestedGeneration=acceptChange(sequence);invalidated=true;}
       }
       return serial(async()=>{
         await load();if(closing)throw new Error('资讯服务已关闭');
-        if(input.action==='status')return visibleStatus(owner);
+        await authorizeRequest(input);
+        if(input.action==='status'){const result=await visibleStatus(owner);authorizeSync(input);return result;}
         if(input.action==='preview'){
           let focus=topics,bindingKey=null;
           if(!focus&&state.preferences){focus=await savedTopics(owner);bindingKey=state.preferences.bindingKey;}
           const scope=scopeFor(owner.sessionId,bindingKey,input.signal,requestedGeneration);
-          try{return{status:'preview',...await generate(scope,focus,{preview:true,topicSource:topics?'temporary':'saved'})};}finally{scope.dispose();}
+          try{await authorizeRequest(input);const result={status:'preview',...await generate(scope,focus,{preview:true,topicSource:topics?'temporary':'saved'})};authorizeSync(input);return result;}finally{scope.dispose();}
         }
         if(changes.has(input.action)){
-          if(duplicateSetting(owner,input))return{...await visibleStatus(owner),duplicate:true};
+          if(duplicateSetting(owner,input)){const result={...await visibleStatus(owner),duplicate:true};authorizeSync(input);return result;}
           stopped(input,requestedGeneration);
           const key=await authorizedKey(owner);
           if(input.action==='configure'&&!await canRun())throw new Error('助理已暂停，未启用日报');
+          await authorizeRequest(input);
           stopped(input,requestedGeneration);receiptCapacity();
+          const previous=state;state=copy(state);
+          try{
           if(input.action==='configure'){
             state.schedule={...value,sessionId:owner.sessionId,bindingKey:key,createdAt:now().toISOString()};
             if(topics)setTopics(owner,key,topics);
@@ -153,7 +172,9 @@ export function createNewsService({store,fetchCandidates,selectArticles,readArti
           else if(input.action==='clear_topics')state.preferences=null;
           else state.schedule=null;
           for(const job of state.jobs)if(['generating','pending','blocked'].includes(job.status)){job.status='cancelled';job.detail=deliveryLabels.cancelled;}
-          recordSetting(owner,input);await save();
+          recordSetting(owner,input);authorizeSync(input);
+          }catch(error){state=previous;throw error;}
+          await save();
           const result=status();
           if(input.action==='cancel')return{...result,text:`AI 资讯日报已关闭；未开始发送的任务已取消，已提交通道或结果不确定的消息无法撤回。${state.preferences?'已保存关注点保留。':''}`};
           if(input.action==='set_topics')return{...result,text:`已保存关注点：${topics.join('、')}。后续预览、立即发送和每日资讯都会使用；当前未发送。${state.schedule?'原推送时间保留。':'尚未开启每日推送。'}`};
@@ -164,6 +185,7 @@ export function createNewsService({store,fetchCandidates,selectArticles,readArti
         if(prior)return jobView(prior,true);
         const key=await authorizedKey(owner);
         if(!await canRun())throw new Error('助理已暂停，未发送资讯');
+        await authorizeRequest(input);
         stopped(input,requestedGeneration);pruneJobs();
         const createdAt=now().toISOString(),job={id:`news_${randomUUID()}`,kind:'manual',requestId:input.requestId,sessionId:owner.sessionId,bindingKey:key,date:null,createdAt,expiresAt:new Date(now().getTime()+SIX_HOURS).toISOString(),status:'generating',articleIds:[],text:'',detail:deliveryLabels.generating,topics:state.preferences?copy(state.preferences.topics):null,timeZone:typeof hostTimeZone==='function'?hostTimeZone():hostTimeZone};
         state.jobs.push(job);await save();return runJob(job,input.signal,requestedGeneration);

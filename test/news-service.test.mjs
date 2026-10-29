@@ -332,6 +332,34 @@ test('stored preferences cannot be joined to a schedule with a different binding
   assert.equal(reboot.sends.length, 0);
 });
 
+test('request-scoped authorization is rechecked after binding lookup and before saving topics', async () => {
+  let allowed = true, checks = 0;
+  const f = await fixture({ hooks: { readBinding: async () => { if (++checks === 2) allowed = false; return { bound: true, bindingKey: binding }; } } });
+  await assert.rejects(f.service.act(owner, mutate('set_topics', { topics: ['未授权主题'], guard: async () => { if (!allowed) throw new Error('private authorization details'); }, authorizeSync: () => allowed })), /授权/);
+  assert.equal(f.writes(), 0);
+  assert.equal((await f.service.act(owner, { action: 'status' })).topics, null);
+});
+
+test('denied request-scoped mutation does not cancel authorized in-flight delivery', async () => {
+  const started = deferred(), gate = deferred();
+  const f = await fixture({ hooks: { selectArticles: async ({ articles }) => { started.resolve(); await gate.promise; return articles.slice(0, 1).map(a => a.id); } } });
+  await f.service.act(owner, mutate('set_topics', { topics: ['原主题'] }));
+  const pending = f.service.act(owner, mutate('send_now'));
+  await started.promise;
+  await assert.rejects(f.service.act(owner, mutate('clear_topics', { guard: async () => { throw new Error('denied'); }, authorizeSync: () => true })), /授权/);
+  gate.resolve();
+  assert.equal((await pending).status, 'reported_sent');
+  assert.deepEqual(f.persisted().preferences.topics, ['原主题']);
+});
+
+test('invalid synchronous authorization contracts fail closed without preference writes', async () => {
+  for (const authorizeSync of [true, () => false, () => undefined, async () => true]) {
+    const f = await fixture();
+    await assert.rejects(f.service.act(owner, mutate('set_topics', { topics: ['AI'], authorizeSync })), /授权/);
+    assert.equal(f.writes(), 0);
+  }
+});
+
 test('invalid preview topics reject before source fetch or storage IO', async () => {
   for (const topics of ['AI', ['x'.repeat(81)], ['AI\n产品'], ['AI', 'AI'], [], null]) {
     const f = await fixture();
