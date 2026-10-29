@@ -1,16 +1,20 @@
 # DSH Dot · DSH Project Companion
 
-## 0.14.1-preview.11 社区预览
+## 0.15.0-preview.12 社区预览
 
-[发布页与下载](https://github.com/oxmumu3/dsh-project-companion/releases/tag/v0.14.1-preview.11) · [详细安装说明](https://github.com/oxmumu3/dsh-project-companion/releases/download/v0.14.1-preview.11/INSTALL.txt) · [该版本源码](https://github.com/oxmumu3/dsh-project-companion/tree/v0.14.1-preview.11)。本预览使用独立发布 tag；当前 main 源码与下方历史说明不代表该版本。
+[发布页与下载](https://github.com/oxmumu3/dsh-project-companion/releases/tag/v0.15.0-preview.12) · [详细安装说明](https://github.com/oxmumu3/dsh-project-companion/releases/download/v0.15.0-preview.12/INSTALL.txt) · [该版本源码](https://github.com/oxmumu3/dsh-project-companion/tree/v0.15.0-preview.12) · [实际验证范围](https://github.com/oxmumu3/dsh-project-companion/blob/v0.15.0-preview.12/docs/verification.md)。本预览使用独立发布 tag；当前 main 源码与下方历史说明不代表该版本，请按固定版本说明安装。
+
+这一版将个人资料、项目简报、明确交办和按范围跟进串在一起。Gmail、Google 日历、Drive、flomo 与滴答清单均按本人授权的具体范围读取；连接不会自动创建私人资料扫描或推送。家庭助手共用微信需另行配置 Owner 委托，完整包不会安装或升级 Family；首次使用建议走独立 Dot 入口。
 
 macOS 用户先安装并打开一次官方 DeepSeek Harness 完成初始化，保存工作并正常退出，然后在终端执行：
 
 ```sh
-(dsh_dot_dir="$(mktemp -d)" && cd "$dsh_dot_dir" && curl -fLO "https://github.com/oxmumu3/dsh-project-companion/releases/download/v0.14.1-preview.11/dsh-dot-0.14.1-preview.11-r3-macos.zip" && curl -fLO "https://github.com/oxmumu3/dsh-project-companion/releases/download/v0.14.1-preview.11/dsh-dot-0.14.1-preview.11-r3-macos.zip.sha256" && shasum -a 256 -c "dsh-dot-0.14.1-preview.11-r3-macos.zip.sha256" && ditto -x -k "dsh-dot-0.14.1-preview.11-r3-macos.zip" . && open "dsh-dot-0.14.1-preview.11-r3-macos/Install.command")
+(dsh_dot_dir="$(mktemp -d)" && cd "$dsh_dot_dir" && curl -fLO "https://github.com/oxmumu3/dsh-project-companion/releases/download/v0.15.0-preview.12/dsh-dot-0.15.0-preview.12-macos.zip" && curl -fLO "https://github.com/oxmumu3/dsh-project-companion/releases/download/v0.15.0-preview.12/dsh-dot-0.15.0-preview.12-macos.zip.sha256" && shasum -a 256 -c "dsh-dot-0.15.0-preview.12-macos.zip.sha256" && ditto -x -k "dsh-dot-0.15.0-preview.12-macos.zip" . && open "dsh-dot-0.15.0-preview.12-macos/Install.command")
 ```
 
-Google 品牌与权限尚未确认通过正式审核，可能出现未验证提示且已知有累计 100 个账号上限；首次独立新用户安装、扫码到手机收件仍未完整验收。家庭助手共用微信是额外配置，该入口暂不支持 Gmail / Drive，受控交办目前为 README 首行的独立只读检查。
+安装器会校验环境；尚未初始化时引导打开官方 App，待本人正常退出后在同一窗口继续，不会自动关闭任务。安装后见[首次使用](https://github.com/oxmumu3/dsh-project-companion/blob/v0.15.0-preview.12/docs/first-use.md)。
+
+Google 品牌已验证，三项数据权限已正式提交审核、尚未批准，仍可能出现未验证提示、累计 100 个账号上限及账号策略限制；flomo 需要 MAX。本版仍是预览：有变化时主动推送的手机验收、独立新用户首次扫码到手机收件，以及连续多日与休眠重连尚未完成。电脑端或维护者的有限实测不代表任意新用户已通过。
 
 给 DeepSeek Harness 加上个人项目助理：通过现有微信通路交办项目任务、记住项目上下文、安排提醒，并把执行回复带回原对话。作者：牛村木木山；社区开源项目，非 DeepSeek 或 OpenAI 官方产品。
 
