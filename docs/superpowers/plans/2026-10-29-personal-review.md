@@ -11,11 +11,11 @@
 ## Execution
 
 - [x] Read accepted scope and current runtime contracts; create isolated worktree at f611a69. Baseline news-service/context-loop: 110/110 pass.
-- [ ] Core: src/personal-review.js, personal-review-ledger.js, personal-review-model.js and test/personal-review*.test.mjs. Test source-backed unseen risks, citation rejection, deadline escalation despite same content, feedback, per-occurrence delivery, restart ambiguity, cancellation and binding/grant change before implementation.
-- [ ] News: migrate stored explicit interests safely, set_topics/clear_topics/configure topics, freeze topics per job, reuse in scheduled selection and summary. Tests cover restart, cross-owner exposure, override preview and cancellation.
-- [ ] Collector: src/personal-review-collect.js. Construct recent-source queries within visible budgets, collect fixed project docs and memory, include coverage and provenance. Add tightly bounded recent Drive/flomo contracts without weakening search/read contracts. Tests use fake transport only.
-- [ ] Host: register personal_review tool and storage domain, original Owner delegation, timer and shutdown, sources/project scope explanation and UI draft entry. Synthetic official Host tests cover configure without reads, due review, pause/revoke and no duplicate return.
-- [ ] Family: extend intent routing and tool admission for personal review/news preferences, verify cross-host synthetic Owner/member separation without bypassing existing gates.
+- [x] Core: src/personal-review.js, personal-review-ledger.js, personal-review-model.js and test/personal-review*.test.mjs. Test source-backed unseen risks, citation rejection, deadline escalation despite same content, feedback, per-occurrence delivery, restart ambiguity, cancellation and binding/grant change before implementation.
+- [x] News: migrate stored explicit interests safely, set_topics/clear_topics/configure topics, freeze topics per job, reuse in scheduled selection and summary. Tests cover restart, cross-owner exposure, override preview and cancellation.
+- [x] Collector: src/personal-review-collect.js. Construct recent-source queries within visible budgets, collect fixed project docs and memory, include coverage and provenance. Add tightly bounded recent Drive/flomo contracts without weakening search/read contracts. Tests use fake transport only.
+- [x] Host: register personal_review tool and storage domain, original Owner delegation, timer and shutdown, sources/project scope explanation and UI draft entry. Synthetic official Host tests cover configure without reads, due review, pause/revoke and no duplicate return.
+- [x] Family: extend intent routing and tool admission for personal review/news preferences, verify cross-host synthetic Owner/member separation without bypassing existing gates.
 - [ ] Verification: focused regressions then required SDK matrices, independent review, freeze candidate package, isolated official Host/UI. Preserve state and installed combinations if daily upgrade is safe; otherwise keep candidate and explain exact blocker.
 - [ ] Delivery: update docs and evidence, provide one concise phone acceptance batch only after computer verification. Do not conflate synthetic delivery with phone receipt.
 
