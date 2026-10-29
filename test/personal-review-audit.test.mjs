@@ -151,3 +151,42 @@ test('audit: a configuration awaiting durable persistence does not expose an ena
   assert.equal(stored.subscription.paused, false);
   await f.service.close();
 });
+
+test('audit: a rejected manual run cannot seed an unconfirmed scope for a later preview', async () => {
+  let checks = 0, reads = 0;
+  const f = fixture({ collect: async () => { reads++; return { evidence: [], coverage: [{ source: 'gmail', status: 'ok', count: 0 }] }; } });
+  await assert.rejects(f.service.act(caller, intent('run_now', { sources: ['gmail'], projects: [], authorizeSync: () => ++checks < 2 })), /授权|取消|失效/);
+  assert.equal(reads, 0);
+  assert.equal(f.stored()?.scope ?? null, null);
+  assert.deepEqual((await f.service.snapshot(caller)).sources, []);
+  await assert.rejects(f.service.act(caller, { action: 'preview' }));
+  assert.equal(reads, 0);
+  await f.service.close();
+});
+
+test('audit: Gmail URL fragments identify different messages even when their action titles match', () => {
+  const first = { ...evidence, id: 'gmail:first', url: 'https://mail.google.com/mail/u/0/#all/first' };
+  const second = { ...evidence, id: 'gmail:second', url: 'https://mail.google.com/mail/u/0/#all/second' };
+  const items = mergeReviewItems([], [{ ...candidate, evidenceIds: [first.id] }, { ...candidate, key: 'independent-second-invitation', evidenceIds: [second.id] }], [first, second], { now: '2026-10-29T09:00:00.000Z', scopeKey: binding });
+  assert.equal(items.length, 2);
+  assert.notEqual(items[0].id, items[1].id);
+});
+
+test('audit: repeated invalid model formats preserve old feedback and complete coverage watermarks', async () => {
+  let malformed = false;
+  const f = fixture({ summarize: async () => malformed ? { items: 'invalid model format' } : { items: [candidate] } });
+  await f.service.act(caller, intent('run_now', { sources: ['gmail'], projects: [] }));
+  const id = f.stored().items[0].id;
+  await f.service.act(caller, intent('feedback', { itemId: id, feedback: 'handled' }));
+  const before = structuredClone({ items: f.stored().items, watermarks: f.stored().watermarks });
+  malformed = true;
+  for (let n = 0; n < 3; n++) {
+    await assert.rejects(f.service.act(caller, intent('run_now', { sources: ['gmail'], projects: [], requestId: `bad-model-${n}` })));
+    assert.deepEqual(f.stored().items, before.items);
+    assert.deepEqual(f.stored().watermarks, before.watermarks);
+    assert.equal(f.stored().jobs.at(-1).status, 'failed');
+  }
+  assert.equal(f.sends.length, 1);
+  assert.doesNotMatch((await f.service.snapshot(caller)).text, /没有.*(?:变化|事项)|已全部处理/);
+  await f.service.close();
+});
