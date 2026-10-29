@@ -249,6 +249,52 @@ test('brief native reasoning policy uses only declared capabilities and stays bo
   await m.summarize({project:{label:'项目'},sources:[source()]});assert.equal(count,1);m.close();
 });
 
+test('brief prefers declared off over low without changing global selection or request budget', async () => {
+  const original=Object.freeze({provider:'selected-provider',model:'selected-model',reasoningEffort:'max'}),calls=[];
+  const llm={async prepareCall(config,signal,policy){
+    const before=structuredClone(config),picked=policy(Object.freeze({...config}),{reasoning:{efforts:[{id:'max'},{id:'low'},{id:'off'}]}});
+    assert.deepEqual(config,before);
+    const call={config:picked,signal};calls.push(call);return{config:picked,stream(request){call.request=request;return textStream(JSON.stringify(summary()))();}};
+  }};
+  const m=createProjectUpdateModel({get:name=>name==='llm'?llm:{currentSelection:()=>original}},{clock:()=>new Date(at)});
+  assert.deepEqual(await m.summarize({project:{label:'项目'},sources:[source()]}),summary());
+  assert.equal(calls.length,1);assert.deepEqual(calls[0].config,{...original,reasoningEffort:'off',maxTokens:6000});
+  assert.equal(calls[0].request.reasoningEffort,'off');assert.deepEqual(calls[0].request.tools,[]);assert.equal(original.reasoningEffort,'max');m.close();
+});
+
+test('brief off selection requires the exact declared capability and never guesses none', async () => {
+  let observed;
+  const llm={async prepareCall(config,signal,policy){
+    const original=Object.freeze({...config,reasoningEffort:'medium'});
+    observed=[
+      policy(original,{reasoning:{efforts:[{id:'off'}]}}),
+      policy(original,{reasoning:{efforts:[{id:'none'},{id:'low'}]}}),
+      policy(original,{reasoning:{efforts:[{id:'none'}]}}),
+      policy(original,{reasoning:{efforts:[{id:'Off'}]}}),
+      policy(original,{})
+    ];
+    return{config:original,stream:()=>textStream(JSON.stringify(summary()))()};
+  }};
+  const m=createProjectUpdateModel({get:name=>name==='llm'?llm:{currentSelection:()=>({provider:'p',model:'m',reasoningEffort:'max'})}},{clock:()=>new Date(at)});
+  await m.summarize({project:{label:'项目'},sources:[source()]});
+  assert.deepEqual(observed.map(row=>row.reasoningEffort),['off','low','medium','medium','medium']);
+  for(const row of observed){assert.equal(row.provider,'p');assert.equal(row.model,'m');assert.equal(row.maxTokens,6000);}m.close();
+});
+
+test('declared off keeps the shared repair budget and repeated permission checks', async () => {
+  const original=Object.freeze({provider:'p',model:'m',reasoningEffort:'max'}),calls=[];let guards=0,syncGuards=0;
+  const llm={async prepareCall(config,signal,policy){
+    const picked=policy(config,{reasoning:{efforts:[{id:'off'},{id:'low'}]}}),call={config:picked,signal};calls.push(call);
+    return{config:picked,stream(request){call.request=request;return accountedStream(calls.length===1?wrongQuote():summary())();}};
+  }};
+  const m=createProjectUpdateModel({get:name=>name==='llm'?llm:{currentSelection:()=>original}},{clock:()=>new Date(at)});
+  const answer=await m.summarize({project:{label:'项目'},sources:[source()],beforeRequest:async()=>{guards++;},beforeRequestSync:()=>{syncGuards++;}});
+  assert.deepEqual(answer,summary());assert.equal(calls.length,2);assert.deepEqual(calls.map(row=>row.config.reasoningEffort),['off','off']);
+  assert.deepEqual(calls.map(row=>row.config.maxTokens),[6000,4500]);assert.equal(calls[0].signal,calls[1].signal);
+  assert.equal(calls[0].request.messages[0].content[0].text,calls[1].request.messages[0].content[0].text);
+  assert.equal(guards,4);assert.equal(syncGuards,2);assert.equal(original.reasoningEffort,'max');m.close();
+});
+
 test('invalid outputs expose only fixed, non-sensitive validation categories', async () => {
   const mutate = change => { const value=summary(); change(value); return value; };
   const cases = [

@@ -197,6 +197,7 @@ function awaitGuard(guard, signal) {
 // does not mutate the user selection and unsupported models retain defaults.
 function briefModelControls(controls, info) {
   const efforts = Array.isArray(info?.reasoning?.efforts) ? info.reasoning.efforts : [];
+  if (efforts.some(item => item?.id === 'off')) return { ...controls, reasoningEffort: 'off' };
   return efforts.some(item => item?.id === 'low') ? { ...controls, reasoningEffort: 'low' } : controls;
 }
 
