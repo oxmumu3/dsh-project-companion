@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {mkdtemp,rm,realpath,mkdir} from 'node:fs/promises';
+import {mkdtemp,rm,realpath,mkdir,writeFile} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join,isAbsolute} from 'node:path';
 import {pathToFileURL} from 'node:url';
@@ -30,7 +30,7 @@ async function fixture(t,options={}){
   scope.provide('familyDotBridge',family.familyDotBridge);const guard=installOwnerDotReadGuard({ctx:scope,getTasks:()=>family.ownerTasksForToolGuard()});scope.effect(()=>async()=>{await guard.close();await family.close();});
  }});
  const dotFiber=await ctx.plugin({name:'synthetic-dot-personal-review',inject:['tools','commands','storageDomain','sessions','systemPrompt'],async apply(scope){adapter=await installCompanion(scope,{clock:()=>new Date(instant),hostTimeZone:'America/Mexico_City',family:{enabled:true},readSetup:async()=>({state:'bound',sessionId:'legacy-owner',bindingKey:'a'.repeat(64)}),readNativeRoute:async()=>({kind:'unbound'}),readBinding:async()=>null,
-  context:{readConfig:()=>({didaToken:'synthetic-token-not-real'}),googlePublisher:null,fetch:async()=>assert.fail('synthetic test must not use network'),transport:{catalog:async()=>({tools:[{name:'list_projects',inputSchema:{type:'object',properties:{}}}]}),call:async()=>{reads.push('provider');assert.fail('settings must not read personal data');},close:async()=>{}}},
+  context:{readConfig:()=>({didaToken:'synthetic-token-not-real'}),googlePublisher:null,fetch:async()=>assert.fail('synthetic test must not use network'),transport:{catalog:async()=>({tools:[{name:'list_projects',inputSchema:{type:'object',properties:{}}}]}),call:async()=>{reads.push('provider');assert.fail('settings must not read personal data');},close:async()=>{}},...(options.context??{})},
   news:{fetchCandidates:async()=>assert.fail('settings must not fetch public feeds'),...(options.news??{})},...(options.personalReview?{personalReview:options.personalReview}:{}),timers:{setInterval(){return{unref(){}};},clearInterval(){}}});}});
  t.after(async()=>{await dotFiber.dispose();await familyFiber.dispose();await ctx.fiber.dispose();await rm(root,{recursive:true,force:true});});
  const makeAgent=(id,cwd)=>{const session=ctx.sessions.create(SessionId(id),{meta:{cwd}}),agent={id,session,ctx,status:'idle'};agents.set(id,agent);return agent;};
@@ -41,7 +41,7 @@ async function fixture(t,options={}){
  for(const [id,role]of[['owner','owner'],['mom','elder']]){family.store.addPerson({id,role,label:id});family.store.bindPerson(id,{accountId:'synthetic-'+id,peerId:'peer-'+id});}await family.start();
  let agent;const message=async(text,{settle=true}={})=>{await family.receive('owner',{id:'source-'+(++counter),peerId:'peer-owner',text,sourceTiming:{receivedAt:instant,providerCreatedAt:instant}});if(settle)await family.settled();if(!agent)agent=makeAgent(intents.at(-1).sessionId,ownerRoot);return agent;};
  await message('请查看项目资料的来源连接状态。');assert.ok((await invoke(agent,'personal_context',{action:'connections'})).sources);
- return{adapter,family,reads,sent,intents,targetRoot,message,tool:async(name,args)=>invoke(agent,name,args),member:async(name,args)=>invoke({...agent,id:'family_member_synthetic'},name,args),forged:async(name,args)=>(await ctx.tools.execute({name,callId:'not-the-observed-call',arguments:args,agent,signal:new AbortController().signal})).value,time:value=>instant=value};
+ return{adapter,family,reads,sent,intents,targetRoot,message,clearActiveCall:()=>{activeCall='no-active-call';},nativeTool:async(name,args)=>invoke(old,name,args),tool:async(name,args)=>invoke(agent,name,args),member:async(name,args)=>invoke({...agent,id:'family_member_synthetic'},name,args),forged:async(name,args)=>(await ctx.tools.execute({name,callId:'not-the-observed-call',arguments:args,agent,signal:new AbortController().signal})).value,time:value=>instant=value};
 }
 test('real Family and Dot accept only verified original schedule and server-selected scope',{skip:!familyRoot},async t=>{
  const f=await fixture(t);await f.message(complete);
@@ -103,4 +103,22 @@ test('Owner actual cancel request invalidates a saved-interest digest waiting at
  await f.message('AI 日报关注：Agent 产品。');await f.tool('ai_digest',{action:'set_topics'});await f.message('给我发送一份AI日报');const pending=f.tool('ai_digest',{action:'send_now'});
  assert.equal(await Promise.race([entered.promise.then(()=>true),pending.then(()=>false)]),true);
  await f.message('取消我的AI日报',{settle:false});const cancel=f.tool('ai_digest',{action:'cancel'});await new Promise(resolve=>setImmediate(resolve));release.resolve();await pending;const result=await cancel;assert.equal(result.schedule,null,JSON.stringify(result));assert.equal(f.sent.length,0);
+});
+test('production collector re-enters saved Family scope for bounded provider IDs and fixed project files',{skip:!familyRoot},async t=>{
+ const io=[],models=[],context={transport:{
+  catalog:async source=>{io.push({stage:'catalog',source});return{tools:[
+   {name:'list_projects',inputSchema:{type:'object',properties:{limit:{type:'integer'},offset:{type:'integer'}}}},
+   {name:'get_project_tasks_bounded',inputSchema:{type:'object',properties:{project_id:{type:'string'},limit:{type:'integer'}},required:['project_id','limit']}},
+  ]};},
+  call:async(source,name,args,options)=>{assert.equal(source,'dida');assert.equal(await options.authorize(),undefined);assert.equal(options.authorizeSync(),true);io.push({stage:'call',source,name,args});
+   if(name==='list_projects')return{value:{projects:[{id:'synthetic-project-id',name:'Synthetic task list'}]}};
+   assert.equal(name,'get_project_tasks_bounded');assert.deepEqual(args,{project_id:'synthetic-project-id',limit:3});return{value:{tasks:[{id:'synthetic-task-id',projectId:'synthetic-project-id',title:'Synthetic invitation deadline',content:'Invitation still requires a response.',status:0,dueDate:'2026-10-30T12:00:00.000Z',updatedAt:'2026-10-29T14:00:00.000Z'}]}};
+  },close:async()=>{},
+ }};
+ const f=await fixture(t,{context,personalReview:{model:{summarize:async input=>{models.push(input);const task=input.evidence.find(item=>item.source==='dida');assert.ok(task,'real context provider result reaches production collector');assert.ok(input.evidence.some(item=>item.source==='project'&&item.text.includes('Synthetic project progress')));assert.doesNotMatch(JSON.stringify(input.evidence),/synthetic-token-not-real/);return{items:[{key:'fixture-invitation',kind:'invitation',title:'合成邀请临期',summary:'合成任务尚未处理。',why:'来源截止时间临近。',action:'核对后回应。',unknown:'是否实际处理仍待本人确认。',evidenceIds:[task.id],priority:'high',confidence:'source',dueAt:task.dueAt}]};}}}});
+ await mkdir(join(f.targetRoot,'.agent/memory'),{recursive:true});await writeFile(join(f.targetRoot,'README.md'),'Synthetic project overview\napi_key=synthetic-token-not-real');await writeFile(join(f.targetRoot,'.agent/memory/context.md'),'Synthetic project background');await writeFile(join(f.targetRoot,'.agent/memory/progress.md'),'Synthetic project progress: invitation pending.');
+ await f.message(complete);const configured=await f.tool('personal_review',{action:'configure'});assert.equal(configured.status,'enabled',JSON.stringify(configured));assert.deepEqual(configured.sources,['dida']);assert.deepEqual(configured.projects,[f.targetRoot]);assert.equal(io.filter(row=>row.stage==='call').length,0);assert.equal(models.length,0);
+ f.clearActiveCall();f.time('2026-10-29T15:00:00.000Z');await f.adapter.personalReview.tick();await f.adapter.personalReview.tick();
+ assert.deepEqual(io.filter(row=>row.stage==='call').map(row=>({name:row.name,args:row.args})),[{name:'list_projects',args:{limit:5,offset:0}},{name:'get_project_tasks_bounded',args:{project_id:'synthetic-project-id',limit:3}}]);assert.equal(models.length,1);assert.equal(models[0].evidence.filter(item=>item.source==='project').length,3);assert.equal(f.sent.filter(row=>row.text.includes('合成邀请临期')).length,1);
+ const before=io.length;const revoked=await f.nativeTool('personal_context',{action:'disconnect',source:'dida',userRequested:true});assert.notEqual(revoked.status,'blocked',JSON.stringify(revoked));f.clearActiveCall();f.time('2026-10-30T15:00:00.000Z');await f.adapter.personalReview.tick();assert.equal(io.length,before);assert.equal(models.length,1);assert.equal(f.sent.filter(row=>row.text.includes('合成邀请临期')).length,1);
 });
