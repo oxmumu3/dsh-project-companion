@@ -49,6 +49,16 @@ function catalogFixture(h){h.context.onFetch=(url,options)=>{if(url!==catalogEnd
 function seedMemory(h,row){h.context.snapshot.projects[0].overview={available:true,goals:[],blockers:[],nextSteps:[],recent:[row]};}
 async function openMemory(h){button(h.render(),'公开项目 A').props.onClick();button(h.render(),'记住的事').props.onClick();await button(h.render(),'纠正或忘记').props.onClick();return h.render();}
 
+test('personal review card explains daily and weekly value without enabling a plan on page load',async()=>{
+ const h=await harness();h.context.snapshot.personalReview={available:true,review:{status:'off',sources:[],projects:[],items:[],jobs:[]},news:{topics:['Agent 产品','插件生态'],topicSource:'explicit'}};
+ h.render();await h.flush();let view=h.render();assert.match(text(view),/每天少漏一件重要的事/);assert.match(text(view),/未开启/);assert.match(text(view),/Agent 产品/);assert.equal(posts(h).length,0);
+ button(view,'先看一份个人回顾').props.onClick();view=h.render();assert.match(text(view),/草稿/);assert.equal(posts(h).length,0);assert.equal(h.opened.length,0);h.dispose();
+});
+test('shared owner entry shows review schedule and unknown delivery honestly without mutation controls',async()=>{
+ const h=await harness();h.context.snapshot.connection.readOnly=true;h.context.snapshot.personalReview={available:true,review:{status:'enabled',schedule:{dailyTime:'09:00',weeklyDay:1,weeklyTime:'09:00',timeZone:'America/Mexico_City'},sources:['gmail','calendar'],projects:['/private/project'],items:[],jobs:[{status:'uncertain',detail:'发送结果不确定，不自动重发'}]},news:{topics:[],topicSource:'default'}};
+ h.render();await h.flush();const view=h.render();assert.match(text(view),/每天 09:00/);assert.match(text(view),/每周一/);assert.match(text(view),/发送结果不确定/);assert.doesNotMatch(text(view),/\/private\/project/);assert.equal(posts(h).length,0);h.dispose();
+});
+
 test('adds a matching native sidebar/main pair without replacing the existing interface',async()=>{
   const h=await harness();const main=h.registrations.find(row=>row.spec.name==='main');
   const entry=h.registrations.find(row=>row.spec.name==='sidebar.panellist');

@@ -54,6 +54,12 @@ const ident={...str,pattern:'^[A-Za-z0-9_-]{1,512}$'};
 const fixed=v=>({enum:[v]});
 const page={type:'integer',minimum:1,maximum:10};
 const tool=(name,properties)=>({name,inputSchema:{type:'object',additionalProperties:false,required:Object.keys(properties),properties}});
+function recentDriveQuery(query){
+ const m=/^modifiedTime >= '(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z)' and modifiedTime <= '(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z)'$/.exec(query);
+ if(!m)return false;
+ const from=Date.parse(m[1]),to=Date.parse(m[2]);
+ return Number.isFinite(from)&&Number.isFinite(to)&&new Date(from).toISOString()===m[1]&&new Date(to).toISOString()===m[2]&&to>from&&to-from<=7*86400000;
+}
 const CATALOGS={
  gmail:[tool('search_threads',{query:{...str,maxLength:500},pageSize:page,includeTrash:fixed(false),view:fixed('THREAD_VIEW_METADATA_ONLY')}),tool('get_message',{messageId:ident,messageFormat:fixed('FULL_CONTENT')})],
  drive:[tool('search_files',{query:{...str,maxLength:1100},pageSize:page,excludeContentSnippets:fixed(true)}),tool('read_file_content',{fileId:ident,includeComments:fixed(false)})],
@@ -71,7 +77,7 @@ function validate(source,name,args){
  if(!Object.hasOwn(CATALOGS,source)||!plain(args))fail('CONTEXT_ARGUMENTS_INVALID');
  try{validateContextCall({name,args},{tools:CATALOGS[source]});}catch{fail('CONTEXT_ARGUMENTS_INVALID');}
  if(name==='search_threads'&&(CONTROL.test(args.query)||!args.query.trim()))fail('CONTEXT_ARGUMENTS_INVALID');
- if(name==='search_files'&&!/^title contains '(?:[^'\\\u0000-\u001f\u007f]|\\['\\])*'$/u.test(args.query))fail('CONTEXT_ARGUMENTS_INVALID');
+ if(name==='search_files'&&!/^title contains '(?:[^'\\\u0000-\u001f\u007f]|\\['\\])*'$/u.test(args.query)&&!recentDriveQuery(args.query))fail('CONTEXT_ARGUMENTS_INVALID');
  if(name==='get_values')rangeSize(args.range);
  return structuredClone(args);
 }
@@ -106,6 +112,7 @@ function fileMetadata(raw,expected,coverage){
 function message(raw,expected,full,coverage){
  if(!plain(raw)||raw.id!==expected||!validId(raw.id))fail('CONTEXT_PROTOCOL_INVALID');
  const row={id:raw.id,snippet:clipped(raw.snippet,1200,coverage)};
+ if(typeof raw.internalDate==='string'&&/^\d{1,15}$/u.test(raw.internalDate)&&Number.isFinite(new Date(Number(raw.internalDate)).getTime()))row.receivedAt=new Date(Number(raw.internalDate)).toISOString();
  if(validId(raw.threadId))row.threadId=raw.threadId;
  const headers=Array.isArray(raw.payload?.headers)?raw.payload.headers:[];
  if(headers.length>100)coverage.truncated=true;
@@ -191,7 +198,7 @@ export function createGoogleSuiteRest({getToken,fetch:fetchImpl=globalThis.fetch
     };
     const gmail='https://gmail.googleapis.com',google='https://www.googleapis.com';
     const getMessage=async(id,full)=>{
-     const operation=full?'gmail_read':'gmail_metadata',raw=await request(gmail,`/gmail/v1/users/me/messages/${encodeURIComponent(id)}`,{format:full?'full':'metadata',...(!full?{metadataHeaders:['Subject','From','Date']}:{}),fields:full?'id,threadId,snippet,payload':'id,threadId,snippet,payload(headers)'},'json',operation);
+     const operation=full?'gmail_read':'gmail_metadata',raw=await request(gmail,`/gmail/v1/users/me/messages/${encodeURIComponent(id)}`,{format:full?'full':'metadata',...(!full?{metadataHeaders:['Subject','From','Date']}:{}),fields:full?'id,threadId,snippet,internalDate,payload':'id,threadId,snippet,internalDate,payload(headers)'},'json',operation);
      try{return message(raw,id,full,coverage);}catch(failure){throw error(CODES.has(failure?.code)?failure.code:'CONTEXT_PROTOCOL_INVALID',failure,{operation,stage:'message_shape',reason:'message_invalid'});}
     };
     const readFile=async(id,wanted)=>{
@@ -215,7 +222,8 @@ export function createGoogleSuiteRest({getToken,fetch:fetchImpl=globalThis.fetch
      for(const row of rows.slice(0,args.pageSize))items.push(await getMessage(row.id,false));value={items};
     }else if(name==='get_message')value=await getMessage(args.messageId,true);
     else if(name==='search_files'){
-     const raw=await request(google,'/drive/v3/files',{q:`name${args.query.slice(5)} and trashed = false`,pageSize:args.pageSize,fields:'nextPageToken,files(id,name,mimeType,modifiedTime,webViewLink)',spaces:'drive'});
+     const recent=recentDriveQuery(args.query);
+     const raw=await request(google,'/drive/v3/files',{q:`${recent?args.query:`name${args.query.slice(5)}`} and trashed = false`,pageSize:args.pageSize,fields:'nextPageToken,files(id,name,mimeType,modifiedTime,webViewLink)',spaces:'drive',...(recent?{orderBy:'modifiedTime desc'}:{})});
      if(!plain(raw)||(raw.files!==undefined&&!Array.isArray(raw.files))||(raw.nextPageToken!==undefined&&typeof raw.nextPageToken!=='string'))fail('CONTEXT_PROTOCOL_INVALID');
      const rows=raw.files??[];if(rows.length>1000)fail('CONTEXT_PROTOCOL_INVALID');coverage.truncated=Boolean(raw.nextPageToken)||rows.length>args.pageSize;value={items:rows.slice(0,args.pageSize).map(r=>fileMetadata(r,null,coverage))};
     }else if(name==='read_file_content')value=await readFile(args.fileId);
