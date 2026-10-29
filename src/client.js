@@ -253,13 +253,16 @@ window.__ModuleLoader__.load({
         const mutate=async body=>{
           const current=latest.current;
           if(inFlight.current||!active.current||current?.connection.state!=='bound')return;
+          const submitting=body.action==='complete'||body.action==='retry';
+          if(body.action==='retry'&&(body.retryKey!==current.welcome?.retryKey||!['stopped','no_text'].includes(current.welcome?.outcome?.status)))return;
           if(body.action==='complete'&&current.welcome?.status==='accepted'){await refresh();return;}
-          if(body.action==='complete')startedWelcome.current=true;
-          if(mutationUncertain.current.selection||(body.action==='complete'&&mutationUncertain.current.welcome))return;
+          if(submitting)startedWelcome.current=true;
+          if(mutationUncertain.current.selection||(submitting&&mutationUncertain.current.welcome))return;
           inFlight.current=true;setBusy(true);setError('');
           try{
             const value=await request(body);if(!active.current)return;update(value);
-            if(body.action==='complete'&&value.welcome?.status!=='accepted')setError(value.welcome?.status==='unknown'?'首份简报的接收状态还不确定，未重复提交。请打开 Dot 会话核对。':'会话正在处理任务或连接已变化，尚未提交首份简报。');
+            if(submitting&&value.welcome?.status!=='accepted')setError(value.welcome?.status==='unknown'?'首份简报的接收状态还不确定，未重复提交。请打开 Dot 会话核对。':'会话正在处理任务或连接已变化，尚未提交首份简报。');
+            if(body.action==='retry'&&value.welcome?.retryKey===body.retryKey)setError('当前会话暂时不能重新生成，请稍后再试。');
             if(body.action==='confirm_received'&&value.welcome?.receipt?.status==='user_confirmed'){
               if(onboarding&&!finished.current){finished.current=true;props.complete?.();}props.close?.();
             }
@@ -269,7 +272,7 @@ window.__ModuleLoader__.load({
                 if([401,403].includes(failure.status))invalidateConnection();
                 setError(failure.message);
               }else{
-                mutationUncertain.current[body.action==='complete'?'welcome':'selection']=true;
+                mutationUncertain.current[submitting?'welcome':'selection']=true;
                 setError('操作结果暂不确定，未自动重试。请刷新状态或打开 Dot 会话核对。');
               }
             }
@@ -281,6 +284,8 @@ window.__ModuleLoader__.load({
         const saved=projects.filter(project=>project.watched).length;
         const selectedCount=new Set([...selected,...projects.filter(project=>project.watched).map(project=>project.id)]).size;
         const welcomeAccepted=bound&&snapshot?.welcome?.status==='accepted';
+        const welcomeFailed=welcomeAccepted&&['stopped','no_text'].includes(snapshot?.welcome?.outcome?.status);
+        const retryKey=welcomeFailed&&/^retry_[a-f0-9]{64}$/.test(snapshot?.welcome?.retryKey??'')?snapshot.welcome.retryKey:null;
         const connectionText={missing:'请先安装并启用微信桥接，然后刷新此页。',unknown:'连接状态暂不可用，请刷新后重试。','waiting-qr':'用微信扫描下方二维码，并在手机上确认登录。',scanned:'手机已扫码，请在微信确认登录。','awaiting-message':'扫码已完成。请在微信给小助手发送首条消息“你好”，它会建立你的 Dot 会话。',bound:'已连接微信，沿用当前会话。',failed:'微信连接暂时失败。请到微信设置页查看状态，此页不会重置已有连接。'}[state]??'正在读取连接状态…';
         const body=h('div',{className:'pc_setup'},
           h('h2',null,'DSH Dot'),
@@ -292,13 +297,13 @@ window.__ModuleLoader__.load({
               props.openSection?h('button',{type:'button',onClick:()=>{props.complete?.();props.openSection('wechat');}},'查看微信设置'):null)),
           h('section',{className:'pc_card'},h('h3',null,'2 · 选择关注的项目'),
             h('p',{className:'pc_muted'},'最多关注 5 个项目。只读取你选择的项目说明和已观察到的会话；不会自动扫全部历史。'),
-            projects.length?projects.map(project=>h('label',{key:project.id},h('input',{type:'checkbox',checked:selected.includes(project.id)||project.watched,disabled:busy||!bound||project.watched||(!selected.includes(project.id)&&selectedCount>=5),onChange:event=>{setSelected(current=>event.target.checked?[...new Set([...current,...projects.filter(p=>p.watched).map(p=>p.id),project.id])].slice(0,5):current.filter(id=>id!==project.id));}}),h('span',null,project.label,project.watched?'（已关注）':''))):h('p',{className:'pc_muted'},'还没有可选择的已知项目。先在 Harness 添加一个项目，再刷新。'),
+            projects.length?projects.map(project=>h('label',{key:project.id},h('input',{type:'checkbox',checked:selected.includes(project.id)||project.watched,disabled:busy||!bound||project.watched||(!selected.includes(project.id)&&selectedCount>=5),onChange:event=>{setSelected(current=>event.target.checked?[...new Set([...current,...projects.filter(p=>p.watched).map(p=>p.id),project.id])].slice(0,5):current.filter(id=>id!==project.id));}}),h('span',null,project.label,project.watched?'（已关注）':''))):h('div',null,h('p',{className:'pc_muted'},'还没有可选择的项目。在 Harness 左侧的工作区区域添加一个本地项目文件夹，再回到这里。'),h('button',{type:'button',disabled:busy||!bound,onClick:refresh},'已添加，刷新项目')),
             h('div',{className:'pc_actions'},h('button',{type:'button',disabled:busy||!bound||!selected.length||mutationUncertain.current.selection,onClick:()=>mutate({action:'select_projects',projectIds:selected})},'保存关注并预览简报'))),
           bound&&snapshot?.firstBrief?h('section',{className:'pc_card'},h('h3',null,'项目资料预览'),h('div',{className:'pc_brief'},snapshot.firstBrief),h('p',{className:'pc_muted'},'这是有来源的资料预览。开始使用后，由 Dot 在当前微信会话整理第一份只读简报。')):null,
-          welcomeAccepted?h('section',{className:'pc_card','data-dot-first-value':true},h('h3',null,'首份简报到哪一步了'),h('p',{className:'pc_muted'},snapshot?.welcome?.outcome?.status==='generated'?'简报已生成，手机是否收到由你确认。':snapshot?.welcome?.outcome?.status==='running'?'Dot 正在整理这次简报。':'任务已提交；生成和手机收件状态仍待核对。'),snapshot?.welcome?.outcome?.reply?h('div',{className:'pc_brief'},snapshot.welcome.outcome.reply):null,snapshot?.welcome?.receipt?.status==='user_confirmed'?h('p',{role:'status'},'你已确认在微信收到这份简报。'):h('div',{className:'pc_actions'},h('button',{type:'button',disabled:busy,onClick:refresh},'刷新简报状态'),h('button',{type:'button',className:'pc_primary',disabled:busy,onClick:()=>mutate({action:'confirm_received'})},'我已在微信收到这份简报')),h('p',{className:'pc_muted'},'只有你实际看见后才点确认；电脑收到回复不等于微信送达。')):null,
+          welcomeAccepted?h('section',{className:'pc_card','data-dot-first-value':true},h('h3',null,welcomeFailed?'这次简报未完成':'首份简报到哪一步了'),h('p',{className:'pc_muted'},snapshot?.welcome?.outcome?.status==='generated'?'简报已生成，手机是否收到由你确认。':snapshot?.welcome?.outcome?.status==='running'?'Dot 正在整理这次简报。':snapshot?.welcome?.outcome?.status==='stopped'?'本次简报已停止，尚未生成可用结果。':snapshot?.welcome?.outcome?.status==='no_text'?'本次未生成简报，已结束此次尝试。':'结果暂时无法确认。请刷新状态，或打开原 Dot 会话核对；不会自动重发。'),snapshot?.welcome?.outcome?.reply?h('div',{className:'pc_brief'},snapshot.welcome.outcome.reply):null,welcomeFailed?h('p',{className:'pc_muted'},retryKey?'检查原 Dot 会话的模型或连接状态后，可重新生成；仍只读取原先选择的项目。':'请打开原 Dot 会话继续。原项目范围未能确认，不会替你猜测或自动重发。'):snapshot?.welcome?.receipt?.status==='user_confirmed'?h('p',{role:'status'},'你已确认在微信收到这份简报。'):h('div',{className:'pc_actions'},h('button',{type:'button',disabled:busy,onClick:refresh},'刷新简报状态'),h('button',{type:'button',className:'pc_primary',disabled:busy,onClick:()=>mutate({action:'confirm_received'})},'我已在微信收到这份简报')),welcomeFailed?null:h('p',{className:'pc_muted'},'只有你实际看见后才点确认；电脑收到回复不等于微信送达。')):null,
           error?h('p',{className:'pc_error',role:'alert'},error):null,
           h('p',{className:'pc_muted'},'电脑和 Harness 需保持在线。提醒、日报和周期跟进都由你另行指定时间，安装不会自动开启推送计划。'),
-          h('div',{className:'pc_actions'},h('button',{type:'button',className:'pc_primary',disabled:busy||!bound||(!welcomeAccepted&&(!saved||mutationUncertain.current.selection||mutationUncertain.current.welcome)),onClick:()=>mutate({action:'complete'})},busy?'正在处理…':welcomeAccepted?'查看已提交的首份简报':'生成首份简报并回到微信'),onboarding?h('button',{type:'button',disabled:busy,onClick:()=>props.complete?.()},'稍后设置'):null));
+          h('div',{className:'pc_actions'},h('button',{type:'button',className:'pc_primary',disabled:busy||!bound||(!welcomeAccepted&&(!saved||mutationUncertain.current.selection||mutationUncertain.current.welcome)),onClick:()=>welcomeFailed?(retryKey?mutate({action:'retry',retryKey}):(ctx.uiWorkspace.openSession(snapshot.connection.sessionId),props.close?.())):mutate({action:'complete'})},busy?'正在处理…':welcomeFailed?(retryKey?'重新生成首份简报':'打开 Dot 会话继续'):welcomeAccepted?'查看已提交的首份简报':'生成首份简报并回到微信'),onboarding?h('button',{type:'button',disabled:busy,onClick:()=>props.complete?.()},'稍后设置'):null));
         return onboarding&&snapshot?h(Modal,{open:true,closeLabel:'关闭',title:'DSH Dot',headless:true,className:'pc_setup_modal',onClose:()=>props.complete?.()},body):body;
       }
       function CredentialForm(props={}){

@@ -71,7 +71,7 @@ const storedRow=z.object({
 }).strict();
 const domainSpec=defineDomain({name:'project_companion',version:1,tables:{state:domainTable(storedRow)}});
 const taskResultsDomainSpec=defineDomain({name:'project_companion_task_results',version:1,tables:{state:domainTable(taskResultsRowSchema)}});
-const onboardingRow=z.object({id:z.literal('profile'),version:z.literal(1),completed:z.boolean(),welcomeStatus:z.enum(['none','dispatching','accepted','unknown']),sessionId:identity.nullable(),bindingKey:z.string().regex(/^[a-f0-9]{64}$/).nullable(),messageId:identity.nullable(),userReceivedAt:timestamp.optional()}).strict();
+const onboardingRow=z.object({id:z.literal('profile'),version:z.literal(1),completed:z.boolean(),welcomeStatus:z.enum(['none','dispatching','accepted','unknown']),sessionId:identity.nullable(),bindingKey:z.string().regex(/^[a-f0-9]{64}$/).nullable(),messageId:identity.nullable(),userReceivedAt:timestamp.optional(),welcomeRoots:z.array(z.string().min(1).max(4096)).min(1).max(5).optional(),previousAttempts:z.array(z.object({messageId:identity,status:z.enum(['stopped','no_text']),finishedAt:timestamp.optional()}).strict()).max(5).optional()}).strict();
 const projectUpdatesDomainSpec=defineDomain({name:'project_companion_updates',version:1,tables:{state:domainTable(projectUpdateRowSchema)}});
 const contextLoopDomainSpec=defineDomain({name:'project_companion_context_loop',version:1,tables:{state:domainTable(contextLoopRowSchema)}});
 const contextDomainSpec=defineDomain({name:'project_companion_context',version:1,tables:{state:domainTable(contextRowSchema)}});

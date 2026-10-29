@@ -1,22 +1,22 @@
 # 安装 DSH Dot
 
-本页对应 `0.15.0-preview.10` macOS 社区预览，包含 Dot 和配套微信桥接。需要已安装的官方 DeepSeek Harness `0.2.0-rc.2`、`0.2.1-rc.2` 或 `0.2.1-rc.3`；新装 Harness 后请先打开一次，再正常退出，官方插件安装依赖这次初始化。作者牛村木木山，非 DeepSeek 或 OpenAI 官方产品。
+本页对应社区预览版 `0.15.0-preview.12`。macOS 完整包包含 Dot 和配套微信桥接。需要已安装的官方 DeepSeek Harness `0.2.0-rc.2`、`0.2.1-rc.2` 或 `0.2.1-rc.3`；新装 Harness 后请先打开一次，再正常退出，官方插件安装依赖这次初始化。作者牛村木木山，非 DeepSeek 或 OpenAI 官方产品。
 
-## 安装当前公开版 0.15.0-preview.10
+## 安装入口（0.15.0-preview.12）
 
 如果刚安装官方 Harness，请先打开一次以初始化桌面环境，再保存工作并正常退出 Harness，再打开 macOS「终端」粘贴下面这一行：
 
 ```sh
-(dsh_dot_dir="$(mktemp -d)" && cd "$dsh_dot_dir" && curl -fLO "https://github.com/oxmumu3/dsh-project-companion/releases/download/v0.15.0-preview.10/dsh-dot-0.15.0-preview.10-macos.zip" && curl -fLO "https://github.com/oxmumu3/dsh-project-companion/releases/download/v0.15.0-preview.10/dsh-dot-0.15.0-preview.10-macos.zip.sha256" && shasum -a 256 -c "dsh-dot-0.15.0-preview.10-macos.zip.sha256" && ditto -x -k "dsh-dot-0.15.0-preview.10-macos.zip" . && open "dsh-dot-0.15.0-preview.10-macos/Install.command")
+(dsh_dot_dir="$(mktemp -d)" && cd "$dsh_dot_dir" && curl -fLO "https://github.com/oxmumu3/dsh-project-companion/releases/download/v0.15.0-preview.12/dsh-dot-0.15.0-preview.12-macos.zip" && curl -fLO "https://github.com/oxmumu3/dsh-project-companion/releases/download/v0.15.0-preview.12/dsh-dot-0.15.0-preview.12-macos.zip.sha256" && shasum -a 256 -c "dsh-dot-0.15.0-preview.12-macos.zip.sha256" && ditto -x -k "dsh-dot-0.15.0-preview.12-macos.zip" . && open "dsh-dot-0.15.0-preview.12-macos/Install.command")
 ```
 
-它会下载固定版本、核对 SHA256、解压到独立临时目录并打开 `Install.command`。脚本会显示安装结果；安装结束后打开 Harness，在左侧进入「DSH Dot」。已有微信连接可以沿用；首次使用需要本人扫码、配置自己的模型。若电脑尚未安装 Harness，安装入口会打开官方应用下载页，待本人装好后继续。
+它会下载固定版本、核对 SHA256、解压到独立临时目录并打开 `Install.command`。脚本会显示安装结果；安装结束后打开 Harness，在左侧进入「DSH Dot」。已有微信连接可以沿用；首次使用需要本人扫码、配置自己的模型。若电脑尚未安装 Harness，安装入口会打开官方应用下载页，待本人装好后继续。若已装 App 但尚未首次启动，安装窗口会打开官方 App 并等待：看到主界面后正常退出 Harness，回到同一窗口按回车继续。App 仍在运行时会继续等待本人正常退出，不会自动关闭任务。
 
-也可以直接下载[完整 macOS 安装包](https://github.com/oxmumu3/dsh-project-companion/releases/download/v0.15.0-preview.10/dsh-dot-0.15.0-preview.10-macos.zip)，解压并双击 `Install.command`。完整目录须一起保留，不要只移出入口文件。校验文件：[ZIP SHA256](https://github.com/oxmumu3/dsh-project-companion/releases/download/v0.15.0-preview.10/dsh-dot-0.15.0-preview.10-macos.zip.sha256)；全部发布资产见[固定版本页面](https://github.com/oxmumu3/dsh-project-companion/releases/tag/v0.15.0-preview.10)。
+也可以直接下载[完整 macOS 安装包](https://github.com/oxmumu3/dsh-project-companion/releases/download/v0.15.0-preview.12/dsh-dot-0.15.0-preview.12-macos.zip)，解压并双击 `Install.command`。完整目录须一起保留，不要只移出入口文件。校验文件：[ZIP SHA256](https://github.com/oxmumu3/dsh-project-companion/releases/download/v0.15.0-preview.12/dsh-dot-0.15.0-preview.12-macos.zip.sha256)；全部发布资产见[固定版本页面](https://github.com/oxmumu3/dsh-project-companion/releases/tag/v0.15.0-preview.12)。
 
 Google 三项数据权限已正式提交，当前 `UNDER_REVIEW`，尚未批准、完成 CASA 或解除已知累计 100 个账号上限；External / In production 不再逐个登记测试账号，但仍可能有未验证提示和账号策略限制，不保证任意新账号可用。flomo 需要 MAX。均为可选来源，不影响先用本地项目和微信流程。连接或启用不会自动创建私人资料扫描、订阅或推送。历史有限读取与当前审核分开记录，见[历史验证记录](verification.md)和[当前路线图](roadmap.md)。
 
-此公开包安装 Dot 与独立 `dsh-wechat`，**不会自动配置共用家庭入口，也不会安装或升级 Family**。已有家庭微信入口需另行配置 Owner 委托；当前本机 0.15 组合要求精确的 Family `0.2.0-preview.33-diary.6-dot.3`，不是只装这个公开包就能获得。
+此公开包安装 Dot 与独立 `dsh-wechat`，**不会自动配置共用家庭入口，也不会安装或升级 Family**。已有家庭微信入口需另行配置 Owner 委托；当前本机已核对的 0.15 组合使用 Family `0.2.0-preview.33-diary.6-dot.3` 或其追加旅行能力的 `.3-travel.1`，不是只装这个公开包就能获得。
 
 ## 安装后
 
@@ -31,7 +31,7 @@ Google 三项数据权限已正式提交，当前 `UNDER_REVIEW`，尚未批准�
 
 ## 官方插件页面添加
 
-高级用户可在官方插件管理页添加并启用同版本 [companion tgz](https://github.com/oxmumu3/dsh-project-companion/releases/download/v0.15.0-preview.10/dsh-project-companion-0.15.0-preview.10.tgz)。微信能力需要同一 Release 的 [dsh-wechat 0.11.1-dot.2](https://github.com/oxmumu3/dsh-project-companion/releases/download/v0.15.0-preview.10/dsh-wechat-0.11.1-dot.2.tgz)；推荐使用完整安装包处理版本和依赖。无需额外启用 YOLO 或 proactive 整包。
+高级用户可在官方插件管理页添加并启用同版本 [companion tgz](https://github.com/oxmumu3/dsh-project-companion/releases/download/v0.15.0-preview.12/dsh-project-companion-0.15.0-preview.12.tgz)。微信能力需要同一 Release 的 [dsh-wechat 0.11.1-dot.2](https://github.com/oxmumu3/dsh-project-companion/releases/download/v0.15.0-preview.12/dsh-wechat-0.11.1-dot.2.tgz)；推荐使用完整安装包处理版本和依赖。无需额外启用 YOLO 或 proactive 整包。
 
 ## 保留与升级规则
 
@@ -42,7 +42,7 @@ Google 三项数据权限已正式提交，当前 `UNDER_REVIEW`，尚未批准�
 
 ## 维护者核验
 
-完整目录包含 `Install.command`、`bundle-manifest.json`、安装脚本、两个固定 tgz 和完整许可证。原始桥接来源与固定差异见[桥接来源说明](https://github.com/oxmumu3/dsh-project-companion/blob/v0.15.0-preview.10/bridge-maintenance/README.md)。有 Node 时可在完整目录运行 `node scripts/install.mjs --bundle-dir . --dry-run`；显式安装加 `--install`。没有独立 Node 时，入口使用官方 App 自带运行时。
+完整目录包含 `Install.command`、`bundle-manifest.json`、安装脚本、两个固定 tgz 和完整许可证。原始桥接来源与固定差异见[桥接来源说明](https://github.com/oxmumu3/dsh-project-companion/blob/v0.15.0-preview.12/bridge-maintenance/README.md)。有 Node 时可在完整目录运行 `node scripts/install.mjs --bundle-dir . --dry-run`；显式安装加 `--install`。没有独立 Node 时，入口使用官方 App 自带运行时。预览也会检查桌面环境；未初始化返回 `needs_initialization`，不会报 `ready`。发现残留文件或无效登记时会停止并交由官方 App 修复，不自行写入或覆盖 profile。
 
 Google 普通三件套与单独日历使用 Keychain 密钥 + AES-256-GCM 存储；旧普通授权仅在明确查询前迁移，状态刷新不写配置。高级手填凭据、会话和历史备份不在该保证范围。历史有限读取、隔离 Host 和手机记录见[验证记录](verification.md)，不把它们改写成本版所有场景或任意新用户均通过。
 

@@ -59,6 +59,14 @@ def json_bytes(value):
     return (json.dumps(value, ensure_ascii=False, indent=2) + '\n').encode()
 
 
+def install_doc_for_kit(text, public_home, version):
+    if public_home == 'https://github.com/oxmumu3/dsh-project-companion':
+        text = text.replace('](first-use.md)', f']({public_home}/blob/v{version}/docs/first-use.md)')
+    else:
+        text = text.replace('[首次使用](first-use.md)', '首次使用（正式仓库入口仍待核验）')
+    return text.replace('](../THIRD_PARTY_NOTICES.md)', '](THIRD_PARTY_NOTICES.md)')
+
+
 def safe_name(name):
     path = PurePosixPath(name)
     if not name or path.is_absolute() or '..' in path.parts or '\\' in name or any(ord(char) < 32 for char in name):
@@ -181,11 +189,7 @@ def main():
             # Keep source-doc links unchanged and rebase only its copied links.
             install_doc = (repo / 'docs/install.md').read_text(encoding='utf-8')
             public_home = metadata.get('homepage', '')
-            if public_home == 'https://github.com/oxmumu3/dsh-project-companion':
-                install_doc = install_doc.replace('](first-use.md)', f']({public_home}/blob/main/docs/first-use.md)')
-            else:
-                install_doc = install_doc.replace('[首次使用](first-use.md)', '首次使用（正式仓库入口仍待核验）')
-            install_doc = install_doc.replace('](../THIRD_PARTY_NOTICES.md)', '](THIRD_PARTY_NOTICES.md)')
+            install_doc = install_doc_for_kit(install_doc, public_home, version)
             (stage / '安装说明.md').write_text(install_doc, encoding='utf-8')
             (stage / 'package.json').write_bytes(json_bytes({'private': True, 'type': 'module'}))
             (stage / 'Install.command').chmod(0o755)

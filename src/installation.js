@@ -1,5 +1,5 @@
 /** Local macOS distribution installer. No daemon, profile editing, login or WeChat access. */
-import {access, readFile, realpath, stat} from 'node:fs/promises';
+import {access, readFile, readdir, realpath, stat} from 'node:fs/promises';
 import {constants} from 'node:fs';
 import {basename, dirname, join, resolve} from 'node:path';
 import {homedir} from 'node:os';
@@ -117,6 +117,21 @@ async function installedPackage(profile,name){
   if(/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(direct)&&direct!==value.version)throw failure('INCONSISTENT_INSTALL',`${name} 的 direct dependency 精确版本与模块版本不一致；请通过官方插件管理器修复。`);
   return {...value,enabled};
 }
+async function desktopProfileInitialized(profile){
+  let text;
+  try{text=await readFile(join(profile,'package.json'),'utf8');}catch(error){
+    if(error.code!=='ENOENT')throw failure('INVALID_LOCAL_METADATA','无法读取官方桌面环境，请通过官方 App 检查修复。');
+    let entries;try{entries=await readdir(profile);}catch(error){if(error.code==='ENOENT')return false;throw failure('INVALID_LOCAL_METADATA','无法检查官方桌面环境，请通过官方 App 检查修复。');}
+    if(entries.length)throw failure('INCONSISTENT_PROFILE','桌面环境存在文件但缺少 package.json，可能是未完成的初始化或安装残留；请通过官方 App 检查修复，不会将其当作全新环境或手工重建。');
+    return false;
+  }
+  let manifest;try{manifest=JSON.parse(text);}catch{throw failure('INVALID_LOCAL_METADATA','官方桌面环境的 package.json 无法解析，请通过官方 App 检查修复。');}
+  const record=value=>value!==null&&typeof value==='object'&&!Array.isArray(value);
+  // Desktop's requireDesktopProfile checks package.json. initProfile creates
+  // these two containers even before any dependencies have been installed.
+  if(!record(manifest)||!record(manifest.dependencies)||!Array.isArray(manifest.dsh?.profile?.bundles)||manifest.dsh.profile.bundles.some(name=>typeof name!=='string'||!name.trim()))throw failure('INVALID_LOCAL_METADATA','官方桌面环境的依赖或插件登记无效，请通过官方 App 检查修复；不会自动初始化或覆盖。');
+  return true;
+}
 
 /** By default only validates and previews. install:true invokes the official Desktop CLI. */
 export async function runInstallation({bundleDir,appPath='/Applications/DeepSeek Harness.app',homeDir=homedir(),dshHome,platform=process.platform,runner=runProcess,install=false,env=process.env,ownPid=process.pid}){
@@ -131,6 +146,7 @@ export async function runInstallation({bundleDir,appPath='/Applications/DeepSeek
   const sdk=await runner(executable,['--expose-internals','--max-old-space-size=128','--input-type=module','--eval',probe],options);let versions;
   try{if(sdk.code!==0)throw Error();versions=JSON.parse(sdk.stdout.trim());}catch{throw failure('RUNTIME_PROBE_FAILED','无法读取官方 App 自带的 Harness/SDK 版本。');}
   if(!bundle.manifest.runtimeVersions.includes(versions.runtimeVersion)||versions.runtimeVersion!==versions.sdkVersion)throw failure('UNSUPPORTED_RUNTIME','当前 Harness/SDK 不在此候选安装包已验证的精确版本范围。');
+  if(!await desktopProfileInitialized(profile))return {status:'needs_initialization',mode:install?'install':'dry_run',runtimeVersion:versions.runtimeVersion,profile,message:'请先打开官方 DeepSeek Harness 一次，等待主界面出现，再保存工作并正常退出，然后回到同一安装窗口继续；本次未安装或创建桌面环境。'};
   const steps=[];
   for(const p of bundle.packages){
     const existing=await installedPackage(profile,p.name);let action='install';

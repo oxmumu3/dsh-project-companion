@@ -348,14 +348,69 @@ test('a second quote mismatch or different validation failure is still rejected 
   }
 });
 
-test('only a quote mismatch is eligible for repair; JSON, schema, claim and citation failures are not', async () => {
-  const unknown = summary(); unknown.changes[0].sourceIds = ['file:unknown'];
-  const claim = summary(); claim.blockers[0].text = '我已验收成功。';
-  for (const output of ['{', { ...summary(), extra: true }, unknown, claim]) {
+test('JSON, schema and malformed citation failures are not eligible for bounded repair', async () => {
+  const malformed = summary(); malformed.changes[0].sourceIds = ['not-a-source-id'];
+  for (const output of ['{', { ...summary(), extra: true }, malformed]) {
     const f = fixture([accountedStream(output), JSON.stringify(summary())]);
     await assert.rejects(f.model.summarize({ project: { label: '项目' }, sources: [source()] }), { code: 'MODEL_INVALID_OUTPUT' });
     assert.equal(f.calls.length, 1); f.model.close();
   }
+});
+
+const unknownSource = () => ({changes:[{kind:'inference',text:'资料之间存在待确认的依赖。',sourceIds:['file:invented-source-private-marker']}],blockers:[],nextSteps:[]});
+test('an unknown source ID gets one fixed correction using only the identical original source and quote catalog',async()=>{
+ const f=fixture([accountedStream(unknownSource()),request=>{
+  const data=JSON.parse(request.messages[0].content[0].text),q=data.quoteCandidates.find(row=>row.sourceId==='file:progress');assert.ok(q);
+  return accountedStream({changes:[{kind:'quote',quoteId:q.quoteId,sourceIds:[q.sourceId]}],blockers:[],nextSteps:[]})();
+ }]);
+ const result=await f.model.summarize({project:{label:'合成项目'},sources:[source()]});assert.equal(result.changes[0].kind,'quote');assert.ok(source().text.includes(result.changes[0].text));assert.deepEqual(result.changes[0].sourceIds,['file:progress']);assert.equal(f.calls.length,2);
+ const [first,repair]=f.calls;assert.equal(first.request.messages[0].content[0].text,repair.request.messages[0].content[0].text);assert.equal(first.signal,repair.signal);assert.equal(first.config.maxTokens,6000);assert.equal(repair.config.maxTokens,4500);assert.equal(first.config.model,repair.config.model);assert.match(repair.request.system,/UNKNOWN_SOURCE_ID/);assert.match(repair.request.system,/sources.*sourceId/);assert.doesNotMatch(JSON.stringify(repair.request),/invented-source-private-marker|资料之间存在待确认的依赖/);f.model.close();
+});
+test('unknown source and other repairable categories share one slot and never accept or remap a fabricated ID',async()=>{
+ for(const [first,second,diagnostic]of[[unknownSource(),unknownSource(),'UNKNOWN_SOURCE_ID'],[unknownSource(),attributedClaim(),'CLAIM'],[wrongQuote(),unknownSource(),'UNKNOWN_SOURCE_ID'],[attributedClaim(),unknownSource(),'UNKNOWN_SOURCE_ID']]){
+  const f=fixture([accountedStream(first),accountedStream(second),JSON.stringify(summary())]);await assert.rejects(f.model.summarize({project:{label:'项目'},sources:[source()]}),{code:'MODEL_INVALID_OUTPUT',validationDiagnostic:diagnostic});assert.equal(f.calls.length,2);f.model.close();
+ }
+});
+test('unknown source correction never exceeds known remaining usage or proceeds after authorization is lost',async()=>{
+ for(const first of [JSON.stringify(unknownSource()),accountedStream(unknownSource(),{}),accountedStream(unknownSource(),{outputTokens:0}),accountedStream(unknownSource(),{outputTokens:6000})]){
+  const f=fixture([first,JSON.stringify(summary())]);await assert.rejects(f.model.summarize({project:{label:'项目'},sources:[source()]}),{code:'MODEL_INVALID_OUTPUT',validationDiagnostic:'UNKNOWN_SOURCE_ID'});assert.equal(f.calls.length,1);f.model.close();
+ }
+ for(const mode of ['revoke','abort']){
+  const controller=new AbortController(),refused=Object.assign(new Error('LOOP_AUTH_CHANGED'),{code:'LOOP_AUTH_CHANGED'});let guards=0;const f=fixture([accountedStream(unknownSource()),JSON.stringify(summary())]);
+  await assert.rejects(f.model.summarize({project:{label:'项目'},sources:[source()],signal:controller.signal,beforeRequest:async()=>{if(++guards===3){if(mode==='revoke')throw refused;controller.abort();}}}),mode==='revoke'?error=>error===refused:{code:'MODEL_ABORTED'});assert.equal(guards,3);assert.equal(f.calls.length,1);f.model.close();
+ }
+});
+
+const attributedClaim = () => ({changes:[{kind:'inference',text:'项目记录新增“手机端验收通过”的声明，模型被拒措辞仅作测试，并非本轮独立验证。',sourceIds:['file:progress']}],blockers:[],nextSteps:[]});
+const acceptanceSource = () => source('file:progress',{text:'最新记录：样例页面已更新，测试者记录手机端验收通过。变化推送仍待手机确认。'});
+test('an attributed acceptance claim is repaired once with an exact quote candidate and identical input',async()=>{
+ const original=acceptanceSource(),f=fixture([accountedStream(attributedClaim()),request=>{
+  const data=JSON.parse(request.messages[0].content[0].text),q=data.quoteCandidates.find(row=>row.text.includes('验收通过'));
+  assert.ok(q);return accountedStream({changes:[{kind:'quote',quoteId:q.quoteId,sourceIds:[q.sourceId]}],blockers:[],nextSteps:[{kind:'suggestion',text:'建议关注仍待手机确认的变化推送。',sourceIds:['file:progress']}]})();
+ }]);
+ const result=await f.model.summarize({project:{label:'合成项目'},sources:[original]});
+ assert.equal(result.changes[0].kind,'quote');assert.equal(result.changes[0].text,'最新记录：样例页面已更新，测试者记录手机端验收通过。');assert.equal(result.nextSteps.length,1);assert.equal(f.calls.length,2);
+ const [first,repair]=f.calls;assert.equal(first.request.messages[0].content[0].text,repair.request.messages[0].content[0].text);assert.equal(first.signal,repair.signal);assert.equal(first.config.maxTokens,6000);assert.equal(repair.config.maxTokens,4500);assert.equal(first.config.model,repair.config.model);
+ assert.match(first.request.system,/来源.*(?:验收|验证).*声明.*quoteId/);assert.match(first.request.system,/inference.*不得.*(?:复述|转述).*声明/);assert.match(repair.request.system,/CLAIM/);assert.doesNotMatch(JSON.stringify(repair.request),/模型被拒措辞/);assert.deepEqual(repair.request.tools,[]);assert.equal(repair.request.messages.length,1);f.model.close();
+});
+test('CLAIM and QUOTE_MISMATCH share one repair slot and never relabel or drop the rejected item',async()=>{
+ for(const [first,second,diagnostic]of[[attributedClaim(),attributedClaim(),'CLAIM'],[attributedClaim(),wrongQuote(),'QUOTE_MISMATCH'],[wrongQuote(),attributedClaim(),'CLAIM']]){
+  const f=fixture([accountedStream(first),accountedStream(second),JSON.stringify(summary())]);
+  await assert.rejects(f.model.summarize({project:{label:'项目'},sources:[source()]}),{code:'MODEL_INVALID_OUTPUT',validationDiagnostic:diagnostic});assert.equal(f.calls.length,2);f.model.close();
+ }
+});
+test('CLAIM repair cannot proceed with unknown or exhausted usage',async()=>{
+ for(const first of [JSON.stringify(attributedClaim()),accountedStream(attributedClaim(),{}),accountedStream(attributedClaim(),{outputTokens:0}),accountedStream(attributedClaim(),{outputTokens:6000}),accountedStream(attributedClaim(),{outputTokens:5700,reasoningTokens:300})]){
+  const f=fixture([first,JSON.stringify(summary())]);await assert.rejects(f.model.summarize({project:{label:'项目'},sources:[source()]}),{code:'MODEL_INVALID_OUTPUT',validationDiagnostic:'CLAIM'});assert.equal(f.calls.length,1);f.model.close();
+ }
+});
+test('revocation or abort before a CLAIM repair prevents another model request',async()=>{
+ for(const mode of ['revoke','abort']){
+  const controller=new AbortController(),refused=Object.assign(new Error('LOOP_AUTH_CHANGED'),{code:'LOOP_AUTH_CHANGED'});let guards=0;
+  const f=fixture([accountedStream(attributedClaim()),JSON.stringify(summary())]);
+  await assert.rejects(f.model.summarize({project:{label:'项目'},sources:[source()],signal:controller.signal,beforeRequest:async()=>{if(++guards===3){if(mode==='revoke')throw refused;controller.abort();}}}),mode==='revoke'?error=>error===refused:{code:'MODEL_ABORTED'});
+  assert.equal(guards,3);assert.equal(f.calls.length,1);f.model.close();
+ }
 });
 
 test('repair never invents a new output budget when usage is unknown, empty or exhausted', async () => {
