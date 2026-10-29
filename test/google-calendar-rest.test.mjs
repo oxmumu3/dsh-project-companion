@@ -31,6 +31,21 @@ test('all-day dates and exclusive end survive; pagination is visible without fol
  assert.deepEqual(r.value.items[0].start,{date:'2026-10-20'});assert.deepEqual(r.value.items[0].end,{date:'2026-10-21'});assert.equal(r.value.items[0].htmlLink,undefined);assert.equal(r.value.truncated,true);assert.equal(r.coverage.hasMore,true);assert.equal(JSON.stringify(r).includes('opaque-private-page-token'),false);assert.equal(calls,1);await t.close();
 });
 
+test('all-day events retain their source calendar timezone without invented timed starts',async()=>{
+ const t=createGoogleCalendarRest({getToken:async()=> 'x',fetch:async()=>response({timeZone:'America/New_York',items:[{id:'all-day',summary:'Synthetic day',start:{date:'2026-11-01'},end:{date:'2026-11-02'}}]})});
+ const r=await t.call('calendar','list_events',args,gates);
+ assert.equal(r.value.items[0].calendarTimeZone,'America/New_York');
+ assert.deepEqual(r.value.items[0].start,{date:'2026-11-01'});assert.deepEqual(r.value.items[0].end,{date:'2026-11-02'});
+ assert.equal(r.value.items[0].start.dateTime,undefined);await t.close();
+});
+
+test('malformed calendar dates and mixed timed/all-day pairs are rejected',async()=>{
+ for(const [start,end] of [[{date:'2026-02-31'},{date:'2026-03-01'}],[{date:'2026-11-01'},{date:'2026-11-01'}],[{date:'2026-11-01'},{dateTime:'2026-11-02T00:00:00Z'}]]){
+  const t=createGoogleCalendarRest({getToken:async()=> 'x',fetch:async()=>response({timeZone:'UTC',items:[{id:'bad',start,end}]})});
+  await assert.rejects(t.call('calendar','list_events',args,gates),fails('CONTEXT_PROTOCOL_INVALID'));await t.close();
+ }
+});
+
 test('unsupported calendar or input is rejected before tokens or HTTP',async()=>{
  let tokens=0,http=0;const t=createGoogleCalendarRest({getToken:async()=>{tokens++;return'x';},fetch:async()=>{http++;return response({items:[]});}});
  for(const input of [{...args,calendarId:'other'},{...args,pageSize:11},{...args,pageSize:0},{...args,endTime:'2026-11-01T00:00:00Z'},{...args,endTime:args.startTime},{...args,startTime:'2026-10-20'},{...args,orderBy:'updated'},{...args,query:'extra'}])await assert.rejects(t.call('calendar','list_events',input,gates),fails('CONTEXT_ARGUMENTS_INVALID'));

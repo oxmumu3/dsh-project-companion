@@ -1,4 +1,6 @@
 import {withAuthDiagnostic} from './auth-diagnostics.js';
+import {canonicalizeTimeZone} from '../vendor/proactive/lib/domain.js';
+import {calendarEventBounds,isCalendarDate} from './calendar-window.js';
 /** Bounded Google Calendar REST reads. This is a bundled contract, not MCP discovery. */
 const ORIGIN='https://www.googleapis.com';
 const PATH='/calendar/v3/calendars/primary/events';
@@ -42,13 +44,19 @@ function officialLink(value){
 }
 function eventTime(value){
  if(!plain(value))fail('CONTEXT_PROTOCOL_INVALID');
- if(typeof value.date==='string'&&/^\d{4}-\d\d-\d\d$/u.test(value.date)&&Number.isFinite(Date.parse(value.date))&&value.dateTime===undefined)return{date:value.date};
+ if(isCalendarDate(value.date)&&value.dateTime===undefined)return{date:value.date};
  if(isTime(value.dateTime)&&value.date===undefined){const r={dateTime:value.dateTime};if(typeof value.timeZone==='string'&&value.timeZone.length<=100&&!CONTROL.test(value.timeZone))r.timeZone=value.timeZone;return r;}
  fail('CONTEXT_PROTOCOL_INVALID');
 }
-function event(row){
+function event(row,calendarTimeZone){
  if(!plain(row)||typeof row.id!=='string'||!row.id.length||row.id.length>512||CONTROL.test(row.id)||!['confirmed','tentative',undefined].includes(row.status))fail('CONTEXT_PROTOCOL_INVALID');
  const item={id:row.id,start:eventTime(row.start),end:eventTime(row.end)};
+ const allDay=item.start.date!==undefined||item.end.date!==undefined;
+ if(allDay){
+  if(!item.start.date||!item.end.date||item.end.date<=item.start.date)fail('CONTEXT_PROTOCOL_INVALID');
+  if(calendarTimeZone)item.calendarTimeZone=calendarTimeZone;
+ }
+ if(!allDay||calendarTimeZone)try{calendarEventBounds(item);}catch{fail('CONTEXT_PROTOCOL_INVALID');}
  if(row.status)item.status=row.status;
  if(typeof row.summary==='string')item.summary=text(row.summary,500);
  if(isTime(row.updated))item.updated=row.updated;
@@ -100,7 +108,9 @@ export function createGoogleCalendarRest({getToken,fetch:fetchImpl=globalThis.fe
      reply=await wait(owned,signal);}catch(e){if(e?.code?.startsWith('CONTEXT_'))throw e;fail('CONTEXT_HTTP_ERROR');}
     const raw=await body(reply,signal);await authorized(settings,signal);cancelled(settings);
     if(!plain(raw)||(raw.items!==undefined&&!Array.isArray(raw.items))||(raw.nextPageToken!==undefined&&(typeof raw.nextPageToken!=='string'||raw.nextPageToken.length>8192)))fail('CONTEXT_PROTOCOL_INVALID');
-    const rows=raw.items??[];if(rows.length>1000)fail('CONTEXT_PROTOCOL_INVALID');const items=rows.slice(0,args.pageSize).map(event);const hasMore=Boolean(raw.nextPageToken)||rows.length>args.pageSize;
+    let calendarTimeZone;
+    if(raw.timeZone!==undefined){try{if(typeof raw.timeZone!=='string'||raw.timeZone.length>100)throw Error();calendarTimeZone=canonicalizeTimeZone(raw.timeZone);}catch{fail('CONTEXT_PROTOCOL_INVALID');}}
+    const rows=raw.items??[];if(rows.length>1000)fail('CONTEXT_PROTOCOL_INVALID');const items=rows.slice(0,args.pageSize).map(row=>event(row,calendarTimeZone));const hasMore=Boolean(raw.nextPageToken)||rows.length>args.pageSize;
     const partial=rows.slice(0,args.pageSize).some(row=>typeof row.summary==='string'&&row.summary.length>500);
     return{value:{items,truncated:hasMore||partial},fetchedAt:new Date(clock()).toISOString(),coverage:{source:'calendar',calendarId:'primary',from:args.startTime,to:args.endTime,returned:items.length,hasMore}};
    });

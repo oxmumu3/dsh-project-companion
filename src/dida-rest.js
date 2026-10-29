@@ -19,6 +19,7 @@ const tool=(name,properties)=>({name,inputSchema:{type:'object',additionalProper
 const CATALOG={provenance:'bundled-contract',unsupportedOperations:['search'],tools:[
  tool('list_projects',{offset:{type:'integer',enum:[0]},limit:{type:'integer',minimum:1,maximum:MAX_ITEMS}}),
  tool('get_project_with_undone_tasks',{project_id:ident}),
+ tool('get_project_tasks_bounded',{project_id:ident,limit:{type:'integer',minimum:1,maximum:MAX_ITEMS}}),
  tool('get_named_project_with_undone_tasks',{project_name:{type:'string',minLength:1,maxLength:180},limit:{type:'integer',minimum:1,maximum:MAX_ITEMS}}),
  tool('get_task_in_project',{project_id:ident,task_id:ident}),
 ]};
@@ -56,11 +57,12 @@ function project(row,coverage){
 function task(row,projectId,expectedId,coverage){
  if(!plain(row)||!validId(row.id)||(expectedId&&row.id!==expectedId)||(row.projectId!==undefined&&row.projectId!==projectId)||typeof row.title!=='string'||(row.status!==undefined&&![0,2].includes(row.status)))fail('CONTEXT_PROTOCOL_INVALID');
  const content=[];
- if(typeof row.dueDate==='string'&&row.dueDate.length<=60&&Number.isFinite(Date.parse(row.dueDate)))content.push(`截止：${row.dueDate}`);
+ const dueDate=typeof row.dueDate==='string'&&row.dueDate.length<=60&&Number.isFinite(Date.parse(row.dueDate))?new Date(row.dueDate).toISOString():undefined;
+ if(dueDate)content.push(`截止：${row.dueDate}`);
  if(typeof row.content==='string')content.push(row.content);
  if(typeof row.desc==='string'&&row.desc!==row.content)content.push(row.desc);
  if(Array.isArray(row.items)&&row.items.length)coverage.truncated=true;
- return{id:row.id,projectId,title:clipped(row.title,180,coverage),content:clipped(content.join('\n'),1200,coverage),...(row.status!==undefined?{status:row.status}:{})};
+ return{id:row.id,projectId,title:clipped(row.title,180,coverage),content:clipped(content.join('\n'),1200,coverage),...(dueDate?{dueDate}:{}),...(row.status!==undefined?{status:row.status}:{})};
 }
 function projectResult(raw,name,args){
  const coverage={truncated:false};let items;
@@ -69,10 +71,13 @@ function projectResult(raw,name,args){
   items=raw.slice(0,args.limit).map(row=>project(row,coverage));
   // This endpoint provides no next-page flag. A full requested page may have more.
   if(raw.length>=args.limit)coverage.truncated=true;
- }else if(name==='get_project_with_undone_tasks'){
+ }else if(['get_project_with_undone_tasks','get_project_tasks_bounded'].includes(name)){
   if(!plain(raw)||!plain(raw.project)||raw.project.id!==args.project_id||!Array.isArray(raw.tasks))fail('CONTEXT_PROTOCOL_INVALID');
-  items=raw.tasks.slice(0,MAX_ITEMS).map(row=>task(row,args.project_id,null,coverage));
-  if(raw.tasks.length>MAX_ITEMS)coverage.truncated=true;
+  const limit=name==='get_project_tasks_bounded'?args.limit:MAX_ITEMS;
+  // The upstream /data endpoint has no task limit. Its response is capped at
+  // 1 MiB, then only the explicitly requested number of tasks is projected.
+  items=raw.tasks.slice(0,limit).map(row=>task(row,args.project_id,null,coverage));
+  if(raw.tasks.length>limit)coverage.truncated=true;
  }else items=[task(raw,args.project_id,args.task_id,coverage)];
  return{items,truncated:coverage.truncated};
 }
@@ -134,7 +139,7 @@ export function createDidaRest({getToken,fetch:fetchImpl=globalThis.fetch,clock=
      const items=raw.tasks.slice(0,args.limit).map(row=>task(row,project_id,null,coverage));
      return{value:{items,truncated:coverage.truncated},fetchedAt:new Date(clock()).toISOString()};
     }
-    const path=name==='list_projects'?'/open/v1/project':`/open/v1/project/${encodeURIComponent(args.project_id)}/${name==='get_project_with_undone_tasks'?'data':`task/${encodeURIComponent(args.task_id)}`}`;
+    const path=name==='list_projects'?'/open/v1/project':`/open/v1/project/${encodeURIComponent(args.project_id)}/${['get_project_with_undone_tasks','get_project_tasks_bounded'].includes(name)?'data':`task/${encodeURIComponent(args.task_id)}`}`;
     const url=new URL(path,ORIGIN);if(name==='list_projects'){url.searchParams.set('offset','0');url.searchParams.set('limit',String(args.limit));}
     const raw=await get(url);
     return{value:projectResult(raw,name,args),fetchedAt:new Date(clock()).toISOString()};

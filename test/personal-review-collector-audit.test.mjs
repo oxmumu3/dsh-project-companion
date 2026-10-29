@@ -69,17 +69,19 @@ test('collector audit: known Dida list ids bind task reads and returned tasks', 
 });
 
 test('collector audit: valid all-day calendar events survive the bounded context path', async () => {
-  let stored;
+  let stored, calendarTimeZone = 'UTC';
   const context = createPersonalContext({ store: { get: async () => stored, put: async (_key, value) => { stored = value; } },
     readConfig: () => ({}), credentialState: () => ({ configured: true, key: 'a'.repeat(64) }), readBinding: async () => ({ kind: 'unbound' }),
     transport: { catalog: async () => ({ tools: [{ name: 'list_events', inputSchema: { type: 'object' } }] }),
-      call: async () => ({ value: { items: [{ id: 'all-day', summary: 'Synthetic holiday', start: { date: '2026-10-29' }, end: { date: '2026-10-30' } }] } }) },
+      call: async () => ({ value: { items: [{ id: 'all-day', summary: 'Synthetic holiday', start: { date: '2026-10-29' }, end: { date: '2026-10-30' }, ...(calendarTimeZone ? { calendarTimeZone } : {}) }] } }) },
   });
   try {
     await context.act(caller, { action: 'connect', source: 'calendar', userRequested: true });
     const result = await context.act(caller, { action: 'query', source: 'calendar', operation: 'upcoming', from: '2026-10-29T00:00:00.000Z', to: '2026-10-30T00:00:00.000Z', limit: 10, userRequested: true });
     assert.equal(result.items.length, 1);
     assert.match(result.items[0].text, /2026-10-29/);
+    calendarTimeZone = undefined;
+    await assert.rejects(context.act(caller, { action: 'query', source: 'calendar', operation: 'upcoming', from: '2026-10-29T00:00:00.000Z', to: '2026-10-30T00:00:00.000Z', limit: 10, userRequested: true }), { code: 'CONTEXT_SCOPE_VIOLATION' });
   } finally { await context.close(); }
 });
 
