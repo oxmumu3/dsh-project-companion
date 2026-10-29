@@ -1,49 +1,50 @@
 # DSH Dot · DSH Project Companion
 
-给已有官方 DeepSeek Harness 加上项目助理：在微信里明确交办到对应项目，把本轮执行回复带回原对话，恢复缓存时避免重新执行。
+把个人资料、Harness 项目和微信连起来：按你指定的范围整理简报，把任务交给对应项目，再把结果和需要关注的变化带回微信。
 
 作者：牛村木木山 · [正式仓库](https://github.com/oxmumu3/dsh-project-companion)。社区开源项目，非 DeepSeek 或 OpenAI 官方产品。
 
 ## 当前版本与入口（2026-10-28）
 
-- **公开下载：`0.14.1-preview.11`**，面向 macOS 上已有的官方 Harness，完整包包含 Dot 与独立微信桥接。
-- **当前源码：`0.15.0-preview.9` 候选**，配套 Family `0.2.0-preview.33-diary.6-dot.3`。独立只读项目交办和提醒已有手机确认；0.15 尚未公开。已安装日常 Harness；复杂五来源合成简报连续两次通过，Gmail 按本人原查询最多一条实读通过（本次匹配 0 条），继承单次检查失败的明确反馈。20:40 微信五源组合分析简报已由本人确认收到；20:45 的单次检查已完成，因无变化静默，未留下周期计划。变化推送、新账号开箱及多日/休眠稳定性仍未实测；本轮不把这些边界写成已完成。下面的公开安装包不包含这些新增能力。
+- **本地候选：`0.15.0-preview.10`，尚未公开发布**。以下下载段落是待发布文案；当前不能将它当作可用下载入口。
+- **维护者共用家庭微信入口已实测**：五源分析简报、独立只读项目交办的一份结果、普通提醒，以及同范围单次无变化静默。
+- **电脑端已实测**：有变化只回传一次，取消或撤权后不读不发；新目录经官方初始化后真实安装成功。变化推送的手机收件、首次扫码授权及多日/休眠恢复仍分别验收，不保证所有场景都已稳定。
 
 | 微信入口 | 使用方式 | 版本与边界 |
 | --- | --- | --- |
 | 独立 Dot | 通过 Dot 自己的微信桥接连接，已有兼容绑定直接沿用 | 公开完整包使用 `dsh-wechat@0.11.1-dot.2`；不自动接入或升级 Family |
 | 共用家庭管家 | 本人沿用家庭管家原微信对话，由已配置的 Owner 委托转给 Dot | 本机 0.15 精确配套 Family `0.2.0-preview.33-diary.6-dot.3`，需单独配置；家人成员不会获得本人的资料与项目权限 |
 
-以下能力与[快速开始](docs/quickstart.md)按当前 0.15 编写；公开 preview11 的行为以[固定发行说明](https://github.com/oxmumu3/dsh-project-companion/releases/tag/v0.14.1-preview.11)为准。共用入口不能视为与独立 Dot 任意语句、任意资源操作完全等价，支持的原话示例见[个人资料闭环](docs/context-loop.md)。
+使用方式见[快速开始](docs/quickstart.md)。共用家庭入口需要另行配置；家人成员不会获得 Owner 的资料和项目权限，支持的原话示例见[个人资料闭环](docs/context-loop.md)。
 
 Google Gmail、Calendar、Drive 的数据权限已正式提交，当前 **`UNDER_REVIEW`**，尚未批准、完成 CASA 或解除已知累计 100 个账号上限；不保证任意新账号均能接入。flomo 需要 MAX。五源授权在本机升级后保留，不等于已创建扫描或订阅。历史账号实读与旧版手机记录见[历史验证记录](docs/verification.md)，不能代替本版验收。
 
-## 0.15.0-preview.2 体验收口候选
+## 从资料到下一步
 
-本地候选进一步区分 Google 本次授权结果与已有凭据；在授权卡说明未验证提示及恢复方式，把首份问题放到已启用来源旁边，已连接后的重连降为次级。首页显示最新交办，保留上次已核验检查与静默状态。共享家庭微信入口的工作台只投影当前 Owner 的记录，交代和改计划继续在原微信完成；本视图不回退另一条旧会话的写入口。此候选尚未公开发布，也不替代手机验收。
+先连接需要的资料，再生成一份带来源的项目简报；随后可以交办任务，或只检查一次有没有变化。连接页区分授权成功、来源启用与实际读取，首页保留最近交办和检查结果。共用家庭微信入口只展示当前 Owner 的记录，交办和改计划继续在原微信完成；家人的权限保持独立。
 
-具体取舍及一手来源见[本轮迭代](docs/personal-agent-iteration.md)、[竞品与复用研究](docs/research/personal-agent-20261028/README.md)和[交互依据](docs/research/personal-agent-20261028/UX.md)。
+具体取舍及一手来源见[本轮迭代](docs/personal-agent-iteration.md)、[竞品与复用研究](https://github.com/oxmumu3/dsh-project-companion/blob/v0.15.0-preview.10/docs/research/personal-agent-20261028/README.md)和[交互依据](https://github.com/oxmumu3/dsh-project-companion/blob/v0.15.0-preview.10/docs/research/personal-agent-20261028/UX.md)。
 
 ## 安装
 
-[下载 0.14.1-preview.11 macOS 完整包](https://github.com/oxmumu3/dsh-project-companion/releases/download/v0.14.1-preview.11/dsh-dot-0.14.1-preview.11-r3-macos.zip) · [固定版本发布页](https://github.com/oxmumu3/dsh-project-companion/releases/tag/v0.14.1-preview.11) · [安装说明](docs/install.md)。
+[下载 0.15.0-preview.10 macOS 完整包](https://github.com/oxmumu3/dsh-project-companion/releases/download/v0.15.0-preview.10/dsh-dot-0.15.0-preview.10-macos.zip) · [固定版本发布页](https://github.com/oxmumu3/dsh-project-companion/releases/tag/v0.15.0-preview.10) · [安装说明](docs/install.md)。
 
 先保存并正常退出 Harness，把下面一行粘贴到 macOS「终端」：
 
 ```sh
-(dsh_dot_dir="$(mktemp -d)" && cd "$dsh_dot_dir" && curl -fLO "https://github.com/oxmumu3/dsh-project-companion/releases/download/v0.14.1-preview.11/dsh-dot-0.14.1-preview.11-r3-macos.zip" && curl -fLO "https://github.com/oxmumu3/dsh-project-companion/releases/download/v0.14.1-preview.11/dsh-dot-0.14.1-preview.11-r3-macos.zip.sha256" && shasum -a 256 -c "dsh-dot-0.14.1-preview.11-r3-macos.zip.sha256" && ditto -x -k "dsh-dot-0.14.1-preview.11-r3-macos.zip" . && open "dsh-dot-0.14.1-preview.11-r3-macos/Install.command")
+(dsh_dot_dir="$(mktemp -d)" && cd "$dsh_dot_dir" && curl -fLO "https://github.com/oxmumu3/dsh-project-companion/releases/download/v0.15.0-preview.10/dsh-dot-0.15.0-preview.10-macos.zip" && curl -fLO "https://github.com/oxmumu3/dsh-project-companion/releases/download/v0.15.0-preview.10/dsh-dot-0.15.0-preview.10-macos.zip.sha256" && shasum -a 256 -c "dsh-dot-0.15.0-preview.10-macos.zip.sha256" && ditto -x -k "dsh-dot-0.15.0-preview.10-macos.zip" . && open "dsh-dot-0.15.0-preview.10-macos/Install.command")
 ```
 
 命令会下载、校验并打开安装入口；安装结束后打开 Harness。Google 数据权限仍在审核，已知累计 100 个账号上限尚未解除，flomo 需要 MAX，均为可选来源。
 
-1. 准备受支持的官方 Harness，保存工作并正常退出。将同版本安装包解压，保留整个目录，再双击 `Install.command`。
+1. 准备受支持的官方 Harness；首次安装 Harness 后先打开一次，初始化桌面环境，再保存工作并正常退出。将同版本安装包解压，保留整个目录，再双击 `Install.command`。
 2. 打开 Harness，完成自己的模型登录与配置，确认微信桥接与项目助理均启用，从左侧打开「DSH Dot」。
 3. 已有微信连接直接沿用。首次连接时扫码确认，再从微信发一句「你好」建立会话。
 4. 先选择一个已在 Harness 添加的项目，预览资料，生成首份只读简报，再在手机实际看见后确认收件。
 
 这是插件增强包，需要官方 **DSH `0.2.0-rc.2`、`0.2.1-rc.2` 或 `0.2.1-rc.3`**。缺少 Harness 时，脚本仅指引你去官方 Releases 安装应用，再返回继续；它不是完整一体机，也不是另一款微信版 App。安装仍可能联网下载依赖。入口未签名、公证；遇到 macOS 安全拦截时先停止核对，不绕过安全检查。Windows 整合安装尚未验证。
 
-公开 preview11 完整包使用保留上游 MIT 许可的 `dsh-wechat@0.11.1-dot.2`：允许从已审计的 `0.11.0` 或 `0.11.1-dot.1` 升级，已是 `0.11.1-dot.2` 时保留，沿用原绑定；其他版本停止，不降级或重置配对。通过官方插件页面手动添加时也须使用该发布的配套文件。完整步骤与维护者说明见[安装说明](docs/install.md)和[首次使用](docs/first-use.md)。
+完整包使用保留上游 MIT 许可的 `dsh-wechat@0.11.1-dot.2`：允许从已审计的 `0.11.0` 或 `0.11.1-dot.1` 升级，已是 `0.11.1-dot.2` 时保留，沿用原绑定；其他版本停止，不降级或重置配对。通过官方插件页面手动添加时也须使用该发布的配套文件。完整步骤与维护者说明见[安装说明](docs/install.md)和[首次使用](docs/first-use.md)。
 
 ## 能做什么
 
@@ -52,7 +53,7 @@ Google Gmail、Calendar、Drive 的数据权限已正式提交，当前 **`UNDER
 - **项目变化卡**：明确询问一个已关注项目，从三份固定文件与安全项目记忆整理变化、阻塞和建议；标清来源及未知，同可见资料未变时不重复正文。新卡不自动替换已有日报或主动跟进。
 - **记住上下文**：保存目标、决策、阻塞和下一步建议；提供保存回执，在项目详情可纠正或确认忘记，关闭重开后可恢复。它是有限项目笔记，不替代正式待办或验收记录。
 - **明确交办**：你说清楚项目与任务后，交给对应原生项目的可用会话，沿用本机审批设置；区分已接收、运行中、待审批、完成与失败，一份最终结果回原微信对话。共用家庭入口须保留“把这个任务交给 项目：任务全文”的完整原话；原先受控 README 首行读取是另一项能力，不证明普通任务的手机闭环。
-- **恢复回复**：纯缓存恢复请求由通道处理，不重新派工；只有明确未发送的连接故障才作有界重试，不盲重发投递不确定的结果。新版真实手机恢复与单结果验收仍待完成。
+- **恢复回复**：纯缓存恢复请求由通道处理，不重新派工；只有明确未发送的连接故障才作有界重试，不盲重发投递不确定的结果。`DOT0156` 已确认只回传一份执行结果；本版限流后恢复收件仍需单独验收。
 - **提醒与日报**：按明确时间设置一次提醒或固定日报，可以暂停、取消。
 - **只读跟进**：先试一次，或明确设置频率，让它核对项目变化、阻塞与下一步；没有值得告知的新情况时可静默结束。
 - **AI 资讯日报**：从 92 个技术博客 RSS 中筛选 AI 与 Builder 相关内容，最多 3 篇重点＋7 篇速览，保留原文链接和读取范围；预览可带明确关注点，解释与本次兴趣的联系；不保存兴趣或改变原计划。支持明确时间开启与取消。详见[资讯日报](docs/news.md)。
@@ -107,8 +108,8 @@ AI 资讯抓取只访问固定公开来源，候选标题、摘要及选中文�
 
 ## 开发与许可
 
-MIT。默认开发环境为 Node.js 22.13+；0.15 冻结包已做三套受支持 SDK 各 1280/1280 回归、独立审读与隔离官方 Host 检查，日常安装和原生界面另有核验；手机、新用户开箱与长期稳定性不因此通过。当前证据层级见[闭环说明](docs/context-loop.md)，此前有限读取与手机证据见[历史验证记录](docs/verification.md)。请通过官方插件管理器安装与启用，不手改 profile 或宿主 bundle 绕过管理器。
+MIT。默认开发环境为 Node.js 22.13+；SDK 回归、独立审读、隔离官方 Host、日常安装与界面核验按各自版本记录；本地 .10 候选尚未完成日常安装和真实模型验收。上文列出的手机场景已实测；这些记录不代表新用户完整开箱、所有变化推送或长期稳定性均已通过。当前证据层级见[闭环说明](docs/context-loop.md)，此前有限读取与手机证据见[历史验证记录](docs/verification.md)。请通过官方插件管理器安装与启用，不手改 profile 或宿主 bundle 绕过管理器。
 
 ## 后续迭代
 
-当前先完成本机 0.15 的一次手机验收和日常使用观察，再决定公开发版；继续验证准确交办、单份结果、恢复与有范围的主动跟进。后续方向见[路线图](docs/roadmap.md)。
+继续观察多日运行、限流恢复与休眠重连，并完善首次使用体验。后续方向见[路线图](docs/roadmap.md)。

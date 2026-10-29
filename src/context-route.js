@@ -114,7 +114,7 @@ export function createContextRoute({context,googleAuth,googleCalendarAuth,google
       if(['google_authorize','google_calendar_authorize','google_suite_authorize','flomo_authorize','dida_authorize'].includes(input.action)){
         if(keys.length!==1||!await canRun())invalid();
       }else if(input.action==='check_summary'){
-        if(keys.some(key=>!['action','preset'].includes(key))||typeof input.expectedBindingRevision!=='string'||Object.hasOwn(input,'preset')&&!['basic','five_source_complex'].includes(input.preset))invalid();
+        if(keys.some(key=>!['action','preset'].includes(key))||typeof input.expectedBindingRevision!=='string'||Object.hasOwn(input,'preset')&&!['basic','five_source_complex','five_source_changed'].includes(input.preset))invalid();
       }else if(input.action==='check_authorization'){
         if(keys.length!==2||!keys.includes('source')||!['calendar','flomo'].includes(input.source)||typeof input.expectedBindingRevision!=='string')invalid();
       }else if(input.action==='check_read'){

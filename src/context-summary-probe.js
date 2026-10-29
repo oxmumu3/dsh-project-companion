@@ -27,13 +27,38 @@ function complexFixture(){
   row('memory:probe-decision','样例决策：复用现有能力，简报要简短并保留未知；目前不扩展任何新权限。',{label:'decision',role:'user'})
  ],previous:null};
 }
+function changedFixture(){
+ const value=complexFixture();
+ value.project.label='合成五来源变化项目';
+ value.previous={checkedAt:'2026-10-20T12:00:00.000Z',truncated:false,summary:{
+  changes:[{kind:'quote',text:'两条日历、两条笔记、两个清单已提供；邮件读取未完成，云盘本次没有匹配项。',sourceIds:['file:probe-progress']}],
+  blockers:[{kind:'quote',text:'最新合成记录：手机闭环仍待测试者确认，不能从历史完成记录推出当前已验收。',sourceIds:['file:probe-progress']}],
+  nextSteps:[{kind:'suggestion',text:'建议结合本次来源记录核对尚未确认的手机结果。',sourceIds:['file:probe-progress']}]
+ }};
+ for(const source of value.sources){
+  source.at='2026-10-20T14:00:00.000Z';
+  if(source.sourceId==='coverage:probe-gmail'){source.status='ok';source.text='gmail 本次限定查询没有返回匹配项，不代表整个账号没有内容。';}
+  if(source.sourceId==='file:probe-progress')source.text=[
+   '当前合成进展：这是虚构验收记录，不是助手本轮独立验证。',
+   '最新记录显示，测试者已确认手机收到一次完整分析简报。',
+   '五来源限定读取均有响应：邮件和云盘在指定范围内没有匹配项，日历两条、笔记两条、清单两个。',
+   '项目文件检查和普通提醒此前已由测试者确认收到，本轮没有重新执行。',
+   '一次检查在规定时间运行，系统记录无可见变化、安静结束；这不证明整个账号没有变化。',
+   '本次新变化：页面文案已更新，测试者记录其手机端验收通过。此处只是项目记录中的声明。',
+   '有变化时的主动推送仍待手机验收，新账号开箱、连续多日与休眠恢复尚未测试。',
+   '下一步建议是观察已安排的一次检查是否把新变化送达；这条资料本身不授权新增计划或重发消息。',
+   '日历最多提供两条事件，不能据此推断其他时间段空闲。'
+  ].join('\n');
+ }
+ return value;
+}
 /** One native Owner-requested synthetic call. Never reads or mutates a source. */
 export function createContextSummaryProbe({summarize,guard,timeoutMs=60000}={}){
  let closed=false,active=null;
  return{
   async check(input){
    if(closed||active||typeof summarize!=='function'||!Number.isFinite(timeoutMs)||timeoutMs<=0||timeoutMs>60000)reject();
-   if(input?.preset!==undefined&&!['basic','five_source_complex'].includes(input.preset))reject();
+   if(input?.preset!==undefined&&!['basic','five_source_complex','five_source_changed'].includes(input.preset))reject();
    const controller=new AbortController(),signal=controller.signal;active=controller;
    const timer=setTimeout(()=>controller.abort(),timeoutMs);
    const bounded=fn=>new Promise((resolve,rejectPromise)=>{
@@ -43,7 +68,7 @@ export function createContextSummaryProbe({summarize,guard,timeoutMs=60000}={}){
    });
    const check=async()=>{if(closed||signal.aborted)reject();await bounded(()=>guard(input));if(closed||signal.aborted)reject();};
    try{
-    await check();const synthetic=input?.preset==='five_source_complex'?complexFixture():fixture();let result;
+    await check();const synthetic=input?.preset==='five_source_changed'?changedFixture():input?.preset==='five_source_complex'?complexFixture():fixture();let result;
     try{
      const answer=await bounded(()=>summarize({...synthetic,signal,beforeRequest:check}));
      const value=validateProjectUpdateSummary(answer,synthetic.sources);

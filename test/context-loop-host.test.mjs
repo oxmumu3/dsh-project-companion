@@ -216,3 +216,20 @@ test('brief rendering guides bounded counts and direct delivery without recyclin
  const response=await h.ctx.tools.execute({callId:'scope-probe',name:'project_companion',arguments:{action:'context_brief',project:root,queries:[{source:'flomo',operation:'search',query:'DeepSeek',limit:2}],userRequested:true},agent:h.agent,signal:new AbortController().signal});
  const rendered=JSON.stringify(response.content??response.message??response);assert.match(rendered,/本次取到/);assert.match(rendered,/不代表账号总量/);assert.match(rendered,/不要.*重复.*请求/);assert.match(rendered,/来源.*指令/);
 });
+
+test('protected context check preserves bounded model diagnostics through the native tool result and renderer',async t=>{
+ const diagnostic={attempts:[{attempt:1,requestedMaxTokens:6000,preparedMaxTokens:6000,reasoningEffort:'low',finish:'stop',textChars:800,reasoningChars:1200,outputTokens:700,reasoningTokens:null}]};
+ for(const failure of [{code:'MODEL_INVALID_OUTPUT',validationDiagnostic:'CLAIM'},{code:'MODEL_INVALID_OUTPUT',validationDiagnostic:'PRIVATE_BAD_CATEGORY'},{code:'MODEL_TOKEN_LIMIT'}]){
+  const h=await fixture(t,{contextLoop:{summarize:async()=>{throw Object.assign(Error('PRIVATE_PROVIDER_BODY'),failure,{modelRunDiagnostic:{...diagnostic,raw:'PRIVATE_MODEL_TEXT'},input:'PRIVATE_SOURCE'});}}});
+  await h.project({action:'watch'});await h.tool({action:'connect',source:'dida',userRequested:true});
+  const brief=await h.project({action:'context_brief',objective:'合成诊断',queries:[{source:'dida',operation:'projects',limit:2}],userRequested:true});assert.equal(brief.analysisState,'source_only');
+  const activeLoop=h.adapter.followup.activeLoop;h.adapter.followup.activeLoop=e=>e.callId==='synthetic-diagnostic-wake'&&e.agent===h.agent?brief.loopId:null;
+  try{
+   const response=await h.ctx.tools.execute({callId:'synthetic-diagnostic-wake',name:'project_companion',arguments:{action:'context_check',loopId:brief.loopId},agent:h.agent,signal:new AbortController().signal});
+   assert.equal(response.isError,false);const value=response.value;assert.equal(value.status,'blocked');assert.equal(value.quiet,false);assert.equal(value.modelDiagnostic,failure.code);assert.deepEqual(value.modelRunDiagnostic,diagnostic);
+   const rendered=JSON.stringify(response.content??response.message??response);assert.match(rendered,/内部脱敏模型计数/);assert.match(rendered,/内部脱敏诊断代码/);
+   if(failure.code==='MODEL_INVALID_OUTPUT'){assert.equal(value.code,'LOOP_MODEL_INVALID_OUTPUT');assert.equal(value.validationDiagnostic,failure.validationDiagnostic==='CLAIM'?'CLAIM':'UNKNOWN');assert.match(rendered,/内部脱敏格式诊断/);}else{assert.equal(value.code,'LOOP_MODEL_UNAVAILABLE');assert.equal(value.validationDiagnostic,undefined);}
+   assert.doesNotMatch(JSON.stringify(response),/PRIVATE_PROVIDER_BODY|PRIVATE_MODEL_TEXT|PRIVATE_SOURCE|PRIVATE_BAD_CATEGORY/);
+  }finally{h.adapter.followup.activeLoop=activeLoop;}
+ }
+});

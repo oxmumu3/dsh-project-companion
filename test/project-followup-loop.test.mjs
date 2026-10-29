@@ -17,14 +17,17 @@ async function harness(t,options={}){
   const ownerRoot=options.ownerOutside?join(temp,'owner-workspace'):root;if(options.ownerOutside)await mkdir(ownerRoot);
   const ctx=new Context();await ctx.plugin(SystemPrompt,{});await ctx.plugin(ToolRuntime,{mode:'native'});
   ctx.provide('workingDirectory',{get:session=>session.header.cwd,ensure:async agent=>agent.session.header.cwd});
-  const events=[],messages=[],tools=[],schedulers=[],invalidated=[],wakeErrors=[];let now=new Date('2026-10-18T16:00:00Z'),adapter,currentBinding=binding;
+  const events=[],messages=[],tools=[],schedulers=[],invalidated=[],wakeErrors=[],storeWrites=new Set(),trackedStores=new WeakSet();let now=new Date('2026-10-18T16:00:00Z'),adapter,currentBinding=binding;
   const owner={id:'session-loop',status:'idle',session:{id:'session-loop',header:{cwd:ownerRoot,agentPreset:'default'},events,get seq(){return events.length;},requestHeader:()=>({config:{provider:'synthetic',model:'synthetic'}})},runMaintenance:async work=>work(),
     followup(message){messages.push(message);events.push({seq:events.length,type:'turn/start',data:{turn:messages.length},time:now.toISOString()},{seq:events.length+1,type:'user/message',data:message,time:now.toISOString()});},
     whenIdle:async()=>{try{await options.onWake?.(h);}catch(error){wakeErrors.push(error);throw error;}events.push({seq:events.length,type:'turn/end',data:{reason:{kind:'completed'}},time:now.toISOString()});}};
   const scope=createScope(ctx,owner);owner.ctx=scope.ctx;
   ctx.provide('agents',{get:id=>id===owner.id?owner:undefined});ctx.provide('agentDefaultModel',{currentSelection:()=>({provider:'synthetic',model:'synthetic'})});
   for(const name of ['project_companion','personal_context','send_wechat','bash'])ctx.tools.register(defineTool({name,description:'Synthetic only',parameters:{action:{type:'string'},project:{type:'string'},loopId:{type:'string'}},output:{schema:{type:'object',additionalProperties:true},render:()=>[]},execute:async args=>{tools.push({name,args});return options.toolResult?.(name,args)??{ok:true,quiet:false};}}));
-  const adapterOptions={ctx,clock:()=>now,hostTimeZone:'America/Mexico_City',authorizeRoot:async value=>value===root,readBinding:async()=>currentBinding,readConnection:async()=>({state:'bound',sessionId:owner.id,bindingKey:'d'.repeat(64)}),invalidateLoop:value=>{invalidated.push(value);options.invalidateLoop?.(value);},createScheduler:deps=>{const s=new ProactiveScheduler(deps);schedulers.push(s);return s;},...(options.familyRoute?{familyRoute:options.familyRoute}: {})};
+  const adapterOptions={ctx,clock:()=>now,hostTimeZone:'America/Mexico_City',authorizeRoot:async value=>value===root,readBinding:async()=>currentBinding,readConnection:async()=>({state:'bound',sessionId:owner.id,bindingKey:'d'.repeat(64)}),invalidateLoop:value=>{invalidated.push(value);options.invalidateLoop?.(value);},createScheduler:deps=>{
+    if(!trackedStores.has(deps.store)){trackedStores.add(deps.store);const persist=deps.store.persist.bind(deps.store);deps.store.persist=(...args)=>{const work=(async()=>{await options.beforeStorePersist?.(deps.store);return persist(...args);})();storeWrites.add(work);work.then(()=>storeWrites.delete(work),()=>storeWrites.delete(work));return work;};}
+    const s=new ProactiveScheduler(deps);schedulers.push(s);return s;
+  },...(options.familyRoute?{familyRoute:options.familyRoute}: {})};
   if(options.pauseState)adapterOptions.pauseState=options.pauseState;
   if(options.canRun)adapterOptions.canRun=options.canRun;
   adapter=createProjectFollowup(adapterOptions);
@@ -33,7 +36,9 @@ async function harness(t,options={}){
     invoke:(args,name='project_companion')=>ctx.tools.execute({callId:'loop-'+(++call),name,arguments:args,agent:owner,signal:new AbortController().signal}),
     reply:text=>events.push({seq:events.length,type:'assistant/message',data:{blocks:[{type:'text',text}]},time:now.toISOString()}),
     reclaim:async()=>{const result=await h.invoke({reason:'无实质变化'},'proactive_reclaim');events.push({seq:events.length,type:'tool/call',data:{name:'proactive_reclaim',arguments:'{}'}});return result;},
-    drain:async()=>{for(const s of schedulers)await s.driveChain;},
+    // Upstream terminate() intentionally starts its final persist without
+    // awaiting it. A drive is not a disk barrier; await those exact writes too.
+    drain:async()=>{for(const s of schedulers)await s.driveChain;await Promise.allSettled([...storeWrites]);},
     tick:async(seconds=1800)=>{now=new Date(now.getTime()+seconds*1000);for(const s of schedulers)s.requestDrive();await h.drain();if(wakeErrors.length)throw wakeErrors[0];},
     reopen:async()=>{await adapter.close();adapter=createProjectFollowup(adapterOptions);}};
   t.after(async()=>{await adapter.close();await scope.dispose();await ctx.fiber.dispose();await rm(temp,{recursive:true,force:true});});return h;
@@ -441,6 +446,47 @@ test('unchanged failed-source coverage is partial history rather than verified q
 });
 
 const onceScopeFile=h=>join(h.root,'.dsh/dot-checks',createHash('sha256').update(h.owner.id).digest('hex'),'scope.json');
+const fixedModelAttempt={attempt:1,requestedMaxTokens:6000,preparedMaxTokens:6000,reasoningEffort:'low',finish:'stop',textChars:412,reasoningChars:0,outputTokens:133,reasoningTokens:0};
+test('fixture tick waits for terminal alarm persistence after the upstream drive has resolved',async t=>{
+ let enter,release,armed=false;const entered=new Promise(resolve=>enter=resolve),held=new Promise(resolve=>release=resolve);
+ const f=familyFixture(),h=await harness(t,{familyRoute:f.route,ownerOutside:true,beforeStorePersist:async store=>{if(armed&&store.listAlarms().some(alarm=>alarm.status==='failed')){enter();await held;}},toolResult:()=>({status:'blocked',code:'LOOP_STORE_UNAVAILABLE'}),onWake:async h=>{await h.invoke(exact(h));await h.reclaim();}});
+ await h.adapter.checkOnce({...h.args,delivery:'family',delaySeconds:60});await h.drain();armed=true;
+ let settled=false,settledBeforeCommit;const firing=h.tick(60).then(()=>{settled=true;});
+ try{await entered;await Promise.all(h.schedulers.map(s=>s.driveChain));await new Promise(setImmediate);settledBeforeCommit=settled;const file=join(h.root,'.dsh/dot-checks',createHash('sha256').update(h.owner.id).digest('hex'),'alarms.json');assert.equal(JSON.parse(await readFile(file,'utf8')).alarms[0].status,'in-flight');}finally{release();await firing;}
+ assert.equal(settledBeforeCommit,false,'drive completion alone cannot signal durable terminal alarm completion');
+ const file=join(h.root,'.dsh/dot-checks',createHash('sha256').update(h.owner.id).digest('hex'),'alarms.json');assert.equal(JSON.parse(await readFile(file,'utf8')).alarms[0].status,'failed');
+});
+
+test('one-off failure preserves only fixed diagnostics under the original receipt and restores without resending',async t=>{
+ const diagnostic={validationDiagnostic:'QUOTE_MISMATCH',modelRunDiagnostic:{attempts:[fixedModelAttempt,{...fixedModelAttempt,attempt:2,textChars:399}]}};
+ const f=familyFixture(),h=await harness(t,{familyRoute:f.route,ownerOutside:true,toolResult:()=>({status:'blocked',quiet:false,code:'LOOP_MODEL_INVALID_OUTPUT',...diagnostic,providerError:'PRIVATE_SOURCE_TEXT',prompt:'PRIVATE_PROMPT'}),onWake:async h=>{await h.invoke(exact(h));await h.reclaim();}});
+ f.route.send=async value=>{const saved=JSON.parse(await readFile(onceScopeFile(h),'utf8'));assert.deepEqual(saved.checkFailure.diagnostic,diagnostic);assert.equal(saved.checkFailure.requestId,value.requestId);f.deliveries.push(value);return{status:'accepted'};};
+ await h.adapter.checkOnce({...h.args,delivery:'family',delaySeconds:60});await h.drain();await h.tick(60);
+ const saved=JSON.parse(await readFile(onceScopeFile(h),'utf8'));assert.deepEqual(saved.checkFailure.diagnostic,diagnostic);assert.equal(saved.familyCompleted,saved.checkFailure.requestId);assert.equal(saved.lastReviewedAt,null);assert.equal(saved.lastCheckOutcome,undefined);assert.equal(saved.status,'failed');
+ assert.doesNotMatch(JSON.stringify(saved.checkFailure),/PRIVATE/);assert.equal(f.deliveries.length,1);assert.doesNotMatch(f.deliveries[0].text,/QUOTE_MISMATCH|PRIVATE|412/);
+ await h.reopen();assert.equal((await h.adapter.recoverFamilyOnce(h.args)).status,'failed');await h.tick(120);assert.equal(f.deliveries.length,1);assert.deepEqual(JSON.parse(await readFile(onceScopeFile(h),'utf8')).checkFailure.diagnostic,diagnostic);
+});
+
+test('one-off failure projects unknown diagnostic enums and bounds counters without retaining raw objects',async t=>{
+ const f=familyFixture(),h=await harness(t,{familyRoute:f.route,ownerOutside:true,toolResult:()=>({status:'blocked',code:'LOOP_MODEL_INVALID_OUTPUT',validationDiagnostic:'PRIVATE_VALIDATION',modelRunDiagnostic:{attempts:[{...fixedModelAttempt,requestedMaxTokens:1000000001,preparedMaxTokens:-1,reasoningEffort:'PRIVATE_REASONING',finish:'PRIVATE_FINISH',textChars:'PRIVATE_COUNT',outputTokens:1.5,providerError:'PRIVATE_BODY'}],prompt:'PRIVATE_PROMPT'}}),onWake:async h=>{await h.invoke(exact(h));await h.reclaim();}});
+ await h.adapter.checkOnce({...h.args,delivery:'family',delaySeconds:60});await h.drain();await h.tick(60);
+ const saved=JSON.parse(await readFile(onceScopeFile(h),'utf8'));assert.deepEqual(saved.checkFailure.diagnostic,{validationDiagnostic:'UNKNOWN',modelRunDiagnostic:{attempts:[{...fixedModelAttempt,requestedMaxTokens:null,preparedMaxTokens:null,reasoningEffort:'other',finish:'other',textChars:null,outputTokens:null}]}});assert.doesNotMatch(JSON.stringify(saved),/PRIVATE/);
+ await h.reopen();assert.equal((await h.adapter.recoverFamilyOnce(h.args)).status,'failed');
+});
+
+test('a later failure does not inherit diagnostics or advance the last successful watermark',async t=>{
+ let run=0;const f=familyFixture(),h=await harness(t,{familyRoute:f.route,ownerOutside:true,toolResult:()=>++run===1?{status:'quiet',quiet:true,coverage:[{source:'project',unavailable:false}]}:run===2?{status:'blocked',code:'LOOP_MODEL_INVALID_OUTPUT',validationDiagnostic:'CLAIM',modelRunDiagnostic:{attempts:[fixedModelAttempt]}}:{status:'blocked',code:'LOOP_MODEL_UNAVAILABLE'},onWake:async h=>{await h.invoke(exact(h));await h.reclaim();}});
+ const schedule=async()=>{await h.adapter.checkOnce({...h.args,delivery:'family',delaySeconds:60});await h.drain();await h.tick(60);return JSON.parse(await readFile(onceScopeFile(h),'utf8'));};
+ const success=await schedule(),failed=await schedule(),later=await schedule();assert.equal(success.lastCheckOutcome,'quiet');assert.equal(failed.checkFailure.diagnostic.validationDiagnostic,'CLAIM');assert.equal(later.checkFailure.diagnostic,undefined);assert.notEqual(later.checkFailure.requestId,failed.checkFailure.requestId);assert.equal(later.lastReviewedAt,success.lastReviewedAt);assert.equal(later.lastCheckOutcome,success.lastCheckOutcome);assert.equal(f.deliveries.length,2);
+});
+
+test('failure metadata accepts bounded diagnostics but rejects unknown fields and malformed persisted counters',async t=>{
+ for(const diagnostic of [{validationDiagnostic:'PRIVATE'}, {modelRunDiagnostic:{attempts:[{...fixedModelAttempt,textChars:1.5}]}}, {modelRunDiagnostic:{attempts:[{...fixedModelAttempt,prompt:'PRIVATE'}]}}, {modelRunDiagnostic:{attempts:[{...fixedModelAttempt,attempt:2}]}}, {modelRunDiagnostic:{attempts:[fixedModelAttempt],providerResponse:'PRIVATE'}}, {validationDiagnostic:'CLAIM',sourceText:'PRIVATE'}, {}]){
+  const f=familyFixture(),h=await harness(t,{familyRoute:f.route,ownerOutside:true});await h.adapter.checkOnce({...h.args,delivery:'family',delaySeconds:60});await h.drain();await h.reopen();
+  const file=onceScopeFile(h),meta=JSON.parse(await readFile(file,'utf8'));meta.familyInflight='family-followup-'+'6'.repeat(64);meta.checkFailure={code:'LOOP_MODEL_INVALID_OUTPUT',at:'2026-10-18T16:00:30.000Z',requestId:meta.familyInflight,notification:'pending',diagnostic};await writeFile(file,JSON.stringify(meta));await assert.rejects(h.adapter.onceStatus(h.args),/failure metadata/);
+ }
+});
+
 for(const code of ['LOOP_MODEL_UNAVAILABLE','LOOP_MODEL_INVALID_OUTPUT','LOOP_MODEL_INVALID_INPUT','LOOP_STORE_UNAVAILABLE','CONTEXT_LOOP_UNAVAILABLE'])test('one-off Family '+code+' ends failed with one fixed notice and preserves the context scope',async t=>{
  const f=familyFixture(),h=await harness(t,{familyRoute:f.route,ownerOutside:true,toolResult:()=>({status:'blocked',quiet:false,code,text:'untrusted provider body must never be relayed'}),onWake:async h=>{await h.invoke(exact(h));assert.equal((await h.invoke(exact(h))).isError,true);await h.reclaim();}});
  f.route.send=async value=>{const saved=JSON.parse(await readFile(onceScopeFile(h),'utf8'));assert.equal(saved.checkFailure.code,code);assert.equal(saved.checkFailure.notification,'pending');assert.equal(saved.checkFailure.requestId,value.requestId);assert.equal(value.authorize(),true);f.deliveries.push(value);return{status:'accepted'};};

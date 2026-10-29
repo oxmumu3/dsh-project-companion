@@ -19,7 +19,7 @@
 - nanobot：执行与投递分离、unknown不盲重发；Dot已有相关实现，本轮复用原账本。
 - pan17：微信能力已有成熟供给，保留版权与维护边界；上游0.14.0差异回放待后续，不因版本号盲替换绑定。
 
-本轮借鉴机制和验证用例，没有复制上述Python项目代码或叠装另一套宿主。现有YOLO/proactive/微信代码继续按固定来源和MIT声明维护。细节见[研究](research/personal-agent-20261028/README.md)。
+本轮借鉴机制和验证用例，没有复制上述Python项目代码或叠装另一套宿主。现有YOLO/proactive/微信代码继续按固定来源和MIT声明维护。细节见[研究](https://github.com/oxmumu3/dsh-project-companion/blob/v0.15.0-preview.10/docs/research/personal-agent-20261028/README.md)。
 
 ## 已知边界
 

@@ -1,7 +1,9 @@
 import {lstat,mkdir,readFile,writeFile,rename,realpath,rm} from 'node:fs/promises';
 import {isAbsolute,join,parse,resolve} from 'node:path';
 import {randomUUID,createHash} from 'node:crypto';
+import {isDeepStrictEqual} from 'node:util';
 import {defineTool} from '@deepseek-ai/dsh-tools';
+import {safeValidationDiagnostic,safeModelRunDiagnostic} from './project-update-model.js';
 import {ProactiveStore} from '../vendor/proactive/lib/store.js';
 import {ProactiveScheduler} from '../vendor/proactive/lib/scheduler.js';
 import {WakeDriver,sessionLogOf} from '../vendor/proactive/lib/wake.js';
@@ -28,9 +30,17 @@ const checkOutcomes=new Set(['quiet','reviewed','partial']);
 const familyRequest=value=>typeof value==='string'&&/^family-followup-[a-f0-9]{64}$/.test(value);
 const checkFailureCodes=new Set(['LOOP_MODEL_UNAVAILABLE','LOOP_MODEL_INVALID_OUTPUT','LOOP_MODEL_INVALID_INPUT','LOOP_STORE_UNAVAILABLE','CONTEXT_LOOP_UNAVAILABLE']);
 const failureNotice='这次定时检查未能完成，不能据此判断资料是否有变化。\n本次检查已结束，不会自动重试，也没有建立周期计划。原资料范围保留；你可以稍后再请我检查。';
+function safeFailureDiagnostic(value,code){
+  if(!value||typeof value!=='object'||Array.isArray(value))return;
+  const diagnostic={};
+  if(code==='LOOP_MODEL_INVALID_OUTPUT'&&value.validationDiagnostic!==undefined)diagnostic.validationDiagnostic=safeValidationDiagnostic(value.validationDiagnostic);
+  const run=safeModelRunDiagnostic(value.modelRunDiagnostic);if(run)diagnostic.modelRunDiagnostic=run;
+  return Object.keys(diagnostic).length?diagnostic:undefined;
+}
 function verifyCheckFailure(meta){
   const value=meta.checkFailure;if(value===undefined)return;
-  if(meta.kind!=='once'||meta.delivery!=='family'||!validLoopId(meta.loopId)||!value||typeof value!=='object'||Array.isArray(value)||Object.keys(value).sort().join(',')!=='at,code,notification,requestId'||!checkFailureCodes.has(value.code)||!explicitTime(value.at)||!familyRequest(value.requestId)||!['pending','accepted','uncertain','not_sent'].includes(value.notification)||meta.familyInflight!==value.requestId&&meta.familyCompleted!==value.requestId)throw new Error('Invalid scoped check failure metadata');
+  if(meta.kind!=='once'||meta.delivery!=='family'||!validLoopId(meta.loopId)||!value||typeof value!=='object'||Array.isArray(value)||Object.keys(value).sort().join(',')!==(Object.hasOwn(value,'diagnostic')?'at,code,diagnostic,notification,requestId':'at,code,notification,requestId')||!checkFailureCodes.has(value.code)||!explicitTime(value.at)||!familyRequest(value.requestId)||!['pending','accepted','uncertain','not_sent'].includes(value.notification)||meta.familyInflight!==value.requestId&&meta.familyCompleted!==value.requestId)throw new Error('Invalid scoped check failure metadata');
+  if(Object.hasOwn(value,'diagnostic')&&(!value.diagnostic||!isDeepStrictEqual(value.diagnostic,safeFailureDiagnostic(value.diagnostic,value.code))))throw new Error('Invalid scoped check failure metadata');
 }
 const failureView=meta=>meta.checkFailure?{lastAttemptAt:meta.checkFailure.at,lastFailureCode:meta.checkFailure.code,failureNotificationStatus:meta.checkFailure.notification}:{};
 
@@ -239,7 +249,8 @@ export function createProjectFollowup(options={}){
     const current=()=>owns()&&entry.enabled&&!entry.loopInvalidated&&!!familyScope(entry)&&options.familyRoute.isCurrent(scope)===true;
     if(!current())return;
     const code=entry.loopFailureCode;
-    entry.meta.checkFailure={code,at:startedAt,requestId,notification:'pending'};
+    const diagnostic=safeFailureDiagnostic(entry.loopFailureDiagnostic,code);
+    entry.meta.checkFailure={code,at:startedAt,requestId,notification:'pending',...(diagnostic?{diagnostic}:{})};
     if(!await persistMeta(entry,owns)||!owns())return;
     if(current()&&await canRun(entry)&&await routeAllowed(entry)&&current()){
       let sent;try{sent=await options.familyRoute.send({scope,text:failureNotice,requestId,authorize:current});}catch{sent={status:'uncertain'};}
@@ -315,9 +326,10 @@ export function createProjectFollowup(options={}){
     if(!isAllowedRead(entry,execution))return;
     if(entry.meta.loopId&&entry.loopReadPending===execution)entry.loopReadPending=false;
     if(closed||!entry.enabled||entry.loopInvalidated)return;
-    const code=result.value?.code??result.error?.code??result.error?.info?.code;
+    const failure=result.value?.code!=null?result.value:result.error?.code!=null?result.error:result.error?.info;
+    const code=failure?.code;
     if(entry.meta.loopId&&terminalLoopCodes.has(code)){void blockLoop(entry,code).catch(()=>{});return;}
-    if(entry.meta.loopId&&checkFailureCodes.has(code)&&(result.isError||result.value?.ok===false||['blocked','failed','error'].includes(result.value?.status))){entry.loopFailureCode=code;return;}
+    if(entry.meta.loopId&&checkFailureCodes.has(code)&&(result.isError||result.value?.ok===false||['blocked','failed','error'].includes(result.value?.status))){entry.loopFailureCode=code;entry.loopFailureDiagnostic=safeFailureDiagnostic(failure,code);return;}
     if(result.isError)return;
     if(result.value?.accepted===false||result.value?.ok===false||['blocked','failed','error'].includes(result.value?.status)||typeof result.value?.code==='string')return;
     entry.successfulReads?.add(execution.arguments.action);
@@ -415,7 +427,7 @@ export function createProjectFollowup(options={}){
           return{outcome:'skipped',skipReason:'Family route changed before wake'};
         }
       }
-      const startedAt=new Date(now()).toISOString();active.set(entry.meta.sessionId,entry);entry.successfulReads=new Set();entry.loopReadPending=false;entry.loopFailureCode=null;entry.loopQuiet=false;entry.loopQuietVerified=false;entry.loopPartial=false;entry.loopReclaimed=false;
+      const startedAt=new Date(now()).toISOString();active.set(entry.meta.sessionId,entry);entry.successfulReads=new Set();entry.loopReadPending=false;entry.loopFailureCode=null;entry.loopFailureDiagnostic=null;entry.loopQuiet=false;entry.loopQuietVerified=false;entry.loopPartial=false;entry.loopReclaimed=false;
       try{
         const prefix=entry.once?'这是用户明确安排的一次性只读检查，结束后没有下一次；本次明确请求可在免打扰时段执行。':'';
         const suffix='\n跟进设置、状态查询、测试调度指令和上一轮汇报正文均不算新业务进展。首次可报告尚未确认已报过的真实阻塞；已汇报过的阻塞没有实质变化时保持安静。';

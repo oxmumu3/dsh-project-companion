@@ -4,7 +4,7 @@ import {createContextRoute,registerContextRoute} from '../src/context-route.js';
 import {bindingRevision} from '../src/workbench-scope.js';
 import {createHash} from 'node:crypto';
 import {createFamilyWorkbenchConnection} from '../src/family-workbench-route.js';
-import {createProjectUpdateModel} from '../src/project-update-model.js';
+import {createProjectUpdateModel,validateProjectUpdateSummary} from '../src/project-update-model.js';
 const initial={state:'bound',sessionId:'synthetic-owner',bindingKey:'a'.repeat(64)};
 function fixture({summarize,owner=true,timeoutMs=1000}={}){
  let binding=initial,paused=false,calls=0,restores=0;const inputs=[];
@@ -59,6 +59,24 @@ test('complex probe preset is fixed five-source material with bounded synthetic 
  for(const extra of [{preset:'private'},{preset:'five_source_complex',text:'PRIVATE'},{preset:'basic',sources:[]},{preset:null},{preset:'five_source_complex',model:'other'}])await assert.rejects(h.route.action({action:'check_summary',expectedBindingRevision,...extra}));
  assert.equal(h.counts().models,1);
 });
+test('changed probe uses fixed previous summary and current acceptance claims without private reads or client material',async()=>{
+ const h=sharedFixture(),expectedBindingRevision=await h.revision();await h.route.action({action:'check_summary',expectedBindingRevision,preset:'five_source_changed'});
+ const input=h.inputs[0];assert.equal(input.project.label,'合成五来源变化项目');assert.ok(input.previous);assert.equal(input.previous.truncated,false);assert.ok(input.previous.summary.blockers.length);assert.ok(input.previous.summary.changes.length);assert.ok(JSON.stringify(input.previous).length<3000);
+ const progress=input.sources.find(s=>s.label==='progress.md');assert.ok(progress.text.length<6000);assert.match(progress.text,/记录.*确认.*手机.*收到/);assert.match(progress.text,/验收/);assert.match(progress.text,/有变化.*推送.*待/);assert.ok(Date.parse(progress.at)>Date.parse(input.previous.checkedAt));
+ assert.ok(input.sources.every(s=>s.status==='ok'));for(const source of ['gmail','calendar','drive','flomo','dida'])assert.ok(input.sources.some(s=>s.sourceId.includes('probe-'+source)));
+ assert.doesNotMatch(JSON.stringify(input),/PRIVATE|experts@|finvo|真实账号/);assert.deepEqual(h.counts(),{models:1,activations:0,privateReads:0});
+ for(const extra of [{sources:[]},{previous:{}},{prompt:'PRIVATE'},{model:'other'}])await assert.rejects(h.route.action({action:'check_summary',expectedBindingRevision,preset:'five_source_changed',...extra}));assert.equal(h.counts().models,1);
+});
+test('changed probe previous quotes validate against the actual fixed prior sources before progress changes',async()=>{
+ const h=sharedFixture(),expectedBindingRevision=await h.revision();
+ await h.route.action({action:'check_summary',expectedBindingRevision,preset:'five_source_complex'});
+ await h.route.action({action:'check_summary',expectedBindingRevision,preset:'five_source_changed'});
+ const [before,current]=h.inputs;
+ assert.deepEqual(validateProjectUpdateSummary(current.previous.summary,before.sources),current.previous.summary);
+ assert.notEqual(before.sources.find(s=>s.label==='progress.md').text,current.sources.find(s=>s.label==='progress.md').text);
+ assert.ok(Date.parse(current.sources.find(s=>s.label==='progress.md').at)>Date.parse(current.previous.checkedAt));
+ assert.deepEqual(h.counts(),{models:2,activations:0,privateReads:0});
+});
 test('late changed binding error does not claim the model was never called',async()=>{
  let h;h=fixture({summarize:async()=>{h.change();return{changes:[],blockers:[],nextSteps:[]};}});
  let endpoint;registerContextRoute({get:()=>({fetch:{register:spec=>{endpoint=spec;}}})},h.route);
@@ -69,6 +87,6 @@ test('basic and complex shared probes resolve candidate quotes through the actua
  const calls=[];const llm={async prepareCall(config,signal,policy){const selected=policy(config,{reasoning:{efforts:[{id:'low'}]}});calls.push(selected);return{config:selected,stream:async function*(request){const data=JSON.parse(request.messages[0].content[0].text);assert.match(request.system,/quoteId/);assert.ok(data.quoteCandidates.length);const q=data.quoteCandidates.find(q=>q.sourceId==='file:probe-progress');assert.ok(q);yield{type:'text-delta',index:0,text:JSON.stringify({changes:[{kind:'quote',quoteId:q.quoteId,sourceIds:[q.sourceId]}],blockers:[],nextSteps:[]})};yield{type:'finish',reason:{kind:'stop'}};}};}};
  const model=createProjectUpdateModel({get:name=>name==='llm'?llm:{currentSelection:()=>({provider:'synthetic-current',model:'synthetic-current'})}});
  const h=sharedFixture({summarize:input=>model.summarize(input)}),expectedBindingRevision=await h.revision();
- for(const preset of ['basic','five_source_complex'])assert.deepEqual(await h.route.action({action:'check_summary',expectedBindingRevision,preset}),{summaryAvailable:true,synthetic:true,counts:{changes:1,blockers:0,nextSteps:0}});
- assert.equal(calls.length,2);assert.ok(calls.every(c=>c.maxTokens===6000&&c.reasoningEffort==='low'));assert.deepEqual(h.counts(),{models:2,activations:0,privateReads:0});model.close();h.route.close();
+ for(const preset of ['basic','five_source_complex','five_source_changed'])assert.deepEqual(await h.route.action({action:'check_summary',expectedBindingRevision,preset}),{summaryAvailable:true,synthetic:true,counts:{changes:1,blockers:0,nextSteps:0}});
+ assert.equal(calls.length,3);assert.ok(calls.every(c=>c.maxTokens===6000&&c.reasoningEffort==='low'));assert.deepEqual(h.counts(),{models:3,activations:0,privateReads:0});model.close();h.route.close();
 });
