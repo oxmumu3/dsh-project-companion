@@ -57,3 +57,16 @@ test('ambiguous or unanchored relative dates do not acquire a made-up deadline',
   const f=await fixture({query:async()=>({items:[row]})});const r=await f.collect({...scope,sources:['gmail'],projects:[]});assert.equal(r.evidence[0].dueAt,undefined);
  }
 });
+test('maximum admitted context fits the model evidence budget without claiming full coverage',async()=>{
+ const row=(id,projectId)=>({id,projectId,title:'Synthetic '.repeat(40),text:'Evidence body. '.repeat(450),createdAt:scope.from,status:'open'});
+ const f=await fixture({query:async(_owner,a)=>{
+  if(a.operation==='read')return{items:[row(a.id)]};
+  if(a.operation==='tasks')return{items:Array.from({length:3},(_,i)=>row(`task-${i}`,a.projectId))};
+  return{items:Array.from({length:a.limit},(_,i)=>row(`${a.source}-${i}`))};
+ },readProject:async()=>['README.md','.agent/memory/context.md','.agent/memory/progress.md'].map(path=>({path,status:'ok',text:'Project evidence. '.repeat(350),modifiedAt:scope.to})),readMemory:async()=>Array.from({length:5},(_,i)=>({id:`mem${i}`,source:{kind:'user'},kind:'goal',text:'Synthetic user goal. '.repeat(300),at:scope.to}))});
+ const r=await f.collect({...scope,projects:Array.from({length:5},(_,i)=>`/synthetic/p${i}`)});
+ assert.ok(JSON.stringify(r.evidence).length<=100000);
+ assert.ok(r.evidence.length>70);
+ assert.deepEqual(new Set(r.evidence.map(e=>e.source)),new Set([...scope.sources,'project','memory']));
+ assert.ok(r.coverage.every(c=>c.status==='partial'&&c.truncated===true));
+});

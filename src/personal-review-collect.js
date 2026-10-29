@@ -112,6 +112,20 @@ export function createPersonalReviewCollector({query,readProject,readMemory}={})
     coverage.push({source:'memory',status:!entries?'unavailable':cut?'partial':'ok',count:entries?n:null,truncated:cut});
    }
   }
+  // Keep a mixed-source review within the model input budget. Trim the longest
+  // bodies first so a large document cannot crowd out the other sources.
+  const limited=new Set();
+  while(JSON.stringify(evidence).length>100000){
+   const longest=evidence.reduce((a,b)=>b.text.length>a.text.length?b:a,evidence[0]);
+   if(longest?.text.length>300){longest.text=longest.text.slice(0,Math.max(300,Math.floor(longest.text.length/2)));limited.add(longest.source);}
+   else{
+    // Extreme metadata can also consume the budget; omit whole evidence rows,
+    // never produce a severed JSON record or pretend the scope was complete.
+    let at=0;for(let i=1;i<evidence.length;i++)if(JSON.stringify(evidence[i]).length>JSON.stringify(evidence[at]).length)at=i;
+    const [removed]=evidence.splice(at,1);if(removed)limited.add(removed.source);else break;
+   }
+  }
+  for(const row of coverage)if(limited.has(row.source)&&!['unavailable','failed'].includes(row.status)){row.status='partial';row.truncated=true;}
   await check();return{evidence,coverage};
  };
 }
