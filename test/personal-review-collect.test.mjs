@@ -69,4 +69,8 @@ test('maximum admitted context fits the model evidence budget without claiming f
  assert.ok(r.evidence.length>70);
  assert.deepEqual(new Set(r.evidence.map(e=>e.source)),new Set([...scope.sources,'project','memory']));
  assert.ok(r.coverage.every(c=>c.status==='partial'&&c.truncated===true));
+ const small=await f.collect({...scope,sources:['flomo'],projects:[]});
+ const clipped=r.evidence.find(e=>e.id===small.evidence[0].id);
+ assert.ok(clipped.text.length<small.evidence[0].text.length);
+ assert.equal(clipped.contentDigest,small.evidence[0].contentDigest);
 });

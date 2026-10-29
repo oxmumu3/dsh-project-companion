@@ -114,6 +114,7 @@ export function createPersonalReviewCollector({query,readProject,readMemory}={})
   }
   // Keep a mixed-source review within the model input budget. Trim the longest
   // bodies first so a large document cannot crowd out the other sources.
+  for(const item of evidence)item.contentDigest=createHash('sha256').update(item.text.normalize('NFKC').trim().toLowerCase().replace(/\s+/g,' ')).digest('hex');
   const limited=new Set();
   while(JSON.stringify(evidence).length>100000){
    const longest=evidence.reduce((a,b)=>b.text.length>a.text.length?b:a,evidence[0]);
