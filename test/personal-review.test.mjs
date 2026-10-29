@@ -23,9 +23,14 @@ test('default stays off; configured scope persists without reading', async () =>
   assert.equal(f.reads.length, 0); assert.equal(f.service.needsTimer(), true); assert.deepEqual(f.stored().subscription.sources, ['gmail']);
   assert.equal((await api()).personalReviewRowSchema.safeParse(f.stored()).success, true);
 });
+test('configuration and status show the actual daily and weekly times with their time zone', async () => {
+  const f = await fixture();
+  const configured = await f.service.act(owner, intent('configure', { ...scope, schedule: { dailyTime: '09:00', weeklyDay: 1, weeklyTime: '18:30', timeZone: 'America/Mexico_City' } }));
+  for (const result of [configured, await f.service.act(owner, { action: 'status' })]) { assert.match(result.text, /每天 09:00/); assert.match(result.text, /每周一 18:30/); assert.match(result.text, /America\/Mexico_City/); }
+});
 test('preview detects an unconfigured new risk in authorized sources without creating plans', async () => {
   const f = await fixture(); const result = await f.service.act(owner, { action: 'preview', ...scope });
-  assert.equal(result.items.length, 1); assert.match(result.text, /可能影响|未知/); assert.match(result.text, /gmail/); assert.equal(f.reads[0].sources[0], 'gmail');
+  assert.equal(result.items.length, 1); assert.match(result.text, /可能影响|未知/); assert.match(result.text, /邮件/); assert.equal(f.reads[0].sources[0], 'gmail');
   assert.equal(f.sends.length, 0); assert.equal(f.writes(), 0); assert.equal(f.service.needsTimer(), false);
 });
 test('daily and weekly claim independent occurrences; replay and restart do not resend', async () => {
@@ -65,7 +70,7 @@ test('weekly retains unresolved commitments even when source has no new evidence
   let empty = false;
   const f = await fixture({ hooks: { collect: async () => ({ evidence: empty ? [] : [evidence()], coverage: [{ source: 'gmail', status: 'ok', count: empty ? 0 : 1 }] }), summarize: async () => ({ items: empty ? [] : [candidate()] }) } });
   await f.service.act(owner, intent('run_now', scope)); empty = true; f.time('2026-10-30T09:00:00.000Z'); const result = await f.service.act(owner, intent('run_now', { ...scope, kind: 'weekly', requestId: 'weekly' }));
-  assert.equal(result.items.length, 1); assert.match(result.text, /未解决|未处理/); assert.match(result.text, /2026-10-29/);
+  assert.equal(result.items.length, 1); assert.match(result.text, /未解决|未处理/); assert.match(result.text, /10月29日/);
 });
 test('revocation and rebind during collection prevent model and delivery', async () => {
   for (const change of ['revoke', 'rebind']) {
@@ -159,4 +164,10 @@ test('one-off scope does not misrepresent a saved subscription, and feedback che
   const status = await f.service.snapshot(owner); assert.deepEqual(status.sources, ['gmail']); assert.deepEqual(status.items.map(i => i.id), [daily.items[0].id]);
   await f.service.act(owner, intent('feedback', { itemId: daily.items[0].id, feedback: 'handled', requestId: 'feedback-gmail' })); assert.deepEqual(authorizations.at(-1), ['gmail']);
   await f.service.act(owner, intent('feedback', { itemId: manual.items[0].id, feedback: 'handled', requestId: 'feedback-calendar' })); assert.deepEqual(authorizations.at(-1), ['calendar']);
+});
+test('collector content digest avoids false updates when budget changes the same evidence excerpt', async () => {
+  let text='Full original source facts.',contentDigest='d'.repeat(64);
+  const f=await fixture({hooks:{collect:async()=>({evidence:[evidence({text,contentDigest})],coverage:[{source:'gmail',status:'partial',count:1,truncated:true}]})}});
+  await f.service.act(owner,intent('run_now',scope));text='Full original';await f.service.act(owner,intent('run_now',{...scope,requestId:'shorter'}));assert.equal(f.sends.length,1);
+  contentDigest='e'.repeat(64);await f.service.act(owner,intent('run_now',{...scope,requestId:'new-facts'}));assert.equal(f.sends.length,2);assert.equal('contentDigest' in f.stored().items[0].evidence[0],false);
 });

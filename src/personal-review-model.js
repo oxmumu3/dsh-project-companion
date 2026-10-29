@@ -22,7 +22,12 @@ export function createPersonalReviewModel(ctx, { clock = () => new Date(), timeo
         if (new Set(input.map(e => e.id)).size !== input.length || !['daily', 'weekly'].includes(kind) || guard !== undefined && typeof guard !== 'function' || authorizeSync !== undefined && typeof authorizeSync !== 'function') fail('MODEL_INVALID_INPUT');
         const currentTime = new Date(now ?? clock()); if (!Number.isFinite(currentTime.getTime())) fail('MODEL_INVALID_INPUT');
         const deadlineHours = Object.fromEntries(input.filter(item => item.dueAt).map(item => [item.id, Math.round((Date.parse(item.dueAt) - currentTime.getTime()) / 3600) / 1000]));
-        data = JSON.stringify({ currentTime: currentTime.toISOString(), kind, evidence: input, deadlineHours, coverage: z.array(reviewCoverageSchema).max(50).parse(coverage), previousItems: z.array(previousSchema).max(60).parse(previousItems) });
+        const material = { currentTime: currentTime.toISOString(), kind, evidence: input, deadlineHours, coverage: z.array(reviewCoverageSchema).max(50).parse(coverage) };
+        const previous = z.array(previousSchema).max(60).parse(previousItems).sort((a, b) => b.lastSeenAt.localeCompare(a.lastSeenAt) || a.id.localeCompare(b.id));
+        const boundedPrevious = []; let previousChars = 2;
+        const previousBudget = Math.min(60000, 170000 - JSON.stringify({ ...material, previousItems: [], previousItemsTruncated: false }).length + 2);
+        for (const item of previous) { const length = JSON.stringify(item).length + (boundedPrevious.length ? 1 : 0); if (previousChars + length > previousBudget) continue; boundedPrevious.push(item); previousChars += length; }
+        data = JSON.stringify({ ...material, previousItems: boundedPrevious, previousItemsTruncated: boundedPrevious.length !== previous.length });
         if (data.length > 190000) fail('MODEL_INVALID_INPUT');
       } catch { fail('MODEL_INVALID_INPUT'); }
       if (!input.length) return { items: [] };

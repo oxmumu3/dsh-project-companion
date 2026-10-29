@@ -106,10 +106,11 @@ export function createPersonalReviewService({ store, readBinding, readBindingSyn
   const displayScope = () => state.subscription ?? state.scope;
   function view(includeScope = true) {
     const scope = displayScope();
+    const schedule = state.subscription?.schedule, scheduleText = schedule ? `时间：${[schedule.dailyTime ? `每天 ${schedule.dailyTime}` : '', schedule.weeklyTime ? `每周${'日一二三四五六'[schedule.weeklyDay]} ${schedule.weeklyTime}` : ''].filter(Boolean).join('，')}（${schedule.timeZone}）。` : '';
     return { status: state.subscription ? state.subscription.paused ? 'paused' : 'enabled' : 'off', schedule: state.subscription ? copy(state.subscription.schedule) : null,
       sources: includeScope ? scope?.sources ?? [] : [], projects: includeScope ? scope?.projects ?? [] : [], items: includeScope ? state.items.filter(i => i.scopeKey === scope?.key).map(i => ({ id: i.id, title: i.title, status: i.status, dueAt: i.dueAt ?? null, snoozeUntil: i.snoozeUntil })) : [],
       jobs: state.jobs.slice(-8).map(j => ({ kind: j.kind, status: j.status, createdAt: j.createdAt, detail: labels[j.status] })),
-      text: `个人回顾：${state.subscription ? state.subscription.paused ? '已暂停' : '已启用' : '未启用定时计划'}。${state.jobs.length ? `最近一次：${labels[state.jobs.at(-1).status]}。` : ''}只读取已确认的来源与项目；电脑与宿主须在线。` };
+      text: `个人回顾：${state.subscription ? state.subscription.paused ? '已暂停' : '已启用' : '未启用定时计划'}。${scheduleText}${state.jobs.length ? `最近一次：${labels[state.jobs.at(-1).status]}。` : ''}只读取已确认的来源与项目；电脑与宿主须在线。` };
   }
   function result(job, items = [], text, duplicate = false) { return { status: job.status, duplicate, kind: job.kind, items: copy(items), text: text ?? labels[job.status] }; }
   function capacity(draft) { const cutoff = now().getTime() - 30 * DAY; draft.receipts = draft.receipts.filter(r => Date.parse(r.at) >= cutoff); if (draft.receipts.length >= 200) throw new Error('近期操作过多，请稍后再试'); }
@@ -128,19 +129,19 @@ export function createPersonalReviewService({ store, readBinding, readBindingSyn
     return parsed;
   }
   async function generate(run, kind, occurrence) {
-    await guard(run); const at = now().toISOString(), window = kind === 'weekly' ? 7 * DAY : DAY;
+    await guard(run); const at = now().toISOString(), window = kind === 'weekly' ? 7 * DAY : DAY, timeZone = run.schedule?.timeZone ?? (state.subscription?.key === run.key ? state.subscription.schedule.timeZone : 'UTC');
     const sourceWatermarks = Object.fromEntries(Object.entries(state.scope?.key === run.key ? state.watermarks : {}).flatMap(([source, value]) => value[kind] ? [[source, value[kind]]] : []));
     const starts = Object.values(sourceWatermarks).map(value => Date.parse(value) - 2 * 3600000);
     const from = new Date(Math.max(now().getTime() - 30 * DAY, starts.length ? Math.min(...starts, now().getTime() - window) : now().getTime() - window)).toISOString();
     const raw = await race(() => collect({ caller: copy(run.caller), sources: copy(run.sources), projects: copy(run.projects), from, to: at, sourceWatermarks, kind, signal: run.signal, guard: () => guard(run) }), run.signal, '个人回顾来源读取失败');
     await guard(run); const data = normalizeCollection(raw, run);
-    if (!data.coverage.some(c => ['ok', 'partial'].includes(c.status))) return { ...data, items: [], selected: [], ledger: state.items, text: renderPersonalReview([], data.coverage, { kind, now: at, unknown: true }), unknown: true, at };
+    if (!data.coverage.some(c => ['ok', 'partial'].includes(c.status))) return { ...data, items: [], selected: [], ledger: state.items, text: renderPersonalReview([], data.coverage, { kind, now: at, unknown: true, timeZone }), unknown: true, at };
     const previousItems = state.items.filter(i => i.scopeKey === run.key).slice(-60).map(i => ({ id: i.id, key: i.key, kind: i.kind, title: i.title, summary: i.summary, status: i.status, dueAt: i.dueAt ?? null, evidenceIds: i.evidence.map(e => e.id), lastSeenAt: i.lastSeenAt }));
     let candidates = [];
     if (data.evidence.length) { const summary = await race(() => summarize({ ...copy(data), previousItems, kind, now: at, signal: run.signal, guard: () => guard(run), authorizeSync: () => authorizeSync(run) }), run.signal, '个人回顾模型整理失败'); await guard(run); candidates = validatePersonalReviewSummary(summary, data.evidence).items; }
     const ledger = mergeReviewItems(state.items, candidates, data.evidence, { now: at, scopeKey: run.key });
     let selected = selectReviewItems(ledger, { now: at, kind, occurrence, scopeKey: run.key });
-    const items = selected.map(s => copy(s.item)); const text = renderPersonalReview(items, data.coverage, { kind, now: at });
+    const items = selected.map(s => copy(s.item)); const text = renderPersonalReview(items, data.coverage, { kind, now: at, timeZone });
     selected = selected.filter(s => items.some(i => i.id === s.item.id));
     return { ...data, items, selected, ledger, text, unknown: false, at };
   }

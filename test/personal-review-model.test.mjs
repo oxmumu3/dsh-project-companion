@@ -32,3 +32,11 @@ test('model receives computed deadline hours so tomorrow is not mistaken for wit
   const f = await fixture(); await f.model.summarize({ evidence: [{ ...evidence[0], dueAt: '2026-10-30T10:00:00.000Z' }], coverage: [], kind: 'daily', now: '2026-10-29T09:00:00.000Z' });
   const data = JSON.parse(f.calls[0].messages[0].content[0].text); assert.deepEqual(data.deadlineHours, { 'mail:1': 25 }); assert.match(f.calls[0].system, /24.*小时|24小时/); f.model.close();
 });
+test('largest bounded evidence keeps recent previous items within 60k without changing feedback records', async () => {
+  const rows=Array.from({length:100},(_,i)=>({id:`mail:${i}`.padEnd(240,'x'),source:'gmail',title:'Synthetic material',text:'x'.repeat(620),dueAt:'2026-11-01T00:00:00.000Z'}));
+  const previous=Array.from({length:60},(_,i)=>({id:String(i).padStart(240,'x'),key:String(i).padStart(240,'k'),kind:'risk',title:'标'.repeat(100),summary:'摘'.repeat(360),status:'handled',dueAt:null,evidenceIds:Array.from({length:12},(_,j)=>`${i}:${j}`.padStart(240,'e')),lastSeenAt:new Date(Date.UTC(2026,8,1+i)).toISOString()}));
+  const coverage=Array.from({length:50},()=>({source:'gmail',status:'partial',count:100000,truncated:true,from:'2026-10-22T00:00:00.000Z',to:'2026-10-29T00:00:00.000Z'}));
+  assert.ok(JSON.stringify(rows).length<=100000);
+  const before=structuredClone(previous),f=await fixture({answer:{items:[]}});await f.model.summarize({evidence:rows,coverage,previousItems:previous,kind:'weekly'});
+  const data=JSON.parse(f.calls[0].messages[0].content[0].text);assert.ok(JSON.stringify(data.previousItems).length<=60000);assert.ok(JSON.stringify(data).length<=170000);assert.equal(data.previousItems[0].id,previous.at(-1).id);assert.equal(data.previousItemsTruncated,true);assert.ok(data.previousItems.every(item=>item.status==='handled'));assert.deepEqual(previous,before);f.model.close();
+});

@@ -8,10 +8,10 @@ export const reviewInstant = z.string().datetime();
 const clean = n => z.string().max(n).refine(s => !/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/u.test(s));
 const prose = n => clean(n).min(1).refine(s => !/(?:[a-z][a-z\d+.-]*:\/\/|www\.|\]\s*\()/iu.test(s));
 const url = z.string().max(1600).refine(value => { try { const u = new URL(value); return ['https:', 'http:'].includes(u.protocol) && !u.username && !u.password; } catch { return false; } });
-export const reviewEvidenceSchema = z.object({ id: reviewId, source: z.enum(reviewEvidenceSources), title: clean(400), text: clean(6000), url: url.optional(), at: reviewInstant.optional(), dueAt: reviewInstant.optional(), dueAtBasis: z.enum(['source', 'relative']).optional() });
+export const reviewEvidenceSchema = z.object({ id: reviewId, source: z.enum(reviewEvidenceSources), title: clean(400), text: clean(6000), contentDigest: z.string().regex(/^[a-f0-9]{64}$/).optional(), url: url.optional(), at: reviewInstant.optional(), dueAt: reviewInstant.optional(), dueAtBasis: z.enum(['source', 'relative']).optional() });
 export const reviewCoverageSchema = z.object({ source: z.enum(reviewEvidenceSources), status: z.enum(['ok', 'partial', 'unavailable', 'failed']), count: z.number().int().min(0).max(100000).nullable(), truncated: z.boolean().optional(), from: reviewInstant.optional(), to: reviewInstant.optional() });
 export const reviewCandidateSchema = z.object({ key: reviewId, kind: z.enum(['risk', 'deadline', 'invitation', 'reply', 'change', 'progress']), title: prose(100), summary: prose(360), why: prose(160), action: prose(160), unknown: clean(180).refine(s => !/https?:\/\//iu.test(s)).default(''), evidenceIds: z.array(reviewId).min(1).max(8), priority: z.enum(['low', 'normal', 'high']), confidence: z.enum(['source', 'inferred']), dueAt: reviewInstant.optional() }).strict();
-const referenceSchema = reviewEvidenceSchema.omit({ text: true });
+const referenceSchema = reviewEvidenceSchema.omit({ text: true, contentDigest: true });
 export const reviewItemSchema = reviewCandidateSchema.omit({ evidenceIds: true }).extend({ id: reviewId, aliases: z.array(reviewId).max(20), evidence: z.array(referenceSchema).max(12), evidenceDigests: z.array(z.object({ locator: z.string().max(1900), source: z.enum(reviewEvidenceSources), digest: z.string().length(64) }).strict()).max(12), revision: z.number().int().min(1), notifiedRevision: z.number().int().min(0), dueAtBasis: z.enum(['source', 'relative']).optional(), firstSeenAt: reviewInstant, lastSeenAt: reviewInstant, status: z.enum(['open', 'handled', 'snoozed', 'dismissed']), snoozeUntil: reviewInstant.nullable(), lastNotifiedAt: reviewInstant.nullable(), notifications: z.array(z.string().max(100)).max(12), scopeKey: z.string().length(64) }).strict();
 export const hashReview = value => createHash('sha256').update(value).digest('hex');
 const canon = value => value.normalize('NFKC').trim().toLowerCase().replace(/\s+/g, ' ');
@@ -34,8 +34,8 @@ export function validatePersonalReviewSummary(value, evidence) {
 export function mergeReviewItems(existing, candidates, evidence, { now, scopeKey }) {
   const items = structuredClone(existing), known = new Map(evidence.map(e => [e.id, e]));
   for (const candidate of candidates) {
-    const refs = candidate.evidenceIds.map(id => { const { text, ...ref } = known.get(id); return ref; });
-    const digests = candidate.evidenceIds.map(id => { const e = known.get(id); return { locator: `${e.source}:${locator(e)}`, source: e.source, digest: hashReview(canon(e.text)) }; });
+    const refs = candidate.evidenceIds.map(id => { const { text, contentDigest, ...ref } = known.get(id); return ref; });
+    const digests = candidate.evidenceIds.map(id => { const e = known.get(id); return { locator: `${e.source}:${locator(e)}`, source: e.source, digest: e.contentDigest ?? hashReview(canon(e.text)) }; });
     const key = canon(candidate.key), identities = new Set(refs.map(locator));
     let item = items.find(i => i.scopeKey === scopeKey && (i.aliases.includes(key) || i.kind === candidate.kind && canon(i.title) === canon(candidate.title) && i.evidence.some(ref => identities.has(locator(ref)))));
     if (!item) {
@@ -89,17 +89,24 @@ export function markReviewNotified(items, selected, now) {
   }
 }
 
-export function renderPersonalReview(items, coverage, { kind, now, unknown = false }) {
+const sourceLabels = { gmail: '邮件', calendar: '日历', drive: '云盘', flomo: 'flomo 笔记', dida: '滴答', project: '项目资料', memory: '项目记忆' };
+function readableTime(value, timeZone, full = false) {
+  const p = Object.fromEntries(new Intl.DateTimeFormat('zh-CN', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).formatToParts(new Date(value)).map(x => [x.type, x.value]));
+  return `${full ? `${p.year}年` : ''}${p.month}月${p.day}日 ${p.hour}:${p.minute}`;
+}
+export function renderPersonalReview(items, coverage, { kind, now, unknown = false, timeZone = 'UTC' }) {
   if (unknown) return '本次个人回顾的授权来源暂不可用；当前进展与期限覆盖未知，保留上次成功读取位置。';
-  const lines = [`${kind === 'weekly' ? '每周回顾：本周进展与未解决事项' : '每日回顾：值得处理的事项'}（${now}）`];
+  const lines = [`${kind === 'weekly' ? '每周回顾：进展与未解决事项' : '每日回顾'} · ${readableTime(now, timeZone, true)}（${timeZone}）`];
   if (!items.length) lines.push('本次有界读取未筛出值得提醒的新事项；不代表全账号没有待办或进展。');
   for (const [index, item] of items.entries()) {
-    const refs = item.evidence.slice(0, 2).map(e => `${e.source} · ${e.at ?? '来源时间未知'}${e.url ? ` ${e.url}` : ''}`).join('；');
-    lines.push(`${index + 1}. ${item.title}\n${item.summary}\n为什么现在：${item.why}${item.dueAt ? ` ${item.dueAtBasis === 'relative' ? '估算期限' : '期限'}：${item.dueAt}${item.dueAtBasis === 'relative' ? '（由来源相对日期推算，请核对原文）' : ''}` : ''}\n建议：${item.action}${item.unknown ? `\n未知：${item.unknown}` : ''}${item.confidence === 'inferred' ? '\n关联或期限为推断，尚未独立核实。' : ''}\n来源：${refs}\n事项：${item.id}`);
+    const refs = item.evidence.slice(0, 2).map(e => `${sourceLabels[e.source]} · ${e.at ? readableTime(e.at, timeZone) : '时间未知'}${e.url ? ` ${e.url}` : ''}`).join('；');
+    const inferred = item.confidence === 'inferred' && item.dueAtBasis !== 'relative' ? '（关联待核对）' : '';
+    lines.push(`${index + 1}. ${item.title}${inferred}\n${item.summary}\n${item.why}${item.dueAt ? `\n${item.dueAtBasis === 'relative' ? '估算期限' : '期限'}：${readableTime(item.dueAt, timeZone)}${item.dueAtBasis === 'relative' ? '（请核对原文）' : ''}` : ''}\n建议：${item.action}${item.unknown ? `\n待核对：${item.unknown}` : ''}\n来源：${refs}${item.evidence.length > 2 ? `；另有 ${item.evidence.length - 2} 条关联资料` : ''}`);
   }
-  lines.push(`覆盖：${coverage.map(c => `${c.source} ${['failed', 'unavailable'].includes(c.status) ? '未获取，未知' : `${c.count ?? '未知'} 条${c.status === 'partial' || c.truncated ? '（限量／未完整覆盖）' : '（本次范围）'}`}`).join('；')}`);
+  lines.push(`覆盖：${coverage.map(c => `${sourceLabels[c.source]} ${['failed', 'unavailable'].includes(c.status) ? '未获取，情况未知' : `${c.count ?? '未知'} 条${c.status === 'partial' || c.truncated ? '（限量／未完整覆盖）' : '（本次范围）'}`}`).join('；')}`);
+  if (items.length) lines.push(`反馈编号：${items.map((item, index) => `${index + 1}=${item.id}`).join('；')}`);
   let text = lines.join('\n\n');
   // Remove whole tail items rather than silently sever source references.
-  while (text.length > 3200 && items.length) { items.pop(); return renderPersonalReview(items, coverage, { kind, now }); }
+  while (text.length > 3200 && items.length) { items.pop(); return renderPersonalReview(items, coverage, { kind, now, timeZone }); }
   return text.slice(0, 3200);
 }
