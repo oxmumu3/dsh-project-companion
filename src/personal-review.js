@@ -52,7 +52,14 @@ export function createPersonalReviewService({ store, readBinding, readBindingSyn
   const now = () => { const value = clock(); if (!(value instanceof Date) || !Number.isFinite(value.getTime())) throw new Error('个人回顾时钟无效'); return value; };
   function requestSync(input = {}) { if (input.signal?.aborted || input.authorizeSync && input.authorizeSync() !== true) throw new Error('个人回顾本次请求已失效或取消'); }
   async function requestGuard(input = {}) { try { if (input.guard && await input.guard() === false) throw new Error(); requestSync(input); } catch { throw new Error('个人回顾本次请求授权已失效'); } }
-  async function save(input) { if (storageFailed) throw new Error('个人回顾存储不可用'); requestSync(input); try { await store.put('profile', personalReviewRowSchema.parse(copy(state))); } catch { storageFailed = true; throw new Error('个人回顾存储不可用'); } }
+  async function persist(value, input) { if (storageFailed) throw new Error('个人回顾存储不可用'); const parsed = personalReviewRowSchema.parse(copy(value)); requestSync(input); try { await store.put('profile', parsed); } catch { storageFailed = true; throw new Error('个人回顾存储不可用'); } }
+  const save = input => persist(state, input);
+  async function commitMutation(input, admission, change) {
+    const draft = copy(state); capacity(draft); change(draft); recordReceipt(draft, input);
+    if (closed || admission !== generation) throw new Error('个人回顾本次请求已取消');
+    // A rejected last-moment gate cannot leave an enabled plan or feedback in memory.
+    await persist(draft, input); state = draft;
+  }
   async function load() {
     if (storageFailed) throw new Error('个人回顾存储不可用'); if (state) return;
     let raw; try { raw = await store.get('profile'); } catch { storageFailed = true; throw new Error('个人回顾存储不可用'); }
@@ -103,9 +110,9 @@ export function createPersonalReviewService({ store, readBinding, readBindingSyn
       text: `个人回顾：${state.subscription ? state.subscription.paused ? '已暂停' : '已启用' : '未启用定时计划'}。${state.jobs.length ? `最近一次：${labels[state.jobs.at(-1).status]}。` : ''}只读取已确认的来源与项目；电脑与宿主须在线。` };
   }
   function result(job, items = [], text, duplicate = false) { return { status: job.status, duplicate, kind: job.kind, items: copy(items), text: text ?? labels[job.status] }; }
-  function capacity() { const cutoff = now().getTime() - 30 * DAY; state.receipts = state.receipts.filter(r => Date.parse(r.at) >= cutoff); if (state.receipts.length >= 200) throw new Error('近期操作过多，请稍后再试'); }
-  function recordReceipt(caller, input) { state.receipts.push({ sessionId: caller.sessionId, requestId: input.requestId, action: input.action, at: now().toISOString() }); }
-  function setScope(scope) { if (state.scope?.key !== scope.key) state.watermarks = {}; state.scope = copy(scope); }
+  function capacity(draft) { const cutoff = now().getTime() - 30 * DAY; draft.receipts = draft.receipts.filter(r => Date.parse(r.at) >= cutoff); if (draft.receipts.length >= 200) throw new Error('近期操作过多，请稍后再试'); }
+  function recordReceipt(draft, input) { draft.receipts.push({ sessionId: input.receiptSessionId, requestId: input.requestId, action: input.action, at: now().toISOString() }); }
+  function setScope(scope, draft = state) { if (draft.scope?.key !== scope.key) draft.watermarks = {}; draft.scope = copy(scope); }
   function normalizeCollection(raw, run) {
     const parsed = z.object({ evidence: z.array(reviewEvidenceSchema).max(100), coverage: z.array(reviewCoverageSchema).max(50) }).parse(raw);
     const allowed = new Set([...run.sources, ...(run.projects.length ? ['project', 'memory'] : [])]);
@@ -164,6 +171,7 @@ export function createPersonalReviewService({ store, readBinding, readBindingSyn
   }
   async function act(rawCaller, input = {}) {
     const caller = requireCaller(rawCaller), action = input.action;
+    input = { ...input, receiptSessionId: caller.sessionId };
     if (!['configure', 'preview', 'run_now', 'status', 'pause', 'resume', 'cancel', 'feedback'].includes(action)) throw new Error('未知个人回顾操作');
     if (input.signal !== undefined && !(input.signal instanceof AbortSignal)) throw new Error('无效取消信号');
     if (input.guard !== undefined && typeof input.guard !== 'function' || input.authorizeSync !== undefined && typeof input.authorizeSync !== 'function') throw new Error('无效本次请求授权检查');
@@ -184,19 +192,19 @@ export function createPersonalReviewService({ store, readBinding, readBindingSyn
       }
       if (action === 'status') { if (state.scope) { const run = execution(state.scope, input.signal, input); try { await guard(run, { allowPaused: true }); } finally { run.dispose(); } } return view(); }
       if (action === 'configure') {
-        capacity(); const schedule = scheduleInput(input.schedule), scope = await buildScope(caller, input, state.scope); if (!await canRun()) throw new Error('助理已暂停');
+        const schedule = scheduleInput(input.schedule), scope = await buildScope(caller, input, state.scope); if (!await canRun()) throw new Error('助理已暂停');
         const run = execution(scope, input.signal, input); try { await guard(run); } finally { run.dispose(); }
-        if (admission !== generation) throw new Error('个人回顾本次请求已取消'); setScope(scope); state.subscription = { ...copy(scope), schedule, createdAt: now().toISOString(), paused: false }; recordReceipt(caller, input); await save(input); return view();
+        await commitMutation(input, admission, draft => { setScope(scope, draft); draft.subscription = { ...copy(scope), schedule, createdAt: now().toISOString(), paused: false }; }); return view();
       }
-      if (action === 'cancel' || action === 'pause') { capacity(); await requestGuard(input); if (action === 'cancel') state.subscription = null; else if (state.subscription) state.subscription.paused = true; recordReceipt(caller, input); await save(input); return view(false); }
+      if (action === 'cancel' || action === 'pause') { await requestGuard(input); await commitMutation(input, admission, draft => { if (action === 'cancel') draft.subscription = null; else if (draft.subscription) draft.subscription.paused = true; }); return view(false); }
       if (action === 'resume') {
-        capacity(); if (!state.subscription) throw new Error('尚无个人回顾计划'); const run = execution(state.subscription, input.signal, input); try { await guard(run); state.subscription.paused = false; state.subscription.createdAt = now().toISOString(); recordReceipt(caller, input); await save(input); return view(); } finally { run.dispose(); }
+        if (!state.subscription) throw new Error('尚无个人回顾计划'); const run = execution(state.subscription, input.signal, input); try { await guard(run); await commitMutation(input, admission, draft => { draft.subscription.paused = false; draft.subscription.createdAt = now().toISOString(); }); return view(); } finally { run.dispose(); }
       }
       if (action === 'feedback') {
-        capacity(); const feedback = z.enum(['handled', 'snoozed', 'dismissed']).parse(input.feedback), item = state.items.find(i => i.id === input.itemId && i.scopeKey === state.scope?.key); if (!item) throw new Error('未找到同一授权范围内的事项');
+        const feedback = z.enum(['handled', 'snoozed', 'dismissed']).parse(input.feedback), item = state.items.find(i => i.id === input.itemId && i.scopeKey === state.scope?.key); if (!item) throw new Error('未找到同一授权范围内的事项');
         const run = execution(state.scope, input.signal, input); try { await guard(run); } finally { run.dispose(); }
         let snoozeUntil = null; if (feedback === 'snoozed') { snoozeUntil = reviewInstant.parse(input.snoozeUntil); if (Date.parse(snoozeUntil) <= now().getTime()) throw new Error('稍后提醒时间须在未来'); }
-        await requestGuard(input); item.status = feedback; item.snoozeUntil = snoozeUntil; recordReceipt(caller, input); await save(input); return { ...view(), text: feedback === 'handled' ? '已标记处理，后续不再催促。' : feedback === 'dismissed' ? '此事项不再提醒。' : '已延后此事项。' };
+        await requestGuard(input); await commitMutation(input, admission, draft => { const target = draft.items.find(i => i.id === item.id); target.status = feedback; target.snoozeUntil = snoozeUntil; }); return { ...view(), text: feedback === 'handled' ? '已标记处理，后续不再催促。' : feedback === 'dismissed' ? '此事项不再提醒。' : '已延后此事项。' };
       }
       const scope = await buildScope(caller, input, state.scope), kind = input.kind ?? 'daily';
       if (admission !== generation) throw new Error('个人回顾本次请求已取消');
