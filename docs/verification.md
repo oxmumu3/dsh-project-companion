@@ -1,3 +1,10 @@
+## 0.15.0-preview.9 · 引用确定性回填与 Gmail 列表响应 · 2026-10-28
+
+- 前置实证：preview.8 日常官方 Host 的固定 basic 合成简报通过；复杂五源合成简报首轮命中 `QUOTE_MISMATCH` 后进入修复轮，剩余 token 耗尽。仅脱敏计数保留在 `output/dsh-dot-real-loop-2026-10-28/native-check-five_source_complex.json`。
+- 同版本原生 Gmail 有界读取（用户原请求的查询，最多一条）收到 HTTP 204、空 body；这不是 0 封邮件的证明。preview.9 补齐列表的 `resultSizeEstimate` 响应字段，以区分字段裁剪后的空响应；真实根因及修复仍须安装后同范围复核，不增加查询、权限或重试。
+- 简报 quote 改为模型选择当前来源的候选 ID，程序回填对应原文后执行原有完整校验。模型预算、来源权限和最终逐字匹配约束保持；旧持久摘要仍兼容。
+- 本候选的独立审读、SDK 回归、精确安装及原生验收结果以 `output/dsh-dot-0159-root-fixes-2026-10-28/` 的证据为准；手机接收和主动跟进完成尚不能由电脑测试代替。
+
 ## 0.15.0-preview.8 · 真实失败分层与单次检查反馈 · 2026-10-28
 
 preview.7 的 18:00 手机实测仍为资料摘录：Gmail 在搜索响应结构检查失败，模型返回 MODEL_TOKEN_LIMIT。Calendar、Drive、flomo、滴答各自返回了本次有限范围的结果；不得从上限或零匹配推断账号总量。18:01 单次检查已受理，电脑记录显示其运行后整理失败、被错记 LOOP_SCOPE_CHANGED 并静默结束，因此不能称主动跟进通过。

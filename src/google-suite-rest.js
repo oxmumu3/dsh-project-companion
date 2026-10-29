@@ -205,7 +205,10 @@ export function createGoogleSuiteRest({getToken,fetch:fetchImpl=globalThis.fetch
     };
     let value;
     if(name==='search_threads'){
-     const raw=await request(gmail,'/gmail/v1/users/me/messages',{q:args.query,maxResults:args.pageSize,includeSpamTrash:'false',fields:'messages(id,threadId),nextPageToken'});
+     // Preserve the documented result metadata even when optional messages and
+     // nextPageToken are absent. Estimates never become item/account counts;
+     // successful reads still require JSON, and HTTP 204 remains a failure.
+     const raw=await request(gmail,'/gmail/v1/users/me/messages',{q:args.query,maxResults:args.pageSize,includeSpamTrash:'false',fields:'messages(id,threadId),nextPageToken,resultSizeEstimate'});
      if(!plain(raw)||(raw.messages!==undefined&&!Array.isArray(raw.messages))||(raw.nextPageToken!==undefined&&typeof raw.nextPageToken!=='string'))readFail('CONTEXT_PROTOCOL_INVALID','gmail_list','list_shape','list_invalid');
      const rows=raw.messages??[];if(rows.length>1000||rows.some(r=>!plain(r)||!validId(r.id)))readFail('CONTEXT_PROTOCOL_INVALID','gmail_list','list_shape','list_invalid');
      coverage.truncated=Boolean(raw.nextPageToken)||rows.length>args.pageSize;const items=[];

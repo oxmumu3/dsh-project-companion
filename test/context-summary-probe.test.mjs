@@ -4,6 +4,7 @@ import {createContextRoute,registerContextRoute} from '../src/context-route.js';
 import {bindingRevision} from '../src/workbench-scope.js';
 import {createHash} from 'node:crypto';
 import {createFamilyWorkbenchConnection} from '../src/family-workbench-route.js';
+import {createProjectUpdateModel} from '../src/project-update-model.js';
 const initial={state:'bound',sessionId:'synthetic-owner',bindingKey:'a'.repeat(64)};
 function fixture({summarize,owner=true,timeoutMs=1000}={}){
  let binding=initial,paused=false,calls=0,restores=0;const inputs=[];
@@ -30,12 +31,12 @@ test('synthetic probe identifies inactive original Owner without asking for acco
  assert.equal(response.status,409);const value=await response.json();assert.equal(value.stage,'owner_unavailable');assert.match(value.error,/原.*会话/);assert.doesNotMatch(value.error,/登录|扫码|PRIVATE|synthetic-owner/);assert.equal(h.restores(),0);
  for(const [change,stage]of[['pause','paused'],['change','binding_changed']]){const h=fixture();h[change]();await assert.rejects(h.run(),{code:'SUMMARY_PROBE_UNAVAILABLE',summaryProbeStage:stage});assert.equal(h.calls(),0);}
 });
-function sharedFixture(){
+function sharedFixture({summarize}={}){
  const scope={familySessionId:'family_owner_probe',bindingRevision:'b'.repeat(64),originSessionId:initial.sessionId,originBindingKey:initial.bindingKey,leaseFingerprint:'c'.repeat(64)};
  let current=true,wrongNative=false,live=true,paused=false,models=0,activations=0,privateReads=0;const owners=[],inputs=[];
  const readSummaryConnection=createFamilyWorkbenchConnection({isEnabled:()=>true,readLegacyConnection:async()=>assert.fail('paired Family must not fall back'),delegation:{isUnpaired:()=>false,registeredSessionId:()=>scope.familySessionId,scopeFor:()=>scope,current:()=>current,recheck:async()=>current,routeState:()=> 'current'},readNativeRoute:async()=>({kind:'bound',binding:{userHash:wrongNative?'e'.repeat(64):scope.bindingRevision,botHash:createHash('sha256').update('family-dot:'+scope.bindingRevision).digest('hex')}})});
  const forbidden=()=>{privateReads++;assert.fail('probe must not read or authorize private sources');};
- const route=createContextRoute({context:{snapshot:async owner=>{owners.push(owner.sessionId);return{sources:[]};},act:forbidden,authorization:forbidden},readConnection:async()=>initial,readSummaryConnection,resolveOwner:sessionId=>live&&sessionId===scope.familySessionId?{sessionId,cwd:'/synthetic/family'}:null,activateOwner:async()=>{activations++;},canRun:async()=>!paused,summarizeSynthetic:async input=>{models++;inputs.push(input);return{changes:[],blockers:[],nextSteps:[]};}});
+ const route=createContextRoute({context:{snapshot:async owner=>{owners.push(owner.sessionId);return{sources:[]};},act:forbidden,authorization:forbidden},readConnection:async()=>initial,readSummaryConnection,resolveOwner:sessionId=>live&&sessionId===scope.familySessionId?{sessionId,cwd:'/synthetic/family'}:null,activateOwner:async()=>{activations++;},canRun:async()=>!paused,summarizeSynthetic:async input=>{models++;inputs.push(input);return summarize?summarize(input):{changes:[],blockers:[],nextSteps:[]};}});
  return{route,inputs,owners,counts:()=>({models,activations,privateReads}),revision:async()=>bindingRevision(await readSummaryConnection()),change:()=>{current=false;},wrong:()=>{wrongNative=true;},offline:()=>{live=false;},pause:()=>{paused=true;}};
 }
 test('paired summary probe uses exact Family route while source account snapshot keeps legacy scope',async()=>{
@@ -63,4 +64,11 @@ test('late changed binding error does not claim the model was never called',asyn
  let endpoint;registerContextRoute({get:()=>({fetch:{register:spec=>{endpoint=spec;}}})},h.route);
  const response=await endpoint.fetch(new Request('http://localhost/api/project_companion/context',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'check_summary',expectedBindingRevision:bindingRevision(initial)})}));
  assert.equal(response.status,409);assert.equal(h.calls(),1);const result=await response.json();assert.equal(result.stage,'binding_changed');assert.doesNotMatch(result.error,/未调用模型/);
+});
+test('basic and complex shared probes resolve candidate quotes through the actual model adapter and final validator',async()=>{
+ const calls=[];const llm={async prepareCall(config,signal,policy){const selected=policy(config,{reasoning:{efforts:[{id:'low'}]}});calls.push(selected);return{config:selected,stream:async function*(request){const data=JSON.parse(request.messages[0].content[0].text);assert.match(request.system,/quoteId/);assert.ok(data.quoteCandidates.length);const q=data.quoteCandidates.find(q=>q.sourceId==='file:probe-progress');assert.ok(q);yield{type:'text-delta',index:0,text:JSON.stringify({changes:[{kind:'quote',quoteId:q.quoteId,sourceIds:[q.sourceId]}],blockers:[],nextSteps:[]})};yield{type:'finish',reason:{kind:'stop'}};}};}};
+ const model=createProjectUpdateModel({get:name=>name==='llm'?llm:{currentSelection:()=>({provider:'synthetic-current',model:'synthetic-current'})}});
+ const h=sharedFixture({summarize:input=>model.summarize(input)}),expectedBindingRevision=await h.revision();
+ for(const preset of ['basic','five_source_complex'])assert.deepEqual(await h.route.action({action:'check_summary',expectedBindingRevision,preset}),{summaryAvailable:true,synthetic:true,counts:{changes:1,blockers:0,nextSteps:0}});
+ assert.equal(calls.length,2);assert.ok(calls.every(c=>c.maxTokens===6000&&c.reasoningEffort==='low'));assert.deepEqual(h.counts(),{models:2,activations:0,privateReads:0});model.close();h.route.close();
 });
