@@ -122,3 +122,16 @@ test('production collector re-enters saved Family scope for bounded provider IDs
  assert.deepEqual(io.filter(row=>row.stage==='call').map(row=>({name:row.name,args:row.args})),[{name:'list_projects',args:{limit:5,offset:0}},{name:'get_project_tasks_bounded',args:{project_id:'synthetic-project-id',limit:3}}]);assert.equal(models.length,1);assert.equal(models[0].evidence.filter(item=>item.source==='project').length,3);assert.equal(f.sent.filter(row=>row.text.includes('合成邀请临期')).length,1);
  const before=io.length;const revoked=await f.nativeTool('personal_context',{action:'disconnect',source:'dida',userRequested:true});assert.notEqual(revoked.status,'blocked',JSON.stringify(revoked));f.clearActiveCall();f.time('2026-10-30T15:00:00.000Z');await f.adapter.personalReview.tick();assert.equal(io.length,before);assert.equal(models.length,1);assert.equal(f.sent.filter(row=>row.text.includes('合成邀请临期')).length,1);
 });
+
+test('public news stays available to the same Owner after unrelated private grant becomes unavailable',{skip:!familyRoot},async t=>{
+ let enabled=true;const calls=[],f=await fixture(t,{context:{readConfig:()=>({didaToken:enabled?'synthetic-token-not-real':''})},news:publicNews(calls)});
+ await f.message('每天早上9点发AI日报');const configured=await f.tool('ai_digest',{action:'configure'});assert.ok(configured.schedule,JSON.stringify(configured));enabled=false;
+ f.time('2026-10-29T15:00:00.000Z');await f.adapter.news.tick();assert.equal(f.sent.length,1,'scheduled public RSS should not depend on private dida grant');
+ await f.message('查看个人回顾状态。');const personal=await f.tool('personal_review',{action:'status'});assert.notEqual(personal.status,'enabled','private path must not borrow public owner route');
+ await f.message('AI 日报');const preview=await f.tool('ai_digest',{action:'preview'});assert.equal(preview.status,'preview',JSON.stringify(preview));assert.equal(f.sent.filter(row=>row.text.includes('公开资料的合成资讯摘要')).length,1);assert.deepEqual(f.reads,[]);
+});
+
+test('unavailable private grant never makes a forged or family-member call eligible for public news',{skip:!familyRoot},async t=>{
+ let enabled=true;const calls=[],f=await fixture(t,{context:{readConfig:()=>({didaToken:enabled?'synthetic-token-not-real':''})},news:publicNews(calls)});enabled=false;await f.message('AI 日报');
+ const forged=await f.forged('ai_digest',{action:'preview'}),member=await f.member('ai_digest',{action:'preview'});assert.equal(forged.status,'blocked',JSON.stringify(forged));assert.equal(member.status,'blocked',JSON.stringify(member));assert.equal(calls.length,0);assert.equal(f.reads.length,0);
+});

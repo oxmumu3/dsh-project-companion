@@ -82,3 +82,9 @@ test('overall execution deadline remains a timeout, not user cancellation, in sa
   assert.equal(f.sends.length,0);
  }finally{AbortSignal.timeout=timeout;clearTimeout(keepAlive);await f.service.close();}
 });
+
+test('scheduled model failure persists only allowlisted SDK finish metadata across restart',async()=>{
+ const f=await fixture({hooks:{summarize:async()=>{throw Object.assign(new Error('PRIVATE_CANARY'),{code:'MODEL_INCOMPLETE',modelDiagnostic:{finish:'other',finishDetail:'error',failureCode:'RATE_LIMIT',privateMessage:'PRIVATE_CANARY'}});}}});
+ await f.service.act(owner,intent('configure',{...scope,schedule:{dailyTime:'09:00',timeZone:'UTC'}}));await f.service.tick();const first=f.stored().jobs[0];assert.equal(first.diagnostic.model.finishDetail,'error');assert.equal(first.diagnostic.model.failureCode,'RATE_LIMIT');assert.doesNotMatch(JSON.stringify(first),/PRIVATE_CANARY/);assert.equal(f.sends.length,0);
+ const restored=await fixture({persisted:f.stored()});const status=await restored.service.snapshot(owner);assert.equal(status.jobs[0].diagnostic.model.failureCode,'RATE_LIMIT');await f.service.close();await restored.service.close();
+});

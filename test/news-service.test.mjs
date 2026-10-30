@@ -463,3 +463,7 @@ test('suspending news cancels a hung request recheck and releases the serial que
   assert.equal((await f.service.act(owner, { action: 'status' })).schedule, null);
   await f.service.close();
 });
+
+test('scheduled public news records only safe Owner route failure classification',async()=>{
+ let offline=false;const f=await fixture({hooks:{readBinding:async()=>offline?{bound:false,reason:'owner_offline'}:{bound:true,bindingKey:binding}}});await f.service.act(owner,mutate('configure',{time:'09:00',timeZone:'America/Mexico_City'}));offline=true;await f.service.tick();const job=f.persisted().jobs.at(-1);assert.equal(job.status,'failed');assert.equal(job.diagnostic.code,'NEWS_AUTHORIZATION_CHANGED');assert.equal(job.diagnostic.authorizationReason,'owner_offline');assert.equal(f.sends.length,0);assert.equal(f.fetches(),0);await f.service.close();
+});

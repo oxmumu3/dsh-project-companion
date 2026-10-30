@@ -5,6 +5,13 @@ const now=new Date('2026-10-29T12:00:10.000Z');
 const owner={familySessionId:'family_owner_synthetic',bindingRevision:'a'.repeat(64),sourceRequestId:'wechat-'+'b'.repeat(64),sourceTimingState:'fresh',sourceTiming:{receivedAt:'2026-10-29T12:00:02.000Z',providerCreatedAt:'2026-10-29T12:00:00.000Z'}};
 const parse=(userText,action='configure',patch={},options={})=>{assert.equal(typeof mod.deriveFamilyPersonalReviewRequest,'function');return mod.deriveFamilyPersonalReviewRequest({...owner,userText,...patch},{action,now,timeZone:'America/Mexico_City',activeCallVerified:true,...options});};
 const request='每天早上9点、每周一早上9点，根据我已启用的资料和选定项目做个人回顾，有风险或临期事项告诉我。';
+test('goal links are derived only from explicit current Owner words, including the lead time',()=>{
+ const value=parse('个人回顾跟进项目「Dot验收」的目标「完成试用」，关联会议「发布评审」，会前30分钟准备。','goal');
+ assert.equal(value.goalAction,'track');assert.equal(value.projectName,'Dot验收');assert.equal(value.goalTitle,'完成试用');assert.equal(value.meetingTitle,'发布评审');
+ assert.equal(parse('个人回顾跟进项目「Dot验收」的目标「完成试用」','goal').meetingTitle,undefined);
+ for(const [verb,action]of [['暂停','pause'],['恢复','resume'],['完成','complete']])assert.equal(parse(`个人回顾${verb}目标「完成试用」`,'goal').goalAction,action);
+ for(const text of ['不要个人回顾跟进项目「Dot验收」的目标「完成试用」','个人回顾跟进项目「Dot验收」的目标「完成试用」，关联会议「发布评审」','个人回顾跟进项目「Dot验收」的目标「完成试用」，关联会议「发布评审」，会前5分钟准备','个人回顾完成目标「完成试用」并发送邮件'])assert.throws(()=>parse(text,'goal'));
+});
 test('verified complete Owner request derives bounded personal scope and both calendar schedules',()=>{
  const r=parse(request);assert.equal(r.action,'configure');assert.equal(r.preset,'enabled_sources_watched_projects');assert.equal(r.sourceRequestId,owner.sourceRequestId);assert.deepEqual(r.schedule,{dailyTime:'09:00',weeklyDay:1,weeklyTime:'09:00',timeZone:'America/Mexico_City'});assert.equal(r.sources,undefined);assert.equal(r.projects,undefined);
  assert.equal(parse('北京时间每天九点、每周日21:30，使用我在电脑启用的资料和已关注项目做个人回顾。').schedule.timeZone,'Asia/Shanghai');

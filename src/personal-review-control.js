@@ -8,7 +8,7 @@ export function createPersonalReviewControl({review,readConnection,resolveOwner,
  return{async action(input){
   if(!input||typeof input!=='object'||Array.isArray(input)||Object.keys(input).some(k=>!['enabled','expectedBindingRevision'].includes(k))||typeof input.enabled!=='boolean'||!/^[a-f0-9]{64}$/.test(input.expectedBindingRevision??''))fail();
   const initial=await readConnection(),revision=bindingRevision(initial);
-  if(isClosed()||initial.state!=='bound'||!initial.sessionId.startsWith('family_owner_')||revision!==input.expectedBindingRevision)fail();
+  if(isClosed()||initial.state!=='bound'||initial.sessionId.startsWith('family_member_')||revision!==input.expectedBindingRevision)fail();
   const caller=resolveOwner(initial.sessionId);if(!caller||caller.sessionId!==initial.sessionId||!isOwnerCurrent(caller))fail();
   const sync=()=>!isClosed()&&isOwnerCurrent(caller)&&resolveOwner(initial.sessionId)?.cwd===caller.cwd;
   const guard=async()=>{if(!sync()||bindingRevision(await readConnection())!==revision||!sync())fail();return true;};

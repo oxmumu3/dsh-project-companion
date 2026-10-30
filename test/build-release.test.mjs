@@ -49,3 +49,8 @@ test('kit rendering preserves the unverified-homepage fallback instead of constr
   const rendered = python('print(release.install_doc_for_kit("[首次使用](first-use.md) · [许可](../THIRD_PARTY_NOTICES.md)","https://example.invalid/unverified","9.8.7-preview.6"))\n').trim();
   assert.equal(rendered, '首次使用（正式仓库入口仍待核验） · [许可](THIRD_PARTY_NOTICES.md)');
 });
+
+test('guarded bridge package has an exact reviewed immutable provenance pin',()=>{
+ const row=JSON.parse(python('import json\nprint(json.dumps(release.reviewed_bridge("dsh-wechat-0.11.1-dot.3.tgz","2205931694cf84eadea55c7445d7f5ff5b2ae4c76a8f658b495120c811a7c41c")))\n'));
+ assert.equal(row.sourceCommit,"1aa862728afcba1d811ce9ba442d6fb1bcd45ee0");assert.equal(row.deltaSha256,"794558129efb162a596c9ec9511ad24196327c3a0c1b882fbc48b751d7972a5d");
+});

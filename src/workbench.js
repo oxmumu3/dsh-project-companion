@@ -30,13 +30,19 @@ const limitations=[
 ];
 
 /** A passive projection of existing state. It owns no store, agent or scheduler. */
-export function createWorkbench({service,taskResults,memory,followup,readBinding,readState=async()=>null,readConnection=async()=>({state:'unknown'}),readContextConnection,readProject=readProjectFiles,clock=()=>new Date(),hostTimeZone=()=>Intl.DateTimeFormat().resolvedOptions().timeZone,isClosed=()=>false}={}){
+export function createWorkbench({service,taskResults,memory,followup,readBinding,readState=async()=>null,readConnection=async()=>({state:'unknown'}),readContextConnection,readDesktopConnection,readProject=readProjectFiles,clock=()=>new Date(),hostTimeZone=()=>Intl.DateTimeFormat().resolvedOptions().timeZone,isClosed=()=>false}={}){
   let closed=false;
   const open=()=>{if(closed||isClosed())throw new Error('项目工作台已关闭。');};
   const connection=async()=>{open();try{const value=await readConnection();open();if(!CONNECTION_STATES.has(value?.state)||(value.state==='bound'&&!bound(value)))return{state:'unknown'};return bound(value)?{state:'bound',sessionId:value.sessionId,bindingKey:value.bindingKey,...(value.readOnly===true?{readOnly:true}:{})}:{state:value.state,...(value.readOnly===true?{readOnly:true}:{})};}catch(error){open();return{state:'unknown'};}};
+    const desktopConnection=async()=>{
+      if(typeof readDesktopConnection!=='function')return null;
+      try{const value=await readDesktopConnection();open();return bound(value)&&!value.sessionId.startsWith('family_')&&value.sessionId!=='family-no-legacy'?{state:'bound',sessionId:value.sessionId,bindingKey:value.bindingKey}:null;}catch{open();return null;}
+    };
+  const desktopConversation=async()=>{open();const before=await desktopConnection(),after=await desktopConnection();return same(before,after)?{state:'ready',sessionId:after.sessionId,revision:bindingRevision(after)}:{state:'unavailable'};};
   async function snapshot(){
     open();
     const issues=[...limitations];
+    const desktopInitial=await desktopConnection();
     const [projectResult,stateResult,initial]=await Promise.allSettled([service.watchedProjects(),readState(),connection()]);
     open();
     const availability={projects:projectResult.status==='fulfilled'&&Array.isArray(projectResult.value)&&projectResult.value.length<=5&&projectResult.value.every(validProject),plans:stateResult.status==='fulfilled'&&Boolean(validPlans(stateResult.value)),jobs:false};
@@ -160,11 +166,13 @@ export function createWorkbench({service,taskResults,memory,followup,readBinding
     const daily=state?.daily;
     let zone='unknown';try{const value=typeof hostTimeZone==='function'?hostTimeZone():hostTimeZone;if(typeof value==='string'&&value.length<=100){new Intl.DateTimeFormat('en',{timeZone:value});zone=value;}}catch{}
     open();
-    return{version:1,generatedAt:clock().toISOString(),hostTimeZone:zone,paused:typeof storedState?.paused==='boolean'?storedState.paused:null,availability,bindingRevision:bindingRevision(current),
+    const desktopCurrent=await desktopConnection();
+    const desktopConversation=same(desktopInitial,desktopCurrent)?{state:'ready',sessionId:desktopCurrent.sessionId,revision:bindingRevision(desktopCurrent)}:{state:'unavailable'};
+    return{version:1,...(typeof readDesktopConnection==='function'?{desktopConversation}:{}),generatedAt:clock().toISOString(),hostTimeZone:zone,paused:typeof storedState?.paused==='boolean'?storedState.paused:null,availability,bindingRevision:bindingRevision(current),
       ...(contextRevision!==undefined?{contextBindingRevision:contextRevision}:{}),connection:{state:current.state,...(bound(current)?{sessionId:current.sessionId}:{}),...(current.readOnly===true?{readOnly:true}:{})},projects,jobs,reminders:reminders.slice(0,20),daily:daily?{time:daily.time,timeZone:daily.timeZone,enabled:daily.enabled===true}:null,
       counts:{projects:projects.length,activeReminders:reminders.length},limitations:issues};
   }
-  return{snapshot,close(){closed=true;}};
+  return{snapshot,desktopConversation,close(){closed=true;}};
 }
 
 /** The official owner-authenticated connection layer is the only transport. */
@@ -185,4 +193,17 @@ export function registerWorkbenchRoute(ctx,adapter){
   const stop=()=>{if(closed)return;closed=true;unregister?.();};
   if(typeof ctx.effect==='function')ctx.effect(()=>stop);
   return stop;
+}
+
+
+/** Authenticated desktop route metadata only; no project/source reads or history. */
+export function registerDesktopConversationRoute(ctx,adapter){
+  const connection=ctx.get('connection');if(typeof connection?.fetch?.register!=='function')return null;
+  let closed=false;const json=(value,status=200)=>Response.json(value,{status,headers:{'Cache-Control':'no-store'}});
+  const unregister=connection.fetch.register({path:'/api/project_companion/desktop-conversation',methods:['GET'],requestBody:'buffered',async fetch(request){
+    if(closed)return json({error:'桌面对话入口已关闭。'},503);
+    if(request.method!=='GET'||new URL(request.url).search||request.body!=null)return json({error:'对话入口不接受参数。'},400);
+    try{const value=await adapter.desktopConversation();return closed?json({error:'桌面对话入口已关闭。'},503):json(value);}catch{return json({state:'unavailable'},503);}
+  }});
+  const stop=()=>{if(closed)return;closed=true;unregister?.();};if(typeof ctx.effect==='function')ctx.effect(()=>stop);return stop;
 }

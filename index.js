@@ -53,7 +53,7 @@ import {createFamilyReadAdapter} from './src/family-read-adapter.js';
 import {createContextRoute,registerContextRoute} from './src/context-route.js';
 import {createFamilyWorkbenchConnection} from './src/family-workbench-route.js';
 import {bindingRevision} from './src/workbench-scope.js';
-import {createWorkbench,registerWorkbenchRoute} from './src/workbench.js';
+import {createWorkbench,registerWorkbenchRoute,registerDesktopConversationRoute} from './src/workbench.js';
 import {createWorkbenchActions,registerWorkbenchActionsRoute} from './src/workbench-actions.js';
 import {createProjectCatalog} from './src/project-catalog.js';
 import {createProjectCatalogController,registerProjectCatalogRoute} from './src/project-catalog-route.js';
@@ -234,9 +234,9 @@ export async function installCompanion(ctx,options={}){
   // News uses the user's configured host model, never an auxiliary session or copied key.
   const newsModel=options.news?.model??createNewsModel(ctx);
   const newsBinding=async sessionId=>{
-    const familyScope=familyDelegate?.scopeFor(sessionId);
-    if(familyScope)return await familyDelegate.recheck(familyScope)?{bound:true,bindingKey:familyScope.bindingRevision}:{bound:false};
-    if(familyDelegate?.matchesSession(sessionId)||sessionId.startsWith('family_owner_'))return{bound:false};
+    const familyScope=familyDelegate?.newsOwnerScopeFor(sessionId);
+    if(familyScope)return familyDelegate.newsOwnerCurrent(familyScope)?{bound:true,bindingKey:familyScope.bindingRevision}:{bound:false};
+    if(familyDelegate?.matchesSession(sessionId)||sessionId.startsWith('family_owner_'))return{bound:false,reason:`owner_${familyDelegate?.newsOwnerRouteState(sessionId)??'unknown'}`};
     const connection=await readSetup();
     return connection.state==='bound'&&connection.sessionId===sessionId
       ?{bound:true,bindingKey:connection.bindingKey}:{bound:false};
@@ -255,11 +255,11 @@ export async function installCompanion(ctx,options={}){
     async send(item){
       // The domain has already persisted dispatching. Never retry an ambiguous side effect.
       if(disposed||lifecycle.signal.aborted||item.signal?.aborted||await service.isPaused())return{status:'failed',detail:'News paused or stopped; not dispatched'};
-      const familyScope=familyDelegate?.scopeFor(item.sessionId);
+      const familyScope=familyDelegate?.newsOwnerScopeFor(item.sessionId);
       if(!familyScope&&(familyDelegate?.matchesSession(item.sessionId)||item.sessionId.startsWith('family_owner_')))return{status:'failed',detail:'Family Owner route changed; not dispatched'};
       if(familyScope){
-        if(item.bindingKey!==familyScope.bindingRevision||typeof item.authorize!=='function'||!await familyDelegate.recheck(familyScope))return{status:'failed',detail:'Family Owner or source grant changed; not dispatched'};
-        try{const result=await getFamilyBridge()?.sendOwner({sessionId:item.sessionId,bindingRevision:familyScope.bindingRevision,text:item.text,requestId:item.requestId,authorize:()=>familyDelegate.current(familyScope)&&item.authorize()});return{status:result?.status==='accepted'?'reported_sent':result?.status==='failed'?'failed':'uncertain',detail:'Family route report only; phone receipt unverified'};}catch{return{status:'uncertain',detail:'Family send outcome unknown; no automatic retry'};}
+        if(item.bindingKey!==familyScope.bindingRevision||typeof item.authorize!=='function'||!familyDelegate.newsOwnerCurrent(familyScope))return{status:'failed',detail:'Family Owner route changed; not dispatched'};
+        try{const result=await getFamilyBridge()?.sendOwner({sessionId:item.sessionId,bindingRevision:familyScope.bindingRevision,text:item.text,requestId:item.requestId,authorize:()=>familyDelegate.newsOwnerCurrent(familyScope)&&item.authorize()});return{status:result?.status==='accepted'?'reported_sent':result?.status==='failed'?'failed':'uncertain',detail:'Family route report only; phone receipt unverified'};}catch{return{status:'uncertain',detail:'Family send outcome unknown; no automatic retry'};}
       }
       // Read the route last: a slow pause-state lookup must not stale this binding.
       const current=await newsBinding(item.sessionId);
@@ -373,6 +373,11 @@ export async function installCompanion(ctx,options={}){
   // one-project follow-up capability. Persisted runs re-enter the exact grant.
   const reviewSources=['gmail','calendar','drive','flomo','dida'];
   const nativeReviewDeliveryNote='当前微信通道尚不支持带授权复核的个人回顾推送，可先预览；共享家庭入口支持。';
+  const standaloneBridge=()=>{try{return ctx.get('dotWechatGuarded',false);}catch{return null;}};
+  const standaloneBinding=sessionId=>{
+    if(typeof sessionId!=='string'||sessionId.startsWith('family_'))return null;
+    try{const bridge=standaloneBridge(),value=bridge?.binding?.(sessionId);return typeof bridge?.send==='function'&&value?.bound===true&&/^[a-f0-9]{64}$/.test(value.bindingKey??'')?value:null;}catch{return null;}
+  };
   const reviewGrantCache=new Map(),reviewBindingCache=new Map();
   const reviewKey=(caller,sources,projects)=>JSON.stringify([caller.sessionId,caller.cwd,[...sources].sort(),[...projects].sort()]);
   const reviewHash=value=>createHash('sha256').update(JSON.stringify(value)).digest('hex');
@@ -385,11 +390,13 @@ export async function installCompanion(ctx,options={}){
     return fn(null);
   };
   const reviewBinding=async sessionId=>{
-    const value=await newsBinding(sessionId);reviewBindingCache.set(sessionId,value);return value;
+    let value;
+    if(sessionId.startsWith('family_owner_')||familyDelegate.matchesSession(sessionId)){const scope=familyDelegate.scopeFor(sessionId);value=scope&&await familyDelegate.recheck(scope)?{bound:true,bindingKey:scope.bindingRevision}:{bound:false};}
+    else value=standaloneBinding(sessionId)??(!standaloneBridge()?await newsBinding(sessionId):{bound:false});reviewBindingCache.set(sessionId,value);return value;
   };
   const reviewBindingSync=sessionId=>{
     if(sessionId.startsWith('family_owner_')||familyDelegate.matchesSession(sessionId)){const scope=familyDelegate.scopeFor(sessionId);return scope&&familyDelegate.current(scope)?{bound:true,bindingKey:scope.bindingRevision}:{bound:false};}
-    return reviewBindingCache.get(sessionId)??{bound:false};
+    return standaloneBinding(sessionId)??(!standaloneBridge()?reviewBindingCache.get(sessionId):null)??{bound:false};
   };
   const reviewAuthorization=async(caller,sources,projects)=>reviewContext(caller,async familyScope=>{
     if(disposed||lifecycle.signal.aborted||!Array.isArray(projects)||projects.length>5||!Array.isArray(sources)||sources.length>5||sources.some(source=>!reviewSources.includes(source)))throw Error('个人回顾范围不可用。');
@@ -420,6 +427,10 @@ export async function installCompanion(ctx,options={}){
   personalReview=createPersonalReviewService({
     store:{get:key=>personalReviewTable.get(key),put:(key,value)=>personalReviewTable.put(key,personalReviewRowSchema.parse(value))},
     readBinding:reviewBinding,readBindingSync:reviewBindingSync,authorization:reviewAuthorization,authorizationSync:reviewAuthorizationSync,
+    readAvailability:scope=>{
+      if(scope.caller.sessionId.startsWith('family_owner_')||familyDelegate.matchesSession(scope.caller.sessionId))return familyDelegate.routeState({sessionId:scope.caller.sessionId,bindingRevision:scope.bindingKey});
+      try{const state=standaloneBridge()?.routeStatus?.({sessionId:scope.caller.sessionId,expectedBinding:scope.bindingKey});return ['current','offline','changed','unknown'].includes(state)?state:'unknown';}catch{return'unknown';}
+    },
     canRun:async()=>!disposed&&!lifecycle.signal.aborted&&!await service.isPaused(),canRunSync:()=>!disposed&&!lifecycle.signal.aborted&&!service.isPausedSync(),
     collect:input=>reviewContext(input.caller,()=>collectReview(input)),summarize:input=>personalReviewModel.summarize(input),
     ...(options.clock?{clock:options.clock}:{}),
@@ -430,9 +441,9 @@ export async function installCompanion(ctx,options={}){
         if(!familyScope||item.bindingKey!==familyScope.bindingRevision||!await familyDelegate.recheck(familyScope)||item.authorize()!==true)return{status:'failed'};
         try{const r=await getFamilyBridge()?.sendOwner({sessionId:item.sessionId,bindingRevision:familyScope.bindingRevision,text:item.text,requestId:item.requestId,authorize:()=>familyDelegate.current(familyScope)&&item.authorize()===true});return{status:r?.status==='accepted'?'reported_sent':r?.status==='failed'?'failed':'uncertain'};}catch{return{status:'uncertain'};}
       }
-      // The legacy send_wechat API has no atomic expected-binding guard.
-      // New private-context delivery must fail closed until that contract exists.
-      return{status:'blocked',text:nativeReviewDeliveryNote};
+      const bridge=standaloneBridge(),binding=standaloneBinding(item.sessionId);
+      if(!bridge||!binding||binding.bindingKey!==item.bindingKey||item.authorize()!==true)return{status:'blocked',text:nativeReviewDeliveryNote};
+      try{const result=await bridge.send({sessionId:item.sessionId,expectedBinding:item.bindingKey,requestId:item.requestId,text:item.text,authorize:()=>!disposed&&!lifecycle.signal.aborted&&!item.signal?.aborted&&item.authorize()===true});return{status:result?.status==='accepted'?'reported_sent':result?.status==='blocked'?'blocked':'uncertain'};}catch{return{status:'uncertain'};}
     },
   });
   await personalReview.ready();
@@ -584,7 +595,7 @@ export async function installCompanion(ctx,options={}){
     },
   });
   workbench=createWorkbench({
-    service,taskResults,memory,followup,readBinding,readConnection:readWorkbenchConnection,readContextConnection:readSetup,isClosed:()=>disposed,
+    service,taskResults,memory,followup,readBinding,readConnection:readWorkbenchConnection,readContextConnection:readSetup,readDesktopConnection:readSetup,isClosed:()=>disposed,
     // Read the existing table directly: GET must not require or resume a live
     // owner, normalize recovery state, or create a second state store.
     readState:()=>table.get('profile'),
@@ -599,11 +610,11 @@ export async function installCompanion(ctx,options={}){
       const caller=owner(ctx,agent),review=await personalReview.snapshot(caller),newsState=await news.act(caller,{action:'status'});
       const current=await readWorkbenchConnection();if(disposed||bindingRevision(current)!==revision)return{...snapshot,personalReview:unavailable};
       const projects=await service.watchedProjects();
-      const deliverySupported=Boolean(familyDelegate.scopeFor(caller.sessionId));
-      const safeReview={...review,projects:review.projects.map(root=>projects.find(p=>p.root===root)?.label??'已选项目'),items:review.items.map(item=>({...item,title:reviewClean(item.title)})),text:reviewClean(review.text)};
+      const deliverySupported=Boolean(familyDelegate.scopeFor(caller.sessionId)||standaloneBinding(caller.sessionId));
+      const safeReview={...review,projects:review.projects.map(root=>projects.find(p=>p.root===root)?.label??'已选项目'),items:review.items.map(item=>({...item,title:reviewClean(item.title)})),...(Array.isArray(review.goals)?{goals:review.goals.slice(0,5).map(goal=>({title:reviewClean(goal.title),status:['active','paused','completed'].includes(goal.status)?goal.status:'paused',meetingTitle:typeof goal.meetingTitle==='string'?reviewClean(goal.meetingTitle):null}))}:{}),text:reviewClean(review.text)};
       if(!deliverySupported)safeReview.text+='\n'+nativeReviewDeliveryNote;
       if(bindingRevision(await readWorkbenchConnection())!==revision)return{...snapshot,personalReview:unavailable};
-      return{...snapshot,personalReview:{available:true,bindingRevision:revision,deliverySupported,deliveryNote:deliverySupported?'通过当前共享家庭入口投递，手机送达仍需本人确认。':nativeReviewDeliveryNote,review:safeReview,news:{topics:newsState.topics,topicSource:newsState.topicSource,text:reviewClean(newsState.text)}}};
+      return{...snapshot,personalReview:{available:true,bindingRevision:revision,deliverySupported,deliveryNote:deliverySupported?'通过当前微信入口投递，手机送达仍需本人确认。':nativeReviewDeliveryNote,review:safeReview,news:{topics:newsState.topics,topicSource:newsState.topicSource,text:reviewClean(newsState.text)}}};
     }catch{return{...snapshot,personalReview:unavailable};}
   };
   workbenchActions=createWorkbenchActions({
@@ -614,12 +625,12 @@ export async function installCompanion(ctx,options={}){
   });
   const reviewControl=createPersonalReviewControl({review:personalReview,readConnection:readWorkbenchConnection,
     resolveOwner:sessionId=>{const agent=ctx.get('agents',false)?.get(sessionId);return agent&&String(agent.id)===sessionId?owner(ctx,agent):null;},
-    isOwnerCurrent:caller=>{const scope=familyDelegate.scopeFor(caller.sessionId);return !disposed&&!!scope&&familyDelegate.current(scope);},isClosed:()=>disposed,onChange:()=>syncTimer()});
+    isOwnerCurrent:caller=>{const scope=familyDelegate.scopeFor(caller.sessionId);return !disposed&&(scope?familyDelegate.current(scope):!!standaloneBinding(caller.sessionId));},isClosed:()=>disposed,onChange:()=>syncTimer()});
   if(typeof ctx.inject==='function')ctx.inject(['connection'],scope=>{if(!disposed)registerPersonalReviewControl(scope,reviewControl);});
   const projectCatalogController=createProjectCatalogController({catalog:projectCatalog,readConnection:readWorkbenchConnection,isPaused:()=>service.isPaused(),isPausedSync:()=>disposed||service.isPausedSync(),isClosed:()=>disposed});
   if(typeof ctx.inject==='function')ctx.inject(['connection'],scope=>{if(!disposed)registerProjectCatalogRoute(scope,projectCatalogController);});
   if(typeof ctx.inject==='function')ctx.inject(['connection'],scope=>{if(!disposed)registerWorkbenchActionsRoute(scope,workbenchActions);});
-  if(typeof ctx.inject==='function')ctx.inject(['connection'],scope=>{if(!disposed)registerWorkbenchRoute(scope,workbench);});
+  if(typeof ctx.inject==='function')ctx.inject(['connection'],scope=>{if(!disposed){registerWorkbenchRoute(scope,workbench);registerDesktopConversationRoute(scope,workbench);}});
   if(typeof ctx.inject==='function')ctx.inject(['connection'],scope=>{if(!disposed)registerContextRoute(scope,contextRoute);});
   if(typeof ctx.inject==='function')ctx.inject(['connection'],scope=>{if(!disposed)registerOnboardingRoute(scope,onboarding);});
 
@@ -933,22 +944,38 @@ export async function installCompanion(ctx,options={}){
       return run({...derived,...selected,userRequested:true,requestId:sourceRequestId,guard,authorizeSync});
     });
   }
+  async function withFamilyNewsService(execution,args,run){
+    const rejected=code=>{throw Object.assign(Error(code),{code});};
+    const sessionId=owner(ctx,execution.agent).sessionId;
+    if(sessionId.startsWith('family_member_'))rejected('FAMILY_PERSONAL_REQUEST_UNAVAILABLE');
+    if(!sessionId.startsWith('family_owner_')&&!familyDelegate.matchesSession(sessionId))return run(args);
+    if(!familyEnabled())rejected('FAMILY_PERSONAL_AUTHORIZATION_CHANGED');
+    // Establishing a brand-new pairing retains the existing Owner proof flow.
+    if(familyDelegate.isUnpaired())return withFamilyPersonalService(execution,args,deriveFamilyNewsRequest,run);
+    const call={sessionId,callId:execution.callId,signal:execution.signal};
+    const scope=await familyDelegate.resolveNewsCall(call);if(!scope)rejected('FAMILY_PERSONAL_REQUEST_UNAVAILABLE');
+    const parse=actual=>deriveFamilyNewsRequest(actual,{action:args.action,now:options.clock?.()??new Date(),timeZone:typeof options.hostTimeZone==='function'?options.hostTimeZone():options.hostTimeZone??Intl.DateTimeFormat().resolvedOptions().timeZone,activeCallVerified:true});
+    const trusted=parse(scope);if(trusted.status==='needs_confirmation')return trusted;
+    const authorizeSync=()=>!disposed&&!execution.signal?.aborted&&familyDelegate.newsOwnerCurrent(scope);
+    const guard=async()=>{if(!authorizeSync())rejected('FAMILY_PERSONAL_AUTHORIZATION_CHANGED');const current=await familyDelegate.resolveNewsCall(call);if(!current||current.sourceRequestId!==scope.sourceRequestId||JSON.stringify(parse(current))!==JSON.stringify(trusted)||!authorizeSync())rejected('FAMILY_PERSONAL_REQUEST_CHANGED');};
+    await guard();const {sourceRequestId,...derived}=trusted;return run({...derived,userRequested:true,requestId:sourceRequestId,guard,authorizeSync});
+  }
   ctx.tools.register(defineTool({
     name:'personal_review',
-    description:'本人个人回顾：按一次确认的来源和最多5个已关注项目做每日/每周有界检查。configure只保存范围与明确时间，不读取资料；来源限已启用Gmail、主日历、Drive、flomo、滴答，不能因账号已连接自动授权。共享家庭入口保留用户原话，由服务端确定已启用资料和选定项目，不猜sources/projects。preview只预览不建计划；run_now仅明确要求现在发送时使用；status/pause/resume/cancel管理同一订阅。feedback也支持本人说“个人回顾「事项原题」已处理/延后1天/不再提醒”，只按同范围唯一精确标题匹配；可按本人说的第几条处理，服务端仅凭已通道接受的同一回顾映射编号；映射不确定时不得猜测。attention仅本人明确开启/关闭工作时段关注时使用，沿用现有订阅范围，不新增来源。无值得处理事项就安静，来源失败或限量保留未知，通道回执不等于手机收到。',
+    description:'本人个人回顾：按一次确认的来源和最多5个已关注项目做每日/每周有界检查。configure只保存范围与明确时间，不读取资料；来源限已启用Gmail、主日历、Drive、flomo、滴答，不能因账号已连接自动授权。共享家庭入口保留用户原话，由服务端确定已启用资料和选定项目，不猜sources/projects。preview只预览不建计划；run_now仅明确要求现在发送时使用；status/pause/resume/cancel管理同一订阅。feedback也支持本人说“个人回顾「事项原题」已处理/延后1天/不再提醒”，只按同范围唯一精确标题匹配；可按本人说的第几条处理，服务端仅凭已通道接受的同一回顾映射编号；映射不确定时不得猜测。attention仅本人明确开启/关闭工作时段关注时使用，沿用现有订阅范围，不新增来源。goal用自然意图跟进目标，例如“个人回顾跟进项目「项目名」的目标「目标」，关联会议「会议名」，会前30分钟准备”；暂停、恢复、完成目标也用此工具。无值得处理事项就安静，来源失败或限量保留未知，通道回执不等于手机收到。',
     parameters:{
-      action:{type:'string',required:true,enum:['configure','preview','run_now','status','pause','resume','cancel','feedback','attention']},
+      action:{type:'string',required:true,enum:['configure','preview','run_now','status','pause','resume','cancel','feedback','attention','goal']},
       sources:{type:'array',items:{type:'string',enum:reviewSources},description:'本人明确确认的已启用来源，最多5个；共享家庭微信由实际原话及已启用来源确定。'},
       projects:{type:'array',items:{type:'string'},description:'已关注且本人确认纳入回顾的项目根路径，最多5个；不自行扩大。'},
       schedule:{type:'object',additionalProperties:false,properties:{dailyTime:{type:'string'},weeklyDay:{type:'integer'},weeklyTime:{type:'string'},timeZone:{type:'string'}},description:'明确的dailyTime/weeklyTime为HH:mm；weeklyDay为0周日至6周六，时区使用IANA。'},
-      enabled:{type:'boolean'},kind:{type:'string',enum:['daily','weekly']},itemTitle:{type:'string'},itemNumber:{type:'integer'},itemId:{type:'string'},feedback:{type:'string',enum:['handled','snoozed','dismissed']},snoozeUntil:{type:'string'},userRequested:{type:'boolean'},
+      enabled:{type:'boolean'},kind:{type:'string',enum:['daily','weekly']},itemTitle:{type:'string'},itemNumber:{type:'integer'},itemId:{type:'string'},feedback:{type:'string',enum:['handled','snoozed','dismissed']},snoozeUntil:{type:'string'},goalAction:{type:'string',enum:['track','pause','resume','complete']},goalTitle:{type:'string'},projectName:{type:'string'},meetingTitle:{type:'string'},objective:{type:'string'},userRequested:{type:'boolean'},
     },
     output:{schema:{type:'object',additionalProperties:true},render:(_args,value)=>[...renderGenerationResult(value),...(value.status==='preview'&&/^[a-f0-9]{64}$/.test(value.viewToken??'')?[{type:'text',text:`DSH_REVIEW_VIEW_TOKEN:${value.viewToken}`}]:[])]},
     async execute(args,execution){
       if(disposed)return{status:'blocked',text:'助理正在关闭。'};
       try{return await withFamilyPersonalService(execution,args,deriveFamilyPersonalReviewRequest,async input=>{
         const caller=owner(ctx,execution.agent),familyScope=familyDelegate.scopeFor(caller.sessionId);
-        if(['configure','run_now','resume','attention'].includes(input.action)&&(!familyScope||!familyDelegate.current(familyScope)))return{status:'blocked',text:nativeReviewDeliveryNote};
+        if(['configure','run_now','resume','attention'].includes(input.action)&&!(familyScope?familyDelegate.current(familyScope):standaloneBinding(caller.sessionId)))return{status:'blocked',text:nativeReviewDeliveryNote};
         if(input.projects!==undefined&&(!Array.isArray(input.projects)||input.projects.length>5))throw Error('本版个人回顾最多选择五个项目。');
         const value=await personalReview.act(owner(ctx,execution.agent),{...input,...(!familyScope?{confirmedViewToken:undefined}:{}),requestId:input.requestId??execution.callId,signal:execution.signal});
         if(input.action==='configure'){
@@ -1116,7 +1143,7 @@ export async function installCompanion(ctx,options={}){
     output:{schema:{type:'object',additionalProperties:true},render:(_args,value)=>renderGenerationResult(value)},
     async execute(args,execution){
       if(disposed)return{status:'blocked',text:'助理正在关闭，未执行资讯请求。'};
-      try{return await withFamilyPersonalService(execution,args,deriveFamilyNewsRequest,async input=>{
+      try{return await withFamilyNewsService(execution,args,async input=>{
         const zone=typeof options.hostTimeZone==='function'?options.hostTimeZone():options.hostTimeZone??Intl.DateTimeFormat().resolvedOptions().timeZone;
         const value=await news.act(owner(ctx,execution.agent),{...input,...(input.action==='configure'&&!input.timeZone?{timeZone:zone}:{}),requestId:input.requestId??execution.callId,signal:execution.signal});
         if(args.action==='status'&&typeof newsModel.usage==='function')value.modelUsage=newsModel.usage();

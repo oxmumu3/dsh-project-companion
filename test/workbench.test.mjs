@@ -4,6 +4,7 @@ import {mkdtemp,mkdir,writeFile,symlink,rm,realpath} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {Context} from '@deepseek-ai/cordis';
+import {bindingRevision} from '../src/workbench-scope.js';
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt';
 import ToolRuntime from '@deepseek-ai/dsh-tools';
 import CommandRuntime from '@deepseek-ai/dsh-commands';
@@ -292,4 +293,33 @@ test('a new active job does not eagerly read an older completion into the curren
 test('verified quiet check is projected as historical evidence, never inferred for legacy records',async()=>{
  const f=await fixture({dependencies:{followup:{inspect:async()=>({followup:null,once:{enabled:false,running:false,status:'completed',delivery:'family',lastReviewedAt:now,lastCheckOutcome:'quiet',runCount:1}})}}});const r=await f.adapter.snapshot();assert.equal(r.projects[0].followup.once.lastCheckOutcome,'quiet');assert.equal(r.projects[0].followup.once.lastReviewedAt,now);
  const bad=await fixture({dependencies:{followup:{inspect:async()=>({followup:null,once:{enabled:false,running:false,status:'completed',delivery:'family',lastCheckOutcome:'quiet'}})}}});assert.equal((await bad.adapter.snapshot()).projects[0].followup.available,false);
+});
+
+test('desktop conversation is independently projected from the genuine native Dot session, never the Family Owner carrier',async()=>{
+ const legacy={state:'bound',sessionId:'native-dot-owner',bindingKey:'d'.repeat(64)};
+ const f=await fixture({connection:{...binding,sessionId:'family_owner_synthetic',readOnly:true},dependencies:{readDesktopConnection:async()=>legacy}});
+ const value=await f.adapter.snapshot();
+ assert.deepEqual(value.desktopConversation,{state:'ready',sessionId:legacy.sessionId,revision:bindingRevision(legacy)});
+ assert.equal(value.connection.sessionId,'family_owner_synthetic');assert.equal(value.connection.readOnly,true);
+ assert.equal(JSON.stringify(value.desktopConversation).includes(legacy.bindingKey),false);
+});
+
+test('desktop conversation rejects Family carriers and changing native owner, without adopting another session',async()=>{
+ for(const mode of ['family','changed','offline']){
+  let reads=0;const a={state:'bound',sessionId:'native-dot-owner',bindingKey:'d'.repeat(64)};
+  const f=await fixture({dependencies:{readDesktopConnection:async()=>mode==='family'?{...a,sessionId:'family_owner_synthetic'}:mode==='offline'?{state:'unknown'}:++reads===1?a:{...a,sessionId:'another-native-owner'}}});
+  const value=await f.adapter.snapshot();assert.deepEqual(value.desktopConversation,{state:'unavailable'});
+ }
+});
+
+test('unknown Family result projection does not hide a separately verified native desktop conversation',async()=>{
+ const legacy={state:'bound',sessionId:'native-dot-owner',bindingKey:'d'.repeat(64)};
+ const f=await fixture({connection:{state:'unknown',readOnly:true},dependencies:{readDesktopConnection:async()=>legacy}});
+ const result=await f.adapter.snapshot();assert.equal(result.connection.state,'unknown');assert.equal(result.desktopConversation.state,'ready');assert.equal(result.desktopConversation.sessionId,legacy.sessionId);
+});
+
+test('desktop conversation endpoint reads only native route metadata and never project or source contents',async()=>{
+ const legacy={state:'bound',sessionId:'native-dot-owner',bindingKey:'d'.repeat(64)};
+ const f=await fixture({dependencies:{readDesktopConnection:async()=>legacy}});
+ assert.equal(typeof f.adapter.desktopConversation,'function');const result=await f.adapter.desktopConversation();assert.equal(result.sessionId,legacy.sessionId);assert.deepEqual(f.calls,[]);
 });

@@ -429,3 +429,10 @@ test('source activation alone does not claim an unavailable WeChat route is read
  const c=await load({panelProps:{bound:false}});savedGoogle(c);c.context.snapshot.bindingRevision='binding-1';for(const row of c.context.snapshot.sources.slice(0,3))row.enabled=true;
  try{c.render();await c.flush();const view=c.render();assert.match(text(view),/已启用 3\/3/);assert.match(text(view),/微信入口状态尚待确认/);assert.doesNotMatch(text(view),/可以在微信或 Dot 会话中按需提问|个人资料来源需要先绑定/);assert.equal(c.requests.length,1);}finally{c.dispose();}
 });
+
+test('lost account listener clears waiting state and explains how to get a fresh link without claiming the new login succeeded',async()=>{
+ const c=await load();c.context.snapshot.flomoAuth={clientConfigured:true,refreshConfigured:true,authInProgress:true,expiresAt:new Date(c.context.now+240000).toISOString()};
+ try{c.render();await c.flush();c.render();await c.flush();c.context.snapshot.flomoAuth.authInProgress=false;await c.tick();const view=c.render();
+  assert.match(text(view),/无法连接.*返回.*重新.*登录/);assert.match(text(view),/原有.*连接.*不代表本次授权成功/);const btn=nodes(view,n=>n.type==='button'&&text(n).includes('登录 flomo 授权'))[0];assert.equal(btn.props.disabled,false);assert.equal(c.requests.filter(r=>r.options.method==='POST').length,0);
+ }finally{c.dispose();}
+});

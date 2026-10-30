@@ -1,5 +1,6 @@
 import {createHash} from 'node:crypto';
 import {basename,isAbsolute} from 'node:path';
+import {reviewSourceTaskSchema,reviewSourceTaskKey,MAX_TRACKED_REVIEW_TASKS} from './personal-review-source-tasks.js';
 
 const DAY=86400000;
 const SOURCES=new Set(['gmail','calendar','drive','flomo','dida']);
@@ -29,11 +30,12 @@ function relativeEmailDeadline(row){
 export function createPersonalReviewCollector({query,readProject,readMemory}={}){
  if(typeof query!=='function'||typeof readProject!=='function')throw Error('Missing personal review readers');
  return async function collect(input){
-  const {caller,sources,projects=[],kind,signal,guard}=input;
+  const {caller,sources,projects=[],kind,signal,guard,taskScopeKey,trackedTasks=[],trackedTasksIncomplete=false}=input;
   const requestedFrom=instant(input.from),to=instant(input.to);
   if(!requestedFrom||!to||Date.parse(to)<=Date.parse(requestedFrom)||!['daily','weekly'].includes(kind)||!Array.isArray(sources)||sources.length>5||new Set(sources).size!==sources.length||sources.some(s=>!SOURCES.has(s))||!Array.isArray(projects)||projects.length>5||projects.some(p=>typeof p!=='string'||!isAbsolute(p))||typeof guard!=='function')throw Error('Invalid personal review collection scope');
+  if(taskScopeKey!==undefined&&!/^[a-f0-9]{64}$/.test(taskScopeKey)||typeof trackedTasksIncomplete!=='boolean'||!Array.isArray(trackedTasks)||trackedTasks.length>MAX_TRACKED_REVIEW_TASKS||trackedTasks.some(task=>!reviewSourceTaskSchema.safeParse(task).success||task.scopeKey!==taskScopeKey||!sources.includes(task.source))||new Set(trackedTasks.map(reviewSourceTaskKey)).size!==trackedTasks.length)throw Error('Invalid tracked task scope');
   const from=new Date(Math.max(Date.parse(requestedFrom),Date.parse(to)-7*DAY)).toISOString(),clipped=from!==requestedFrom;
-  const evidence=[],coverage=[];
+  const evidence=[],coverage=[],taskChecks=[];
   async function check(){signal?.throwIfAborted();if(await guard()!==true)throw Error('Personal review authorization revoked');signal?.throwIfAborted();}
   async function attempt(fn){await check();let value;try{value=await fn();}catch{await check();return null;}await check();return value;}
   const add=(source,row,resource,extra={})=>{
@@ -49,9 +51,17 @@ export function createPersonalReviewCollector({query,readProject,readMemory}={})
    if(explicitDue){item.dueAt=explicitDue;item.dueAtBasis='source';}
    else if(relativeDue){item.dueAt=relativeDue;item.dueAtBasis='relative';item.text=`${item.text.slice(0,5750)}\n估算相对期限：${relativeDue}（按邮件日期与原文天数推算，实际截止时间需核对原文）。`;}
    if(url)item.url=url;
+   if(source==='dida'&&taskScopeKey){const task=reviewSourceTaskSchema.safeParse({source,projectId:row.projectId,taskId:row.id,scopeKey:taskScopeKey});if(task.success)item.sourceTask=task.data;}
    const i=evidence.findIndex(e=>e.id===id);if(i>=0)evidence[i]={...evidence[i],...item};else evidence.push(item);return true;
   };
   async function read(source,args){return attempt(()=>query(caller,{...args,source,action:'query',userRequested:true,signal}));}
+  for(const task of trackedTasks){
+   const result=await read(task.source,{operation:'read',projectId:task.projectId,id:task.taskId});
+   const row=result?.items?.length===1?result.items[0]:null;
+   const exact=Array.isArray(result?.items)&&row?.id===task.taskId&&row?.projectId===task.projectId&&result.truncated!==true&&result.coverage?.hasMore!==true;
+   const status=exact&&['open','completed'].includes(row.status)?row.status:'unknown';
+   taskChecks.push({task:{...task},status,checkedAt:to});
+  }
   for(const source of sources){
    await check();let response,rows=[],partial=clipped,failed=false,windowFrom=from,windowTo=to;
    if(source==='gmail')response=await read(source,{operation:'search',query:`after:${Math.floor(Date.parse(from)/1000)} before:${Math.ceil(Date.parse(to)/1000)}`,limit:10});
@@ -103,7 +113,7 @@ export function createPersonalReviewCollector({query,readProject,readMemory}={})
    for(const row of (rows??[]).slice(0,3)){
     if(row.status!=='ok'||!['README.md','.agent/memory/context.md','.agent/memory/progress.md'].includes(row.path)){partial=true;continue;}
     partial ||= row.truncated===true||String(row.text??'').length>6000;
-    add('project',{title:`${basename(root)} / ${row.path}`,text:row.text,updatedAt:row.modifiedAt},`${root}/${row.path}`);count++;
+    add('project',{title:`${basename(root)} / ${row.path}`,text:row.text,updatedAt:row.modifiedAt},`${root}/${row.path}`,{projectRoot:root});count++;
    }
    coverage.push({source:'project',status:!count?'unavailable':partial?'partial':'ok',count:count||null,truncated:partial});
    if(typeof readMemory==='function'){
@@ -113,7 +123,7 @@ export function createPersonalReviewCollector({query,readProject,readMemory}={})
     for(const entry of (entries??[]).slice(0,5)){
      // Memories retain their provenance, including whether a claim came from an assistant.
      if(!entry.id||!entry.source?.kind||!entry.text){cut=true;continue;}
-     add('memory',{title:`${basename(root)} / ${entry.kind??'记忆'}（${entry.source.kind}）`,text:entry.text,updatedAt:entry.at},`${root}/${entry.id}`);n++;
+     add('memory',{title:`${basename(root)} / ${entry.kind??'记忆'}（${entry.source.kind}）`,text:entry.text,updatedAt:entry.at},`${root}/${entry.id}`,{projectRoot:root});n++;
     }
     coverage.push({source:'memory',status:!entries?'unavailable':cut?'partial':'ok',count:entries?n:null,truncated:cut});
    }
@@ -133,6 +143,7 @@ export function createPersonalReviewCollector({query,readProject,readMemory}={})
    }
   }
   for(const row of coverage)if(limited.has(row.source)&&!['unavailable','failed'].includes(row.status)){row.status='partial';row.truncated=true;}
-  await check();return{evidence,coverage};
+  for(const row of coverage)if((trackedTasksIncomplete&&row.source==='dida'||taskChecks.some(check=>check.task.source===row.source&&check.status==='unknown'))&&row.status==='ok')row.status='partial';
+  await check();return{evidence,coverage,taskChecks};
  };
 }

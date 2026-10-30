@@ -80,6 +80,28 @@ export function createFamilyOwnerDelegation({store,getBridge,readGrantedLeases,r
     let actual;try{actual=select(await readGrantedLeases(),scope.originSessionId);}catch{return false;}
     return current(scope)&&actual?.originBindingKey===scope.originBindingKey&&actual?.leaseFingerprint===scope.leaseFingerprint;
   }
+  // Public RSS delivery is authorised by the previously paired Owner route,
+  // not by unrelated private-source credentials. Never use this for context.
+  function newsOwnerRouteState(sessionId){
+    if(closed||!loaded)return 'unknown';
+    if(state?.disabled===true)return 'changed';
+    if(!valid(state))return 'unknown';
+    if(state.familySessionId!==sessionId)return 'changed';
+    try{
+      const bridge=getBridge(),args={sessionId:state.familySessionId,bindingRevision:state.bindingRevision};
+      const status=bridge?.ownerRouteStatus?.(args);
+      if(status==='changed'){void revoke();return 'changed';}
+      if(status==='offline'||status==='unknown')return status;
+      return status==='current'&&bridge?.isOwnerRevisionCurrent?.(args.sessionId,args.bindingRevision)===true?'current':'unknown';
+    }catch{return 'unknown';}
+  }
+  function newsOwnerCurrent(scope){
+    return Boolean(valid(state)&&scope&&scope.familySessionId===state.familySessionId&&scope.bindingRevision===state.bindingRevision&&newsOwnerRouteState(scope.familySessionId)==='current');
+  }
+  function newsOwnerScopeFor(sessionId){
+    if(!valid(state)||state.familySessionId!==sessionId)return null;
+    const scope={familySessionId:state.familySessionId,bindingRevision:state.bindingRevision};return newsOwnerCurrent(scope)?scope:null;
+  }
   async function ownerCall(execution){
     if(!identity(execution?.sessionId)||!identity(execution?.callId))return null;
     try{
@@ -171,6 +193,14 @@ export function createFamilyOwnerDelegation({store,getBridge,readGrantedLeases,r
         const scope={...copy(state),...(typeof family.userText==='string'?{userText:family.userText}:{}),...(typeof family.previousUserText==='string'?{previousUserText:family.previousUserText}:{}),...(/^[a-f0-9]{64}$/.test(family.previousReviewViewToken??'')?{previousReviewViewToken:family.previousReviewViewToken}:{}),...(typeof family.sourceRequestId==='string'?{sourceRequestId:family.sourceRequestId}:{}),...(family.sourceTiming&&typeof family.sourceTiming==='object'?{sourceTiming:copy(family.sourceTiming)}:{}),...(typeof family.sourceTimingState==='string'?{sourceTimingState:family.sourceTimingState}:{})};return await recheck(scope)?scope:null;
       });
     },
+    async resolveNewsCall(execution){
+      return serial(async()=>{
+        await load();const family=await ownerCall(execution),scope=family&&newsOwnerScopeFor(family.sessionId);
+        if(!scope||family.bindingRevision!==scope.bindingRevision||!newsOwnerCurrent(scope))return null;
+        return {...scope,...(typeof family.userText==='string'?{userText:family.userText}:{}),...(typeof family.previousUserText==='string'?{previousUserText:family.previousUserText}:{}),...(typeof family.sourceRequestId==='string'?{sourceRequestId:family.sourceRequestId}:{}),...(family.sourceTiming&&typeof family.sourceTiming==='object'?{sourceTiming:copy(family.sourceTiming)}:{}),...(typeof family.sourceTimingState==='string'?{sourceTimingState:family.sourceTimingState}:{})};
+      });
+    },
+    newsOwnerScopeFor,newsOwnerCurrent,newsOwnerRouteState,
     // Background wake paths may use only a scope captured from a verified
     // owner call, and must recheck it again immediately before each effect.
     ready:()=>serial(load),

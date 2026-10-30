@@ -10,6 +10,8 @@ const hasOwn = (value, key) => Object.prototype.hasOwnProperty.call(value, key);
 const record = value => value !== null && typeof value === 'object' && !Array.isArray(value);
 const diagnosticCount = value => Number.isSafeInteger(value) && value >= 0 && value <= 1000000000 ? value : null;
 const diagnosticEfforts = new Set(['off', 'none', 'minimal', 'low', 'medium', 'high', 'max', 'other', 'unset']);
+const diagnosticFinishDetails = new Set(['error','aborted','tool-calls','other']);
+const diagnosticFailureCodes = new Set(['NO_ADAPTER','MISSING_CREDENTIAL','INVALID_CREDENTIAL','AUTH','RATE_LIMIT','CONTEXT_WINDOW_EXCEEDED','QUOTA','ACCOUNT_QUOTA','ABORTED']);
 /** Fixed controls and counts only; never accept response/provider strings. */
 export function safeModelCallDiagnostic(value) {
   if (!record(value)) return undefined;
@@ -17,7 +19,9 @@ export function safeModelCallDiagnostic(value) {
     reasoningEffort: value.reasoningEffort === undefined ? 'unset' : diagnosticEfforts.has(value.reasoningEffort) ? value.reasoningEffort : 'other',
     finish: ['none', 'stop', 'max-tokens', 'other'].includes(value.finish) ? value.finish : value.finish === undefined ? 'none' : 'other',
     textChars: diagnosticCount(value.textChars), reasoningChars: diagnosticCount(value.reasoningChars),
-    outputTokens: diagnosticCount(value.outputTokens), reasoningTokens: diagnosticCount(value.reasoningTokens) };
+    outputTokens: diagnosticCount(value.outputTokens), reasoningTokens: diagnosticCount(value.reasoningTokens),
+    ...(value.finishDetail !== undefined ? {finishDetail: diagnosticFinishDetails.has(value.finishDetail) ? value.finishDetail : 'other'} : {}),
+    ...(value.failureCode !== undefined ? {failureCode: diagnosticFailureCodes.has(value.failureCode) ? value.failureCode : 'other'} : {}) };
 }
 
 // Apply only capabilities declared by the selected provider for this bounded
@@ -149,16 +153,17 @@ function cancellable(promise, signal) {
 }
 
 /** One native adapter call; no Agent or durable transcript is created. */
-export async function runNewsModel({ llm, selection, system, data, signal, maxTokens, onUsage = () => {}, onDiagnostic = () => {}, preparePolicy, beforeStream, beforeStreamSync }) {
+export async function runNewsModel({ llm, selection, system, data, signal, maxTokens, onUsage = () => {}, onDiagnostic = () => {}, preparePolicy, beforeStream, beforeStreamSync, diagnoseFinish = false }) {
   if (beforeStream !== undefined && typeof beforeStream !== 'function' || beforeStreamSync !== undefined && typeof beforeStreamSync !== 'function') fail('MODEL_INVALID_INPUT');
   if (!llm || typeof llm.prepareCall !== 'function' || !record(selection) || typeof selection.provider !== 'string' || !selection.provider.trim() || typeof selection.model !== 'string' || !selection.model.trim()) fail('MODEL_UNAVAILABLE');
   const config = { provider: selection.provider, model: selection.model,
     ...(typeof selection.reasoningEffort === 'string' && selection.reasoningEffort ? { reasoningEffort: selection.reasoningEffort } : {}), maxTokens };
   const blocks = new Map(), reasoningLengths = new Map();
-  let prepared, finish, usage, length = 0, ended = false;
+  let prepared, finish, failureCode, usage, length = 0, ended = false;
   const diagnostic = () => safeModelCallDiagnostic({ requestedMaxTokens: maxTokens, preparedMaxTokens: prepared?.config?.maxTokens,
     reasoningEffort: prepared?.config?.reasoningEffort, finish, textChars: length, reasoningChars: [...reasoningLengths.values()].reduce((sum, count) => sum + count, 0),
-    outputTokens: usage?.outputTokens, reasoningTokens: usage?.reasoningTokens });
+    outputTokens: usage?.outputTokens, reasoningTokens: usage?.reasoningTokens,
+    ...(diagnoseFinish && finish && finish !== 'stop' && finish !== 'max-tokens' ? {finishDetail:finish, ...(['error','aborted'].includes(finish) ? {failureCode:failureCode ?? 'other'} : {})} : {}) });
   const emitDiagnostic = () => { try { onDiagnostic(diagnostic()); } catch { /* Diagnostics cannot change request execution. */ } };
   emitDiagnostic();
   prepared = await cancellable(Promise.resolve().then(() => llm.prepareCall(config, signal, preparePolicy)), signal);
@@ -206,6 +211,7 @@ export async function runNewsModel({ llm, selection, system, data, signal, maxTo
         onUsage(usage);
       } else if (chunk.type === 'finish') {
         finish = chunk.reason?.kind;
+        if (diagnoseFinish && ['error','aborted'].includes(finish)) failureCode = chunk.reason?.failure?.code;
         if (finish === 'max-tokens') fail('MODEL_TOKEN_LIMIT');
         if (finish !== 'stop') fail('MODEL_INCOMPLETE');
       }

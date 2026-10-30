@@ -39,6 +39,7 @@ REVIEWED_BRIDGES = {
         'deltaSha256': 'bbb6a1ab70a5b11bce72308a705813538ec15c53f462b009c2128d04d0775dee',
         'sha256': 'b0f811e7f3d4746fe27d12460f7f188d4ad8d0b5f6be44f442636ce6db3538f7',
     },
+    'dsh-wechat-0.11.1-dot.3.tgz': {'name': 'dsh-wechat', 'version': '0.11.1-dot.3', 'sourceKind': 'dot_maintained_fork', 'sourceCommit': '1aa862728afcba1d811ce9ba442d6fb1bcd45ee0', 'deltaSha256': '794558129efb162a596c9ec9511ad24196327c3a0c1b882fbc48b751d7972a5d', 'sha256': '2205931694cf84eadea55c7445d7f5ff5b2ae4c76a8f658b495120c811a7c41c'},
 }
 PROHIBITED = {'.dsh', '.git', '.agent', 'node_modules', '__MACOSX', '.DS_Store', 'credentials', 'tokens', 'secrets'}
 MIT_PARTS = ['MIT License', 'Copyright', 'Permission is hereby granted', 'The above copyright notice and this permission notice', '"AS IS"', 'IN NO EVENT SHALL']
@@ -150,7 +151,7 @@ def runtime_fingerprints(files):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     source_root = Path(__file__).resolve().parent.parent
-    parser.add_argument('--bridge', type=Path, required=True, help='One exact reviewed original 0.11.0 or Dot maintenance 0.11.1-dot.1/0.11.1-dot.2 archive')
+    parser.add_argument('--bridge', type=Path, required=True, help='One exact reviewed original 0.11.0 or Dot maintenance 0.11.1-dot.1/0.11.1-dot.2/0.11.1-dot.3 archive')
     parser.add_argument('--output', type=Path, default=source_root / 'dist', help='Artifact directory; defaults to this source checkout/dist')
     parser.add_argument('--runtime-reference', type=Path, help='Optional previously tested companion tgz; require identical index/src/vendor/bundle runtime bytes')
     args = parser.parse_args()

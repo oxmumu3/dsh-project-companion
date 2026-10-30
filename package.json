@@ -1,6 +1,6 @@
 {
   "name": "dsh-project-companion",
-  "version": "0.17.0-preview.2",
+  "version": "0.18.0-preview.1",
   "description": "DSH Dot: WeChat personal agent, project memory and proactive follow-up for DeepSeek Harness",
   "author": "牛村木木山",
   "license": "MIT",
@@ -43,7 +43,8 @@
     "docs/google-public-onboarding.md",
     "docs/dot-v2-implementation.md",
     "docs/personal-agent-iteration.md",
-    "docs/personal-review.md"
+    "docs/personal-review.md",
+    "docs/personal-review-recovery.md"
   ],
   "scripts": {
     "test": "node --max-old-space-size=128 --test --test-concurrency=1 test/*.test.mjs",

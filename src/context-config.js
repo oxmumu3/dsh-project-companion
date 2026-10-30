@@ -2,6 +2,7 @@ import z from '@deepseek-ai/schemastery';
 
 // Native Configure owns credential entry and persistence. No chat/tool accepts these fields.
 export const Config = z.object({
+  desktopConversationSessionId: z.string().default('').description('继续上次桌面对话，由 Dot 自动保存；清空后可重新开始。').volatile(),
   dotAppearance: z.union(['native','dot']).default('native').description('界面外观：native 保留原生外观，dot 使用可恢复的 Dot 主题').volatile(),
   familyOwnerDelegation: z.boolean().default(false).description('允许已验证的家庭管家 Owner 使用本人现有 Dot 资料授权；默认关闭').volatile(),
   familyOwnerReminderEnabled: z.boolean().default(false).description('允许家庭管家使用同一提醒账本处理经验证的 Owner 单次提醒；默认关闭').volatile(),

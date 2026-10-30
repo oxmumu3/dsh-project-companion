@@ -1,6 +1,6 @@
 // This parser admits only an already independently verified Family Owner call.
 // It never trusts model-supplied source IDs, projects, dates, or feedback values.
-const actions=new Set(['configure','preview','run_now','status','pause','resume','cancel','feedback','attention']);
+const actions=new Set(['configure','preview','run_now','status','pause','resume','cancel','feedback','attention','goal']);
 export const familyPersonalReviewAction=action=>actions.has(action);
 const fail=()=>{throw Object.assign(new Error('无法从本次 Owner 原话核对个人回顾的范围或操作；本次未读取资料或更改计划。'),{code:'FAMILY_REVIEW_SCOPE_UNSUPPORTED'});};
 const stamp=value=>typeof value==='string'&&Number.isFinite(Date.parse(value))&&new Date(value).toISOString()===value?Date.parse(value):NaN;
@@ -22,6 +22,13 @@ export function deriveFamilyPersonalReviewRequest(scope,{action,now=new Date(),t
  if(!actions.has(action))fail();
  let text=assertFamilyOwnerRequest(scope,{now,activeCallVerified,requireFresh:action!=='status'}).replace(/[。！!]+$/u,'').replace(/^(?:请|帮我|麻烦)\s*/u,'');
  const result={action,sourceRequestId:scope.sourceRequestId};
+ if(action==='goal'){
+  const track=text.match(/^(?:我的)?个人回顾跟进项目「([^「」\r\n]{1,100})」的目标「([^「」\r\n]{1,100})」(?:[，,]\s*关联会议「([^「」\r\n]{1,100})」[，,]\s*会前\s*30\s*分钟准备)?$/u);
+  if(track)return{...result,goalAction:'track',projectName:track[1],goalTitle:track[2],...(track[3]?{meetingTitle:track[3]}:{})};
+  const lifecycle=text.match(/^(?:我的)?个人回顾(暂停|恢复|完成)目标「([^「」\r\n]{1,100})」$/u);
+  if(lifecycle)return{...result,goalAction:{暂停:'pause',恢复:'resume',完成:'complete'}[lifecycle[1]],goalTitle:lifecycle[2]};
+  fail();
+ }
  if(action==='feedback'){
   const m=text.match(/^(?:我的)?个人回顾(?:事项)?\s+([A-Za-z0-9][A-Za-z0-9_.:-]{2,159})\s+(已处理|不再提醒|延后(?:\d{1,3}|[一二两三四五六七八九十]{1,3})(?:小时|天))$/u);
   const titled=text.match(/^(?:我的)?个人回顾(?:事项)?\s*(?:「([^「」\r\n]{1,100})」|“([^“”\r\n]{1,100})”)\s*(已处理|不再提醒|延后(?:\d{1,3}|[一二两三四五六七八九十]{1,3})(?:小时|天))$/u);

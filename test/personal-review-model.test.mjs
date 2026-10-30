@@ -65,3 +65,9 @@ test('private model attaches safe token counts and distinguishes output cap from
  const f=await fixture({stream:async function*(){yield{type:'reasoning-delta',index:0,text:'PRIVATE_BODY_CANARY'};yield{type:'usage',usage:{outputTokens:6500}};yield{type:'finish',reason:{kind:'max-tokens'}};}});
  await assert.rejects(f.model.summarize({evidence,kind:'daily'}),error=>{assert.equal(error.code,'MODEL_TOKEN_LIMIT');assert.equal(error.modelDiagnostic.textChars,0);assert.equal(error.modelDiagnostic.outputTokens,6500);assert.doesNotMatch(JSON.stringify(error),/PRIVATE_BODY_CANARY/);return true;});f.model.close();
 });
+
+test('safe finish diagnostics retain only allowlisted SDK failure metadata',async()=>{
+ for(const [reason,detail,code] of [[{kind:'error',failure:{code:'RATE_LIMIT',message:'PRIVATE_FAILURE_MESSAGE'}},'error','RATE_LIMIT'],[{kind:'error',failure:{code:'PRIVATE_FAILURE_CODE',message:'PRIVATE_FAILURE_MESSAGE'}},'error','other'],[{kind:'aborted',failure:{code:'AUTH',message:'PRIVATE_FAILURE_MESSAGE'}},'aborted','AUTH'],[{kind:'tool-calls'},'tool-calls',undefined]]){
+  const f=await fixture({stream:async function*(){yield {type:'finish',reason};}});await assert.rejects(f.model.summarize({evidence,kind:'daily'}),error=>{assert.equal(error.code,'MODEL_INCOMPLETE');assert.equal(error.modelDiagnostic.finish,'other');assert.equal(error.modelDiagnostic.finishDetail,detail);assert.equal(error.modelDiagnostic.failureCode,code);assert.doesNotMatch(JSON.stringify(error.modelDiagnostic),/PRIVATE_/);return true;});f.model.close();
+ }
+});

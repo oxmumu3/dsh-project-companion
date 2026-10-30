@@ -253,3 +253,16 @@ test('second maintenance bridge cannot downgrade or accept an unknown intervenin
   const f=await fixture(t,{installed:{'dsh-wechat':prior},bridgeVersion:next});await assert.rejects(ready()({...f,install:true}),e=>e.code==='BRIDGE_VERSION_CONFLICT');assert.equal(f.calls.some(c=>c.args.includes('add')),false);
  }
 });
+
+test('guarded proactive bridge upgrades every reviewed predecessor and preserves pairing',async t=>{
+ for(const prior of ['0.11.0','0.11.1-dot.1','0.11.1-dot.2']){
+  const f=await fixture(t,{installed:{'dsh-wechat':prior},bridgeVersion:'0.11.1-dot.3'});
+  const state=join(f.profile,'wechat-pairing.json');await writeFile(state,'synthetic-original-pairing');
+  const result=await ready()({...f,install:true});assert.equal(result.status,'installed');assert.equal(result.steps[0].action,'upgrade');assert.equal(result.steps[0].version,'0.11.1-dot.3');assert.equal(await readFile(state,'utf8'),'synthetic-original-pairing');
+ }
+});
+test('guarded proactive bridge never downgrades or accepts an unknown predecessor',async t=>{
+ for(const [prior,next] of [['0.11.1-dot.3','0.11.1-dot.2'],['0.11.1-other.1','0.11.1-dot.3']]){
+  const f=await fixture(t,{installed:{'dsh-wechat':prior},bridgeVersion:next});await assert.rejects(ready()({...f,install:true}),e=>e.code==='BRIDGE_VERSION_CONFLICT');assert.equal(f.calls.some(c=>c.args.includes('add')),false);
+ }
+});

@@ -29,7 +29,7 @@ async function harness({layout=true,sessions,appearance=false}={}){
   if(appearance){ctx.configForms={get:()=>({getSnapshot:()=>formState,subscribe:fn=>{formListeners.add(fn);return()=>formListeners.delete(fn);},mutate:async(ops,revision)=>{assert.equal(revision,formState.revision);assert.equal(ops[0].path[0],'dotAppearance');formState={...formState,revision:revision+1,value:{dotAppearance:ops[0].value}};formListeners.forEach(fn=>fn());return true;}})};ctx.theme={overrideTokens:()=>{const layer={active:true};themeLayers.push(layer);return()=>{layer.active=false;};}};}
   module.apply(ctx);
   const panel=()=>registrations.find(row=>row.spec.name==='main'&&row.spec.key==='project-companion-dot');
-  const render=()=>{cursor=0;assert.ok(panel(),'native Dot main panel must be registered');return panel().component(sessions?{useSessions:selector=>selector({byId:sessions})}:{});};
+  const render=(props={})=>{cursor=0;assert.ok(panel(),'native Dot main panel must be registered');return panel().component({...props,...(sessions?{useSessions:selector=>selector({byId:sessions})}:{})});};
   const flush=async()=>{const run=pending;pending=[];run.forEach(fn=>fn());await new Promise(resolve=>setImmediate(resolve));};
   const unmount=()=>{values.forEach(value=>value?.cleanup?.());values=[];pending=[];};
   return{module,source,ctx,context,registrations,requests,opened,panels,themeLayers,render,flush,unmount,dispose:()=>{unmount();cleanups.forEach(stop=>stop?.());}};
@@ -62,13 +62,17 @@ test('work-hour attention status is read-only and shows its next check and remai
  const h=await harness();h.context.snapshot.personalReview={available:true,review:{status:'enabled',schedule:{dailyTime:'09:00',timeZone:'America/Mexico_City'},attention:{enabled:true,nextRun:'2026-10-30T17:00:00.000Z',quiet:false,remaining:1},sources:['gmail'],projects:[],items:[],jobs:[]},news:{topics:[],topicSource:'default'}};
  h.render();await h.flush();const view=h.render();assert.match(text(view),/工作时段主动关注已开启/);assert.match(text(view),/今天还可提醒 1 次/);assert.match(text(view),/下次检查/);assert.equal(posts(h).length,0);h.dispose();
 });
+test('existing review card displays current goals without a new setup form',async()=>{
+ const h=await harness();h.context.snapshot.personalReview={available:true,review:{status:'enabled',sources:[],projects:[],items:[],jobs:[],goals:[{title:'完善产品',status:'active',meetingTitle:'周会'}]},news:{topics:[]}};
+ h.render();await h.flush();const view=h.render();assert.match(text(view),/正在跟进的目标/);assert.match(text(view),/完善产品.*跟进中.*周会/);assert.equal(posts(h).length,0);h.dispose();
+});
 
 test('adds a matching native sidebar/main pair without replacing the existing interface',async()=>{
   const h=await harness();const main=h.registrations.find(row=>row.spec.name==='main');
   const entry=h.registrations.find(row=>row.spec.name==='sidebar.panellist');
   assert.ok(main,'native main panel');assert.ok(entry,'persistent sidebar entry');assert.equal(main.spec.key,entry.spec.id);
   assert.equal(entry.spec.label,'DSH Dot');assert.equal(h.registrations.some(row=>['root','sidebar','conversation.composer','conversation.chat.node'].includes(row.spec.name)),false);
-  assert.ok(h.registrations.some(row=>row.spec.name==='settings.section'));assert.ok(h.registrations.some(row=>row.spec.name==='settings.onboarding'));
+  assert.ok(h.registrations.some(row=>row.spec.name==='settings.section'));assert.equal(h.registrations.some(row=>row.spec.name==='settings.onboarding'),false);
   assert.equal(h.requests.length,0);assert.equal(h.panels.length,0);assert.equal(h.opened.length,0);
   const icon=entry.component({size:18,active:false});assert.equal(nodes(icon,node=>node.type==='button').length,0);
   h.dispose();assert.ok(h.registrations.every(row=>row.disposed));
@@ -159,7 +163,7 @@ test('known native session titles aid explicit choice and missing cache stays un
 
 test('unbound empty snapshot remains usable and never invents a connection or dispatch',async()=>{
   const h=await harness();h.context.snapshot={...sample(),connection:{state:'awaiting-message'},projects:[],jobs:[],reminders:[],counts:{projects:0,activeReminders:0}};
-  h.render();await h.flush();let view=h.render();assert.match(text(view),/先连接，再选一个项目/);assert.ok(button(view,'项目'));assert.ok(button(view,'连接'));
+  h.render();await h.flush();let view=h.render();assert.match(text(view),/今天想推进哪件事/);assert.ok(button(view,'项目'));assert.ok(button(view,'连接'));
   assert.match(text(view),/微信尚未确认连接/);assert.equal(button(view,'打开 Dot 会话'),undefined);
   button(view,'项目').props.onClick();view=h.render();assert.match(text(view),/还没有关注项目/);
   assert.equal(h.opened.length,0);assert.equal(h.requests.length,1);assert.deepEqual(posts(h),[]);h.dispose();
@@ -202,9 +206,9 @@ test('more active reminders than the visible window are labelled rather than cal
   h.render();await h.flush();const view=h.render();assert.match(text(view),/仅显示.*条.*其余/);assert.match(text(view),/核对演示/);h.dispose();
 });
 
-test('first-use home puts WeChat connection in primary position without dispatching on mount',async()=>{
+test('first-use home offers desktop input before optional WeChat setup without dispatching on mount',async()=>{
  const h=await harness();h.context.snapshot={...sample(),connection:{state:'awaiting-message'},projects:[],jobs:[],reminders:[]};h.render();await h.flush();const view=h.render();
- assert.match(text(view),/把 Dot 接到微信里/);const connect=button(view,'连接微信');assert.ok(connect);assert.equal(connect.props.className,'pc_dot_primary');assert.ok(button(view,'先在电脑了解'));assert.equal(h.requests.length,1);assert.equal(h.opened.length,0);h.dispose();
+ assert.match(text(view),/今天想推进哪件事/);const entry=button(view,'开始对话');assert.ok(entry);assert.equal(entry.props.className,'pc_dot_primary');assert.equal(nodes(view,n=>n.type==='textarea').length,1);assert.equal(h.requests.length,1);assert.equal(h.opened.length,0);h.dispose();
 });
 
 test('home natural-language entry preserves input when native preparation is unavailable',async()=>{
@@ -569,16 +573,16 @@ test('a newer running or blocked task stays current instead of an older complete
 });
 
 
-test('shared Family workbench is an honest read-only return path, never a native Owner draft shortcut',async()=>{
+test('shared Family results remain read-only while desktop conversation input stays visible',async()=>{
  const h=await harness();h.context.snapshot.connection.readOnly=true;h.context.snapshot.contextBindingRevision=null;h.context.snapshot.projects[0].followup={available:true,followup:null,once:null};seedMemory(h,memoryRow('m1','context','已有背景'));
- try{h.render();await h.flush();let view=h.render();assert.match(text(view),/原微信.*交代/);assert.equal(nodes(view,n=>n.type==='textarea'&&n.props['aria-label']==='交代给 Dot 的事情').length,0);assert.equal(button(view,'和 Dot 接着聊'),undefined);assert.equal(button(view,'安排提醒'),undefined);button(view,'公开项目 A').props.onClick();view=h.render();assert.equal(button(view,'和 Dot 聊这个项目'),undefined);button(view,'记住的事').props.onClick();view=h.render();assert.equal(button(view,'纠正或忘记'),undefined);assert.equal(button(view,'告诉 Dot 要记住什么'),undefined);
+ try{h.render();await h.flush();let view=h.render();assert.match(text(view),/今天想推进哪件事/);assert.equal(nodes(view,n=>n.type==='textarea'&&n.props['aria-label']==='交代给 Dot 的事情').length,1);assert.equal(button(view,'和 Dot 接着聊'),undefined);assert.equal(button(view,'安排提醒'),undefined);button(view,'公开项目 A').props.onClick();view=h.render();assert.equal(button(view,'和 Dot 聊这个项目'),undefined);button(view,'记住的事').props.onClick();view=h.render();assert.equal(button(view,'纠正或忘记'),undefined);assert.equal(button(view,'告诉 Dot 要记住什么'),undefined);
   button(view,'连接').props.onClick();view=h.render();const panel=nodes(view,n=>n.props?.bindingRevision===null&&typeof n.type==='function')[0];assert.ok(panel);assert.equal(panel.props.onFirstValue,undefined);assert.equal(panel.props.bound,false);assert.equal(h.opened.length,0);assert.deepEqual(actionPosts(h),[]);
  }finally{h.dispose();}
 });
 
 test('offline shared Family mode preserves the return-to-WeChat path instead of offering legacy re-pairing',async()=>{
  const h=await harness();h.context.snapshot.connection={state:'unknown',readOnly:true};
- try{h.render();await h.flush();const view=h.render();assert.match(text(view),/原微信/);assert.equal(button(view,'连接微信'),undefined);assert.equal(button(view,'选择关注项目'),undefined);assert.equal(nodes(view,n=>n.type==='textarea'&&n.props['aria-label']==='交代给 Dot 的事情').length,0);assert.equal(h.opened.length,0);}finally{h.dispose();}
+ try{h.render();await h.flush();const view=h.render();assert.match(text(view),/今天想推进哪件事/);assert.equal(button(view,'连接微信'),undefined);assert.equal(button(view,'选择关注项目'),undefined);assert.equal(nodes(view,n=>n.type==='textarea'&&n.props['aria-label']==='交代给 Dot 的事情').length,1);assert.equal(h.opened.length,0);}finally{h.dispose();}
 });
 
 
@@ -597,4 +601,31 @@ test('shared Owner attention control submits only fixed intent and refreshes its
  h.context.snapshot.personalReview={available:true,bindingRevision:revision,deliverySupported:true,review:{status:'enabled',schedule:{dailyTime:'09:00',timeZone:'UTC'},sources:['gmail'],projects:[],items:[],jobs:[],attention:{enabled:false,nextRun:null,quiet:false,remaining:0}},news:{topics:[],topicSource:'default'}};
  h.context.onFetch=async(url,options)=>{if(url==='/api/project_companion/review/attention'){assert.deepEqual(JSON.parse(options.body),{enabled:true,expectedBindingRevision:revision});h.context.snapshot.personalReview.review.attention={enabled:true,nextRun:'2026-10-30T11:00:00.000Z',quiet:false,remaining:2};return Response.json({text:'已开启工作时段关注。'});}return Response.json(h.context.snapshot);};
  h.render();await h.flush();let tree=h.render();await button(tree,'开启工作时段主动关注').props.onClick();await h.flush();tree=h.render();assert.match(text(tree),/已开启工作时段关注。/);assert.ok(button(tree,'关闭工作时段主动关注'));assert.equal(actionPosts(h).length,1);h.dispose();
+});
+
+
+test('shared result scope routes desktop drafts and history to the genuine native Dot session',async()=>{
+ const h=await harness(),nativeId='native-desktop-dot';h.context.snapshot.connection={state:'bound',sessionId:'family_owner_synthetic',readOnly:true};h.context.snapshot.desktopConversation={state:'ready',sessionId:nativeId,revision:'a'.repeat(64)};
+ const prepared=[],binding={sessionId:nativeId,ctx:{get:()=>({input:{requestDraftInitialization:(ref,options)=>{assert.equal(ref,binding);prepared.push(options);return'applied';}}})}};
+ h.ctx.sessions={retain:id=>{assert.equal(id,nativeId);return{binding,ready:Promise.resolve(),release(){}};}};
+ try{h.render();await h.flush();let view=h.render();const input=nodes(view,n=>n.type==='textarea'&&n.props['aria-label']==='交代给 Dot 的事情')[0];assert.ok(input);input.props.onChange({target:{value:'继续我的桌面任务'}});await button(h.render(),'开始对话').props.onClick();assert.equal(prepared.length,1);assert.equal(prepared[0].clearPreviousDraft,false);assert.deepEqual(h.opened,[nativeId]);assert.equal(actionPosts(h).length,0);await button(h.render(),'对话记录').props.onClick();assert.deepEqual(h.opened,[nativeId,nativeId]);}finally{h.dispose();}
+});
+
+
+test('current official host embeds its native conversation factory with a session-scoped child slot',async()=>{
+ const h=await harness();h.context.snapshot.desktopConversation={state:'ready',sessionId:'native-desktop-dot',revision:'a'.repeat(64)};h.ctx.sessions={retain(){throw Error('child effects not rendered by this structural harness');}};
+ const props={SessionProvider:function SessionProvider(){},renderSlot:()=>null};
+ try{h.render(props);await h.flush();const view=h.render(props),native=nodes(view,n=>n.type?.name==='DesktopConversation')[0];assert.ok(native);assert.equal(native.props.target.sessionId,'native-desktop-dot');assert.equal(native.props.SessionProvider,props.SessionProvider);assert.equal(nodes(view,n=>n.type==='textarea'&&n.props['aria-label']==='交代给 Dot 的事情').length,0);const panel=h.registrations.find(r=>r.spec.name==='main');assert.equal(panel.spec.children['dot.desktop.conversation'].scope,'session');const child=h.registrations.find(r=>r.spec.name==='dot.desktop.conversation');let requested;child.component({renderFactorySlot:(name,options)=>{requested={name,options};}});assert.equal(requested.name,'conversation.content');assert.equal(requested.options.variant,'embedded');assert.equal(requested.options.phase,'active');assert.equal(requested.options.hero,false);assert.equal(h.opened.length,0);assert.equal(actionPosts(h).length,0);}finally{h.dispose();}
+});
+
+test('unbound desktop creates one real native session only after explicit input and reuses it',async()=>{
+ const h=await harness();h.context.snapshot.connection={state:'missing'};h.context.snapshot.desktopConversation={state:'unavailable'};let created=0,release;const binding={sessionId:'new-native',ctx:{get:()=>({input:{requestDraftInitialization:()=>'applied'}})}};
+ h.ctx.sessions={create:async()=>{created++;return'new-native';},retain:id=>{assert.equal(id,'new-native');return{binding,ready:Promise.resolve(),release(){}};}};
+ try{h.render();await h.flush();assert.equal(created,0);let view=h.render();nodes(view,n=>n.type==='textarea'&&n.props['aria-label']==='交代给 Dot 的事情')[0].props.onChange({target:{value:'开始本地对话'}});await button(h.render(),'开始对话').props.onClick();assert.equal(created,1);view=h.render();nodes(view,n=>n.type==='textarea'&&n.props['aria-label']==='交代给 Dot 的事情')[0].props.onChange({target:{value:'接着上一句'}});await button(h.render(),'开始对话').props.onClick();assert.equal(created,1);assert.deepEqual(h.opened,['new-native','new-native']);assert.equal(actionPosts(h).length,0);}finally{h.dispose();}
+});
+
+test('native embedded draft handoff stays on the workbench and preserves the original draft policy',async()=>{
+ const h=await harness(),prepared=[];let releases=0;const binding={sessionId:'native-desktop',ctx:{get:()=>({input:{requestDraftInitialization:(_binding,options)=>{prepared.push(options);return'applied';}}})}};
+ h.ctx.sessions={retain:()=>({binding,ready:Promise.resolve(),release:()=>releases++})};
+ try{const result=await h.module.prepareDotDraft(h.ctx,binding.sessionId,'合成的新问题',undefined,async()=>{},undefined,true);assert.equal(result.status,'applied');assert.equal(prepared.length,1);assert.equal(prepared[0].clearPreviousDraft,false);assert.equal(h.opened.length,0);assert.equal(h.panels.length,0);assert.equal(releases,1);}finally{h.dispose();}
 });

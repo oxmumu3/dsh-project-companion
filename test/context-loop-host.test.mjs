@@ -233,3 +233,34 @@ test('protected context check preserves bounded model diagnostics through the na
   }finally{h.adapter.followup.activeLoop=activeLoop;}
  }
 });
+
+test('desktop native route preserves original context and project authority independently of Family delegation',async t=>{
+ const family={enabled:true};let familyOwner='family_owner_1';
+ const h=await fixture(t,{family,onRoot:ctx=>ctx.provide('familyDotBridge',{resolveOwnerCall:async()=>null,isOwnerRevisionCurrent:id=>id===familyOwner})});
+ await h.tool({action:'connect',source:'dida',userRequested:true});
+ const root=h.agent.session.header.cwd;await h.project({action:'watch',project:root});
+ const route=h.routes.get('/api/project_companion/desktop-conversation');
+ const view=async()=>{const r=await route.fetch(new Request('http://localhost/api/project_companion/desktop-conversation'));assert.equal(r.status,200);return r.json();};
+ const original=await view();assert.equal(original.state,'ready');assert.equal(original.sessionId,h.agent.id);assert.equal(original.sessionId.startsWith('family_'),false);
+ for(const stage of ['owner-switch','family-disabled']){
+  if(stage==='owner-switch')familyOwner='family_owner_other';else family.enabled=false;
+  assert.deepEqual(await view(),original,stage);
+  const result=await h.tool({action:'query',source:'dida',operation:'projects',limit:2,userRequested:true});assert.notEqual(result.status,'blocked',stage);
+  const project=await h.project({action:'status'});assert.equal(project.counts.projects,1,stage);assert.equal(project.projects.length,1,stage);
+ }
+ assert.equal(h.calls.filter(row=>row.type==='call').length,2);
+});
+
+test('new desktop native session cannot inherit the old native source grant but may explicitly enable its own without WeChat',async t=>{
+ const h=await fixture(t);await h.tool({action:'connect',source:'dida',userRequested:true});
+ const session=h.ctx.sessions.create(SessionId('desktop-native-fresh'),{meta:{cwd:h.agent.session.header.cwd}}),agent={id:session.id,session,ctx:h.ctx,status:'idle'};h.agents.set(agent.id,agent);
+ let n=0;const invoke=async args=>{const r=await h.ctx.tools.execute({callId:'desktop-fresh-'+(++n),name:'personal_context',arguments:args,agent,signal:new AbortController().signal});assert.equal(r.isError,false);return r.value;};
+ const query={action:'query',source:'dida',operation:'projects',limit:2,userRequested:true};
+ const count=h.calls.length;assert.equal((await invoke(query)).status,'blocked');assert.equal(h.calls.length,count);
+ // Explicitly unbound local route is verified by the fixture readNativeRoute.
+ h.setConnection({state:'unbound'});
+ const enabled=await invoke({action:'connect',source:'dida',userRequested:true});assert.equal(enabled.sources.find(row=>row.id==='dida').enabled,true);
+ assert.notEqual((await invoke(query)).status,'blocked');assert.equal(h.calls.filter(row=>row.type==='call').length,1);
+ const route=h.routes.get('/api/project_companion/desktop-conversation'),response=await route.fetch(new Request('http://localhost/api/project_companion/desktop-conversation'));
+ assert.deepEqual(await response.json(),{state:'unavailable'},'local native authority does not invent a WeChat/Family route');
+});
