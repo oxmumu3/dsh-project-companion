@@ -337,7 +337,13 @@ export function createPersonalReviewService({ store, readBinding, readBindingSyn
       }catch{route={state:'unknown',reason:'ROUTE_FAILED'};}
       availability=route.state;if(availability!=='current')diagnostic=route;
       if(availability==='current'){
-        const run=execution(plan);try{await guard(run);}catch(error){availability='changed';const code=personalReviewGuardCodeSchema.safeParse(personalReviewFailure(error).code);diagnostic={state:'changed',reason:'GUARD_REJECTED',guardCode:code.success?code.data:'REVIEW_FAILED'};}finally{run.dispose();}
+        const run=execution(plan);try{await guard(run);}catch(error){
+          availability='changed';let guardCode='REVIEW_FAILED';
+          // Even error metadata getters may throw. Diagnostics must preserve
+          // the original blocked admission without exposing the thrown value.
+          try{const code=personalReviewGuardCodeSchema.safeParse(personalReviewFailure(error).code);if(code.success)guardCode=code.data;}catch{}
+          diagnostic={state:'changed',reason:'GUARD_REJECTED',guardCode};
+        }finally{run.dispose();}
       }
     }
     if(closed||admission!==generation)return{blocked:true,check:null};

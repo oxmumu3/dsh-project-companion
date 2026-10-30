@@ -5,18 +5,18 @@ import {createPersonalReviewService,personalReviewRowSchema} from '../src/person
 const caller={sessionId:'synthetic-availability-owner',cwd:'/synthetic/availability'},binding='a'.repeat(64),grant='b'.repeat(64);
 const intent=(action,extra={})=>({action,requestId:`availability-${action}`,userRequested:true,...extra});
 async function fixture({persisted}={}){
- let row=structuredClone(persisted),at=new Date('2026-10-30T10:40:00Z'),availability='current',failure,grantMode,bindingMode,enabled=true,writes=0,availabilityReads=0,authorizationReads=0,bindingReads=0;
+ let row=structuredClone(persisted),at=new Date('2026-10-30T10:40:00Z'),availability='current',failure,grantMode,bindingMode,bindingFailure,enabled=true,writes=0,availabilityReads=0,authorizationReads=0,bindingReads=0;
  const calls={collect:0,model:0,send:0};
  const service=createPersonalReviewService({store:{get:async()=>structuredClone(row),put:async(_key,value)=>{writes++;row=structuredClone(value);}},clock:()=>at,
   readAvailability:async()=>{availabilityReads++;if(failure)throw failure;return availability;},
   authorization:async()=>{authorizationReads++;if(grantMode==='throw')throw new Error('PRIVATE_AUTH_CANARY');return grantMode==='missing'?null:grantMode==='changed'?'c'.repeat(64):grant;},
-  readBinding:async()=>{bindingReads++;if(bindingMode==='throw')throw new Error('PRIVATE_BINDING_CANARY');if(bindingMode==='unexpected')return{bound:true,get bindingKey(){throw Object.assign(new Error('PRIVATE_GUARD_CANARY'),{code:'MODEL_INVALID_OUTPUT'});}};return{bound:bindingMode!=='missing',bindingKey:bindingMode==='changed'?'d'.repeat(64):binding};},
+  readBinding:async()=>{bindingReads++;if(bindingFailure)return{bound:true,get bindingKey(){throw bindingFailure;}};if(bindingMode==='throw')throw new Error('PRIVATE_BINDING_CANARY');if(bindingMode==='unexpected')return{bound:true,get bindingKey(){throw Object.assign(new Error('PRIVATE_GUARD_CANARY'),{code:'MODEL_INVALID_OUTPUT'});}};return{bound:bindingMode!=='missing',bindingKey:bindingMode==='changed'?'d'.repeat(64):binding};},
   canRun:async()=>enabled,
   collect:async()=>{calls.collect++;return{evidence:[],coverage:[{source:'gmail',status:'ok',count:0}]};},
   summarize:async()=>{calls.model++;return{items:[]};},send:async()=>{calls.send++;return{status:'reported_sent'};},
  });
  await service.ready();
- return{service,calls,row:()=>structuredClone(row),writes:()=>writes,counts:()=>({availabilityReads,authorizationReads,bindingReads}),time:value=>{at=new Date(value);},route:value=>{availability=value;failure=undefined;},routeFailure:()=>{failure=Object.assign(new Error('PRIVATE_ROUTE_MESSAGE_CANARY'),{code:'PRIVATE_ROUTE_CODE_CANARY',session:'PRIVATE_SESSION_CANARY',path:'/PRIVATE_PATH_CANARY',token:'PRIVATE_TOKEN_CANARY'});},grantMode:value=>{grantMode=value;},bindingMode:value=>{bindingMode=value;},disable:()=>{enabled=false;}};
+ return{service,calls,row:()=>structuredClone(row),writes:()=>writes,counts:()=>({availabilityReads,authorizationReads,bindingReads}),time:value=>{at=new Date(value);},route:value=>{availability=value;failure=undefined;},routeFailure:()=>{failure=Object.assign(new Error('PRIVATE_ROUTE_MESSAGE_CANARY'),{code:'PRIVATE_ROUTE_CODE_CANARY',session:'PRIVATE_SESSION_CANARY',path:'/PRIVATE_PATH_CANARY',token:'PRIVATE_TOKEN_CANARY'});},grantMode:value=>{grantMode=value;},bindingMode:value=>{bindingMode=value;},bindingFailure:error=>{bindingFailure=error;},disable:()=>{enabled=false;}};
 }
 async function subscribe(f){
  await f.service.act(caller,intent('configure',{sources:['gmail'],projects:[],schedule:{dailyTime:'09:00',timeZone:'UTC'}}));
@@ -52,6 +52,16 @@ test('pre-job guard failures persist only existing fixed authorization, binding 
   const f=await fixture();await subscribe(f);if(kind==='grant')f.grantMode(value);else if(kind==='binding')f.bindingMode(value);else f.disable();
   f.time('2026-10-30T11:00:00Z');await f.service.tick();
   assert.deepEqual(f.row().recovery.diagnostic,{state:'changed',reason:'GUARD_REJECTED',guardCode:code});assert.doesNotMatch(JSON.stringify(f.row().recovery),/PRIVATE_/);blocked(f);await f.service.close();
+ }
+});
+
+test('throwing error metadata getters cannot escape blocked admission or leak private text',async()=>{
+ for(const property of ['code','reviewDiagnostic','modelDiagnostic']){
+  const f=await fixture();await subscribe(f);
+  const failure=Object.defineProperty(new Error('PRIVATE_GUARD_ERROR_CANARY'),property,{get(){throw new Error('PRIVATE_ERROR_GETTER_CANARY');}});
+  f.bindingFailure(failure);f.time('2026-10-30T11:00:00Z');assert.deepEqual(await f.service.tick(),[]);
+  assert.deepEqual(f.row().recovery.diagnostic,{state:'changed',reason:'GUARD_REJECTED',guardCode:'REVIEW_FAILED'});
+  assert.doesNotMatch(JSON.stringify(f.row().recovery),/PRIVATE_/);blocked(f);await f.service.close();
  }
 });
 
