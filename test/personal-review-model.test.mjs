@@ -48,3 +48,13 @@ test('largest bounded evidence keeps recent previous items within 60k without ch
   const before=structuredClone(previous),f=await fixture({answer:{items:[]}});await f.model.summarize({evidence:rows,coverage,previousItems:previous,kind:'weekly'});
   const data=JSON.parse(f.calls[0].messages[0].content[0].text);assert.ok(JSON.stringify(data.previousItems).length<=60000);assert.ok(JSON.stringify(data).length<=170000);assert.equal(data.previousItems[0].id,previous.at(-1).id);assert.equal(data.previousItemsTruncated,true);assert.ok(data.previousItems.every(item=>item.status==='handled'));assert.deepEqual(previous,before);f.model.close();
 });
+
+test('private helper chooses supported bounded output policy without changing saved model selection', async () => {
+ const {createPersonalReviewModel}=await api();const selection={provider:'synthetic',model:'original',reasoningEffort:'max'},before=structuredClone(selection);let captured;
+ const ctx={get(name){if(name==='agentDefaultModel')return{currentSelection:()=>selection};if(name==='llm')return{prepareCall:async(config,_signal,policy)=>{captured={requested:config,prepared:typeof policy==='function'?policy(config,{reasoning:{efforts:[{id:'off'},{id:'low'},{id:'max'}]}}):config};return{config:captured.prepared,stream:async function*(){yield{type:'text-delta',index:0,text:JSON.stringify(output)};yield{type:'finish',reason:{kind:'stop'}};}};}};}};
+ const model=createPersonalReviewModel(ctx);await model.summarize({evidence,kind:'daily'});assert.equal(captured.prepared.reasoningEffort,'off');assert.equal(captured.prepared.provider,'synthetic');assert.equal(captured.prepared.model,'original');assert.equal(captured.prepared.maxTokens,6500);assert.deepEqual(selection,before);model.close();
+});
+test('private model attaches safe token counts and distinguishes output cap from authorization',async()=>{
+ const f=await fixture({stream:async function*(){yield{type:'reasoning-delta',index:0,text:'PRIVATE_BODY_CANARY'};yield{type:'usage',usage:{outputTokens:6500}};yield{type:'finish',reason:{kind:'max-tokens'}};}});
+ await assert.rejects(f.model.summarize({evidence,kind:'daily'}),error=>{assert.equal(error.code,'MODEL_TOKEN_LIMIT');assert.equal(error.modelDiagnostic.textChars,0);assert.equal(error.modelDiagnostic.outputTokens,6500);assert.doesNotMatch(JSON.stringify(error),/PRIVATE_BODY_CANARY/);return true;});f.model.close();
+});

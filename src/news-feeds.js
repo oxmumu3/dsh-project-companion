@@ -445,7 +445,7 @@ export async function readNewsArticle(article, { fetch, lookup, signal } = {}) {
   checkAbort(signal);
   const fallback = warning => ({ article, content: plain(article?.excerpt || '').slice(0, 800), coverage: 'feed-only', truncated: false, warning });
   try {
-    const feed = NEWS_FEEDS.find(x => x.name === article?.sourceName && x.htmlUrl === article?.sourceUrl);
+    const feed = NEWS_FEEDS.find(x => x.name === article?.sourceName && new URL(x.htmlUrl).href === new URL(article?.sourceUrl).href);
     if (!feed || typeof article.url !== 'string' || article.id !== digest(canonicalURL(article.url, feed))) throw new Error('Unknown news article');
     const body = await readURL(article.url, feed, { fetch, lookup, signal });
     if (body.type && !['text/html', 'application/xhtml+xml', 'text/plain'].includes(body.type)) throw new Error('Unsupported news article content type');

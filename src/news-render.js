@@ -3,8 +3,8 @@ import {normalizeNewsTopics} from './news-topics.js';
 export const NEWS_MESSAGE_LIMIT = 3200;
 const clean = value => String(value ?? '').toWellFormed().replace(/[\u0000-\u001f\u007f]/g,' ').replace(/\s+/g,' ').trim();
 const clip = (text,n) => { let value=''; for(const c of clean(text)){if(value.length+c.length>n)break;value+=c;}return value; };
-const ellipsis = (value,n) => {const source=clean(value);return source.length>n?`${clip(source,n-1)}…`:source;};
-const prose = (value,n) => clip(String(value??'').replace(/<[^>]*>/g,' ').replace(/(?:https?:\/\/|www\.)\S+/gi,'').replace(/[\[\]()*_`#<>\\]/g,' '),n);
+const ellipsis = (value,n) => {if(n<=0)return '';const source=clean(value);return source.length>n?`${clip(source,n-1)}…`:source;};
+const prose = (value,n) => ellipsis(String(value??'').replace(/<[^>]*>/g,' ').replace(/(?:https?:\/\/|www\.)\S+/gi,'').replace(/[\[\]()*_`#<>\\]/g,' '),n);
 export function newsPublicUrl(value){
   if(typeof value!=='string'||value.length>1600||/[\s<>\\]/.test(value))throw new Error('原文 URL 无效');
   let url;try{url=new URL(value);}catch{throw new Error('原文 URL 无效');}
@@ -15,7 +15,7 @@ export function newsPublicUrl(value){
 export function renderNewsDigest({items=[],generatedAt=new Date().toISOString(),stats={},timeZone='UTC',topics,topicSource='temporary',preview=true}={}){
   const focus=normalizeNewsTopics(topics);
   if(!Array.isArray(items)||items.length>10)throw new Error('资讯最多 10 篇');
-  const source=items.map(item=>({id:item.id,sourceUrl:item.sourceUrl??null,publishedAt:item.publishedAt??null,truncated:item.truncated===true,url:newsPublicUrl(item.url),title:prose(item.title,54)||'未命名文章',sourceName:ellipsis(prose(item.sourceName,100),22)||'RSS 来源',summary:prose(item.summary,210),why:prose(item.why,70),coverage:item.coverage==='article'?'article':'feed-only'}));
+  const source=items.map(item=>({id:item.id,sourceUrl:item.sourceUrl??null,publishedAt:item.publishedAt??null,truncated:item.truncated===true,url:newsPublicUrl(item.url),title:prose(item.title,54)||'未命名文章',sourceName:ellipsis(prose(item.sourceName,100),22)||'RSS 来源',summary:prose(item.summary,360),why:prose(item.why,90),coverage:item.coverage==='article'?'article':'feed-only'}));
   const localDate=value=>{if(!Number.isFinite(Date.parse(value)))return '日期未知';try{const p=Object.fromEntries(new Intl.DateTimeFormat('en-CA',{timeZone,year:'numeric',month:'2-digit',day:'2-digit'}).formatToParts(new Date(value)).map(x=>[x.type,x.value]));return `${p.year}-${p.month}-${p.day}`;}catch{return new Date(value).toISOString().slice(0,10);}};
   const displayDate=localDate(generatedAt);
   const footer='来源为最近 24 小时 RSS 候选；摘要依据已取得的材料，未独立核验全部事实。';
@@ -41,8 +41,8 @@ export function renderNewsDigest({items=[],generatedAt=new Date().toISOString(),
   // Full URLs are indivisible. Remove complete trailing articles until the
   // minimal layout fits, then distribute the remaining budget to prose.
   while(rows.length&&render(rows,0,0).length>NEWS_MESSAGE_LIMIT)rows=rows.slice(0,-1);
-  let text=render(rows,190,55);
-  for(const [summaryLimit,whyLimit] of [[145,35],[110,20],[75,0],[45,0],[20,0],[0,0]]){if(text.length<=NEWS_MESSAGE_LIMIT)break;text=render(rows,summaryLimit,whyLimit);}
+  let text=render(rows,360,90);
+  for(const [summaryLimit,whyLimit] of [[190,55],[145,35],[110,20],[75,0],[45,0],[20,0],[0,0]]){if(text.length<=NEWS_MESSAGE_LIMIT)break;text=render(rows,summaryLimit,whyLimit);}
   if(text.length>NEWS_MESSAGE_LIMIT)throw new Error('资讯正文超过单条消息限制');
   return{text,items:rows,deepCount:Math.min(3,rows.length),briefCount:Math.max(0,rows.length-3),stats:{...stats,hours:24,selectedCount:rows.length},generatedAt,...(focus?{topics:focus}:{})};
 }
