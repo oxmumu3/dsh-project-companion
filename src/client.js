@@ -799,6 +799,7 @@ function registerDotOverlay(ctx, Component) {
       // Keep drafts only for this plugin lifetime. No private text is stored in
       // browser storage, and a different owner/binding never inherits the cache.
       const workbenchCache={binding:null,draft:'',selected:'',localConversation:null,memory:new Map(),follow:new Map()};
+      const needsInlineWechatSetup=connection=>connection?.readOnly!==true&&['missing','waiting-qr','scanned','awaiting-message'].includes(connection?.state);
       let workbenchSurface={page:null,ready:false,target:null,focus:null,suspended:false,navigationPhase:null};
       let nativeNavigation={phase:null,sawAway:false};
       const surfaceListeners=new Set();
@@ -933,15 +934,15 @@ function registerDotOverlay(ctx, Component) {
         // This is a passive view of the bridge's existing pairing state. Unknown
         // or Family bindings never enter the legacy pairing path.
         const readInlineConnection=async()=>{
-          if(!active.current||inlineFlight.current||currentSnapshot.current?.connection?.state!=='missing'||currentSnapshot.current?.connection?.readOnly===true)return;
+          if(!active.current||inlineFlight.current||!needsInlineWechatSetup(currentSnapshot.current?.connection))return;
           inlineFlight.current=true;
-          try{const value=await request(endpoint);if(!active.current||currentSnapshot.current?.connection?.state!=='missing'||currentSnapshot.current?.connection?.readOnly===true)return;
+          try{const value=await request(endpoint);if(!active.current||!needsInlineWechatSetup(currentSnapshot.current?.connection))return;
             if(value?.version!==1||!['missing','unknown','waiting-qr','scanned','awaiting-message','bound','failed'].includes(value.connection?.state))throw Error('connection unavailable');
             setInlineConnection(value.connection);setInlineConnectionError('');setQrFailed(false);
           }catch{if(active.current)setInlineConnectionError('微信连接状态暂未确认；电脑对话可以继续。');}
           finally{inlineFlight.current=false;}
         };
-        React.useEffect(()=>{if(snapshot?.connection?.state==='missing'&&snapshot.connection.readOnly!==true)void readInlineConnection();else{setInlineConnection(null);setInlineConnectionError('');}},[snapshot?.connection?.state,snapshot?.connection?.readOnly]);
+        React.useEffect(()=>{if(needsInlineWechatSetup(snapshot?.connection))void readInlineConnection();else{setInlineConnection(null);setInlineConnectionError('');}},[snapshot?.connection?.state,snapshot?.connection?.readOnly]);
         React.useEffect(()=>{if(!['waiting-qr','scanned','awaiting-message'].includes(inlineConnection?.state))return;const timer=setInterval(()=>void readInlineConnection(),5000);return()=>clearInterval(timer);},[inlineConnection?.state]);
         React.useEffect(()=>{if(page==='projects'&&bindingOf(snapshot)&&!catalog&&!catalogError)void loadCatalog();},[page,bindingOf(snapshot)]);
         const action=async(body,scope=scoped(body.projectId,body.id),epoch=viewEpoch.current)=>{
@@ -1092,12 +1093,12 @@ function registerDotOverlay(ctx, Component) {
         const plans=section('下一次跟进',upcoming.length?upcoming.map(({project:p,kind,plan})=>h('div',{className:'pc_dot_row',key:`${p.id}:${kind}`},h('div',null,h('strong',null,p.label),h('small',{className:'pc_dot_muted'},kind==='once'?'单次检查':followFrequency(plan),plan.blocked?' · 当前受阻':plan.running===false?(kind==='once'?' · 等待到期':' · 已保存，运行器未启动'):'',plan.loopId?' · 含已选个人资料':'',` · 原微信会话`),h('small',{className:'pc_dot_muted'},`下次 ${date(plan.nextDueAt)}`)),button('查看安排',()=>openFollow(p)))):projects.some(p=>p.followup?.available===false||!p.followup)?h('p',{className:'pc_dot_muted'},'项目跟进状态尚未确认，可在项目详情中查询。'):h('p',{className:'pc_dot_muted'},'还没有开启项目跟进。先交代目标，再决定什么时候回来看看。'),
           !availability.plans?h('p',{className:'pc_dot_muted'},readOnly?'共享微信的提醒与日报，请在原微信查询或安排；这里不混入独立 Dot 会话的旧计划。':'提醒与日报状态尚未确认，请刷新核对。'):h('div',null,...reminders.map(r=>h('div',{className:'pc_dot_row',key:r.id},h('div',null,h('strong',null,r.title),h('small',{className:'pc_dot_muted'},'明确提醒 · 原微信会话')),h('span',{className:'pc_dot_muted'},date(r.dueAt)))),!readOnly&&!reminders.length?h('p',{className:'pc_dot_muted'},'暂无待触发的明确提醒。'):null,snapshot?.counts?.activeReminders>reminders.length?h('p',{className:'pc_dot_muted'},`仅显示 ${reminders.length} 条活动提醒，其余请在 Dot 会话中查询。`):null,readOnly?null:h('p',{className:'pc_dot_muted'},snapshot?.daily?.enabled?`项目资料日报：每天 ${snapshot.daily.time}（${snapshot.daily.timeZone}）`:'项目资料日报未开启。'),h('div',{className:'pc_dot_actions'},readOnly?null:button('安排提醒',()=>stageDraft('请提醒我：','')),readOnly?null:button('设置日报',()=>stageDraft('请帮我设置项目资料日报。先和我确认每天的发送时间、时区和关注项目，再开启。','')))));
         const currentResult=recentJobs[0];
-        const firstUse=snapshot?.connection?.state==='missing'&&!readOnly;
+        const firstUse=needsInlineWechatSetup(snapshot?.connection);
         const attentionProjection=snapshot?.personalReview?.attentionItems;
         const scheduleProjection=snapshot?.personalReview?.schedules;
         const attentionItems=attentionProjection?.available===true&&Array.isArray(attentionProjection.items)?attentionProjection.items.slice(0,5):null;
         const scheduleItems=Array.isArray(scheduleProjection?.items)?scheduleProjection.items.slice(0,12):null;
-        const unknownScopes=[!availability.projects?'关注项目':null,!availability.jobs?'交办记录':null,!availability.plans?'已有安排':null,!attentionItems?'当前事项':attentionProjection.coverage==='unconfirmed'?'部分事项覆盖':null,scheduleProjection?.available!==true?'下一次安排':null,snapshot?.connection?.state==='unknown'?'微信连接':null].filter(Boolean);
+        const unknownScopes=[!availability.projects?'关注项目':null,!availability.jobs?'交办记录':null,!availability.plans?'已有安排':null,!attentionItems?'当前事项':attentionProjection.coverage==='unconfirmed'?'部分事项覆盖':null,scheduleProjection?.available!==true?'下一次安排':null,['unknown','failed'].includes(snapshot?.connection?.state)?'微信连接':null].filter(Boolean);
         const recovery=!firstUse&&unknownScopes.length?h('div',{className:'pc_dot_notice pc_dot_recovery',role:'status','data-dot-recovery':true},h('div',null,h('strong',null,'部分状态暂未确认，电脑对话可以继续'),h('p',null,`${unknownScopes.join('、')}尚未核对。保留原安排，不会据此判断没有事项或重新创建。`),h('details',null,h('summary',null,'查看影响范围'),h('p',null,[attentionProjection?.note,scheduleProjection?.note].filter(v=>typeof v==='string'&&v).join(' ')||'恢复连接后重试状态，现有记录不会自动重做。'))),h('div',{className:'pc_dot_actions'},button('查看连接',()=>changePage('settings')),button('重试状态',refresh))):null;
         const jobCard=job=>h('article',{className:'pc_dot_update',key:job.id,'data-dot-job':job.id},h('p',{className:'pc_dot_muted'},`${job.projectLabel} · ${states[job.status]??'状态待核对'}`),h('h3',null,job.task),job.result?.available===true&&typeof job.result.text==='string'?h('p',{className:'pc_dot_excerpt'},job.result.text):null,job.result?.truncated?h('p',{className:'pc_dot_muted'},'原回复较长，此处为摘录。'):null,job.delivery?h('p',{className:'pc_dot_muted'},deliveries[job.delivery.status]??'回传状态待核对'):null,h('div',{className:'pc_dot_actions'},button('看看这次结果',()=>openTask(job)),readOnly?null:button('和 Dot 接着聊',()=>continueJob(job))));
         const focusComposer=()=>{composerStart.current?.focus?.();composerStart.current?.scrollIntoView?.({block:'nearest'});};

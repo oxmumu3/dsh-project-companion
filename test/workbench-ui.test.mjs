@@ -75,7 +75,17 @@ test('native reset missing setup passively shows existing real QR and desktop in
  try{h.render();await h.flush();h.render();await h.flush();const view=h.render(),connect=nodes(view,n=>n.props['data-dot-inline-wechat'])[0];assert.ok(connect);assert.match(text(connect),/把 Dot 带到微信里/);assert.equal(nodes(connect,n=>n.type==='img'&&n.props.src==='/wechat/api/qr-image?v='+'a'.repeat(16)).length,1);assert.ok(button(connect,'先在电脑上试试'));assert.equal(nodes(view,n=>n.type==='textarea'&&n.props['aria-label']==='交代给 Dot 的事情').length,1);assert.ok(h.requests.every(r=>r.options.method==='GET'));assert.equal(h.opened.length,0);}finally{h.dispose();}
 });
 
-for(const connection of [{state:'bound',readOnly:true,sessionId:'family_owner_synthetic'},{state:'unknown',readOnly:true},{state:'unknown'}])test(`native reset ${connection.state} Family or unknown does not start QR or suggest legacy pairing`,async()=>{
+for(const state of ['waiting-qr','scanned','awaiting-message'])test(`native Host ${state} workbench projects the existing pairing state inline with passive reads only`,async()=>{
+ const h=await harness();h.context.snapshot.connection={state};h.context.onFetch=url=>url===endpoint?Response.json(h.context.snapshot):Response.json({version:1,completed:false,connection:{state,...(state==='waiting-qr'?{qrAvailable:true,qrRevision:'b'.repeat(16)}:{})},projects:[]});
+ try{h.render();await h.flush();h.render();await h.flush();const tree=h.render(),connect=nodes(tree,n=>n.props['data-dot-inline-wechat'])[0];assert.ok(connect);assert.equal(nodes(tree,n=>n.props['data-dot-recovery']).length,0);assert.equal(nodes(connect,n=>n.type==='img').length,state==='waiting-qr'?1:0);if(state==='waiting-qr')assert.equal(nodes(connect,n=>n.type==='img')[0].props.src,'/wechat/api/qr-image?v='+'b'.repeat(16));if(state==='scanned')assert.match(text(connect),/已扫码.*手机上确认/);if(state==='awaiting-message')assert.match(text(connect),/发送“你好”/);assert.equal(h.requests.filter(r=>r.url==='/api/project_companion/onboarding').length,1);assert.ok(h.requests.every(r=>r.options.method==='GET'));assert.equal(h.opened.length,0);assert.equal(nodes(tree,n=>n.type==='textarea'&&n.props['aria-label']==='交代给 Dot 的事情').length,1);}finally{h.dispose();}
+});
+
+for(const state of ['missing','waiting-qr','scanned','awaiting-message','failed'])test(`native Host Family readOnly ${state} never enters legacy inline pairing`,async()=>{
+ const h=await harness();h.context.snapshot.connection={state,readOnly:true};
+ try{h.render();await h.flush();h.render();await h.flush();const tree=h.render();assert.equal(nodes(tree,n=>n.props['data-dot-inline-wechat']).length,0);assert.equal(h.requests.filter(r=>r.url==='/api/project_companion/onboarding').length,0);assert.equal(nodes(tree,n=>n.type==='img').length,0);assert.deepEqual(actionPosts(h),[]);}finally{h.dispose();}
+});
+
+for(const connection of [{state:'bound',readOnly:true,sessionId:'family_owner_synthetic'},{state:'unknown',readOnly:true},{state:'unknown'},{state:'failed'}])test(`native reset ${connection.state} Family or unknown does not start QR or suggest legacy pairing`,async()=>{
  const h=await harness();h.context.snapshot.connection=connection;
  try{h.render();await h.flush();h.render();await h.flush();const view=h.render();assert.equal(nodes(view,n=>n.props['data-dot-inline-wechat']).length,0);assert.equal(h.requests.filter(r=>r.url==='/api/project_companion/onboarding').length,0);assert.equal(nodes(view,n=>n.type==='img').length,0);assert.deepEqual(actionPosts(h),[]);}finally{h.dispose();}
 });
@@ -208,7 +218,7 @@ test('known native session titles aid explicit choice and missing cache stays un
 
 test('unbound empty snapshot remains usable and never invents a connection or dispatch',async()=>{
   const h=await harness();h.context.snapshot={...sample(),connection:{state:'awaiting-message'},projects:[],jobs:[],reminders:[],counts:{projects:0,activeReminders:0}};
-  h.render();await h.flush();let view=h.render();assert.match(text(view),/今天想推进哪件事/);assert.ok(button(view,'项目'));assert.ok(button(view,'连接'));
+  h.render();await h.flush();let view=h.render();assert.equal(nodes(view,n=>n.type==='textarea'&&n.props['aria-label']==='交代给 Dot 的事情').length,1);assert.ok(button(view,'项目'));assert.ok(button(view,'连接'));
   assert.match(text(view),/微信尚未确认连接/);assert.equal(button(view,'打开 Dot 会话'),undefined);
   button(view,'项目').props.onClick();view=h.render();assert.match(text(view),/还没有关注项目/);
   assert.equal(h.opened.length,0);assert.equal(h.requests.length,1);assert.deepEqual(posts(h),[]);h.dispose();
@@ -253,7 +263,7 @@ test('more active reminders than the visible window are labelled rather than cal
 
 test('first-use home offers desktop input before optional WeChat setup without dispatching on mount',async()=>{
  const h=await harness();h.context.snapshot={...sample(),connection:{state:'awaiting-message'},projects:[],jobs:[],reminders:[]};h.render();await h.flush();const view=h.render();
- assert.match(text(view),/今天想推进哪件事/);const entry=button(view,'开始对话');assert.ok(entry);assert.equal(entry.props.className,'pc_dot_primary');assert.equal(nodes(view,n=>n.type==='textarea').length,1);assert.equal(h.requests.length,1);assert.equal(h.opened.length,0);h.dispose();
+ assert.match(text(view),/先把一件事交给 Dot/);const entry=button(view,'开始对话');assert.ok(entry);assert.equal(entry.props.className,'pc_dot_primary');assert.equal(nodes(view,n=>n.type==='textarea').length,1);assert.equal(h.requests.length,1);assert.equal(h.opened.length,0);h.dispose();
 });
 
 test('home natural-language entry preserves input when native preparation is unavailable',async()=>{
