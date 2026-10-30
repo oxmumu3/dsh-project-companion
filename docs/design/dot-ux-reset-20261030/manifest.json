@@ -7,12 +7,27 @@
   "nativeImplementationPending": true,
   "dailyVersion": "0.18.0-preview.1",
   "files": {
-    "DESIGN.md": "e1b0a98bbeae7336a8dabb04462eea7d6119f8b85805500be092d4fb97f007e2",
+    "DESIGN.md": "446a4948a15f87f09cfc691edc3827181f5828a49a11d91daac0b2b2ec9817c7",
     "research.md": "236fee8e6469c7430f0ebd01a71970b69f9c1e8ea4dd904c9c5d4945599e400e",
     "native-implementation-audit.md": "c570603ae4235d0e486bda1697d232f4636b694f86ec493a44ce1a625bb1188f",
     "implementation-gaps.md": "55df3847be7b1350e0dabec72c97d889437466fdc16f2d19b9ba6a5e72a98041",
-    "prototype.html": "c242dbd7d03fef5d253e4db6b8cbd975c3ae1222300a20b7ae671652b953a5b5",
-    "prototype-notes.md": "680aafbc767175d52826c8e6064b71a3d9b2c8c1fb8207e99dda0181fe71ce56",
-    "QA.md": "129a0f07758639553a90f057ff41ef473233227d2d448ba4e52bf607370bc0b6"
+    "prototype.html": "640aadbd292b86e028b1a5f928eb68469af3d6b396993dafb26094d155a48f96",
+    "prototype-notes.md": "9064b47ad82ac4bac0139ffbff1a772e563186ac55524a2b7340e3a9caf4e508",
+    "QA.md": "88888496247e9abdef08b41b153a403e7e681b1b3cf331170a2740b00e56ec90"
+  },
+  "localPreview": {
+    "url": "http://127.0.0.1:60757/prototype.html",
+    "pidSession": 35529,
+    "bind": "127.0.0.1",
+    "standaloneHtmlAlsoSaved": true
+  },
+  "updatedAt": "2026-10-30T17:27:56.623953+00:00",
+  "priorDocumentationCommit": "23d8b66",
+  "firstUse": {
+    "inlineQr": true,
+    "syntheticCode": true,
+    "nativeInstalled": false,
+    "desktopAndNarrowQa": true,
+    "realPairingRequested": false
   }
 }
