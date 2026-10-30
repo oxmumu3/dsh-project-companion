@@ -121,21 +121,22 @@ export function createPersonalReviewService({ store, readBinding, readBindingSyn
     const today=date(now().getTime());return state.attentionClaims.filter(j=>date(Date.parse(j.at))===today).length;
   }
   function attentionView(){const plan=state.subscription;if(!plan)return{enabled:false,nextRun:null,quiet:true,remaining:0};return attentionStatus({now:now(),timeZone:plan.schedule.timeZone,attention:plan.paused?undefined:plan.attention,createdAt:plan.attention?.createdAt??plan.createdAt,occurrences:state.occurrences,...plan.schedule,usedMessages:usedAttention(plan)});}
-  function itemInScope(item,scope){return Boolean(scope&&item.scopeKey===scope.key&&(!item.sourceTask||item.sourceTask.scopeKey===hashReview(JSON.stringify({key:scope.key,grant:scope.grant}))));}
+  function itemInScope(item,scope){const grantScopeKey=scope&&hashReview(JSON.stringify({key:scope.key,grant:scope.grant}));return Boolean(scope&&item.scopeKey===scope.key&&item.grantScopeKey===grantScopeKey&&(!item.sourceTask||item.sourceTask.scopeKey===grantScopeKey));}
   function view(includeScope = true) {
     const scope = displayScope();
     const schedule = state.subscription?.schedule, scheduleText = schedule ? `时间：${[schedule.dailyTime ? `每天 ${schedule.dailyTime}` : '', schedule.weeklyTime ? `每周${'日一二三四五六'[schedule.weeklyDay]} ${schedule.weeklyTime}` : ''].filter(Boolean).join('，')}（${schedule.timeZone}）。` : '';
+    const unconfirmed=includeScope&&scope&&state.items.some(item=>item.scopeKey===scope.key&&!['handled','dismissed'].includes(item.status)&&!itemInScope(item,scope));
     return { status: state.subscription ? state.subscription.paused ? 'paused' : 'enabled' : 'off', schedule: state.subscription ? copy(state.subscription.schedule) : null,
       attention:attentionView(),goals:includeScope&&scope?state.goals.filter(g=>g.scopeKey===scope.key&&g.grant===scope.grant).sort((a,b)=>Number(a.status==='completed')-Number(b.status==='completed')).slice(0,5).map(g=>({title:g.title,objective:g.objective,status:g.status,meetingTitle:g.meetingTitle??null})):[],
       sources: includeScope ? scope?.sources ?? [] : [], projects: includeScope ? scope?.projects ?? [] : [], items: includeScope ? state.items.filter(i => itemInScope(i,scope)).map(i => ({ id: i.id, title: i.title, status: i.status, dueAt: i.dueAt ?? null, snoozeUntil: i.snoozeUntil })) : [],
       jobs: state.jobs.slice(-8).map(j => ({ kind: j.kind, status: j.status, createdAt: j.createdAt, detail: labels[j.status],...(j.diagnostic?{diagnostic:copy(j.diagnostic)}:{}) })),
       lastGeneration: includeScope&&scope&&lastGeneration&&sameCaller(scope.caller,lastGeneration.caller)?copy(lastGeneration.value):null,
-      text: `个人回顾：${state.subscription ? state.subscription.paused ? '已暂停' : '已启用' : '未启用定时计划'}。${scheduleText}${state.jobs.length ? `最近一次：${labels[state.jobs.at(-1).status]}。` : ''}只读取已确认的来源与项目；电脑与宿主须在线。` };
+      text: `个人回顾：${state.subscription ? state.subscription.paused ? '已暂停' : '已启用' : '未启用定时计划'}。${scheduleText}${state.jobs.length ? `最近一次：${labels[state.jobs.at(-1).status]}。` : ''}${unconfirmed?'部分旧事项缺少当前授权依据，暂未展示，请在原范围重新核对。':''}只读取已确认的来源与项目；电脑与宿主须在线。` };
   }
   function result(job, items = [], text, duplicate = false) { return { status: job.status, duplicate, kind: job.kind, items: copy(items), text: text ?? labels[job.status] }; }
   function capacity(draft) { const cutoff = now().getTime() - 30 * DAY; draft.receipts = draft.receipts.filter(r => Date.parse(r.at) >= cutoff); if (draft.receipts.length >= 200) throw new Error('近期操作过多，请稍后再试'); }
   function recordReceipt(draft, input) { draft.receipts.push({ sessionId: input.receiptSessionId, requestId: input.requestId, action: input.action, at: now().toISOString() }); }
-  function setScope(scope, draft = state) { if (draft.scope?.key !== scope.key) draft.watermarks = {}; draft.scope = copy(scope); }
+  function setScope(scope, draft = state) { if (draft.scope?.key !== scope.key || draft.scope?.grant !== scope.grant) draft.watermarks = {}; draft.scope = copy(scope); }
   function rememberView(draft,run,generated){draft.lastView={viewToken:hashReview(randomUUID()),caller:copy(run.caller),scopeKey:run.key,bindingKey:run.bindingKey,grant:run.grant,at:generated.at,itemIds:generated.items.map(i=>i.id)};}
 
   function normalizeCollection(raw, run, trackedTasks = [], taskScopeKey) {
@@ -160,8 +161,10 @@ export function createPersonalReviewService({ store, readBinding, readBindingSyn
     generationStatus('running');
     try {
     await guard(run); const at = now().toISOString(), window = kind === 'weekly' ? 7 * DAY : DAY, timeZone = run.schedule?.timeZone ?? (state.subscription?.key === run.key ? state.subscription.schedule.timeZone : 'UTC');
-    const sourceWatermarks = Object.fromEntries(Object.entries(state.scope?.key === run.key ? state.watermarks : {}).flatMap(([source, value]) => value[kind] ? [[source, value[kind]]] : []));
-    const taskScopeKey = hashReview(JSON.stringify({ key: run.key, grant: run.grant })), { tasks: trackedTasks, hasMore: trackedTasksIncomplete } = trackedReviewSourceTasks(state.items, { scopeKey: run.key, taskScopeKey, sources: run.sources });
+    const sourceWatermarks = Object.fromEntries(Object.entries(state.scope?.key === run.key && state.scope?.grant === run.grant ? state.watermarks : {}).flatMap(([source, value]) => value[kind] ? [[source, value[kind]]] : []));
+    const taskScopeKey = hashReview(JSON.stringify({ key: run.key, grant: run.grant }));
+    const currentTaskScope = i => i.grantScopeKey === taskScopeKey && (!i.sourceTask || i.sourceTask.scopeKey === taskScopeKey);
+    const { tasks: trackedTasks, hasMore: trackedTasksIncomplete } = trackedReviewSourceTasks(state.items.filter(currentTaskScope), { scopeKey: run.key, taskScopeKey, sources: run.sources });
     const starts = Object.values(sourceWatermarks).map(value => Date.parse(value) - 2 * 3600000);
     const normalFrom = new Date(Math.max(now().getTime() - 30 * DAY, starts.length ? Math.min(...starts, now().getTime() - window) : now().getTime() - window)).toISOString();
     const recovery=recoveryWindow({from:normalFrom,to:at,check:run.recovery});const from=recovery.from;
@@ -172,7 +175,6 @@ export function createPersonalReviewService({ store, readBinding, readBindingSyn
     const recoveryNote=recovery.coverageUnknown?'未覆盖时段超过 7 天；本次仅检查最近 7 天与当前状态，更早变化仍未知。\n\n':'';
     const reconciled = reconcileReviewSourceTasks(state.items, data.taskChecks, { scopeKey: run.key, taskScopeKey });
     if (!data.coverage.some(c => ['ok', 'partial'].includes(c.status))) { generationStatus('unknown'); return { ...data, items: [], selected: [], ledger: reconciled, text: recoveryNote+renderPersonalReview([], data.coverage, { kind, now: at, unknown: true, timeZone }), unknown: true, at }; }
-    const currentTaskScope = i => !i.sourceTask || i.sourceTask.scopeKey === taskScopeKey;
     const previousItems = reconciled.filter(i => i.scopeKey === run.key && currentTaskScope(i)).slice(-60).map(i => ({ id: i.id, key: i.key, kind: i.kind, title: i.title, summary: i.summary, status: i.status, dueAt: i.dueAt ?? null, evidenceIds: i.evidence.map(e => e.id), lastSeenAt: i.lastSeenAt }));
     let candidates = [];
     if (data.evidence.length) { stage='model'; const summary = await race(() => summarize({ ...copy(data), previousItems, goals:activeReviewGoals(state.goals,run).map(g=>({objective:g.objective,project:g.project,meetingTitle:g.meetingTitle??null})), kind: materialKind, now: at, signal: run.signal, guard: () => guard(run), authorizeSync: () => authorizeSync(run) }), run.signal, 'REVIEW_MODEL_FAILED'); await guard(run); candidates = validatePersonalReviewSummary(summary, data.evidence).items; }
@@ -180,7 +182,7 @@ export function createPersonalReviewService({ store, readBinding, readBindingSyn
     const ledger = mergeReviewItems(reconciled, [...candidates,...meetingCandidates], data.evidence, { now: at, scopeKey: run.key, grantScopeKey: taskScopeKey });
     const attentionSelection=kind==='attention'?selectAttentionItems(ledger.filter(i=>currentTaskScope(i)&&i.lastSeenAt===at),{now:at,scopeKey:run.key,coverage:data.coverage,remaining:Math.max(0,(run.attention?.maxMessagesPerDay??2)-usedAttention(run))}):null;
     let selected = occurrence.startsWith('meeting:')?[]:attentionSelection?.selected ?? selectReviewItems(ledger.filter(currentTaskScope), { now: at, kind, occurrence, scopeKey: run.key });
-    if(kind==='attention'&&usedAttention(run)<(run.attention?.maxMessagesPerDay??2)){const preparation=selectMeetingPreparation(ledger,meetingCandidates.map(c=>c.key),{scopeKey:run.key,now:at});selected=[...selected,...preparation].filter((v,i,a)=>a.findIndex(x=>x.item.id===v.item.id)===i).slice(0,3);}
+    if(kind==='attention'&&usedAttention(run)<(run.attention?.maxMessagesPerDay??2)){const preparation=selectMeetingPreparation(ledger.filter(currentTaskScope),meetingCandidates.map(c=>c.key),{scopeKey:run.key,now:at});selected=[...selected,...preparation].filter((v,i,a)=>a.findIndex(x=>x.item.id===v.item.id)===i).slice(0,3);}
     const items = selected.map(s => copy(s.item)); const text = recoveryNote+(kind==='attention'?'有一件新变化值得留意。\n\n':'')+renderPersonalReview(items, data.coverage, { kind:kind==='attention'?'daily':kind, now: at, timeZone });
     selected = selected.filter(s => items.some(i => i.id === s.item.id));
     generationStatus('completed'); return { ...data, items, selected, ledger, text, unknown: attentionSelection?.status==='unknown', at };

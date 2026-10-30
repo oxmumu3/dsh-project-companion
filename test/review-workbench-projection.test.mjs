@@ -85,7 +85,7 @@ test('guarded raw-row reader discards private projections when ownership changes
 
 test('guarded reader authorizes stored exact scope and returns no repair or automatic generation',async()=>{
  const {createReviewWorkbenchReader}=await api();let authorizations=0,sourceReads=0,modelCalls=0,stateWrites=0;
- const read=createReviewWorkbenchReader({readReviewState:async()=>raw(),readNewsState:async()=>null,readConnection:async()=>route,resolveOwner:()=>caller,authorizeReview:async(actual,selected)=>{assert.deepEqual(actual,caller);assert.equal(selected.grant,grant);authorizations++;return{bindingKey:binding,grant};},readNewsBinding:async()=>({bound:true,bindingKey:binding}),readProjects:async()=>[],clock:()=>new Date(now),isClosed:()=>false,collect:()=>sourceReads++,summarize:()=>modelCalls++,put:()=>stateWrites++});
+ const read=createReviewWorkbenchReader({readReviewState:async()=>raw(),readNewsState:async()=>null,readConnection:async()=>route,resolveOwner:()=>caller,authorizeReview:async(actual,selected)=>{assert.deepEqual(actual,caller);assert.equal(selected.grant,grant);authorizations++;return{bindingKey:binding,grant};},authorizeSync:()=>true,readNewsBinding:async()=>({bound:true,bindingKey:binding}),readProjects:async()=>[],clock:()=>new Date(now),isClosed:()=>false,collect:()=>sourceReads++,summarize:()=>modelCalls++,put:()=>stateWrites++});
  const p=await read({bindingRevision:bindingRevision(route)});assert.equal(p.available,true);assert.equal(p.attentionItems.items.length,1);assert.ok(authorizations>=2);assert.equal(sourceReads,0);assert.equal(modelCalls,0);assert.equal(stateWrites,0);
 });
 
@@ -108,4 +108,66 @@ test('changed final grant and foreign news settings remain unavailable without e
  const result=await read({bindingRevision:bindingRevision(route)});assert.equal(result.available,false);assert.deepEqual(result.attentionItems.items,[]);
  const newsState={id:'profile',version:2,schedule:{time:'08:00',timeZone:'UTC',sessionId:'foreign-owner',bindingKey:binding,createdAt:now},preferences:{topics:['synthetic-private-topic'],source:'explicit',sessionId:'foreign-owner',bindingKey:binding,updatedAt:now},jobs:[],articleHistory:[],dailyDates:[],receipts:[]};
  const projected=projectReviewWorkbench(input({newsState}));assert.equal(projected.schedules.available,false);assert.equal(JSON.stringify(projected).includes('synthetic-private-topic'),false);assert.equal(projected.schedules.items.length,0);
+});
+
+test('grant revocation inside the last asynchronous current check is denied by the final synchronous proof',async()=>{
+ const {createReviewWorkbenchReader}=await api();let reads=0,revoked=false,synchronousChecks=0;
+ const read=createReviewWorkbenchReader({readReviewState:async()=>raw(),readNewsState:async()=>null,readConnection:async()=>{if(++reads===4)revoked=true;return route;},resolveOwner:async()=>caller,authorizeReview:async()=>({bindingKey:binding,grant}),authorizeSync:(actual,selected,proof)=>{assert.deepEqual(actual,caller);assert.equal(selected.grant,grant);assert.equal(proof.bindingKey,binding);synchronousChecks++;return !revoked;},readNewsBinding:async()=>({bound:true,bindingKey:binding}),readProjects:async()=>[],clock:()=>new Date(now)});
+ const p=await read({bindingRevision:bindingRevision(route)});assert.equal(revoked,true);assert.equal(synchronousChecks,1);assert.equal(p.available,false);assert.deepEqual(p.attentionItems.items,[]);assert.equal(JSON.stringify(p).includes(candidate.summary),false);
+});
+
+test('missing throwing false and asynchronous final proofs all fail closed',async()=>{
+ const {createReviewWorkbenchReader}=await api();
+ for(const authorizeSync of [undefined,()=>false,()=>{throw Error('synthetic deny');},async()=>true,()=>Promise.reject(Error('synthetic reject'))]){
+  const read=createReviewWorkbenchReader({readReviewState:async()=>raw(),readNewsState:async()=>null,readConnection:async()=>route,resolveOwner:()=>caller,authorizeReview:async()=>({bindingKey:binding,grant}),authorizeSync,readNewsBinding:async()=>({bound:true,bindingKey:binding}),readProjects:async()=>[],clock:()=>new Date(now)});
+  const p=await read({bindingRevision:bindingRevision(route)});assert.equal(p.available,false);assert.deepEqual(p.attentionItems.items,[]);
+ }
+});
+
+test('prior-grant and unmarked summaries never enter model context or current selection',async()=>{
+ const {projectReviewWorkbench}=await api();
+ for(const oldMarker of [undefined,'c'.repeat(64)])for(const returnCurrent of [true,false]){
+  const oldEvidence={...evidence,id:'old-evidence',text:'old grant private body'},oldCandidate={...candidate,summary:'SYNTHETIC_PRIOR_GRANT_PRIVATE_SUMMARY',evidenceIds:[oldEvidence.id]};
+  let stored=raw({items:mergeReviewItems([], [oldCandidate], [oldEvidence], {now,scopeKey:scope.key,...(oldMarker?{grantScopeKey:oldMarker}:{})})}),seen=[];
+  const service=createPersonalReviewService({store:{get:async()=>structuredClone(stored),put:async(_key,value)=>stored=structuredClone(value)},readBinding:async()=>({bound:true,bindingKey:binding}),authorization:async()=>grant,collect:async()=>({evidence:[evidence],coverage:[{source:'gmail',status:'ok',count:1}]}),summarize:async input=>{seen=input.previousItems;return{items:returnCurrent?[{...candidate,summary:input.previousItems[0]?.summary??'当前证据摘要。'}]:[]};},send:async()=>assert.fail('preview cannot send'),clock:()=>new Date(now)});
+  await service.ready();const result=await service.act(caller,{action:'preview',sources:['gmail'],projects:[]});await service.close();assert.deepEqual(seen,[]);assert.equal(JSON.stringify(result).includes(oldCandidate.summary),false);
+  const p=projectReviewWorkbench(input({reviewState:stored}));assert.equal(JSON.stringify(p).includes(oldCandidate.summary),false);if(!returnCurrent){assert.equal(stored.items[0].grantScopeKey,oldMarker);assert.equal(p.attentionItems.available,false);}
+ }
+});
+
+test('current grant summaries remain available to the model while previous-grant incremental anchors do not',async()=>{
+ let stored=raw({watermarks:{gmail:{daily:'2026-10-29T22:00:00.000Z'}}}),seen=[],anchors;
+ stored.scope.grant='c'.repeat(64);
+ const service=createPersonalReviewService({store:{get:async()=>structuredClone(stored),put:async(_key,value)=>stored=structuredClone(value)},readBinding:async()=>({bound:true,bindingKey:binding}),authorization:async()=>grant,collect:async input=>{anchors=input.sourceWatermarks;return{evidence:[evidence],coverage:[{source:'gmail',status:'ok',count:1}]};},summarize:async input=>{seen=input.previousItems;return{items:[]};},send:async()=>assert.fail('preview cannot send'),clock:()=>new Date(now)});
+ await service.ready();await service.act(caller,{action:'preview',sources:['gmail'],projects:[]});await service.close();assert.equal(seen.length,1);assert.equal(seen[0].summary,candidate.summary);assert.deepEqual(anchors,{});assert.deepEqual(stored.watermarks,{});
+});
+
+test('provider links reject literal and encoded credential fingerprints and exact configured-secret matches',async()=>{
+ const {projectReviewWorkbench}=await api(),secret='sk-proj-'+'A'.repeat(48),configured='synthetic-configured-access-value',encoded=value=>[...value].map(char=>'%'+char.charCodeAt(0).toString(16)).join('');
+ for(const value of [secret,encoded(secret),encoded(encoded(secret)),configured,encoded(configured)])for(const path of [`https://mail.google.com/mail/u/0/#${value}`,`https://mail.google.com/mail/u/0/${value}`]){
+  const rows=mergeReviewItems([], [candidate], [{...evidence,url:path}], {now,scopeKey:scope.key,grantScopeKey}),p=projectReviewWorkbench(input({reviewState:raw({items:rows}),cleanText:text=>String(text).replaceAll(configured,'[已隐藏]')}));
+  assert.equal(p.attentionItems.items[0].sources[0].url,null,path);assert.equal(JSON.stringify(p).includes(secret),false);assert.equal(JSON.stringify(p).includes(configured),false);
+ }
+});
+
+test('only grant-marked current source tasks may supply tracked source locators',async()=>{
+ const taskScope={...scope,sources:['dida']};taskScope.key=hashReview(JSON.stringify({caller,sources:taskScope.sources,projects:[],bindingKey:binding}));const marker=hashReview(JSON.stringify({key:taskScope.key,grant})),task={source:'dida',projectId:'synthetic-project',taskId:'synthetic-task',scopeKey:marker};
+ for(const oldMarker of [undefined,'c'.repeat(64),marker]){
+  const row={...evidence,source:'dida',sourceTask:task};let tracked,stored=raw({scope:taskScope,items:mergeReviewItems([], [candidate], [row], {now,scopeKey:taskScope.key,...(oldMarker?{grantScopeKey:oldMarker}:{})})});
+  const service=createPersonalReviewService({store:{get:async()=>structuredClone(stored),put:async(_key,value)=>stored=structuredClone(value)},readBinding:async()=>({bound:true,bindingKey:binding}),authorization:async()=>grant,collect:async input=>{tracked=input.trackedTasks;return{evidence:[row],coverage:[{source:'dida',status:'ok',count:1}]};},summarize:async()=>({items:[]}),send:async()=>assert.fail('preview cannot send'),clock:()=>new Date(now)});
+  await service.ready();await service.act(caller,{action:'preview',sources:['dida'],projects:[]});await service.close();assert.deepEqual(tracked,oldMarker===marker?[task]:[]);
+ }
+});
+
+test('stable grants retain their existing incremental anchors and current model context',async()=>{
+ const watermarks={gmail:{daily:'2026-10-29T22:00:00.000Z'}};let stored=raw({watermarks}),anchors,previous;
+ const service=createPersonalReviewService({store:{get:async()=>structuredClone(stored),put:async(_key,value)=>stored=structuredClone(value)},readBinding:async()=>({bound:true,bindingKey:binding}),authorization:async()=>grant,collect:async input=>{anchors=input.sourceWatermarks;return{evidence:[evidence],coverage:[{source:'gmail',status:'ok',count:1}]};},summarize:async input=>{previous=input.previousItems;return{items:[]};},send:async()=>assert.fail('preview cannot send'),clock:()=>new Date(now)});
+ await service.ready();await service.act(caller,{action:'preview',sources:['gmail'],projects:[]});await service.close();assert.deepEqual(anchors,{gmail:watermarks.gmail.daily});assert.deepEqual(stored.watermarks,watermarks);assert.equal(previous[0].summary,candidate.summary);
+});
+
+test('native status and feedback do not reveal or acknowledge legacy titles under a current grant',async()=>{
+ const legacy=mergeReviewItems([], [{...candidate,title:'SYNTHETIC_PRIOR_GRANT_PRIVATE_TITLE'}], [evidence], {now,scopeKey:scope.key});let stored=raw({items:legacy}),reads=0,models=0;
+ const service=createPersonalReviewService({store:{get:async()=>structuredClone(stored),put:async(_key,value)=>stored=structuredClone(value)},readBinding:async()=>({bound:true,bindingKey:binding}),authorization:async()=>grant,collect:async()=>{reads++;return{evidence:[evidence],coverage:[{source:'gmail',status:'ok',count:1}]};},summarize:async()=>{models++;return{items:[]};},send:async()=>assert.fail('preview cannot send'),clock:()=>new Date(now)});
+ await service.ready();await service.act(caller,{action:'preview',sources:['gmail'],projects:[]});const status=await service.snapshot(caller);assert.equal(JSON.stringify(status).includes(legacy[0].title),false);assert.deepEqual(status.items,[]);assert.match(status.text,/旧事项.*核对/);
+ await assert.rejects(service.act(caller,{action:'feedback',itemId:legacy[0].id,feedback:'handled',requestId:'legacy-feedback',userRequested:true}),/授权范围|未找到/);assert.equal(stored.items[0].status,'open');assert.equal(reads,1);assert.equal(models,1);await service.close();
 });

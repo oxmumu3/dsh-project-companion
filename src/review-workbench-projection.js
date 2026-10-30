@@ -19,14 +19,20 @@ const freshReview=()=>({id:'profile',version:1,scope:null,subscription:null,item
 const parseReview=value=>personalReviewRowSchema.safeParse(value??freshReview());
 const at=value=>typeof value==='string'&&Number.isFinite(Date.parse(value))?new Date(value).toISOString():null;
 const validZone=value=>{try{return typeof value==='string'&&Boolean(new Intl.DateTimeFormat('en',{timeZone:value}));}catch{return false;}};
+const credentialFingerprint=/\b(?:sk-(?:proj-)?|ghp_|github_pat_|xox[baprs]-)[A-Za-z0-9_-]{20,}\b/u;
 
-function safeUrl(value,source){
+function safeUrl(value,source,cleanText){
   if(typeof value!=='string'||value.length>1600)return null;
   try{
     const url=new URL(value),roots={gmail:['mail.google.com'],calendar:['calendar.google.com'],drive:['drive.google.com','docs.google.com'],dida:['dida365.com','ticktick.com'],flomo:['flomoapp.com','flomo.app']}[source]??[];
     if(url.protocol!=='https:'||url.username||url.password||url.port||url.search||!roots.some(root=>url.hostname===root||url.hostname.endsWith('.'+root)))return null;
-    let decoded=value;for(let i=0;i<2;i++)try{decoded=decodeURIComponent(decoded);}catch{break;}
-    if(/(?:token|secret|password|credential|authorization|signature|api[_-]?key)[=:/]|\/(?:Users|home|private|etc|var)\//iu.test(decoded))return null;
+    let decoded=value;
+    for(let depth=0;depth<5;depth++){
+      // Check the exact configured-secret cleaner as well as generic shapes at
+      // every decoding layer. Links are rejected whole, never partly rewritten.
+      if(String(cleanText(decoded))!==decoded||redactReviewText(decoded,16384)!==decoded||credentialFingerprint.test(decoded)||/(?:token|secret|password|credential|authorization|signature|api[_-]?key)[=:/]|\/(?:Users|home|private|tmp|etc|var|synthetic)\/|[A-Za-z]:\\/iu.test(decoded))return null;
+      const next=decodeURIComponent(decoded);if(next===decoded)break;if(depth===4)return null;decoded=next;
+    }
     return url.href;
   }catch{return null;}
 }
@@ -41,7 +47,7 @@ function textCleaner(scope,cleanText){
       .replace(/(?:file:\/\/)?\/(?:Users|home|private|tmp|var|etc|synthetic)\/[^\s，。；、！？<>"']*/gu,'[已隐藏]')
       .replace(/[A-Za-z]:\\[^\s，。；、！？<>"']*/gu,'[已隐藏]')
       .replace(/(^|[\s（(：:])\/(?:[^\s/，。；、！？<>"']+\/)*[^\s，。；、！？<>"']+/gu,'$1[已隐藏]')
-      .replace(/\b(?:sk-(?:proj-)?|ghp_|github_pat_|xox[baprs]-)[A-Za-z0-9_-]{20,}\b/gu,'[已隐藏]')
+      .replace(new RegExp(credentialFingerprint.source,'gu'),'[已隐藏]')
       .replace(/\b[a-f\d]{64}\b/giu,'[已隐藏]')
       .replace(/(?:https?:\/\/|www\.)[^\s，。；、！？<>"']*/giu,'[已隐藏]');
     return result.slice(0,max);
@@ -83,7 +89,7 @@ export function projectReviewWorkbench({reviewState,newsState,caller,bindingKey,
   }).sort((a,b)=>({high:0,normal:1,low:2}[a.priority]-{high:0,normal:1,low:2}[b.priority])||(Date.parse(a.dueAt??a.eventStartAt??'9999-01-01')-Date.parse(b.dueAt??b.eventStartAt??'9999-01-01'))||b.lastSeenAt.localeCompare(a.lastSeenAt));
   const cards=actionable.slice(0,5).map(item=>{
     const prose=Object.fromEntries([['title',100],['summary',360],['why',160],['action',160],['unknown',180]].map(([key,max])=>[key,clean(item[key],max)]));
-    const sources=item.evidence.slice(0,3).map(ref=>({source:ref.source,label:sourceLabels[ref.source],at:at(ref.at),contentState:ref.contentState??null,truncated:ref.contentState==='truncated',url:safeUrl(ref.url,ref.source)}));
+    const sources=item.evidence.slice(0,3).map(ref=>({source:ref.source,label:sourceLabels[ref.source],at:at(ref.at),contentState:ref.contentState??null,truncated:ref.contentState==='truncated',url:safeUrl(ref.url,ref.source,cleanText)}));
     return{id:item.id,kind:item.kind,...prose,status:item.status,priority:item.priority,confidence:item.confidence,dueAt:at(item.dueAt),dueAtBasis:item.dueAtBasis??null,eventStartAt:at(item.eventStartAt),eventEndAt:at(item.eventEndAt),snoozeUntil:at(item.snoozeUntil),lastSeenAt:at(item.lastSeenAt),sources,truncated:item.evidence.length>3||sources.some(ref=>ref.truncated)||Object.keys(prose).some(key=>prose[key]!==item[key])};
   });
   const attentionItems={available:!unconfirmed||cards.length>0,items:cards,truncated:actionable.length>5,coverage:unconfirmed?'unconfirmed':'stored-only',note:unconfirmed?unknownNote:storedNote};
@@ -109,7 +115,7 @@ export function projectReviewWorkbench({reviewState,newsState,caller,bindingKey,
 }
 
 /** Read raw local rows and bracket every projection with the existing owner/grant gates. */
-export function createReviewWorkbenchReader({readReviewState,readNewsState,readConnection,resolveOwner,authorizeReview,readNewsBinding,readProjects,clock=()=>new Date(),isClosed=()=>false,cleanText,deliverySupported=()=>false,deliveryNote=()=>''}={}){
+export function createReviewWorkbenchReader({readReviewState,readNewsState,readConnection,resolveOwner,authorizeReview,authorizeSync,readNewsBinding,readProjects,clock=()=>new Date(),isClosed=()=>false,cleanText,deliverySupported=()=>false,deliveryNote=()=>''}={}){
   return async snapshot=>{
     const denied=()=>({...unavailable(),bindingRevision:snapshot?.bindingRevision??null});
     try{
@@ -131,6 +137,15 @@ export function createReviewWorkbenchReader({readReviewState,readNewsState,readC
       if(!value.available)return denied();
       const supported=Boolean(deliverySupported(caller)),note=deliveryNote(supported);
       if(note)value.review.text+='\n'+note;
+      // Every preceding gate may yield. Recheck exact private authority in this
+      // same turn immediately before returning; a Promise cannot be a proof.
+      if(scope){
+        if(typeof authorizeSync!=='function')return denied();
+        const allowed=authorizeSync(caller,scope,proof);
+        if(allowed&&typeof allowed.then==='function')Promise.resolve(allowed).catch(()=>{});
+        if(allowed!==true)return denied();
+      }
+      if(isClosed())return denied();
       return{...value,bindingRevision:revision,deliverySupported:supported,deliveryNote:note};
     }catch{return denied();}
   };

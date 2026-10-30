@@ -610,6 +610,10 @@ export async function installCompanion(ctx,options={}){
       const grant=await reviewAuthorization(caller,scope.sources,scope.projects),binding=await reviewBinding(caller.sessionId);
       return binding?.bound?{grant,bindingKey:binding.bindingKey}:null;
     },
+    authorizeSync:(caller,scope,proof)=>{
+      const binding=reviewBindingSync(caller.sessionId);
+      return !disposed&&!lifecycle.signal.aborted&&binding?.bound===true&&binding.bindingKey===proof.bindingKey&&proof.bindingKey===scope.bindingKey&&proof.grant===scope.grant&&reviewAuthorizationSync(caller,scope.sources,scope.projects,proof.grant)===true;
+    },
     readNewsBinding:newsBinding,readProjects:()=>service.watchedProjects(),isClosed:()=>disposed,cleanText:reviewClean,
     deliverySupported:caller=>Boolean(familyDelegate.scopeFor(caller.sessionId)||standaloneBinding(caller.sessionId)),
     deliveryNote:supported=>supported?'通过当前微信入口投递，手机送达仍需本人确认。':nativeReviewDeliveryNote,
