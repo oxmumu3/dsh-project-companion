@@ -7,7 +7,7 @@ import {readFile} from 'node:fs/promises';
 // hooks together. Only Host transport/native editor rendering is synthetic.
 async function fixture({selected=true,draftStatus='applied',changeBinding=false,invalidScopeResponse=false}={}){
  const instances=new Map(),registrations=[],cleanups=[],requests=[],retained=[],released=[];
- let current,cursor,pending=[],definition;
+ let current,cursor,pending=[],definition,activePanel='project-companion-dot';
  const React={createElement:(type,props,...children)=>({type,props:{...props,children:children.flat(Infinity)},children:children.flat(Infinity)}),
   useState(initial){const row=current,i=cursor++;if(!(i in row.values))row.values[i]=typeof initial==='function'?initial():initial;return[row.values[i],value=>{row.values[i]=typeof value==='function'?value(row.values[i]):value;}];},
   useRef(value){const row=current,i=cursor++;return row.values[i]??(row.values[i]={current:value});},
@@ -25,14 +25,14 @@ async function fixture({selected=true,draftStatus='applied',changeBinding=false,
   sessions:{refresh:async()=>{},list:{getSnapshot:()=>state},create:async()=>{created++;const id='created-native';binding=makeBinding(id);state.ids=[id];state.byId={[id]:{id,cwd:'/synthetic/project',retainedBy:{}}};if(draftStatus==='preserved')draft.text='原生会话中已有的另一份草稿';return id;},binding:()=>binding,retain:id=>{assert.equal(id,binding.sessionId);retained.push(id);refCount++;return{binding,ready:Promise.resolve(),release(){released.push(id);if(--refCount===0){draft.text='';draft.attachments=[];draft.approvals=[];}}};}}};
  api.apply(ctx);
  const main=registrations.find(r=>r.spec.name==='main').component,overlay=registrations.find(r=>r.spec.name==='shell.overlay').component;
- const props={usePanelInfo:selector=>selector({activePanelId:'project-companion-dot'}),useSessions:selector=>selector(state),SessionProvider:({children})=>React.createElement('native-session',null,children),renderSlot:()=>React.createElement('native-editor',{'data-native-editor':true,draft})};
+ const props={usePanelInfo:selector=>selector({activePanelId:activePanel}),useSessions:selector=>selector(state),SessionProvider:({children})=>React.createElement('native-session',null,children),renderSlot:()=>React.createElement('native-editor',{'data-native-editor':true,draft})};
  function render(){const seen=new Set();function walk(node,path='0'){
   if(node===null||node===undefined||typeof node!=='object')return node;
   if(typeof node.type==='function'){let row=instances.get(path);if(!row||row.type!==node.type){row?.values.forEach(v=>v?.cleanup?.());row={type:node.type,values:[]};instances.set(path,row);}seen.add(path);current=row;cursor=0;return walk(node.type(node.props),path+'.f');}
   return{...node,children:node.children.map((child,i)=>walk(child,path+'.'+i))};
  }const tree=walk(React.createElement('host',null,React.createElement(main,props),React.createElement(overlay,props)));for(const[path,row]of instances)if(!seen.has(path)){row.values.forEach(v=>v?.cleanup?.());instances.delete(path);}return tree;}
  const settle=async()=>{for(let i=0;i<8;i++){render();const run=pending;pending=[];run.forEach(fn=>fn());await new Promise(resolve=>setImmediate(resolve));}return render();};
- return{render,settle,props,state,snapshot,draft,retained,released,requests,dispose(){for(const row of instances.values())row.values.forEach(v=>v?.cleanup?.());cleanups.forEach(fn=>fn?.());}};
+ return{render,settle,props,state,snapshot,draft,retained,released,requests,ctx,setPanel:id=>{activePanel=id;},dispose(){for(const row of instances.values())row.values.forEach(v=>v?.cleanup?.());cleanups.forEach(fn=>fn?.());}};
 }
 function nodes(tree,predicate){if(!tree||typeof tree!=='object')return[];return[...(predicate(tree)?[tree]:[]),...tree.children.flatMap(child=>nodes(child,predicate))];}
 const text=tree=>typeof tree==='string'?tree:(tree?.children??[]).map(text).join(' ');
@@ -64,4 +64,27 @@ test('changed workbench scope during explicit floating creation keeps exact loca
 
 test('unreadable scope response preserves draft without exposing response or Host error text',async()=>{
  const f=await fixture({selected:false,invalidScopeResponse:true});const local='网络异常时完整保留的草稿';try{let tree=await f.settle();nodes(tree,n=>n.type==='textarea')[0].props.onChange({target:{value:local}});button(tree,'项目').props.onClick();tree=await f.settle();button(tree,'打开 Dot 对话').props.onClick();tree=await f.settle();await button(tree,'开始桌面对话').props.onClick();tree=await f.settle();assert.doesNotMatch(text(tree),/PRIVATE_/);assert.equal(text(nodes(nodes(tree,n=>n.props['data-dot-retained-local-draft'])[0],n=>n.type==='pre')[0]),local);assert.equal(f.draft.text,'');}finally{f.dispose();}
+});
+
+test('first main input holds its native lifetime before temporary draft prefill can release',async()=>{
+ const f=await fixture({selected:false});const local='首屏输入不能在React挂载前丢失';try{let tree=await f.settle();nodes(tree,n=>n.type==='textarea')[0].props.onChange({target:{value:local}});tree=f.render();await button(tree,'开始对话').props.onClick();assert.equal(f.draft.text,local,'the draft must survive before the native editor mounts');tree=await f.settle();assert.equal(editors(tree).length,1);assert.equal(f.draft.text,local);assert.equal(nodes(tree,n=>n.props['data-dot-retained-local-draft']).length,0);}finally{f.dispose();}
+});
+
+for(const surface of ['today','overlay'])test(`opening full native history waits for ${surface} editor unmount and successful async open`,async()=>{
+ const f=await fixture();let accept;const gate=new Promise(resolve=>accept=resolve),events=[];try{
+  let tree=await f.settle();if(surface==='overlay'){button(tree,'项目').props.onClick();tree=await f.settle();button(tree,'打开 Dot 对话').props.onClick();tree=await f.settle();}assert.equal(editors(tree).length,1);
+  f.ctx.uiWorkspace.openSession=id=>{events.push({kind:'open',id,editableRoots:editors(f.render()).length});return gate;};f.ctx.layout.selectPanel=id=>events.push({kind:'select',id});
+  const navigation=button(tree,'打开 Dot 会话').props.onClick();tree=await f.settle();assert.deepEqual(events,[{kind:'open',id:'selected-native',editableRoots:0}]);assert.equal(editors(tree).length,0);assert.deepEqual(f.released,[]);assert.equal(f.draft.text,'用户已有的未发送草稿');
+  accept();await navigation;tree=await f.settle();assert.deepEqual(events,[{kind:'open',id:'selected-native',editableRoots:0},{kind:'select',id:null}]);assert.equal(editors(tree).length,0);assert.deepEqual(f.released,[]);assert.deepEqual(f.draft.attachments,['synthetic-local-attachment']);assert.deepEqual(f.draft.approvals,['synthetic-pending-approval']);
+ }finally{accept?.();f.dispose();}
+});
+
+test('rejected asynchronous native history open restores the original Dot editor without losing draft or leaking error',async()=>{
+ const f=await fixture();let rejectOpen;const gate=new Promise((_resolve,reject)=>rejectOpen=reject);gate.catch(()=>{});const panels=[];try{
+  let tree=await f.settle();f.ctx.uiWorkspace.openSession=()=>gate;f.ctx.layout.selectPanel=id=>panels.push(id);const navigation=button(tree,'打开 Dot 会话').props.onClick();tree=await f.settle();assert.equal(editors(tree).length,0);assert.deepEqual(panels,[]);rejectOpen(Error('PRIVATE_NATIVE_OPEN_REJECTION'));await navigation;tree=await f.settle();assert.equal(editors(tree).length,1);assert.match(text(tree),/会话.*未能打开/);assert.doesNotMatch(text(tree),/PRIVATE_NATIVE/);assert.deepEqual(panels,[]);assert.equal(f.draft.text,'用户已有的未发送草稿');assert.deepEqual(f.retained,['selected-native']);assert.deepEqual(f.released,[]);
+ }finally{f.dispose();}
+});
+
+test('confirmed native transition restores the global launcher while Today stays unmounted until explicit return',async()=>{
+ const f=await fixture();try{let tree=await f.settle();f.ctx.uiWorkspace.openSession=async()=>{};f.ctx.layout.selectPanel=id=>f.setPanel(id);const navigation=button(tree,'打开 Dot 会话').props.onClick();tree=await f.settle();await navigation;tree=await f.settle();assert.equal(editors(tree).length,0);assert.ok(button(tree,'打开 Dot 对话'));f.state.byId['selected-native'].retainedBy={mainView:1};button(tree,'打开 Dot 对话').props.onClick();tree=await f.settle();assert.equal(editors(tree).length,0,'the same native main session must not acquire a second Dot editor');assert.match(text(tree),/这个对话已在当前页面打开/);f.setPanel('project-companion-dot');tree=await f.settle();assert.equal(editors(tree).length,1);assert.equal(nodes(tree,n=>n.props.role==='dialog').length,0);assert.equal(f.draft.text,'用户已有的未发送草稿');}finally{f.dispose();}
 });

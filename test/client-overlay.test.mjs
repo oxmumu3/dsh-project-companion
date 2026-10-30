@@ -41,6 +41,10 @@ test('returning to Today removes floating editor before home is eligible to acqu
  let homeActive=false;const c=harness({useSurface:()=>({homeActive,homeReady:false})});button(c.render(),'打开 Dot 对话').props.onClick();let tree=c.render();await c.flush();assert.equal(nodes(tree,n=>n.type==='native-conversation').length,1);homeActive=true;tree=c.render();assert.equal(nodes(tree,n=>n.type==='native-conversation').length,0);await c.flush();assert.equal(nodes(c.render(),n=>n.props.role==='dialog').length,0);
 });
 
+test('native-main handoff suspends and closes the overlay before another editor can open',async()=>{
+ let suspended=false;const c=harness({useSurface:()=>({suspended})});button(c.render(),'打开 Dot 对话').props.onClick();let tree=c.render();await c.flush();assert.equal(nodes(tree,n=>n.type==='native-conversation').length,1);suspended=true;tree=c.render();assert.equal(nodes(tree,n=>n.type==='native-conversation').length,0);assert.equal(button(tree,'打开 Dot 对话'),undefined);await c.flush();suspended=false;tree=c.render();assert.equal(nodes(tree,n=>n.type==='native-conversation').length,0);
+});
+
 test('opening delegates the original provider and slot props to one overlay conversation',async()=>{
   const c=harness();button(c.render(),'打开 Dot 对话').props.onClick();const tree=c.render();await c.flush();
   assert.equal(nodes(tree,n=>n.props.role==='dialog').length,1);assert.equal(c.rendered.length,1);

@@ -39,9 +39,9 @@ export function createDotOverlay(React, adapters = {}) {
     const pendingWorkbench = React.useRef(false);
     const returnFocus = React.useRef(false);
     const live = React.useRef(true);
-    const showing=open&&surface.homeActive!==true;
+    const showing=open&&surface.homeActive!==true&&surface.suspended!==true;
     React.useEffect(() => { live.current = true; return () => { live.current = false; }; }, []);
-    React.useEffect(()=>{if(surface.homeActive&&open)setOpen(false);},[surface.homeActive,open]);
+    React.useEffect(()=>{if((surface.homeActive||surface.suspended)&&open)setOpen(false);},[surface.homeActive,surface.suspended,open]);
     React.useEffect(() => {
       if (open) { panel.current?.focus?.(); return; }
       if (pendingWorkbench.current) {
@@ -82,7 +82,7 @@ export function createDotOverlay(React, adapters = {}) {
             h('button', { className: 'dot_overlay_action', type: 'button', 'aria-label': '打开完整工作台', title: '打开完整工作台', onClick: openWorkbench }, icon('expand')),
             h('button', { className: 'dot_overlay_action', type: 'button', 'aria-label': '收起 Dot 对话', title: '收起', onClick: close }, icon('close'))),
           h('div', { className: 'dot_overlay_body' }, content)),
-        !(surface.homeActive&&surface.homeReady) && h('button', { className: 'dot_overlay_launcher', type: 'button', ref: launcher, 'aria-label': showing ? '收起 Dot 对话' : '打开 Dot 对话', 'aria-expanded': showing, 'aria-controls': showing ? 'dsh-dot-overlay-dialog' : undefined, onKeyDown: escape,
+        !surface.suspended && !(surface.homeActive&&surface.homeReady) && h('button', { className: 'dot_overlay_launcher', type: 'button', ref: launcher, 'aria-label': showing ? '收起 Dot 对话' : '打开 Dot 对话', 'aria-expanded': showing, 'aria-controls': showing ? 'dsh-dot-overlay-dialog' : undefined, onKeyDown: escape,
           onClick: () => { setError(''); if(surface.homeActive){adapters.focusHome?.();return;} if (open) close(); else setOpen(true); } }, mark(), h('span', null, 'Dot'))));
   };
 }

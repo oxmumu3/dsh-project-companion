@@ -453,7 +453,7 @@ test('recurring follow-up uses the explicitly reviewed cadence without enabling 
 });
 
 test('preparing a native draft locks local input so delayed readiness cannot erase newer edits',async()=>{
- const h=await harness();let release;h.ctx.sessions={retain:()=>({binding:{sessionId:'dot-source'},ready:new Promise(resolve=>release=resolve),release(){}})};h.ctx.conversation={input:{requestDraftInitialization:()=> 'preserved'}};const retainOriginal=h.ctx.sessions.retain;h.ctx.sessions.retain=(...args)=>{const ref=retainOriginal(...args);ref.binding.ctx={get:()=>h.ctx.conversation};return ref;};
+ const h=await harness();let release;const nativeReady=new Promise(resolve=>release=resolve);h.ctx.sessions={retain:()=>({binding:{sessionId:'dot-source'},ready:nativeReady,release(){}})};h.ctx.conversation={input:{requestDraftInitialization:()=> 'preserved'}};const retainOriginal=h.ctx.sessions.retain;h.ctx.sessions.retain=(...args)=>{const ref=retainOriginal(...args);ref.binding.ctx={get:()=>h.ctx.conversation};return ref;};
  selectedDesktop(h,'dot-source');h.render();await h.flush();let view=h.render();nodes(view,n=>n.type==='textarea')[0].props.onChange({target:{value:'Original input'}});view=h.render();const pending=button(view,'开始对话').props.onClick();view=h.render();const input=nodes(view,n=>n.type==='textarea')[0];assert.equal(input.props.disabled,true);input.props.onChange({target:{value:'New concurrent edit'}});assert.equal(nodes(h.render(),n=>n.type==='textarea')[0].props.value,'Original input');release();await pending;assert.equal(nodes(h.render(),n=>n.type==='textarea')[0].props.value,'Original input');h.dispose();
 });
 
@@ -560,7 +560,7 @@ test('native draft navigation unmount and remount retains unsent local text with
 });
 
 test('native prefill rechecks the binding after delayed retain readiness and preserves stale local input',async()=>{
-  const h=await harness();h.context.snapshot.bindingRevision='before-rebind';let ready,prepared=0;const binding={sessionId:'dot-source',ctx:{get:()=>({input:{requestDraftInitialization:()=>{prepared++;return'applied';}}})}};h.ctx.sessions={retain:()=>({binding,ready:new Promise(resolve=>{ready=resolve;}),release(){}})};
+  const h=await harness();h.context.snapshot.bindingRevision='before-rebind';let ready,prepared=0;const nativeReady=new Promise(resolve=>{ready=resolve;});const binding={sessionId:'dot-source',ctx:{get:()=>({input:{requestDraftInitialization:()=>{prepared++;return'applied';}}})}};h.ctx.sessions={retain:()=>({binding,ready:nativeReady,release(){}})};
   try{selectedDesktop(h,'dot-source');h.render();await h.flush();nodes(h.render(),n=>n.type==='textarea')[0].props.onChange({target:{value:'只属于旧绑定的问题'}});const pending=button(h.render(),'开始对话').props.onClick();h.context.snapshot={...h.context.snapshot,bindingRevision:'after-rebind'};ready();await pending;const view=h.render();assert.equal(prepared,0);assert.equal(h.opened.length,0);assert.match(text(view),/绑定或项目范围已变化/);assert.equal(nodes(view,n=>n.type==='textarea')[0].props.value,'只属于旧绑定的问题');assert.equal(h.requests.length,2);
   }finally{h.dispose();}
 });
@@ -579,7 +579,7 @@ test('continuing two same-title results carries the chosen stable task ID into d
 
 test('opening native conversation also resolves unsaved memory through the same keep/discard policy',async()=>{
   const h=await harness(),row=memoryRow('native-exit','context','原始背景');seedMemory(h,row);h.context.onFetch=url=>url===endpoint?Response.json(h.context.snapshot):memoryDetail(row);
-  try{selectedDesktop(h,'dot-source');h.render();await h.flush();let view=await openMemory(h);nodes(drawer(view),n=>n.type==='textarea')[0].props.onChange({target:{value:'离开前的草稿'}});await button(h.render(),'打开 Dot 会话').props.onClick();assert.deepEqual(h.opened,[]);assert.match(text(drawer(h.render())),/这次修改还没保存/);button(h.render(),'保留草稿并离开').props.onClick();assert.deepEqual(h.opened,['dot-source']);assert.equal(posts(h).length,0);
+  try{selectedDesktop(h,'dot-source');h.render();await h.flush();let view=await openMemory(h);nodes(drawer(view),n=>n.type==='textarea')[0].props.onChange({target:{value:'离开前的草稿'}});await button(h.render(),'打开 Dot 会话').props.onClick();assert.deepEqual(h.opened,[]);assert.match(text(drawer(h.render())),/这次修改还没保存/);button(h.render(),'保留草稿并离开').props.onClick();await h.flush();assert.deepEqual(h.opened,['dot-source']);assert.equal(posts(h).length,0);
   }finally{h.dispose();}
 });
 
