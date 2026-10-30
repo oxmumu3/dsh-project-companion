@@ -1,0 +1,72 @@
+{
+  "at": "2026-10-30T18:13:41.666Z",
+  "sourceSha256": "5008524c34f274ea29f3e416ce0bc2536b58b36cb5622ceac5ad3b69fc3e7108",
+  "pass": true,
+  "records": [
+    {
+      "state": "daily-desktop",
+      "viewport": {
+        "width": 1280,
+        "height": 800
+      },
+      "pageBackground": "rgb(246, 245, 240)",
+      "composerBackground": "rgb(255, 254, 250)",
+      "composerBorder": "rgb(126, 142, 152)",
+      "editorCount": 1,
+      "docWidth": 1280,
+      "qrBottom": null,
+      "sendBottom": 461.7890625
+    },
+    {
+      "state": "first-desktop",
+      "viewport": {
+        "width": 1280,
+        "height": 720
+      },
+      "pageBackground": "rgb(246, 245, 240)",
+      "composerBackground": "rgb(255, 254, 250)",
+      "composerBorder": "rgb(126, 142, 152)",
+      "editorCount": 1,
+      "docWidth": 1280,
+      "qrBottom": 489.890625,
+      "sendBottom": 382.9921875
+    },
+    {
+      "state": "first-phone",
+      "viewport": {
+        "width": 375,
+        "height": 844
+      },
+      "pageBackground": "rgb(246, 245, 240)",
+      "composerBackground": "rgb(255, 254, 250)",
+      "composerBorder": "rgb(126, 142, 152)",
+      "editorCount": 1,
+      "docWidth": 375,
+      "qrBottom": 366.5859375,
+      "sendBottom": 670.78125
+    },
+    {
+      "state": "floating-phone",
+      "viewport": {
+        "width": 375,
+        "height": 844
+      },
+      "pageBackground": "rgb(246, 245, 240)",
+      "composerBackground": "rgb(255, 254, 250)",
+      "composerBorder": "rgb(126, 142, 152)",
+      "editorCount": 1,
+      "docWidth": 375,
+      "qrBottom": null,
+      "sendBottom": 742,
+      "draftPreserved": true
+    }
+  ],
+  "scope": "Synthetic HTML only; no real pairing, sources, messages or plans",
+  "change": "One CSS declaration: home composer background paper -> surface. Border, typography, layout and all JS unchanged.",
+  "previousSha256": "702de7eb0d2150e7f35be65c7dd3ed895ad5eb7de7e570f2cd5857a187527e94",
+  "scriptSha256": "a8e220c488ef29039eb0aa1e6dc06c5f930645f23b10f88f01cb041111367fb7",
+  "jsUnchanged": true,
+  "runtimeChanged": false,
+  "installed": false,
+  "checks": "Four targeted browser states; prior full Hallmark run remains historical baseline, not claimed as rerun."
+}

@@ -25,3 +25,7 @@
 node build.mjs 将 tokens.css、base.css、app.css 内联为独立 prototype.html，保留原 CSP。首屏 QR 为明确标注的示意图，不可真实配对。没有外部图片/字体槽位；下一项最有价值的真实材料是原生接线后的第一条实际任务结果，不能用虚构数字或装饰图填充。
 
 完整过程在 .hallmark/PICKS.md、judged-review.md、finish-review.md，比较页为 .hallmark/compare.html。日常 Harness 仍是 0.18.0-preview.1，本轮未安装、改授权/绑定/计划或发布。
+
+## 用户反馈回改：输入区白底
+
+用户指出同色输入框辨识不及旧版。仅将首页composer从纸色恢复为现有白色surface，边框、布局、二维码、文案与JS不变；桌面日常/首次、375px首次与浮层四态已核对，草稿保留。当前证据input-surface-proof.json；此前完整Hallmark报告对应前一版基线，本轮未重跑整套检查。原生日常插件未更改。
