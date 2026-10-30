@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createPersonalReviewCollector} from '../src/personal-review-collect.js';
 import {createPersonalReviewService,personalReviewRowSchema} from '../src/personal-review.js';
+import {createPersonalReviewModel} from '../src/personal-review-model.js';
 const caller={sessionId:'synthetic-source-diagnostic-owner',cwd:'/synthetic/review'},binding='a'.repeat(64),grant='b'.repeat(64);
 const from='2026-10-29T09:00:00.000Z',to='2026-10-30T09:00:00.000Z';
 const failure={code:'CONTEXT_HTTP_ERROR',readStage:'call',operation:'recent'};
@@ -9,6 +10,18 @@ const expected={source:'flomo',...failure};
 const run=(extra={})=>({caller,sources:['flomo'],projects:[],kind:'daily',from,to,guard:async()=>true,...extra});
 const err=(extra={})=>Object.assign(Error('PRIVATE_CANARY_BODY_URL_TOKEN'),{code:'CONTEXT_HTTP_ERROR',readStage:'call',token:'PRIVATE_CANARY_TOKEN',...extra});
 const collector=query=>createPersonalReviewCollector({query,readProject:async()=>assert.fail('must not read a project')});
+
+test('direct model helper validates but omits source failure metadata before transmission',async()=>{
+ let captured;
+ const ctx={get(name){if(name==='agentDefaultModel')return{currentSelection:()=>({provider:'synthetic',model:'fake'})};if(name==='llm')return{prepareCall:async config=>({config,stream:async function*(request){captured=request;yield{type:'text-delta',index:0,text:'{"items":[]}'};yield{type:'finish',reason:{kind:'stop'}};}})};}};
+ const model=createPersonalReviewModel(ctx);
+ try{
+  await model.summarize({evidence:[{id:'synthetic-boundary',source:'gmail',title:'Synthetic source',text:'Synthetic evidence.'}],coverage:[{source:'gmail',status:'partial',count:1,diagnostic:{code:'CONTEXT_HTTP_ERROR',readStage:'call',operation:'read'}}],kind:'daily',now:to});
+  const material=JSON.parse(captured.messages[0].content[0].text);
+  assert.deepEqual(material.coverage,[{source:'gmail',status:'partial',count:1}]);
+  assert.doesNotMatch(JSON.stringify(material),/CONTEXT_HTTP_ERROR|readStage|diagnostic/);
+ }finally{model.close();}
+});
 
 test('collector retains only first source failure closed code, read stage and operation without an extra read',async()=>{
  const calls=[];const collect=collector(async(_caller,args)=>{calls.push(args.operation);if(args.operation==='projects')return{items:[{id:'synthetic-p1',title:'one'},{id:'synthetic-p2',title:'two'}]};throw err({code:args.projectId==='synthetic-p1'?'CONTEXT_HTTP_ERROR':'CONTEXT_TIMEOUT',readStage:args.projectId==='synthetic-p1'?'call':'catalog'});});

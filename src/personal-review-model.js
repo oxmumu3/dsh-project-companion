@@ -33,7 +33,8 @@ export function createPersonalReviewModel(ctx, { clock = () => new Date(), timeo
         const confirmedGoals=z.array(z.object({objective:z.string().max(100),project:z.string().max(4096),meetingTitle:z.string().max(100).nullable()}).strict()).max(5).parse(goals);
         const control=currentReview===undefined?undefined:currentReviewSchema.parse(currentReview);
         if(control&&Date.parse(control.checkedAt)>currentTime.getTime())fail('MODEL_INVALID_INPUT');
-        const material = { confirmedGoals, ...(control?{currentReview:control}:{}), currentTime: currentTime.toISOString(), kind, evidence: input, deadlineHours, coverage: z.array(reviewCoverageSchema).max(50).parse(coverage) };
+        const modelCoverage=z.array(reviewCoverageSchema).max(50).parse(coverage).map(({diagnostic,...row})=>row);
+        const material = { confirmedGoals, ...(control?{currentReview:control}:{}), currentTime: currentTime.toISOString(), kind, evidence: input, deadlineHours, coverage:modelCoverage };
         const previous = z.array(previousSchema).max(60).parse(previousItems).sort((a, b) => b.lastSeenAt.localeCompare(a.lastSeenAt) || a.id.localeCompare(b.id));
         const boundedPrevious = []; let previousChars = 2;
         const previousBudget = Math.min(60000, 170000 - JSON.stringify({ ...material, previousItems: [], previousItemsTruncated: false }).length + 2);
