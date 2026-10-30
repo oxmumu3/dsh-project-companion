@@ -1,0 +1,50 @@
+{
+  "at": "2026-10-30T17:39:07.594109+00:00",
+  "scope": "visual-css-only-prototype",
+  "htmlSha256": "6728b7aae03566b80c605c6d2daa30c3f529fad352f245bb0d66be71023aaae5",
+  "baselineSha256": "640aadbd292b86e028b1a5f928eb68469af3d6b396993dafb26094d155a48f96",
+  "nonStyleBytesUnchanged": true,
+  "nativeRuntimeChanged": false,
+  "realPairingOrSourceRead": false,
+  "desktop": {
+    "viewport": [
+      1280,
+      720
+    ],
+    "horizontalOverflow": false,
+    "qrBottom": 349.59,
+    "sendBottom": 583.18
+  },
+  "narrow": {
+    "viewport": [
+      390,
+      844
+    ],
+    "documentWidth": 390,
+    "qrBottom": 346.58,
+    "sendBottom": 586.38,
+    "mainActionHeight": 44
+  },
+  "overlayFinal": {
+    "backgroundOpaque": true,
+    "opacity": 1,
+    "sendBottom": 747,
+    "inputCount": 1,
+    "draftPreserved": true,
+    "escapeFocus": "launcher"
+  },
+  "statesVerified": [
+    "first-use",
+    "daily",
+    "connection-problem",
+    "qr-expired-refresh",
+    "connected-collapse",
+    "narrow-overlay"
+  ],
+  "review": "CSS read-only audit found no blocking issue; actual overlay animation transparency fixed during browser QA",
+  "userVisualAcceptance": false,
+  "limitations": [
+    "Synthetic prototype only",
+    "Real QR/OAuth/source reads, native editor integration, natural schedules and mobile receipt not tested by this visual pass"
+  ]
+}

@@ -7,13 +7,15 @@
   "nativeImplementationPending": true,
   "dailyVersion": "0.18.0-preview.1",
   "files": {
-    "DESIGN.md": "446a4948a15f87f09cfc691edc3827181f5828a49a11d91daac0b2b2ec9817c7",
+    "DESIGN.md": "39b0ba93c0bf5c8f3b8246429e46787db636a9b78e8d9ed5ba93c0061489d17d",
     "research.md": "236fee8e6469c7430f0ebd01a71970b69f9c1e8ea4dd904c9c5d4945599e400e",
     "native-implementation-audit.md": "c570603ae4235d0e486bda1697d232f4636b694f86ec493a44ce1a625bb1188f",
     "implementation-gaps.md": "55df3847be7b1350e0dabec72c97d889437466fdc16f2d19b9ba6a5e72a98041",
-    "prototype.html": "640aadbd292b86e028b1a5f928eb68469af3d6b396993dafb26094d155a48f96",
+    "prototype.html": "6728b7aae03566b80c605c6d2daa30c3f529fad352f245bb0d66be71023aaae5",
     "prototype-notes.md": "9064b47ad82ac4bac0139ffbff1a772e563186ac55524a2b7340e3a9caf4e508",
-    "QA.md": "88888496247e9abdef08b41b153a403e7e681b1b3cf331170a2740b00e56ec90"
+    "QA.md": "5a1850735c98366827be9cdc1a6ba5587cb24faff610e1e3a2cfd06a7b0a9f91",
+    "visual-notes.md": "19a9101a3968890f19c8557e17837b9f488ebaa4429f2a143955245bece9c259",
+    "visual-proof.json": "54e3b26d321314a6623cf47aec208884693ab13f69566457ebf47c096a26b36a"
   },
   "localPreview": {
     "url": "http://127.0.0.1:60757/prototype.html",
@@ -21,7 +23,7 @@
     "bind": "127.0.0.1",
     "standaloneHtmlAlsoSaved": true
   },
-  "updatedAt": "2026-10-30T17:27:56.623953+00:00",
+  "updatedAt": "2026-10-30T17:39:07.594109+00:00",
   "priorDocumentationCommit": "23d8b66",
   "firstUse": {
     "inlineQr": true,
@@ -29,5 +31,11 @@
     "nativeInstalled": false,
     "desktopAndNarrowQa": true,
     "realPairingRequested": false
+  },
+  "visualPolish": {
+    "cssOnly": true,
+    "proof": "visual-proof.json",
+    "nativeInstalled": false,
+    "userAccepted": false
   }
 }
