@@ -125,13 +125,22 @@ export function createPersonalReviewService({ store, readBinding, readBindingSyn
   function view(includeScope = true) {
     const scope = displayScope();
     const schedule = state.subscription?.schedule, scheduleText = schedule ? `时间：${[schedule.dailyTime ? `每天 ${schedule.dailyTime}` : '', schedule.weeklyTime ? `每周${'日一二三四五六'[schedule.weeklyDay]} ${schedule.weeklyTime}` : ''].filter(Boolean).join('，')}（${schedule.timeZone}）。` : '';
+    const attention=attentionView(),policy=state.subscription?.attention;
+    let attentionText='工作时段主动关注：未配置。';
+    if(policy?.enabled===false)attentionText='工作时段主动关注：已关闭。';
+    else if(policy?.enabled===true&&state.subscription.paused)attentionText='工作时段主动关注：已暂停（随个人回顾暂停）；当前不会执行工作时段检查。';
+    else if(attention.enabled){
+      const pad=value=>String(value).padStart(2,'0');
+      const next=attention.nextRun?localProjection(makeLocalFormatter(schedule.timeZone),Date.parse(attention.nextRun)):null;
+      attentionText=`工作时段主动关注：已开启。${pad(policy.startHour)}:00–${pad(policy.endHour)}:00，每${policy.intervalMinutes/60}小时检查；每日额外最多 ${policy.maxMessagesPerDay} 条，今天还可额外提醒 ${attention.remaining} 条。${next?`下次检查：${next.year}/${pad(next.month)}/${pad(next.day)} ${pad(next.hour)}:${pad(next.minute)}（${schedule.timeZone}）。`:'下次检查时间尚未确认。'}${attention.quiet?'当前不在工作时段。':''}只在有值得提醒的新变化时发送；开启不代表本次已完成检查或手机已收到。`;
+    }
     const unconfirmed=includeScope&&scope&&state.items.some(item=>item.scopeKey===scope.key&&!['handled','dismissed'].includes(item.status)&&!itemInScope(item,scope));
     return { status: state.subscription ? state.subscription.paused ? 'paused' : 'enabled' : 'off', schedule: state.subscription ? copy(state.subscription.schedule) : null,
-      attention:attentionView(),goals:includeScope&&scope?state.goals.filter(g=>g.scopeKey===scope.key&&g.grant===scope.grant).sort((a,b)=>Number(a.status==='completed')-Number(b.status==='completed')).slice(0,5).map(g=>({title:g.title,objective:g.objective,status:g.status,meetingTitle:g.meetingTitle??null})):[],
+      attention,goals:includeScope&&scope?state.goals.filter(g=>g.scopeKey===scope.key&&g.grant===scope.grant).sort((a,b)=>Number(a.status==='completed')-Number(b.status==='completed')).slice(0,5).map(g=>({title:g.title,objective:g.objective,status:g.status,meetingTitle:g.meetingTitle??null})):[],
       sources: includeScope ? scope?.sources ?? [] : [], projects: includeScope ? scope?.projects ?? [] : [], items: includeScope ? state.items.filter(i => itemInScope(i,scope)).map(i => ({ id: i.id, title: i.title, status: i.status, dueAt: i.dueAt ?? null, snoozeUntil: i.snoozeUntil })) : [],
       jobs: state.jobs.slice(-8).map(j => ({ kind: j.kind, status: j.status, createdAt: j.createdAt, detail: labels[j.status],...(j.diagnostic?{diagnostic:copy(j.diagnostic)}:{}) })),
       lastGeneration: includeScope&&scope&&lastGeneration&&sameCaller(scope.caller,lastGeneration.caller)?copy(lastGeneration.value):null,
-      text: `个人回顾：${state.subscription ? state.subscription.paused ? '已暂停' : '已启用' : '未启用定时计划'}。${scheduleText}${state.jobs.length ? `最近一次：${labels[state.jobs.at(-1).status]}。` : ''}${unconfirmed?'部分旧事项缺少当前授权依据，暂未展示，请在原范围重新核对。':''}只读取已确认的来源与项目；电脑与宿主须在线。` };
+      text: `个人回顾：${state.subscription ? state.subscription.paused ? '已暂停' : '已启用' : '未启用定时计划'}。${scheduleText}${attentionText}${state.jobs.length ? `最近一次：${labels[state.jobs.at(-1).status]}。` : ''}${unconfirmed?'部分旧事项缺少当前授权依据，暂未展示，请在原范围重新核对。':''}只读取已确认的来源与项目；电脑与宿主须在线。` };
   }
   function result(job, items = [], text, duplicate = false) { return { status: job.status, duplicate, kind: job.kind, items: copy(items), text: text ?? labels[job.status] }; }
   function capacity(draft) { const cutoff = now().getTime() - 30 * DAY; draft.receipts = draft.receipts.filter(r => Date.parse(r.at) >= cutoff); if (draft.receipts.length >= 200) throw new Error('近期操作过多，请稍后再试'); }
