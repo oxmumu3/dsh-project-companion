@@ -5,7 +5,7 @@ import {readFile} from 'node:fs/promises';
 
 // Execute the actual Workbench, overlay, retained DesktopConversation and their
 // hooks together. Only Host transport/native editor rendering is synthetic.
-async function fixture({selected=true,draftStatus='applied',changeBinding=false}={}){
+async function fixture({selected=true,draftStatus='applied',changeBinding=false,invalidScopeResponse=false}={}){
  const instances=new Map(),registrations=[],cleanups=[],requests=[],retained=[],released=[];
  let current,cursor,pending=[],definition;
  const React={createElement:(type,props,...children)=>({type,props:{...props,children:children.flat(Infinity)},children:children.flat(Infinity)}),
@@ -17,7 +17,7 @@ async function fixture({selected=true,draftStatus='applied',changeBinding=false}
  const draft={text:selected?'用户已有的未发送草稿':'',attachments:selected?['synthetic-local-attachment']:[],approvals:selected?['synthetic-pending-approval']:[]};
  let binding,created=0,refCount=0,form={status:'ready',writable:true,revision:1,value:{desktopConversationSessionId:selected?'selected-native':'',desktopConversationSelectionVersion:selected?1:0}};
  const makeBinding=id=>({sessionId:id,ctx:{get:()=>({input:{for:()=>({focus(){}}),requestDraftInitialization:(_binding,options)=>{assert.equal(options.clearPreviousDraft,false);if(draftStatus==='preserved')return'preserved';draft.text=options.prompt;return'applied';}}})}});binding=makeBinding('selected-native');
- vm.runInNewContext(await readFile(new URL('../src/client.js',import.meta.url),'utf8'),{window:{__ModuleLoader__:{load:d=>definition=d}},AbortController,AbortSignal,Date,setInterval,clearInterval,fetch:async(url,options)=>{requests.push({url,options});return Response.json(changeBinding&&created?{...snapshot,bindingRevision:'changed-after-create'}:snapshot);}});
+ vm.runInNewContext(await readFile(new URL('../src/client.js',import.meta.url),'utf8'),{window:{__ModuleLoader__:{load:d=>definition=d}},AbortController,AbortSignal,Date,setInterval,clearInterval,fetch:async(url,options)=>{requests.push({url,options});if(invalidScopeResponse&&created)return new Response('PRIVATE_SCOPE_RESPONSE_DO_NOT_DISPLAY');return Response.json(changeBinding&&created?{...snapshot,bindingRevision:'changed-after-create'}:snapshot);}});
  const api=definition.factory(id=>id==='react'?React:{Modal:'modal'});
  const ctx={effect:fn=>cleanups.push(fn()),layout:{selectPanel(){}},uiWorkspace:{openSession(){throw Error('lifecycle test must stay on Dot');}},
   slots:{inject:(_name,fn)=>fn(),register:(spec,component)=>{registrations.push({spec,component});return()=>{};}},
@@ -60,4 +60,8 @@ for(const status of ['applied','preserved'])test(`first local draft survives exp
 
 test('changed workbench scope during explicit floating creation keeps exact local draft recoverable',async()=>{
  const f=await fixture({selected:false,changeBinding:true});const local='只属于创建前范围的原始草稿';try{let tree=await f.settle();nodes(tree,n=>n.type==='textarea')[0].props.onChange({target:{value:local}});button(tree,'项目').props.onClick();tree=await f.settle();button(tree,'打开 Dot 对话').props.onClick();tree=await f.settle();await button(tree,'开始桌面对话').props.onClick();tree=await f.settle();assert.equal(f.draft.text,'');const recovery=nodes(tree,n=>n.props['data-dot-retained-local-draft'])[0];assert.ok(recovery);assert.equal(text(nodes(recovery,n=>n.type==='pre')[0]),local);assert.ok(button(recovery,'复制保留草稿'));assert.match(text(tree),/范围.*变化|原范围.*未确认/);}finally{f.dispose();}
+});
+
+test('unreadable scope response preserves draft without exposing response or Host error text',async()=>{
+ const f=await fixture({selected:false,invalidScopeResponse:true});const local='网络异常时完整保留的草稿';try{let tree=await f.settle();nodes(tree,n=>n.type==='textarea')[0].props.onChange({target:{value:local}});button(tree,'项目').props.onClick();tree=await f.settle();button(tree,'打开 Dot 对话').props.onClick();tree=await f.settle();await button(tree,'开始桌面对话').props.onClick();tree=await f.settle();assert.doesNotMatch(text(tree),/PRIVATE_/);assert.equal(text(nodes(nodes(tree,n=>n.props['data-dot-retained-local-draft'])[0],n=>n.type==='pre')[0]),local);assert.equal(f.draft.text,'');}finally{f.dispose();}
 });
