@@ -18,6 +18,14 @@ test('privileged pairing reuses existing grant without copying source credential
   const delegated=await f.service.resolve(call);assert.equal(delegated.originSessionId,'old-dot-session');assert.equal(delegated.originBindingKey,oldBinding);assert.equal(delegated.bindingRevision,familyRevision);
   assert.doesNotMatch(JSON.stringify(f.row()),/synthetic-token|credentialKey|flomo/);
 });
+test('only the bridge-proved review token is transiently passed with the active Owner call',async()=>{
+ const f=fixture(),token='f'.repeat(64),base=f.bridge.resolveOwnerCall;
+ await f.service.pair({execution:call,originSessionId:'old-dot-session',userAuthorized:true});
+ f.bridge.resolveOwnerCall=async input=>({...await base(input),previousReviewViewToken:token});
+ assert.equal((await f.service.resolve(call)).previousReviewViewToken,token);assert.equal(f.row().previousReviewViewToken,undefined);
+ f.bridge.resolveOwnerCall=async input=>({...await base(input),previousReviewViewToken:'invalid'});
+ assert.equal((await f.service.resolve(call)).previousReviewViewToken,undefined);
+});
 test('untrusted or foreign sessions cannot create or use a pairing',async()=>{
   const f=fixture();await assert.rejects(f.service.pair({execution:call,originSessionId:'old-dot-session'}));await assert.rejects(f.service.pair({execution:{sessionId:'family_member_1',callId:'real-tool-call'},originSessionId:'old-dot-session',userAuthorized:true}));assert.equal(await f.service.resolve({sessionId:'family_member_1',callId:'real-tool-call'}),null);assert.equal(f.row(),undefined);
 });

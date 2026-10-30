@@ -65,7 +65,7 @@ test('preview diagnostics are transient while last successful generation is dist
  const status=await f.service.snapshot(owner);
  assert.equal(status.lastGeneration.status,'completed');
  assert.equal(status.lastGeneration.diagnostic,undefined);
- assert.deepEqual(f.stored(),before);
+ assert.deepEqual(f.stored().subscription,before.subscription);assert.deepEqual(f.stored().jobs,before.jobs);assert.deepEqual(f.stored().watermarks,before.watermarks);assert.equal(f.stored().items.length,1);assert.ok(f.stored().lastView.viewToken);assert.equal(f.stored().lastGeneration,undefined);
  assert.equal(f.sends.length,0);
  await f.service.close();
 });

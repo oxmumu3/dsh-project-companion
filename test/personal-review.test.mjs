@@ -31,7 +31,7 @@ test('configuration and status show the actual daily and weekly times with their
 test('preview detects an unconfigured new risk in authorized sources without creating plans', async () => {
   const f = await fixture(); const result = await f.service.act(owner, { action: 'preview', ...scope });
   assert.equal(result.items.length, 1); assert.match(result.text, /可能影响|未知/); assert.match(result.text, /邮件/); assert.equal(f.reads[0].sources[0], 'gmail');
-  assert.equal(f.sends.length, 0); assert.equal(f.writes(), 0); assert.equal(f.service.needsTimer(), false);
+  assert.equal(f.sends.length, 0); assert.equal(f.stored().subscription, null); assert.equal(f.service.needsTimer(), false);
 });
 test('daily and weekly claim independent occurrences; replay and restart do not resend', async () => {
   const f = await fixture(); await f.service.act(owner, intent('configure', { ...scope, schedule: { dailyTime: '09:00', weeklyDay: 4, weeklyTime: '10:00', timeZone: 'UTC' } }));
@@ -158,7 +158,7 @@ test('derived relative deadlines are explicitly estimated, and changed source de
 });
 test('one-off scope does not misrepresent a saved subscription, and feedback checks its own item scope', async () => {
   const authorizations = [];
-  const f = await fixture({ hooks: { authorization: async (_caller, sources) => { authorizations.push([...sources]); return grant; }, collect: async ({ sources }) => ({ evidence: [evidence({ id: `${sources[0]}:1`, source: sources[0] })], coverage: [{ source: sources[0], status: 'ok', count: 1 }] }), summarize: async ({ evidence: rows }) => ({ items: [candidate({ key: rows[0].source, title: `${rows[0].source} 待处理`, evidenceIds: [rows[0].id] })] }) } });
+  const f = await fixture({ hooks: { authorization: async (_caller, sources) => { authorizations.push([...sources]); return grant; }, collect: async ({ sources }) => ({ evidence: [evidence({ id: `${sources[0]}:1`, source: sources[0], ...(sources[0] === 'calendar' ? { dueAt: undefined, text: 'Synthetic meeting scheduled.', eventStartAt: '2026-10-29T10:00:00.000Z', eventEndAt: '2026-10-29T11:00:00.000Z' } : {}) })], coverage: [{ source: sources[0], status: 'ok', count: 1 }] }), summarize: async ({ evidence: rows }) => ({ items: [candidate({ key: rows[0].source, title: `${rows[0].source} 待处理`, evidenceIds: [rows[0].id], ...(rows[0].source === 'calendar' ? { kind: 'event', dueAt: undefined, eventStartAt: rows[0].eventStartAt, eventEndAt: rows[0].eventEndAt, summary: '已安排一次会议。', why: '会议即将开始。', action: '查看会议详情。', unknown: '准备状态未知。' } : {}) })] }) } });
   await f.service.act(owner, intent('configure', { ...scope, schedule: { dailyTime: '09:00', timeZone: 'UTC' } }));
   const daily = await f.service.act(owner, intent('run_now')); const manual = await f.service.act(owner, intent('run_now', { sources: ['calendar'], projects: [], requestId: 'calendar-only' }));
   const status = await f.service.snapshot(owner); assert.deepEqual(status.sources, ['gmail']); assert.deepEqual(status.items.map(i => i.id), [daily.items[0].id]);
@@ -170,4 +170,59 @@ test('collector content digest avoids false updates when budget changes the same
   const f=await fixture({hooks:{collect:async()=>({evidence:[evidence({text,contentDigest})],coverage:[{source:'gmail',status:'partial',count:1,truncated:true}]})}});
   await f.service.act(owner,intent('run_now',scope));text='Full original';await f.service.act(owner,intent('run_now',{...scope,requestId:'shorter'}));assert.equal(f.sends.length,1);
   contentDigest='e'.repeat(64);await f.service.act(owner,intent('run_now',{...scope,requestId:'new-facts'}));assert.equal(f.sends.length,2);assert.equal('contentDigest' in f.stored().items[0].evidence[0],false);
+});
+test('preview persists actionable last-view items but never creates a schedule or delivery',async()=>{
+ const f=await fixture();const preview=await f.service.act(owner,{action:'preview',...scope});
+ assert.equal(f.stored()?.lastView?.itemIds[0],preview.items[0].id);assert.equal(f.stored().subscription,null);assert.equal(f.sends.length,0);
+ await f.service.act(owner,intent('feedback',{itemNumber:1,feedback:'handled',confirmedViewToken:preview.viewToken}));assert.equal(f.stored().items[0].status,'handled');
+ const reboot=await fixture({persisted:f.stored()});await reboot.service.ready();assert.equal((await reboot.service.snapshot(owner)).items[0].status,'handled');
+});
+test('ordinal feedback rejects stale, rebound, ambiguous and wrong-owner views',async()=>{
+ for(const mode of ['stale','rebound','ambiguous','owner']){const f=await fixture();await f.service.act(owner,{action:'preview',...scope});
+ if(mode==='stale')f.time('2026-10-30T10:00:00.000Z');if(mode==='rebound')f.rebind();
+ await assert.rejects(f.service.act(mode==='owner'?{...owner,sessionId:'other'}:owner,intent('feedback',{itemNumber:1,feedback:'handled',...(mode==='ambiguous'?{itemId:'another'}:{})})));assert.equal(f.stored().items[0].status,'open');}
+});
+test('daytime attention uses existing scope, skips morning overlap, persists budget and dedupes',async()=>{
+ const f=await fixture();await f.service.act(owner,intent('configure',{...scope,schedule:{dailyTime:'09:00',timeZone:'UTC'}}));
+ await f.service.act(owner,intent('attention',{enabled:true}));assert.equal(f.reads.length,0);assert.equal((await f.service.snapshot(owner)).attention.enabled,true);
+ await f.service.tick();assert.equal(f.sends.length,1);f.time('2026-10-29T11:00:00.000Z');await f.service.tick();assert.equal(f.sends.length,1);assert.equal(f.stored().jobs.at(-1).kind,'attention');
+ const reboot=await fixture({persisted:f.stored()});reboot.time('2026-10-29T11:01:00.000Z');await reboot.service.tick();assert.equal(reboot.reads.length,0);assert.equal(reboot.sends.length,0);
+ await f.service.act(owner,intent('attention',{enabled:false,requestId:'off'}));assert.equal(f.stored().subscription.schedule.dailyTime,'09:00');assert.equal((await f.service.snapshot(owner)).attention.enabled,false);
+});
+test('attention never expands scope, requires existing explicit schedule and conserves private permissions',async()=>{
+ const f=await fixture();await assert.rejects(f.service.act(owner,intent('attention',{enabled:true})));
+ await f.service.act(owner,intent('configure',{...scope,schedule:{dailyTime:'09:00',timeZone:'UTC'}}));
+ await assert.rejects(f.service.act(owner,intent('attention',{enabled:true,sources:['drive']})));assert.equal(f.reads.length,0);
+ f.revoke();await assert.rejects(f.service.act(owner,intent('attention',{enabled:true})));assert.equal(f.stored().subscription.attention,undefined);
+});
+test('coincident daily and weekly sends only weekly and claims both occurrences before side effects',async()=>{
+ const f=await fixture();await f.service.act(owner,intent('configure',{...scope,schedule:{dailyTime:'09:00',weeklyDay:4,weeklyTime:'09:00',timeZone:'UTC'}}));
+ await f.service.tick();assert.equal(f.sends.length,1);assert.equal(f.stored().jobs[0].kind,'weekly');assert.ok(f.stored().occurrences.includes('daily:2026-10-29'));assert.ok(f.stored().occurrences.includes('weekly:2026-10-29'));
+});
+
+test('unconfirmed or mismatched preview never resolves an ordinal feedback',async()=>{const f=await fixture();const p=await f.service.act(owner,{action:'preview',...scope});for(const token of [undefined,'old_view'])await assert.rejects(f.service.act(owner,intent('feedback',{itemNumber:1,feedback:'handled',confirmedViewToken:token})));assert.equal(f.stored().items[0].status,'open');assert.ok(p.viewToken);});
+test('exact-title feedback modifies only the unique same-scope item and rejects ambiguity',async()=>{
+ const f=await fixture();await f.service.act(owner,{action:'preview',...scope});
+ await assert.rejects(f.service.act(owner,intent('feedback',{itemTitle:'访问政策',feedback:'handled'})));
+ await f.service.act(owner,intent('feedback',{requestId:'title-feedback',itemTitle:'访问政策即将变化',feedback:'handled'}));assert.equal(f.stored().items[0].status,'handled');
+ f.rebind();await assert.rejects(f.service.act(owner,intent('feedback',{requestId:'title-rebind',itemTitle:'访问政策即将变化',feedback:'dismissed'})));assert.equal(f.stored().items[0].status,'handled');
+ const ambiguous=await fixture({hooks:{summarize:async()=>({items:[candidate(),candidate({key:'second',kind:'change'})]})}});await ambiguous.service.act(owner,{action:'preview',...scope});assert.equal(ambiguous.stored().items.length,2);
+ await assert.rejects(ambiguous.service.act(owner,intent('feedback',{itemTitle:'访问政策即将变化',feedback:'handled'})));assert.ok(ambiguous.stored().items.every(i=>i.status==='open'));
+});
+test('attention message budget survives short job history pruning and uncertain delivery',async()=>{
+ const f=await fixture();await f.service.act(owner,intent('configure',{...scope,schedule:{dailyTime:'08:00',timeZone:'UTC'}}));await f.service.act(owner,intent('attention',{enabled:true}));
+ const stored=structuredClone(f.stored());stored.jobs=[];stored.attentionClaims=[{id:'claim-one',at:'2026-10-29T09:01:00.000Z',timeZone:'UTC',status:'uncertain'},{id:'claim-two',at:'2026-10-29T11:01:00.000Z',timeZone:'UTC',status:'queued'}];
+ const restart=await fixture({persisted:stored});restart.time('2026-10-29T13:00:00.000Z');await restart.service.tick();assert.equal(restart.sends.length,0);assert.equal(restart.reads.length,0);assert.equal((await restart.service.snapshot(owner)).attention.remaining,0);
+});
+test('enabling attention after a daytime slot never catches up that slot or reads immediately',async()=>{
+ const f=await fixture();await f.service.act(owner,intent('configure',{...scope,schedule:{dailyTime:'08:00',timeZone:'UTC'}}));f.time('2026-10-29T11:10:00.000Z');await f.service.act(owner,intent('attention',{enabled:true}));await f.service.tick();assert.equal(f.reads.length,0);assert.equal(f.sends.length,0);
+});
+test('failed preview cannot replace feedback mapping, and confirmed old tokens cannot affect a new preview',async()=>{
+ let failing=false;const f=await fixture({hooks:{summarize:async()=>{if(failing)throw new Error('model failure');return{items:[candidate()]};}}});
+ const original=await f.service.act(owner,{action:'preview',...scope});failing=true;await assert.rejects(f.service.act(owner,{action:'preview',...scope}));assert.equal(f.stored().lastView.viewToken,original.viewToken);
+ failing=false;const latest=await f.service.act(owner,{action:'preview',...scope});assert.notEqual(latest.viewToken,original.viewToken);await assert.rejects(f.service.act(owner,intent('feedback',{itemNumber:1,feedback:'handled',confirmedViewToken:original.viewToken})));assert.equal(f.stored().items[0].status,'open');
+});
+test('attention last-moment local authority rejection leaves the saved subscription unchanged',async()=>{
+ const f=await fixture();await f.service.act(owner,intent('configure',{...scope,schedule:{dailyTime:'09:00',timeZone:'UTC'}}));const before=structuredClone(f.stored());let calls=0;
+ await assert.rejects(f.service.act(owner,intent('attention',{enabled:true,authorizeSync:()=>++calls<4})));assert.deepEqual(f.stored(),before);assert.equal(f.reads.length,0);assert.equal(f.sends.length,0);
 });

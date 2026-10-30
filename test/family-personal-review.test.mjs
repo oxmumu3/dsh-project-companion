@@ -31,6 +31,31 @@ test('feedback must name the displayed stable item identifier and derive disposi
  const snooze=parse('个人回顾事项 pritem_123 延后24小时。','feedback');assert.equal(snooze.feedback,'snoozed');assert.equal(snooze.snoozeUntil,'2026-10-30T12:00:00.000Z');
  assert.throws(()=>parse('已处理','feedback'));assert.throws(()=>parse('个人回顾事项 pritem_123 已处理，并发送邮件','feedback'));
 });
+test('Owner can refer to a numbered recent review item without exposing internal ids',()=>{
+ assert.deepEqual(parse('个人回顾第1条已处理','feedback'),{action:'feedback',itemNumber:1,feedback:'handled',sourceRequestId:owner.sourceRequestId});
+ assert.equal(parse('第1条已处理','feedback').itemNumber,1);
+ assert.deepEqual(parse('第2条延后1天','feedback'),{action:'feedback',itemNumber:2,feedback:'snoozed',snoozeUntil:'2026-10-30T12:00:00.000Z',sourceRequestId:owner.sourceRequestId});
+ assert.equal(parse('第3条不再提醒','feedback').feedback,'dismissed');
+ for(const text of ['第0条已处理','第10条已处理','第1和第2条已处理','不要第1条已处理','第1条已处理并发邮件'])assert.throws(()=>parse(text,'feedback'),text);
+});
+test('numbered feedback carries only the authenticated bridge receipt token',()=>{
+ const token='c'.repeat(64);
+ assert.equal(parse('第1条已处理','feedback',{previousReviewViewToken:token}).confirmedViewToken,token);
+ assert.equal(parse('第1条已处理','feedback',{previousReviewViewToken:'bad'}).confirmedViewToken,undefined);
+ assert.equal(parse('个人回顾事项 pritem_123 已处理','feedback',{previousReviewViewToken:token}).confirmedViewToken,undefined);
+});
+test('verified Owner can name an exact review title without an internal identifier',()=>{
+ assert.deepEqual(parse('个人回顾「访问政策即将变化」已处理','feedback'),{action:'feedback',itemTitle:'访问政策即将变化',feedback:'handled',sourceRequestId:owner.sourceRequestId});
+ assert.equal(parse('个人回顾“项目 A · 续约”延后1天','feedback').snoozeUntil,'2026-10-30T12:00:00.000Z');
+ for(const text of ['不要个人回顾「风险」已处理','个人回顾「风险」已处理并发邮件','个人回顾「风险”已处理','个人回顾「」已处理'])assert.throws(()=>parse(text,'feedback'),text);
+});
+test('attention is enabled or disabled only by a narrow verified Owner instruction',()=>{
+ for(const text of ['开启个人回顾工作时段主动关注','每天9点到19点，每2小时主动关注个人回顾，每天最多提醒2次']){
+  const value=parse(text,'attention');assert.deepEqual(value,{action:'attention',enabled:true,sourceRequestId:owner.sourceRequestId});assert.equal(value.sources,undefined);assert.equal(value.projects,undefined);
+ }
+ assert.equal(parse('关闭个人回顾工作时段主动关注','attention').enabled,false);
+ for(const text of ['不要开启个人回顾工作时段主动关注','开启个人回顾工作时段主动关注并读取其他账号','每天9点到19点，每2小时主动关注个人回顾，每天最多提醒10次'])assert.throws(()=>parse(text,'attention'),text);
+});
 test('quoted, hypothetical, negative, expanded, mixed or model-reinterpreted requests cannot grant scope',()=>{
  for(const text of ['不要'+request,'如果可以'+request,'他说“'+request+'”',request+'顺便读取妈妈的日历',request+'只看某个未指定文件','每天9点和10点，使用我在电脑启用的资料和已关注项目做个人回顾','每天9点，使用所有账号和全部项目做个人回顾'])assert.throws(()=>parse(text),text);
 });

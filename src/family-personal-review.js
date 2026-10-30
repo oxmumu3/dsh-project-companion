@@ -1,6 +1,6 @@
 // This parser admits only an already independently verified Family Owner call.
 // It never trusts model-supplied source IDs, projects, dates, or feedback values.
-const actions=new Set(['configure','preview','run_now','status','pause','resume','cancel','feedback']);
+const actions=new Set(['configure','preview','run_now','status','pause','resume','cancel','feedback','attention']);
 export const familyPersonalReviewAction=action=>actions.has(action);
 const fail=()=>{throw Object.assign(new Error('无法从本次 Owner 原话核对个人回顾的范围或操作；本次未读取资料或更改计划。'),{code:'FAMILY_REVIEW_SCOPE_UNSUPPORTED'});};
 const stamp=value=>typeof value==='string'&&Number.isFinite(Date.parse(value))&&new Date(value).toISOString()===value?Date.parse(value):NaN;
@@ -23,13 +23,21 @@ export function deriveFamilyPersonalReviewRequest(scope,{action,now=new Date(),t
  let text=assertFamilyOwnerRequest(scope,{now,activeCallVerified,requireFresh:action!=='status'}).replace(/[。！!]+$/u,'').replace(/^(?:请|帮我|麻烦)\s*/u,'');
  const result={action,sourceRequestId:scope.sourceRequestId};
  if(action==='feedback'){
-  const m=text.match(/^(?:我的)?个人回顾(?:事项)?\s+([A-Za-z0-9][A-Za-z0-9_.:-]{2,159})\s+(已处理|不再提醒|延后(?:\d{1,3}|[一二两三四五六七八九十]{1,3})(?:小时|天))$/u);if(!m)fail();
-  if(m[2]==='已处理')return{...result,itemId:m[1],feedback:'handled'};
-  if(m[2]==='不再提醒')return{...result,itemId:m[1],feedback:'dismissed'};
-  const delay=m[2].match(/^延后(.+)(小时|天)$/u),hours=number(delay[1])*(delay[2]==='天'?24:1);if(!Number.isInteger(hours)||hours<1||hours>168)fail();
-  return{...result,itemId:m[1],feedback:'snoozed',snoozeUntil:new Date(stamp(scope.sourceTiming.providerCreatedAt)+hours*3600000).toISOString()};
+  const m=text.match(/^(?:我的)?个人回顾(?:事项)?\s+([A-Za-z0-9][A-Za-z0-9_.:-]{2,159})\s+(已处理|不再提醒|延后(?:\d{1,3}|[一二两三四五六七八九十]{1,3})(?:小时|天))$/u);
+  const titled=text.match(/^(?:我的)?个人回顾(?:事项)?\s*(?:「([^「」\r\n]{1,100})」|“([^“”\r\n]{1,100})”)\s*(已处理|不再提醒|延后(?:\d{1,3}|[一二两三四五六七八九十]{1,3})(?:小时|天))$/u);
+  const short=text.replace(/\s+/gu,'').match(/^(?:(?:我的)?个人回顾(?:事项)?)?第([一二两三四五六七八九1-9])(?:条|项)(已处理|不再提醒|延后(?:\d{1,3}|[一二两三四五六七八九十]{1,3})(?:小时|天))$/u);if(!m&&!short&&!titled)fail();
+  const target=m?{itemId:m[1]}:titled?{itemTitle:titled[1]??titled[2]}:{itemNumber:number(short[1]),...(/^[a-f0-9]{64}$/u.test(scope.previousReviewViewToken??'')?{confirmedViewToken:scope.previousReviewViewToken}:{})},operation=titled?titled[3]:(m??short)[2];
+  if(operation==='已处理')return{...result,...target,feedback:'handled'};
+  if(operation==='不再提醒')return{...result,...target,feedback:'dismissed'};
+  const delay=operation.match(/^延后(.+)(小时|天)$/u),hours=number(delay[1])*(delay[2]==='天'?24:1);if(!Number.isInteger(hours)||hours<1||hours>168)fail();
+  return{...result,...target,feedback:'snoozed',snoozeUntil:new Date(stamp(scope.sourceTiming.providerCreatedAt)+hours*3600000).toISOString()};
  }
  text=text.replace(/\s+/gu,'').replace(/[，,、；;]/gu,'，');
+ if(action==='attention'){
+  if(/^(?:开启|打开|启用)(?:我的)?个人回顾(?:的)?工作时段主动关注$/u.test(text)||text==='每天9点到19点，每2小时主动关注个人回顾，每天最多提醒2次')return{...result,enabled:true};
+  if(/^(?:关闭|停止|取消|暂停)(?:我的)?个人回顾(?:的)?工作时段主动关注$/u.test(text))return{...result,enabled:false};
+  fail();
+ }
  const lifecycle={status:/^(?:查看|看看|查询)(?:我的)?个人回顾(?:状态|设置)?$/u,pause:/^(?:暂停|暂时关闭)(?:我的)?个人回顾$/u,resume:/^(?:恢复|继续)(?:我的)?个人回顾$/u,cancel:/^(?:取消|关闭|停止)(?:我的)?个人回顾$/u};
  if(lifecycle[action]){if(!lifecycle[action].test(text))fail();return result;}
  if(action==='configure'&&/^(?:(?:每天每周主动给我做|每天(?:早上)?(?:\d{1,2}|[一二两三四五六七八九十]{1,3})点做|开启)(?:我的)?个人回顾)$/u.test(text))return needsConfirmation(scope.sourceRequestId);

@@ -11,11 +11,11 @@ test('the production service normalized source URL still reaches the allowlisted
  try{const r=await service.act({sessionId:'test',cwd:'/synthetic/news'},{action:'preview'});assert.equal(articleReads,1);assert.equal(r.items[0].coverage,'article');}finally{await service.close();}
 });
 test('message-bounded prose marks truncation rather than ending silently mid-sentence',()=>{
- const r=renderNewsDigest({items:Array.from({length:10},(_,i)=>({id:`a${i}`,title:'AI news',url:`https://example.org/${i}?q=${'x'.repeat(100)}`,sourceName:'Public',publishedAt:now.toISOString(),summary:'源'.repeat(350),why:'因'.repeat(90),coverage:'article'})),generatedAt:now.toISOString()});
+ const r=renderNewsDigest({items:Array.from({length:10},(_,i)=>({id:`a${i}`,tier:i<3?'deep':'brief',kind:'substantive',title:'AI news',url:`https://example${i}.org/${i}?q=${'x'.repeat(100)}`,sourceName:'Public',publishedAt:now.toISOString(),summary:'源'.repeat(350),why:'因'.repeat(90),coverage:'article'})),generatedAt:now.toISOString()});
  assert.match(r.text,/源+…/u);assert.match(r.text,/值得关注：因+…/u);assert.ok(r.text.length<=3200);for(const item of r.items)assert.ok(r.text.includes(item.url));
 });
 test('short digest preserves complete valid summaries when the message budget has room',()=>{
  const summary='源'.repeat(350),why='因'.repeat(90);
- const r=renderNewsDigest({items:[{id:'a',title:'AI news',url:'https://example.org/a',sourceName:'Public',publishedAt:now.toISOString(),summary,why,coverage:'article'}],generatedAt:now.toISOString()});
+ const r=renderNewsDigest({items:[{id:'a',tier:'deep',kind:'substantive',title:'AI news',url:'https://example.org/a',sourceName:'Public',publishedAt:now.toISOString(),summary,why,coverage:'article'}],generatedAt:now.toISOString()});
  assert.ok(r.text.includes(summary));assert.ok(r.text.includes(why));assert.equal(r.items[0].summary,summary);assert.equal(r.items[0].why,why);assert.ok(r.text.length<=3200);
 });

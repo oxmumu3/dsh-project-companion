@@ -22,7 +22,7 @@ function fixture(hooks = {}) {
   return { service, sends, stored: () => stored, rebind: () => { route = 'c'.repeat(64); } };
 }
 
-test('audit: cancelling a due daily review cannot fall through to a weekly send in the same tick', async () => {
+test('audit: cancelling the coalesced weekly review cannot fall through to a daily send in the same tick', async () => {
   let entered, reads = 0;
   const started = new Promise(resolve => { entered = resolve; });
   const f = fixture({ collect: async () => {
@@ -37,7 +37,7 @@ test('audit: cancelling a due daily review cannot fall through to a weekly send 
   assert.equal(reads, 1);
   assert.equal(f.sends.length, 0);
   assert.equal(f.stored().subscription, null);
-  assert.deepEqual(f.stored().jobs.map(job => [job.kind, job.status]), [['daily', 'cancelled']]);
+  assert.deepEqual(f.stored().jobs.map(job => [job.kind, job.status]), [['weekly', 'cancelled']]);
 });
 
 test('audit: a changed binding cannot read or acknowledge old-scope review items', async () => {

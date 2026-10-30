@@ -40,6 +40,13 @@ test('model receives computed deadline hours so tomorrow is not mistaken for wit
   const f = await fixture(); await f.model.summarize({ evidence: [{ ...evidence[0], dueAt: '2026-10-30T10:00:00.000Z' }], coverage: [], kind: 'daily', now: '2026-10-29T09:00:00.000Z' });
   const data = JSON.parse(f.calls[0].messages[0].content[0].text); assert.deepEqual(data.deadlineHours, { 'mail:1': 25 }); assert.match(f.calls[0].system, /24.*小时|24小时/); f.model.close();
 });
+test('model receives typed calendar and Drive evidence with explicit unknown-body instructions',async()=>{
+ const calendar={id:'event:1',source:'calendar',title:'Synthetic meeting',text:'A scheduled meeting.',eventStartAt:'2026-10-30T16:30:00.000Z',eventEndAt:'2026-10-30T17:30:00.000Z'};
+ const drive={id:'drive:1',source:'drive',title:'Synthetic worksheet',text:'',contentState:'actual_empty',contentScope:'returned_text'};
+ const f=await fixture({answer:{items:[]}});await f.model.summarize({evidence:[calendar,drive],kind:'daily',now:'2026-10-30T06:23:00.000Z'});
+ const data=JSON.parse(f.calls[0].messages[0].content[0].text);assert.equal(data.evidence[0].eventStartAt,calendar.eventStartAt);assert.equal(data.evidence[1].contentState,'actual_empty');assert.deepEqual(data.deadlineHours,{});
+ assert.match(f.calls[0].system,/绝不是任务截止/);assert.match(f.calls[0].system,/不能写文件为空/);assert.match(f.calls[0].system,/只给一个最先需要做的动作/);assert.match(f.calls[0].system,/时区已知/);assert.match(f.calls[0].system,/不同来源的时区不同不等于缺少时区/);f.model.close();
+});
 test('largest bounded evidence keeps recent previous items within 60k without changing feedback records', async () => {
   const rows=Array.from({length:100},(_,i)=>({id:`mail:${i}`.padEnd(240,'x'),source:'gmail',title:'Synthetic material',text:'x'.repeat(620),dueAt:'2026-11-01T00:00:00.000Z'}));
   const previous=Array.from({length:60},(_,i)=>({id:String(i).padStart(240,'x'),key:String(i).padStart(240,'k'),kind:'risk',title:'标'.repeat(100),summary:'摘'.repeat(360),status:'handled',dueAt:null,evidenceIds:Array.from({length:12},(_,j)=>`${i}:${j}`.padStart(240,'e')),lastSeenAt:new Date(Date.UTC(2026,8,1+i)).toISOString()}));

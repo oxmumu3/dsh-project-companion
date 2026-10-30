@@ -26,6 +26,30 @@ async function verifiedFamilyRuntime(){
  const {createRuntime}=await import(pathToFileURL(join(root,'src/runtime.mjs')).href);
  assert.equal(typeof createRuntime,'function');return createRuntime;
 }
+for(const sendMode of ['accepted','uncertain'])test(`Family ${sendMode} preview and numbered feedback`,{skip:familyRoot?false:'Set FAMILY_BRIDGE_ROOT to a checked Family source tree'},async t=>{
+ const createRuntime=await verifiedFamilyRuntime();
+ const {createPersonalReviewService}=await import('../src/personal-review.js'),{createFamilyOwnerDelegation}=await import('../src/family-owner-delegation.js'),{deriveFamilyPersonalReviewRequest}=await import('../src/family-personal-review.js');
+ const temp=await realpath(await mkdtemp(join(tmpdir(),'family-review-ack-'))),root=join(temp,'owner');await mkdir(root);
+ const sent=[],intents=[];let preview;
+ const ownerAgent={ensureControlWorkspace:async()=>({workspaceId:'control',title:'Owner',path:root}),listWorkspaces:async()=>[{workspaceId:'control',title:'Owner',path:root}],start:async intent=>{intents.push(structuredClone(intent));return{state:'running'};},observe:async intent=>intent.requestId===intents[0].requestId&&preview?{...intent,state:'succeeded',foreign:false,requestSeen:true,text:preview.text,reviewViewToken:preview.viewToken}:{...intent,state:'running',foreign:false,requestSeen:true,queued:false,turn:1,activeTurn:1,activeRequestIds:[intent.requestId],events:[{type:'tool/call',turn:1,callId:'review-call',status:'running'}]}};
+ const family=createRuntime({directory:join(temp,'family'),ownerAgent,now:()=> '2026-10-29T09:00:00.000Z',intervalMs:1000000,channelFactory:()=>({status:()=>({status:'connected'}),connect:async()=>{},disconnect:async()=>{},close:async()=>{},send:async(route,text,options)=>{assert.equal(options.authorize(),true);sent.push({route,text});if(sendMode==='uncertain')throw Error('synthetic unknown');return{status:'api_accepted'};}})});
+ t.after(async()=>{await family.close();await rm(temp,{recursive:true,force:true});});
+ family.store.addPerson({id:'owner',role:'owner',label:'Owner'});family.store.bindPerson('owner',{accountId:'acct',peerId:'peer'});await family.start();
+ const timing={receivedAt:'2026-10-29T09:00:00.000Z',providerCreatedAt:'2026-10-29T09:00:00.000Z'};
+ await family.receive('owner',{id:'preview',peerId:'peer',text:'预览一份个人回顾，使用我在电脑启用的资料和已关注项目，不建立计划。',sourceTiming:timing});await family.settled();
+ const id=intents[0].sessionId,caller={sessionId:id,cwd:root},call={sessionId:id,callId:'review-call'};let delegationRow,reviewRow;
+ const delegate=createFamilyOwnerDelegation({store:{get:async()=>delegationRow,put:async(_key,row)=>{delegationRow=structuredClone(row);}},getBridge:()=>family.familyDotBridge,readGrantedLeases:async()=>[],readGrantedLeasesSync:()=>[]});
+ await delegate.pair({execution:call,originSessionId:'family-no-legacy',userAuthorized:true});
+ const service=createPersonalReviewService({store:{get:async()=>structuredClone(reviewRow),put:async(_key,row)=>{reviewRow=structuredClone(row);}},clock:()=>new Date(timing.receivedAt),readBinding:async()=>({bound:true,bindingKey:'a'.repeat(64)}),authorization:async()=> 'b'.repeat(64),canRun:async()=>true,collect:async()=>({evidence:[{id:'m:1',source:'gmail',title:'Synthetic risk',text:'Synthetic risk',at:'2026-10-29T08:00:00.000Z'}],coverage:[{source:'gmail',status:'ok',count:1}]}),summarize:async()=>({items:[{key:'risk',kind:'risk',title:'合成风险',summary:'需要处理',why:'可能影响项目',action:'检查',unknown:'状态未知',evidenceIds:['m:1'],priority:'high',confidence:'source'}]}),send:async()=>({status:'reported_sent'})});
+ preview=await service.act(caller,{action:'preview',sources:['gmail'],projects:[]});assert.equal(preview.items.length,1);
+ await family.tick();await family.settled();assert.ok(sent.some(row=>row.text===preview.text));
+ await family.receive('owner',{id:'feedback',peerId:'peer',text:'第1条已处理',sourceTiming:timing});await family.settled();
+ const scope=await delegate.resolve(call);assert.equal(scope.previousReviewViewToken,sendMode==='accepted'?preview.viewToken:undefined);
+ const derived=deriveFamilyPersonalReviewRequest(scope,{action:'feedback',now:new Date(timing.receivedAt),activeCallVerified:true});assert.equal(derived.confirmedViewToken,sendMode==='accepted'?preview.viewToken:undefined);
+ await assert.rejects(service.act(caller,{...derived,confirmedViewToken:'f'.repeat(64),userRequested:true,requestId:derived.sourceRequestId}));
+ if(sendMode==='accepted'){await service.act(caller,{...derived,userRequested:true,requestId:derived.sourceRequestId});assert.equal(reviewRow.items[0].status,'handled');}else{await assert.rejects(service.act(caller,{...derived,userRequested:true,requestId:derived.sourceRequestId}));assert.notEqual(reviewRow.items[0].status,'handled');}
+ family.store.bindPerson('owner',{accountId:'new',peerId:'new'});assert.equal(await delegate.resolve(call),null);
+});
 test('real Family Owner WeChat admission + Cordis bridge + native Dot brief, handoff and one result',{skip:familyRoot?false:'Set FAMILY_BRIDGE_ROOT to a checked Family source tree'},async t=>{
  const createRuntime=await verifiedFamilyRuntime();
  const {createFamilyProjectExecutor}=await import(pathToFileURL(join(familyRoot,'src/family-project-executor.mjs')).href);

@@ -977,7 +977,7 @@ test('AI digest host separates temporary preview from explicit persistent topics
   assert.equal(schema.parameters.properties.topics.items.type, 'string');
   const result = await newsTool(h, { action: 'preview', topics: ['DeepSeek 插件', 'Agent 产品'] }, 'synthetic-topic-preview');
   assert.deepEqual(seen, [['DeepSeek 插件', 'Agent 产品'], ['DeepSeek 插件', 'Agent 产品']]);
-  assert.match(result.text, /仅本次预览/);
+  assert.match(result.text, /本次预览通过当前对话回复/);
   const saved = await newsTool(h, { action: 'set_topics', topics: ['AI'], userRequested: true }, 'synthetic-saved-topics');
   assert.notEqual(saved.status, 'blocked', JSON.stringify(saved));
   assert.deepEqual((await newsTool(h, { action: 'status' })).topics, ['AI']);
@@ -999,7 +999,7 @@ test('personal review default host collector masks configured secrets and paused
  const preview=await invoke({action:'preview',sources:[],projects:[root]},'review-preview');assert.equal(preview.status,'preview',JSON.stringify(preview));assert.equal(summaries.length,1);assert.doesNotMatch(JSON.stringify(summaries),/synthetic-review-private-secret|not-for-model/);assert.match(JSON.stringify(summaries),/已隐藏/);assert.equal(h.sent.length,0);assert.equal(h.timers().active,false);
  const configured=await invoke({action:'configure',sources:[],projects:[root],schedule:{dailyTime:'09:00',timeZone:'UTC'},userRequested:true},'review-configure');assert.equal(configured.status,'blocked',JSON.stringify(configured));assert.match(configured.text,/可先预览.*共享家庭入口支持/);assert.equal(summaries.length,1);assert.equal(h.timers().active,false);
   for(const action of ['run_now','resume']){const denied=await invoke({action,sources:[],projects:[root],userRequested:true},'review-native-'+action);assert.equal(denied.status,'blocked');assert.match(denied.text,/授权复核/);}assert.equal(summaries.length,1);assert.equal(h.sent.length,0);
- const visible=await h.adapter.workbench.snapshot();assert.equal(visible.personalReview.available,true);assert.equal(visible.personalReview.review.status,'off');assert.equal(visible.personalReview.deliverySupported,false);assert.match(visible.personalReview.review.text,/授权复核/);assert.deepEqual(visible.personalReview.review.projects,[]);assert.equal(summaries.length,1);
+ const visible=await h.adapter.workbench.snapshot();assert.equal(visible.personalReview.available,true);assert.equal(visible.personalReview.review.status,'off');assert.equal(visible.personalReview.deliverySupported,false);assert.match(visible.personalReview.review.text,/授权复核/);assert.deepEqual(visible.personalReview.review.projects,['synthetic-project']);assert.equal(summaries.length,1);
  await h.tool({action:'pause'});const paused=await h.adapter.workbench.snapshot();assert.equal(paused.personalReview.available,true);assert.equal(summaries.length,1);
- binding='b'.repeat(64);const changed=await h.adapter.workbench.snapshot();assert.notEqual(changed.bindingRevision,visible.bindingRevision);assert.deepEqual(changed.personalReview.review.items,[]);assert.equal(summaries.length,1);
+ binding='b'.repeat(64);const changed=await h.adapter.workbench.snapshot();assert.notEqual(changed.bindingRevision,visible.bindingRevision);assert.equal(changed.personalReview.available,false);assert.equal(changed.personalReview.review,undefined);assert.equal(summaries.length,1);
 });

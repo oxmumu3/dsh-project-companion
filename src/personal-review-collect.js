@@ -40,7 +40,11 @@ export function createPersonalReviewCollector({query,readProject,readMemory}={})
    if(!resource||typeof resource!=='string'||resource.length>4096)return false;
    const id=`${source}_${createHash('sha256').update(resource).digest('hex').slice(0,32)}`;
    const item={id,source,title:clean(row.title??resource,400),text:clean(row.text),...extra};
-   const at=instant(row.updatedAt??row.createdAt),explicitDue=instant(row.dueAt),relativeDue=source==='gmail'&&!explicitDue?relativeEmailDeadline(row):undefined,url=link(row.url,source);
+   const at=instant(row.updatedAt??row.createdAt),explicitDue=source==='calendar'?undefined:instant(row.dueAt),relativeDue=source==='gmail'&&!explicitDue?relativeEmailDeadline(row):undefined,url=link(row.url,source);
+   if(source==='calendar'){
+    const start=instant(row.startAt??String(row.text??'').match(/^开始：([^\n]+)$/m)?.[1]??row.dueAt),end=instant(row.endAt??String(row.text??'').match(/^结束：([^\n]+)$/m)?.[1]);
+    if(start)item.eventStartAt=start;if(end&&(!start||Date.parse(end)>Date.parse(start)))item.eventEndAt=end;
+   }
    if(at)item.at=at;
    if(explicitDue){item.dueAt=explicitDue;item.dueAtBasis='source';}
    else if(relativeDue){item.dueAt=relativeDue;item.dueAtBasis='relative';item.text=`${item.text.slice(0,5750)}\n估算相对期限：${relativeDue}（按邮件日期与原文天数推算，实际截止时间需核对原文）。`;}
@@ -72,7 +76,7 @@ export function createPersonalReviewCollector({query,readProject,readMemory}={})
     if(source==='gmail')rows=rows.filter(row=>{const at=instant(row.receivedAt??row.createdAt);if(!at){partial=true;return true;}if(Date.parse(at)<Date.parse(from)||Date.parse(at)>Date.parse(to)){partial=true;return false;}return true;});
     for(const row of rows){if(row.status==='completed'||row.status==='cancelled')continue;
      const resource=source==='dida'?row.id&&`${row.projectId??''}/${row.id}`:row.id;
-     if(!add(source,row,resource))partial=true;
+     if(!add(source,row,resource,source==='drive'?{contentState:'metadata_only',contentScope:'returned_text'}:{}))partial=true;
      if(String(row.text??'').length>6000)partial=true;
     }
     if(['gmail','drive'].includes(source)){
@@ -80,12 +84,14 @@ export function createPersonalReviewCollector({query,readProject,readMemory}={})
      for(const row of rows.slice(0,3)){
       if(!row.id){partial=true;continue;}
       const body=await read(source,{operation:'read',id:row.id});
-      if(!body||!Array.isArray(body.items)||!body.items.length){partial=true;continue;}
+      if(!body||!Array.isArray(body.items)||!body.items.length){partial=true;if(source==='drive')add(source,row,row.id,{contentState:'unavailable',contentScope:'returned_text'});continue;}
       partial ||= body.truncated===true;
       // Only expand the exact returned resource; provider identifiers cannot widen this read.
       const item=body.items.find(x=>x.id===row.id);
-      if(!item||item.status==='unsupported_content'){partial=true;continue;}
-      add(source,{...row,...item},row.id);if(String(item.text??'').length>6000)partial=true;
+      if(!item||item.status==='unsupported_content'){partial=true;if(source==='drive')add(source,row,row.id,{contentState:'unavailable',contentScope:'returned_text'});continue;}
+      const contentState=source==='drive'?(body.truncated===true||String(item.text??'').length>6000?'truncated':typeof item.text!=='string'?'unread':item.text.length===0?'actual_empty':'read'):undefined;
+      if(contentState==='unread')partial=true;
+      add(source,{...row,...item},row.id,contentState?{contentState,contentScope:'returned_text'}:{});if(String(item.text??'').length>6000)partial=true;
      }
     }
    }
@@ -118,7 +124,7 @@ export function createPersonalReviewCollector({query,readProject,readMemory}={})
   const limited=new Set();
   while(JSON.stringify(evidence).length>100000){
    const longest=evidence.reduce((a,b)=>b.text.length>a.text.length?b:a,evidence[0]);
-   if(longest?.text.length>300){longest.text=longest.text.slice(0,Math.max(300,Math.floor(longest.text.length/2)));limited.add(longest.source);}
+   if(longest?.text.length>300){if(longest.source==='drive'&&['read','truncated'].includes(longest.contentState))longest.contentState='truncated';longest.text=longest.text.slice(0,Math.max(300,Math.floor(longest.text.length/2)));limited.add(longest.source);}
    else{
     // Extreme metadata can also consume the budget; omit whole evidence rows,
     // never produce a severed JSON record or pretend the scope was complete.

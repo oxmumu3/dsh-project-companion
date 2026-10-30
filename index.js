@@ -19,6 +19,7 @@ import {createNewsService,newsRowSchema} from './src/news-service.js';
 import {fetchNewsCandidates,readNewsArticle} from './src/news-feeds.js';
 import {createNewsModel} from './src/news-model.js';
 import {generationFailure,renderGenerationResult} from './src/generation-failure.js';
+import {createPersonalReviewControl,registerPersonalReviewControl} from './src/personal-review-control.js';
 import {createPersonalReviewService,personalReviewRowSchema} from './src/personal-review.js';
 import {createPersonalReviewModel} from './src/personal-review-model.js';
 import {createPersonalReviewCollector,redactReviewText} from './src/personal-review-collect.js';
@@ -611,6 +612,10 @@ export async function installCompanion(ctx,options={}){
     activateOwner:async sessionId=>{const controller=ctx.get('sessionController',false);if(disposed||typeof controller?.resolveAgent!=='function')throw new Error('请先打开原 Dot 微信会话。');const value=await controller.resolveAgent(sessionId);if(disposed||value?.error||String(value?.agent?.id)!==sessionId)throw new Error('原 Dot 会话暂不能恢复。');},
     ...(options.clock?{clock:options.clock}:{}),
   });
+  const reviewControl=createPersonalReviewControl({review:personalReview,readConnection:readWorkbenchConnection,
+    resolveOwner:sessionId=>{const agent=ctx.get('agents',false)?.get(sessionId);return agent&&String(agent.id)===sessionId?owner(ctx,agent):null;},
+    isOwnerCurrent:caller=>{const scope=familyDelegate.scopeFor(caller.sessionId);return !disposed&&!!scope&&familyDelegate.current(scope);},isClosed:()=>disposed,onChange:()=>syncTimer()});
+  if(typeof ctx.inject==='function')ctx.inject(['connection'],scope=>{if(!disposed)registerPersonalReviewControl(scope,reviewControl);});
   const projectCatalogController=createProjectCatalogController({catalog:projectCatalog,readConnection:readWorkbenchConnection,isPaused:()=>service.isPaused(),isPausedSync:()=>disposed||service.isPausedSync(),isClosed:()=>disposed});
   if(typeof ctx.inject==='function')ctx.inject(['connection'],scope=>{if(!disposed)registerProjectCatalogRoute(scope,projectCatalogController);});
   if(typeof ctx.inject==='function')ctx.inject(['connection'],scope=>{if(!disposed)registerWorkbenchActionsRoute(scope,workbenchActions);});
@@ -930,22 +935,22 @@ export async function installCompanion(ctx,options={}){
   }
   ctx.tools.register(defineTool({
     name:'personal_review',
-    description:'本人个人回顾：按一次确认的来源和最多5个已关注项目做每日/每周有界检查。configure只保存范围与明确时间，不读取资料；来源限已启用Gmail、主日历、Drive、flomo、滴答，不能因账号已连接自动授权。共享家庭入口保留用户原话，由服务端确定已启用资料和选定项目，不猜sources/projects。preview只预览不建计划；run_now仅明确要求现在发送时使用；status/pause/resume/cancel管理同一订阅。feedback使用展示的itemId和本人已处理/稍后/不再提醒意见。无值得处理事项就安静，来源失败或限量保留未知，通道回执不等于手机收到。',
+    description:'本人个人回顾：按一次确认的来源和最多5个已关注项目做每日/每周有界检查。configure只保存范围与明确时间，不读取资料；来源限已启用Gmail、主日历、Drive、flomo、滴答，不能因账号已连接自动授权。共享家庭入口保留用户原话，由服务端确定已启用资料和选定项目，不猜sources/projects。preview只预览不建计划；run_now仅明确要求现在发送时使用；status/pause/resume/cancel管理同一订阅。feedback也支持本人说“个人回顾「事项原题」已处理/延后1天/不再提醒”，只按同范围唯一精确标题匹配；可按本人说的第几条处理，服务端仅凭已通道接受的同一回顾映射编号；映射不确定时不得猜测。attention仅本人明确开启/关闭工作时段关注时使用，沿用现有订阅范围，不新增来源。无值得处理事项就安静，来源失败或限量保留未知，通道回执不等于手机收到。',
     parameters:{
-      action:{type:'string',required:true,enum:['configure','preview','run_now','status','pause','resume','cancel','feedback']},
+      action:{type:'string',required:true,enum:['configure','preview','run_now','status','pause','resume','cancel','feedback','attention']},
       sources:{type:'array',items:{type:'string',enum:reviewSources},description:'本人明确确认的已启用来源，最多5个；共享家庭微信由实际原话及已启用来源确定。'},
       projects:{type:'array',items:{type:'string'},description:'已关注且本人确认纳入回顾的项目根路径，最多5个；不自行扩大。'},
       schedule:{type:'object',additionalProperties:false,properties:{dailyTime:{type:'string'},weeklyDay:{type:'integer'},weeklyTime:{type:'string'},timeZone:{type:'string'}},description:'明确的dailyTime/weeklyTime为HH:mm；weeklyDay为0周日至6周六，时区使用IANA。'},
-      kind:{type:'string',enum:['daily','weekly']},itemId:{type:'string'},feedback:{type:'string',enum:['handled','snoozed','dismissed']},snoozeUntil:{type:'string'},userRequested:{type:'boolean'},
+      enabled:{type:'boolean'},kind:{type:'string',enum:['daily','weekly']},itemTitle:{type:'string'},itemNumber:{type:'integer'},itemId:{type:'string'},feedback:{type:'string',enum:['handled','snoozed','dismissed']},snoozeUntil:{type:'string'},userRequested:{type:'boolean'},
     },
-    output:{schema:{type:'object',additionalProperties:true},render:(_args,value)=>renderGenerationResult(value)},
+    output:{schema:{type:'object',additionalProperties:true},render:(_args,value)=>[...renderGenerationResult(value),...(value.status==='preview'&&/^[a-f0-9]{64}$/.test(value.viewToken??'')?[{type:'text',text:`DSH_REVIEW_VIEW_TOKEN:${value.viewToken}`}]:[])]},
     async execute(args,execution){
       if(disposed)return{status:'blocked',text:'助理正在关闭。'};
       try{return await withFamilyPersonalService(execution,args,deriveFamilyPersonalReviewRequest,async input=>{
         const caller=owner(ctx,execution.agent),familyScope=familyDelegate.scopeFor(caller.sessionId);
-        if(['configure','run_now','resume'].includes(input.action)&&(!familyScope||!familyDelegate.current(familyScope)))return{status:'blocked',text:nativeReviewDeliveryNote};
+        if(['configure','run_now','resume','attention'].includes(input.action)&&(!familyScope||!familyDelegate.current(familyScope)))return{status:'blocked',text:nativeReviewDeliveryNote};
         if(input.projects!==undefined&&(!Array.isArray(input.projects)||input.projects.length>5))throw Error('本版个人回顾最多选择五个项目。');
-        const value=await personalReview.act(owner(ctx,execution.agent),{...input,requestId:input.requestId??execution.callId,signal:execution.signal});
+        const value=await personalReview.act(owner(ctx,execution.agent),{...input,...(!familyScope?{confirmedViewToken:undefined}:{}),requestId:input.requestId??execution.callId,signal:execution.signal});
         if(input.action==='configure'){
           const names=(await service.watchedProjects()).filter(p=>value.projects.includes(p.root)).map(p=>p.label);
           value.text+="\n资料："+(value.sources.map(id=>SOURCE_INFO[id]?.name??id).join('、')||'未选择外部来源')+'。项目：'+(names.join('、')||'未选择项目')+'。\n每日检查过去24小时、每周检查近7天；每源有条数上限，未覆盖部分保留未知。本次只保存订阅，尚未读取或发送。';

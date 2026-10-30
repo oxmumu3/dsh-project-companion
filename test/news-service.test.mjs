@@ -2,9 +2,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 async function api(){const m=await import('../src/news-service.js').catch(()=>({}));assert.equal(typeof m.createNewsService,'function','news service must exist');return m;}
 const owner={sessionId:'session-test',cwd:'/synthetic/project'},binding='a'.repeat(64),otherBinding='b'.repeat(64);
-const article=i=>({id:`a${i}`,url:`https://example.com/article/${i}`,title:`Article ${i}`,sourceName:'Synthetic RSS',sourceUrl:'https://example.com/feed.xml',publishedAt:'2026-10-19T13:00:00Z',excerpt:`Feed fact ${i}`});
+const article=i=>({id:`a${i}`,url:`https://example${i}.com/article/${i}`,title:`Article ${i}`,sourceName:'Synthetic RSS',sourceUrl:'https://example.com/feed.xml',publishedAt:'2026-10-19T13:00:00Z',excerpt:`Feed fact ${i}`});
 const deferred=()=>{let resolve;const promise=new Promise(r=>{resolve=r;});return{promise,resolve};};
-async function fixture(options={}){const{createNewsService}=await api();let persisted=options.persisted,now=new Date('2026-10-19T15:00:00Z'),bound=binding,paused=false;let reads=[],sends=[],fetches=0,writes=0;const hooks={fetchCandidates:async()=>{fetches++;return{articles:Array.from({length:12},(_,i)=>article(i)),stats:{hours:24}};},selectArticles:async({articles})=>articles.slice(0,10).map(a=>a.id),readArticle:async a=>{reads.push(a.id);return{article:a,content:`Original fact ${a.id}`,coverage:'article',truncated:false};},summarizeArticles:async({articles})=>({items:articles.map(a=>({id:a.id,summary:`Summary ${a.id}`,why:'Useful business context'}))}),send:async item=>{sends.push(item);return{status:'reported_sent'};},...options.hooks};const store=options.store??{get:async()=>structuredClone(persisted),put:async(_k,v)=>{writes++;persisted=structuredClone(v);}};const service=createNewsService({store,clock:()=>now,hostTimeZone:()=> 'America/Mexico_City',readBinding:async()=>({bound:!!bound,bindingKey:bound}),canRun:async()=>!paused,...hooks});return{service,sends,reads,fetches:()=>fetches,writes:()=>writes,persisted:()=>persisted,time:v=>{now=new Date(v);},bind:v=>{bound=v;},pause:v=>{paused=v;}};}
+async function fixture(options={}){const{createNewsService}=await api();let persisted=options.persisted,now=new Date('2026-10-19T15:00:00Z'),bound=binding,paused=false;let reads=[],sends=[],fetches=0,writes=0;const hooks={fetchCandidates:async()=>{fetches++;return{articles:Array.from({length:12},(_,i)=>article(i)),stats:{hours:24}};},selectArticles:async({articles})=>articles.slice(0,10).map(a=>a.id),readArticle:async a=>{reads.push(a.id);return{article:a,content:`Original fact ${a.id}`,coverage:'article',truncated:false};},summarizeArticles:async({articles})=>({items:articles.map(a=>({id:a.id,tier:a.coverage==='article'?'deep':'brief',kind:'substantive',summary:`Summary ${a.id}`,why:'Useful business context'}))}),send:async item=>{sends.push(item);return{status:'reported_sent'};},...options.hooks};const store=options.store??{get:async()=>structuredClone(persisted),put:async(_k,v)=>{writes++;persisted=structuredClone(v);}};const service=createNewsService({store,clock:()=>now,hostTimeZone:()=> 'America/Mexico_City',readBinding:async()=>({bound:!!bound,bindingKey:bound}),canRun:async()=>!paused,...hooks});return{service,sends,reads,fetches:()=>fetches,writes:()=>writes,persisted:()=>persisted,time:v=>{now=new Date(v);},bind:v=>{bound=v;},pause:v=>{paused=v;}};}
 const mutate=(action,extra={})=>({action,userRequested:true,requestId:`req-${action}`,...extra});
 test('default status is off without source, send or storage mutations',async()=>{const f=await fixture();await f.service.ready();const r=await f.service.act(owner,{action:'status'});assert.equal(r.schedule,null);assert.equal(f.fetches(),0);assert.equal(f.sends.length,0);assert.equal(f.writes(),0);assert.equal(f.service.needsTimer(),false);});
 test('preview creates 3+7, reads only three originals and persists nothing',async()=>{const f=await fixture();const r=await f.service.act(owner,{action:'preview'});assert.equal(r.items.length,10);assert.deepEqual(f.reads,['a0','a1','a2']);assert.equal(f.writes(),0);assert.equal(f.sends.length,0);assert.ok(r.text.length<=3200);assert.equal(r.stats.hours,24);});
@@ -52,7 +52,7 @@ test('explicit topics personalize only this preview and reach both model stages 
   assert.deepEqual(r.topics, ['DeepSeek 插件', '创作者生态']);
   assert.deepEqual(topics, [' DeepSeek 插件 ', '创作者生态']);
   assert.match(r.text, /本次关注点.*DeepSeek 插件/);
-  assert.match(r.text, /仅本次预览.*未发送.*未创建或修改推送计划/s);
+  assert.match(r.text, /本次预览通过当前对话回复；未另行推送、未更改计划/s);
   assert.equal(f.writes(), 0);
   assert.equal(f.sends.length, 0);
   assert.equal(f.service.needsTimer(), false);
@@ -130,7 +130,7 @@ test('preview defaults to saved topics and an explicit override neither persists
   const override = await f.service.act(owner, { action: 'preview', topics: ['开发工具'] });
   assert.deepEqual(seen, [['Agent 产品'], ['开发工具']]);
   assert.match(saved.text, /已保存关注点/);
-  assert.match(saved.text, /仅本次预览.*未发送/);
+  assert.match(saved.text, /本次预览通过当前对话回复；未另行推送、未更改计划/);
   assert.match(override.text, /本次关注点.*开发工具/);
   assert.deepEqual(f.persisted(), before);
   assert.equal(f.writes(), writes);
@@ -375,7 +375,7 @@ test('topic preview with no selected articles still identifies one-off focus and
   const r = await f.service.act(owner, { action: 'preview', topics: ['DeepSeek 插件'] });
   assert.equal(r.items.length, 0);
   assert.match(r.text, /DeepSeek 插件/);
-  assert.match(r.text, /仅本次预览.*未发送.*未创建或修改推送计划/s);
+  assert.match(r.text, /本次预览通过当前对话回复；未另行推送、未更改计划/s);
 });
 
 test('mutating the submitted preview action cannot bypass admission or change a daily plan', async () => {

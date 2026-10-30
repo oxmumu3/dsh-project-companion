@@ -1,3 +1,4 @@
+import { attentionDue, attentionStatus, selectAttentionItems } from './personal-review-attention.js';
 import { randomUUID } from 'node:crypto';
 import { isAbsolute, resolve } from 'node:path';
 import { z } from 'zod';
@@ -10,11 +11,13 @@ const digest = z.string().regex(/^[a-f0-9]{64}$/), localTime = z.string().regex(
 const callerSchema = z.object({ sessionId: reviewId, cwd: z.string().min(1).max(4096).refine(isAbsolute) }).strict();
 const scopeSchema = z.object({ caller: callerSchema, sources: z.array(z.enum(reviewSources)).max(5), projects: z.array(z.string().min(1).max(4096).refine(isAbsolute)).max(5), bindingKey: digest, grant: digest, key: digest }).strict();
 const scheduleSchema = z.object({ dailyTime: localTime.optional(), weeklyDay: z.number().int().min(0).max(6).optional(), weeklyTime: localTime.optional(), timeZone: z.string().min(1).max(100) }).strict().refine(s => Boolean(s.dailyTime || s.weeklyTime) && (s.weeklyTime === undefined) === (s.weeklyDay === undefined));
+const attentionSchema=z.object({enabled:z.boolean(),intervalMinutes:z.literal(120),startHour:z.literal(9),endHour:z.literal(19),maxMessagesPerDay:z.literal(2),createdAt:reviewInstant}).strict();
+const lastViewSchema=z.object({viewToken:reviewId.optional(),caller:callerSchema,scopeKey:digest,bindingKey:digest,grant:digest,at:reviewInstant,itemIds:z.array(reviewId).max(5)}).strict();
 const statuses = ['generating', 'dispatching', 'reported_sent', 'queued', 'uncertain', 'failed', 'cancelled', 'expired', 'quiet', 'unknown'];
-const jobSchema = z.object({ id: reviewId, sessionId: reviewId, requestId: reviewId, kind: z.enum(['daily', 'weekly']), occurrence: reviewId, createdAt: reviewInstant, status: z.enum(statuses), itemIds: z.array(reviewId).max(5), diagnostic: personalReviewDiagnosticSchema.optional() }).strict();
-export const personalReviewRowSchema = z.object({ id: z.literal('profile'), version: z.literal(1), scope: scopeSchema.nullable(), subscription: scopeSchema.extend({ schedule: scheduleSchema, createdAt: reviewInstant, paused: z.boolean() }).strict().nullable(), items: z.array(reviewItemSchema).max(300), jobs: z.array(jobSchema).max(60), occurrences: z.array(reviewId).max(800), watermarks: z.record(z.string(), z.object({ daily: reviewInstant.optional(), weekly: reviewInstant.optional() }).strict()), receipts: z.array(z.object({ sessionId: reviewId, requestId: reviewId, action: z.string().max(30), at: reviewInstant }).strict()).max(200) }).strict();
+const jobSchema = z.object({ id: reviewId, sessionId: reviewId, requestId: reviewId, kind: z.enum(['daily', 'weekly', 'attention']), occurrence: reviewId, createdAt: reviewInstant, status: z.enum(statuses), itemIds: z.array(reviewId).max(5), diagnostic: personalReviewDiagnosticSchema.optional() }).strict();
+export const personalReviewRowSchema = z.object({ id: z.literal('profile'), version: z.literal(1), scope: scopeSchema.nullable(), lastView:lastViewSchema.nullable().default(null), attentionClaims:z.array(z.object({id:reviewId,at:reviewInstant,timeZone:z.string(),status:z.enum(['dispatching','reported_sent','queued','uncertain'])}).strict()).max(100).default([]), subscription: scopeSchema.extend({ schedule: scheduleSchema, createdAt: reviewInstant, paused: z.boolean(), attention:attentionSchema.optional() }).strict().nullable(), items: z.array(reviewItemSchema).max(300), jobs: z.array(jobSchema).max(60), occurrences: z.array(reviewId).max(800), watermarks: z.record(z.string(), z.object({ daily: reviewInstant.optional(), weekly: reviewInstant.optional(), attention:reviewInstant.optional() }).strict()), receipts: z.array(z.object({ sessionId: reviewId, requestId: reviewId, action: z.string().max(30), at: reviewInstant }).strict()).max(200) }).strict();
 const fresh = () => ({ id: 'profile', version: 1, scope: null, subscription: null, items: [], jobs: [], occurrences: [], watermarks: {}, receipts: [] });
-const labels = { generating: '正在整理', dispatching: '正在提交通道', reported_sent: '通道报告已发出，手机送达与已读未知', queued: '通道已排队，手机送达未知', uncertain: '发送结果不确定，不自动重发', failed: '本次回顾失败，不自动重试', cancelled: '本次已取消', expired: '超过六小时窗口，不补发', quiet: '没有达到提醒门槛的新事项，本次保持安静', unknown: '来源覆盖未知，未作无变化判断' };
+const labels = { generating: '正在整理', dispatching: '正在提交通道', reported_sent: '通道报告已发出，手机送达与已读未知', queued: '通道已排队，手机送达未知', uncertain: '发送结果不确定，不自动重发', failed: '本次回顾失败，不自动重试', cancelled: '本次已取消', expired: '已错过本次检查窗口，不补发', quiet: '没有达到提醒门槛的新事项，本次保持安静', unknown: '来源覆盖未知，未作无变化判断' };
 function requireCaller(raw) { try { const caller = callerSchema.parse({ sessionId: raw?.sessionId, cwd: raw?.cwd }); caller.cwd = resolve(caller.cwd); return caller; } catch { throw new Error('需要本人真实本地会话'); } }
 function sourceScope(input, fallback) {
   const sources = input.sources ?? fallback?.sources, projects = input.projects ?? fallback?.projects ?? [];
@@ -106,10 +109,17 @@ export function createPersonalReviewService({ store, readBinding, readBindingSyn
     if (!authorizeSync(run, allowPaused)) throw personalReviewFailure(null,{code:'REVIEW_AUTHORIZATION_CHANGED'}); return true;
   }
   const displayScope = () => state.subscription ?? state.scope;
+  function usedAttention(plan=state.subscription) {
+    if(!plan)return 0;
+    const date=d=>{const p=localProjection(makeLocalFormatter(plan.schedule.timeZone),d);return `${p.year}-${p.month}-${p.day}`;};
+    const today=date(now().getTime());return state.attentionClaims.filter(j=>date(Date.parse(j.at))===today).length;
+  }
+  function attentionView(){const plan=state.subscription;if(!plan)return{enabled:false,nextRun:null,quiet:true,remaining:0};return attentionStatus({now:now(),timeZone:plan.schedule.timeZone,attention:plan.paused?undefined:plan.attention,createdAt:plan.attention?.createdAt??plan.createdAt,occurrences:state.occurrences,...plan.schedule,usedMessages:usedAttention(plan)});}
   function view(includeScope = true) {
     const scope = displayScope();
     const schedule = state.subscription?.schedule, scheduleText = schedule ? `时间：${[schedule.dailyTime ? `每天 ${schedule.dailyTime}` : '', schedule.weeklyTime ? `每周${'日一二三四五六'[schedule.weeklyDay]} ${schedule.weeklyTime}` : ''].filter(Boolean).join('，')}（${schedule.timeZone}）。` : '';
     return { status: state.subscription ? state.subscription.paused ? 'paused' : 'enabled' : 'off', schedule: state.subscription ? copy(state.subscription.schedule) : null,
+      attention:attentionView(),
       sources: includeScope ? scope?.sources ?? [] : [], projects: includeScope ? scope?.projects ?? [] : [], items: includeScope ? state.items.filter(i => i.scopeKey === scope?.key).map(i => ({ id: i.id, title: i.title, status: i.status, dueAt: i.dueAt ?? null, snoozeUntil: i.snoozeUntil })) : [],
       jobs: state.jobs.slice(-8).map(j => ({ kind: j.kind, status: j.status, createdAt: j.createdAt, detail: labels[j.status],...(j.diagnostic?{diagnostic:copy(j.diagnostic)}:{}) })),
       lastGeneration: includeScope&&scope&&lastGeneration&&sameCaller(scope.caller,lastGeneration.caller)?copy(lastGeneration.value):null,
@@ -119,6 +129,8 @@ export function createPersonalReviewService({ store, readBinding, readBindingSyn
   function capacity(draft) { const cutoff = now().getTime() - 30 * DAY; draft.receipts = draft.receipts.filter(r => Date.parse(r.at) >= cutoff); if (draft.receipts.length >= 200) throw new Error('近期操作过多，请稍后再试'); }
   function recordReceipt(draft, input) { draft.receipts.push({ sessionId: input.receiptSessionId, requestId: input.requestId, action: input.action, at: now().toISOString() }); }
   function setScope(scope, draft = state) { if (draft.scope?.key !== scope.key) draft.watermarks = {}; draft.scope = copy(scope); }
+  function rememberView(draft,run,generated){draft.lastView={viewToken:hashReview(randomUUID()),caller:copy(run.caller),scopeKey:run.key,bindingKey:run.bindingKey,grant:run.grant,at:generated.at,itemIds:generated.items.map(i=>i.id)};}
+
   function normalizeCollection(raw, run) {
     const parsed = z.object({ evidence: z.array(reviewEvidenceSchema).max(100), coverage: z.array(reviewCoverageSchema).max(50) }).parse(raw);
     const allowed = new Set([...run.sources, ...(run.projects.length ? ['project', 'memory'] : [])]);
@@ -148,20 +160,21 @@ export function createPersonalReviewService({ store, readBinding, readBindingSyn
     let candidates = [];
     if (data.evidence.length) { stage='model'; const summary = await race(() => summarize({ ...copy(data), previousItems, kind, now: at, signal: run.signal, guard: () => guard(run), authorizeSync: () => authorizeSync(run) }), run.signal, 'REVIEW_MODEL_FAILED'); await guard(run); candidates = validatePersonalReviewSummary(summary, data.evidence).items; }
     const ledger = mergeReviewItems(state.items, candidates, data.evidence, { now: at, scopeKey: run.key });
-    let selected = selectReviewItems(ledger, { now: at, kind, occurrence, scopeKey: run.key });
-    const items = selected.map(s => copy(s.item)); const text = renderPersonalReview(items, data.coverage, { kind, now: at, timeZone });
+    const attentionSelection=kind==='attention'?selectAttentionItems(ledger.filter(i=>i.lastSeenAt===at),{now:at,scopeKey:run.key,coverage:data.coverage,remaining:Math.max(0,(run.attention?.maxMessagesPerDay??2)-usedAttention(run))}):null;
+    let selected = attentionSelection?.selected ?? selectReviewItems(ledger, { now: at, kind, occurrence, scopeKey: run.key });
+    const items = selected.map(s => copy(s.item)); const text = (kind==='attention'?'有一件新变化值得留意。\n\n':'')+renderPersonalReview(items, data.coverage, { kind:kind==='attention'?'daily':kind, now: at, timeZone });
     selected = selected.filter(s => items.some(i => i.id === s.item.id));
-    generationStatus('completed'); return { ...data, items, selected, ledger, text, unknown: false, at };
+    generationStatus('completed'); return { ...data, items, selected, ledger, text, unknown: attentionSelection?.status==='unknown', at };
     } catch(error) { const failure=personalReviewFailure(error,{...counts,stage,elapsedMs:Date.now()-started,code:stage==='collection'?'REVIEW_COLLECTION_FAILED':stage==='validation'?'REVIEW_VALIDATION_FAILED':stage==='model'?'REVIEW_MODEL_FAILED':'REVIEW_FAILED'});generationStatus('failed',failure.reviewDiagnostic);throw failure; }
   }
-  async function runJob(scope, { requestId, kind = 'daily', occurrence, signal, expired = false, input = {}, admission = generation }) {
+  async function runJob(scope, { requestId, kind = 'daily', occurrence, signal, expired = false, input = {}, admission = generation, coClaim=[] }) {
     if (admission !== generation || closed) throw personalReviewFailure(null,{code:'REVIEW_CANCELLED'});
     const existing = state.jobs.find(j => j.sessionId === scope.caller.sessionId && j.requestId === requestId);
     if (existing) return result(existing, [], undefined, true);
     if (state.occurrences.includes(occurrence)) return { status: 'quiet', kind, duplicate: true, items: [], text: '此回顾请求已处理，不重复读取或发送。' };
     const job = { id: `review_job_${randomUUID()}`, sessionId: scope.caller.sessionId, requestId, kind, occurrence, createdAt: now().toISOString(), status: expired ? 'expired' : 'generating', itemIds: [] };
     const draft = copy(state); if (input.action === 'run_now') setScope(scope, draft);
-    draft.jobs.push(job); draft.jobs = draft.jobs.slice(-60); if (!draft.occurrences.includes(occurrence)) draft.occurrences.push(occurrence); draft.occurrences = draft.occurrences.slice(-800);
+    draft.jobs.push(job); draft.jobs = draft.jobs.slice(-60); if (!draft.occurrences.includes(occurrence)) draft.occurrences.push(occurrence); for(const id of coClaim)if(!draft.occurrences.includes(id))draft.occurrences.push(id); draft.occurrences = draft.occurrences.slice(-800);
     const run = execution(scope, signal, input);
     let journaled = false;
     try {
@@ -172,6 +185,11 @@ export function createPersonalReviewService({ store, readBinding, readBindingSyn
       for (const coverage of generated.coverage) if (state.scope?.key === run.key && coverage.status === 'ok' && !coverage.truncated && !generated.coverage.some(c => c.source === coverage.source && (c.status !== 'ok' || c.truncated))) state.watermarks[coverage.source] = { ...state.watermarks[coverage.source], [kind]: generated.at };
       if (!generated.items.length) { job.status = generated.unknown ? 'unknown' : 'quiet'; await save(); return result(job, [], generated.text); }
       job.itemIds = generated.items.map(i => i.id); job.status = 'dispatching';
+      if(kind==='attention'){
+        state.attentionClaims=state.attentionClaims.filter(row=>now().getTime()-Date.parse(row.at)<7*DAY);
+        if(state.attentionClaims.length>=100)throw new Error('主动关注预算账本已满');
+        state.attentionClaims.push({id:job.id,at:now().toISOString(),timeZone:scope.schedule.timeZone,status:'dispatching'});
+      }
       // Persist both claim and fact notification before entering a side-effecting adapter.
       const notificationBefore=new Map(state.items.filter(item=>job.itemIds.includes(item.id)).map(item=>[item.id,{notifiedRevision:item.notifiedRevision,lastNotifiedAt:item.lastNotifiedAt,notifications:copy(item.notifications),status:item.status,snoozeUntil:item.snoozeUntil}]));
       markReviewNotified(state.items, generated.selected, generated.at); await save(); await guard(run);
@@ -180,7 +198,9 @@ export function createPersonalReviewService({ store, readBinding, readBindingSyn
       job.status = ['reported_sent', 'queued'].includes(delivery?.status) ? delivery.status : delivery?.status === 'failed' || delivery?.status === 'blocked' ? 'failed' : 'uncertain';
       // A definite no-delivery releases only the notification fact; the current
       // occurrence remains claimed. Uncertain/crashed dispatch remains claimed.
-      if(job.status==='failed'){job.diagnostic=personalReviewFailure(null,{code:'REVIEW_DELIVERY_FAILED',stage:'delivery'}).reviewDiagnostic;for(const item of state.items){const before=notificationBefore.get(item.id);if(before)Object.assign(item,before);}}
+      if(job.status==='failed'){state.attentionClaims=state.attentionClaims.filter(row=>row.id!==job.id);job.diagnostic=personalReviewFailure(null,{code:'REVIEW_DELIVERY_FAILED',stage:'delivery'}).reviewDiagnostic;for(const item of state.items){const before=notificationBefore.get(item.id);if(before)Object.assign(item,before);}}
+      const claim=state.attentionClaims.find(row=>row.id===job.id);if(claim)claim.status=job.status;
+      if(['reported_sent'].includes(job.status))rememberView(state,run,generated);
       await save(); return result(job, generated.items, `${generated.text}\n\n${labels[job.status]}`);
     } catch (error) {
       if (!journaled) throw error;
@@ -193,7 +213,7 @@ export function createPersonalReviewService({ store, readBinding, readBindingSyn
   async function act(rawCaller, input = {}) {
     const caller = requireCaller(rawCaller), action = input.action;
     input = { ...input, receiptSessionId: caller.sessionId };
-    if (!['configure', 'preview', 'run_now', 'status', 'pause', 'resume', 'cancel', 'feedback'].includes(action)) throw new Error('未知个人回顾操作');
+    if (!['configure', 'preview', 'run_now', 'status', 'pause', 'resume', 'cancel', 'feedback', 'attention'].includes(action)) throw new Error('未知个人回顾操作');
     if (input.signal !== undefined && !(input.signal instanceof AbortSignal)) throw new Error('无效取消信号');
     if (input.guard !== undefined && typeof input.guard !== 'function' || input.authorizeSync !== undefined && typeof input.authorizeSync !== 'function') throw new Error('无效本次请求授权检查');
     if (!['preview', 'status'].includes(action) && (input.userRequested !== true || !reviewId.safeParse(input.requestId).success)) throw new Error('需要用户明确要求及本次请求 ID');
@@ -202,7 +222,7 @@ export function createPersonalReviewService({ store, readBinding, readBindingSyn
     const activeScope = state?.scope ?? controllers.values().next().value;
     if (activeScope && !sameCaller(caller, activeScope.caller)) throw new Error('需要原本人会话，不能延续他人授权');
     await requestGuard(input);
-    if (activeScope && ['cancel', 'pause', 'configure', 'feedback'].includes(action) && !state?.receipts.some(r => r.sessionId === caller.sessionId && r.requestId === input.requestId)) invalidate();
+    if (activeScope && ['cancel', 'pause', 'configure', 'feedback','attention'].includes(action) && !state?.receipts.some(r => r.sessionId === caller.sessionId && r.requestId === input.requestId)) invalidate();
     const admission = generation;
     return serial(async () => {
       await load(); if (closed) throw new Error('个人回顾服务已关闭');
@@ -221,20 +241,54 @@ export function createPersonalReviewService({ store, readBinding, readBindingSyn
       if (action === 'resume') {
         if (!state.subscription) throw new Error('尚无个人回顾计划'); const run = execution(state.subscription, input.signal, input); try { await guard(run); await commitMutation(input, admission, draft => { draft.subscription.paused = false; draft.subscription.createdAt = now().toISOString(); }); return view(); } finally { run.dispose(); }
       }
+      if(action==='attention'){
+        if(typeof input.enabled!=='boolean'||input.sources!==undefined||input.projects!==undefined||input.schedule!==undefined)throw new Error('主动关注沿用原订阅范围，不能在此扩大资料范围');
+        if(!state.subscription)throw new Error('请先确认个人回顾的资料范围和日程');
+        const run=execution(state.subscription,input.signal,input);try{await guard(run,{allowPaused:!input.enabled});
+          await commitMutation(input,admission,draft=>{draft.subscription.attention={enabled:input.enabled,intervalMinutes:120,startHour:9,endHour:19,maxMessagesPerDay:2,createdAt:now().toISOString()};});return view();
+        }finally{run.dispose();}
+      }
       if (action === 'feedback') {
-        const feedback = z.enum(['handled', 'snoozed', 'dismissed']).parse(input.feedback), scopes = [state.scope, state.subscription].filter(Boolean), item = state.items.find(i => i.id === input.itemId && scopes.some(scope => scope.key === i.scopeKey)); if (!item) throw new Error('未找到同一授权范围内的事项');
+        let itemId=input.itemId;
+        if(input.itemTitle!==undefined){
+          if(itemId!==undefined||input.itemNumber!==undefined||typeof input.itemTitle!=='string'||!input.itemTitle.trim()||input.itemTitle.length>100)throw new Error('请提供唯一的事项名称');
+          const active=displayScope(),matches=state.items.filter(item=>active&&item.scopeKey===active.key&&item.title===input.itemTitle);
+          if(matches.length!==1)throw new Error('这个事项名称无法唯一确认，请查看回顾后再说明');itemId=matches[0].id;
+        }
+        if(input.itemNumber!==undefined){
+          const index=z.number().int().min(1).max(5).parse(input.itemNumber)-1,shown=state.lastView;
+          if(itemId!==undefined||!shown||typeof input.confirmedViewToken!=='string'||input.confirmedViewToken!==shown.viewToken||!sameCaller(shown.caller,caller)||now().getTime()-Date.parse(shown.at)>DAY||now().getTime()<Date.parse(shown.at)||!shown.itemIds[index])throw new Error('最近一份回顾编号不可用，请用事项名称确认或重新查看回顾');
+          const selected=[state.scope,state.subscription].find(v=>v?.key===shown.scopeKey&&v.bindingKey===shown.bindingKey&&v.grant===shown.grant);
+          if(!selected)throw new Error('回顾编号对应的授权范围已变化');itemId=shown.itemIds[index];
+        }
+        const feedback = z.enum(['handled', 'snoozed', 'dismissed']).parse(input.feedback), scopes = [state.scope, state.subscription].filter(Boolean), item = state.items.find(i => i.id === itemId && scopes.some(scope => scope.key === i.scopeKey)); if (!item) throw new Error('未找到同一授权范围内的事项');
         const run = execution(scopes.find(scope => scope.key === item.scopeKey), input.signal, input); try { await guard(run); } finally { run.dispose(); }
         let snoozeUntil = null; if (feedback === 'snoozed') { snoozeUntil = reviewInstant.parse(input.snoozeUntil); if (Date.parse(snoozeUntil) <= now().getTime()) throw new Error('稍后提醒时间须在未来'); }
         await requestGuard(input); await commitMutation(input, admission, draft => { const target = draft.items.find(i => i.id === item.id); target.status = feedback; target.snoozeUntil = snoozeUntil; }); return { ...view(false), text: feedback === 'handled' ? '已标记处理，后续不再催促。' : feedback === 'dismissed' ? '此事项不再提醒。' : '已延后此事项。' };
       }
       const scope = await buildScope(caller, input, displayScope()), kind = input.kind ?? 'daily';
       if (admission !== generation) throw new Error('个人回顾本次请求已取消');
-      if (action === 'preview') { const run = execution(scope, input.signal, input); try { const generated = await generate(run, kind, `preview:${now().toISOString()}`); return { status: generated.unknown ? 'unknown' : 'preview', items: generated.items, coverage: generated.coverage, text: generated.text }; } finally { run.dispose(); } }
+      if (action === 'preview') { const run = execution(scope, input.signal, input); try { const generated = await generate(run, kind, `preview:${now().toISOString()}`); await guard(run); const draft=copy(state); setScope(scope,draft); draft.items=generated.ledger; rememberView(draft,run,generated); await persist(draft,input); state=draft; return { status: generated.unknown ? 'unknown' : 'preview', viewToken:state.lastView.viewToken, items: generated.items, coverage: generated.coverage, text: generated.text }; } finally { run.dispose(); } }
       const existing = state.jobs.find(j => j.sessionId === caller.sessionId && j.requestId === input.requestId); if (existing) return result(existing, [], undefined, true);
       return runJob(scope, { requestId: input.requestId, kind, occurrence: `manual:${hashReview(`${caller.sessionId}:${input.requestId}`)}`, signal: input.signal, input, admission });
     });
   }
   return { act, snapshot: caller => act(caller, { action: 'status' }), ready: () => serial(load), needsTimer: () => !closed && !storageFailed && Boolean(state?.subscription && !state.subscription.paused), suspend: invalidate,
-    tick: () => { const admission = generation; return serial(async () => { await load(); if (closed || admission !== generation || !state.subscription || state.subscription.paused) return []; const output = []; for (const kind of ['daily', 'weekly']) { const plan = state.subscription; if (!plan || plan.paused || closed || admission !== generation) break; const due = latestOccurrence(now(), plan.schedule, kind); if (!due || due.epoch < Date.parse(plan.createdAt) || state.occurrences.includes(due.id)) continue; try { output.push(await runJob(plan, { requestId: due.id, kind, occurrence: due.id, expired: now().getTime() - due.epoch > GRACE, admission })); } catch { /* The journal has a fixed diagnostic; never expose provider errors in background work. */ } } return output; }); },
+    tick: () => { const admission = generation; return serial(async () => {
+      await load(); if (closed || admission !== generation || !state.subscription || state.subscription.paused) return [];
+      const output=[];
+      // The weekly review includes daily attention: claim coincident daily work
+      // together before any read/send, including uncertain delivery recovery.
+      for(const kind of ['weekly','daily','attention']){
+        const plan=state.subscription;if(!plan||plan.paused||closed||admission!==generation)break;
+        const policy=kind==='attention'?attentionDue({now:now(),timeZone:plan.schedule.timeZone,attention:plan.attention,createdAt:plan.attention?.createdAt??plan.createdAt,occurrences:state.occurrences,...plan.schedule}):null;
+        const due=policy?policy.occurrence:latestOccurrence(now(),plan.schedule,kind);
+        if(!due||due.epoch<Date.parse(plan.createdAt)||state.occurrences.includes(due.id))continue;
+        if(kind==='attention'&&usedAttention(plan)>=(plan.attention?.maxMessagesPerDay??0))continue;
+        const daily=kind==='weekly'?latestOccurrence(now(),plan.schedule,'daily'):null;
+        const coClaim=daily?.epoch===due.epoch?[daily.id]:[];
+        try{output.push(await runJob(plan,{requestId:due.id,kind,occurrence:due.id,expired:policy?policy.status==='expired':now().getTime()-due.epoch>GRACE,admission,coClaim}));}catch{/* Fixed diagnostics stay in the journal; never leak provider errors. */}
+      }return output;
+    }); },
     close: () => { closed = true; invalidate(); return queue; } };
 }

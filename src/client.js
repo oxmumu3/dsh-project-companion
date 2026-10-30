@@ -673,14 +673,24 @@ window.__ModuleLoader__.load({
         const recentJobs=[...jobs].reverse().sort((a,b)=>Date.parse(b.createdAt)-Date.parse(a.createdAt));
         const reviewState=snapshot?.personalReview?.available===true?snapshot.personalReview:null;
         const reviewSchedule=reviewState?.review?.schedule;
+        const toggleAttention=async()=>{
+          if(!active.current||flight.current||!reviewState?.deliverySupported||!reviewSchedule)return;
+          const expectedBindingRevision=reviewState.bindingRevision;flight.current=true;setBusy(true);setError('');
+          try{const value=await request('/api/project_companion/review/attention',{enabled:reviewState.review.attention?.enabled!==true,expectedBindingRevision});if(active.current&&bindingOf(currentSnapshot.current)===expectedBindingRevision)setNotice(value.text);}
+          catch{if(active.current)setError('主动关注设置未更改或结果待核对，请刷新后检查。');}
+          finally{flight.current=false;if(active.current){setBusy(false);await refresh();}}
+        };
         const reviewPreset='每天09:00、每周一09:00，使用我在电脑启用的资料和已关注项目做个人回顾，主动发现风险、截止事项和项目进展；无变化时保持安静。';
         const reviewCard=section('每天少漏一件重要的事',
           h('p',{className:'pc_dot_muted'},'把近期邮件、日程、笔记、待办和项目变化放在一起，看清需要处理的风险与截止事项。每天提醒重点，每周回看进展。'),
           reviewState?.deliverySupported===false?h('p',{className:'pc_dot_muted'},reviewState.deliveryNote??'当前通道只支持个人回顾预览，暂不能开启推送。'):null,
           h('p',null,!reviewState?'个人回顾状态暂无法确认。':reviewState.review?.status==='enabled'?'个人回顾已开启':reviewState.review?.status==='paused'?'个人回顾已暂停':'个人回顾未开启'),
           reviewState?.review?.status!=='off'&&reviewSchedule?h('p',{className:'pc_dot_muted'},[reviewSchedule.dailyTime?`每天 ${reviewSchedule.dailyTime}`:'',Number.isInteger(reviewSchedule.weeklyDay)&&reviewSchedule.weeklyTime?`每周${['日','一','二','三','四','五','六'][reviewSchedule.weeklyDay]} ${reviewSchedule.weeklyTime}`:'',reviewSchedule.timeZone].filter(Boolean).join(' · ')):null,
+          reviewState?.review?.attention?h('p',{className:'pc_dot_muted'},reviewState.review.status==='paused'?'工作时段主动关注已暂停。':reviewState.review.attention.enabled===true?['工作时段主动关注已开启',reviewState.review.attention.quiet?'当前安静时段':'',reviewState.review.attention.nextRun?`下次检查 ${date(reviewState.review.attention.nextRun)}`:'',Number.isInteger(reviewState.review.attention.remaining)?`今天还可提醒 ${reviewState.review.attention.remaining} 次`:''].filter(Boolean).join(' · '):reviewState.review.attention.enabled===false?'工作时段主动关注未开启。':'工作时段主动关注状态待确认。'):null,
+          reviewState?.deliverySupported&&reviewSchedule?button(reviewState.review.attention?.enabled?'关闭工作时段主动关注':'开启工作时段主动关注',toggleAttention,{disabled:busy||reviewState.review.status==='paused'}):null,
+          h('p',{className:'pc_dot_muted'},'工作时段：09:00–19:00，每两小时检查；重要新风险或临期事项才提醒，每天最多额外两条。沿用现有资料范围。'),
           reviewState?.review?.sources?.length||reviewState?.review?.projects?.length?h('p',{className:'pc_dot_muted'},`范围：${reviewState.review.sources?.length??0} 个资料来源，${reviewState.review.projects?.length??0} 个项目。只读已确认范围，可随时暂停或取消。`):null,
-          reviewState?.review?.jobs?.length?h('p',{className:'pc_dot_muted'},`最近一轮：${reviewState.review.jobs.at(-1).detail??'状态待核对'}`):null,
+          reviewState?.review?.jobs?.length?h('p',{className:'pc_dot_muted'},`最近一轮：${date(reviewState.review.jobs.at(-1).createdAt)} · ${reviewState.review.jobs.at(-1).detail??'状态待核对'}`):null,
           h('div',{className:'pc_dot_actions'},...(readOnly?[]:[button('先看一份个人回顾',()=>stageDraft('预览一份个人回顾，使用我在电脑启用的资料和已关注项目，不建立计划。',''),{disabled:busy||!bound}),reviewState?.deliverySupported===false?null:button(reviewState?.review?.status==='enabled'?'调整个人回顾':'开启每日与每周回顾',()=>stageDraft(reviewPreset,''),{disabled:busy||!bound})])),
           readOnly?h('p',{className:'pc_dot_muted'},'在原微信告诉我「每天09:00、每周一09:00，使用我在电脑启用的资料和已关注项目做个人回顾」即可开启；也可以说「暂停个人回顾」。'):h('p',{className:'pc_dot_muted'},'先准备一句话，由你发送后启用。打开页面不会扫描资料或自动建计划。'),
           h('h3',null,'AI 日报，围绕你的关注点'),

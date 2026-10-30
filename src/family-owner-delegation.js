@@ -168,7 +168,7 @@ export function createFamilyOwnerDelegation({store,getBridge,readGrantedLeases,r
       return serial(async()=>{
         await load();const family=await ownerCall(execution);
         if(!family||!valid(state)||family.sessionId!==state.familySessionId||family.bindingRevision!==state.bindingRevision)return null;
-        const scope={...copy(state),...(typeof family.userText==='string'?{userText:family.userText}:{}),...(typeof family.previousUserText==='string'?{previousUserText:family.previousUserText}:{}),...(typeof family.sourceRequestId==='string'?{sourceRequestId:family.sourceRequestId}:{}),...(family.sourceTiming&&typeof family.sourceTiming==='object'?{sourceTiming:copy(family.sourceTiming)}:{}),...(typeof family.sourceTimingState==='string'?{sourceTimingState:family.sourceTimingState}:{})};return await recheck(scope)?scope:null;
+        const scope={...copy(state),...(typeof family.userText==='string'?{userText:family.userText}:{}),...(typeof family.previousUserText==='string'?{previousUserText:family.previousUserText}:{}),...(/^[a-f0-9]{64}$/.test(family.previousReviewViewToken??'')?{previousReviewViewToken:family.previousReviewViewToken}:{}),...(typeof family.sourceRequestId==='string'?{sourceRequestId:family.sourceRequestId}:{}),...(family.sourceTiming&&typeof family.sourceTiming==='object'?{sourceTiming:copy(family.sourceTiming)}:{}),...(typeof family.sourceTimingState==='string'?{sourceTimingState:family.sourceTimingState}:{})};return await recheck(scope)?scope:null;
       });
     },
     // Background wake paths may use only a scope captured from a verified

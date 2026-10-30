@@ -58,6 +58,10 @@ test('shared owner entry shows review schedule and unknown delivery honestly wit
  const h=await harness();h.context.snapshot.connection.readOnly=true;h.context.snapshot.personalReview={available:true,review:{status:'enabled',schedule:{dailyTime:'09:00',weeklyDay:1,weeklyTime:'09:00',timeZone:'America/Mexico_City'},sources:['gmail','calendar'],projects:['/private/project'],items:[],jobs:[{status:'uncertain',detail:'发送结果不确定，不自动重发'}]},news:{topics:[],topicSource:'default'}};
  h.render();await h.flush();const view=h.render();assert.match(text(view),/每天 09:00/);assert.match(text(view),/每周一/);assert.match(text(view),/发送结果不确定/);assert.doesNotMatch(text(view),/\/private\/project/);assert.equal(posts(h).length,0);h.dispose();
 });
+test('work-hour attention status is read-only and shows its next check and remaining budget',async()=>{
+ const h=await harness();h.context.snapshot.personalReview={available:true,review:{status:'enabled',schedule:{dailyTime:'09:00',timeZone:'America/Mexico_City'},attention:{enabled:true,nextRun:'2026-10-30T17:00:00.000Z',quiet:false,remaining:1},sources:['gmail'],projects:[],items:[],jobs:[]},news:{topics:[],topicSource:'default'}};
+ h.render();await h.flush();const view=h.render();assert.match(text(view),/工作时段主动关注已开启/);assert.match(text(view),/今天还可提醒 1 次/);assert.match(text(view),/下次检查/);assert.equal(posts(h).length,0);h.dispose();
+});
 
 test('adds a matching native sidebar/main pair without replacing the existing interface',async()=>{
   const h=await harness();const main=h.registrations.find(row=>row.spec.name==='main');
