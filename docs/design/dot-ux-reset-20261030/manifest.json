@@ -1,0 +1,18 @@
+{
+  "createdAt": "2026-10-30T17:14:09.907304+00:00",
+  "type": "synthetic-clickable-design-prototype",
+  "runtimeChanged": false,
+  "installed": false,
+  "userAccepted": false,
+  "nativeImplementationPending": true,
+  "dailyVersion": "0.18.0-preview.1",
+  "files": {
+    "DESIGN.md": "e1b0a98bbeae7336a8dabb04462eea7d6119f8b85805500be092d4fb97f007e2",
+    "research.md": "236fee8e6469c7430f0ebd01a71970b69f9c1e8ea4dd904c9c5d4945599e400e",
+    "native-implementation-audit.md": "c570603ae4235d0e486bda1697d232f4636b694f86ec493a44ce1a625bb1188f",
+    "implementation-gaps.md": "55df3847be7b1350e0dabec72c97d889437466fdc16f2d19b9ba6a5e72a98041",
+    "prototype.html": "c242dbd7d03fef5d253e4db6b8cbd975c3ae1222300a20b7ae671652b953a5b5",
+    "prototype-notes.md": "680aafbc767175d52826c8e6064b71a3d9b2c8c1fb8207e99dda0181fe71ce56",
+    "QA.md": "129a0f07758639553a90f057ff41ef473233227d2d448ba4e52bf607370bc0b6"
+  }
+}
