@@ -21,6 +21,7 @@ import {createNewsModel} from './src/news-model.js';
 import {generationFailure,renderGenerationResult} from './src/generation-failure.js';
 import {createPersonalReviewControl,registerPersonalReviewControl} from './src/personal-review-control.js';
 import {createPersonalReviewService,personalReviewRowSchema} from './src/personal-review.js';
+import {createReviewWorkbenchReader} from './src/review-workbench-projection.js';
 import {createPersonalReviewModel} from './src/personal-review-model.js';
 import {createPersonalReviewCollector,redactReviewText} from './src/personal-review-collect.js';
 import {deriveFamilyPersonalReviewRequest} from './src/family-personal-review.js';
@@ -602,20 +603,20 @@ export async function installCompanion(ctx,options={}){
     ...(options.clock?{clock:options.clock}:{}),...(options.hostTimeZone?{hostTimeZone:options.hostTimeZone}:{}),
   });
   const baseWorkbenchSnapshot=workbench.snapshot;
+  const readReviewWorkbench=createReviewWorkbenchReader({
+    readReviewState:()=>personalReviewTable.get('profile'),readNewsState:()=>newsTable.get('profile'),readConnection:readWorkbenchConnection,
+    resolveOwner:sessionId=>{const agent=ctx.get('agents',false)?.get(sessionId);return !disposed&&agent&&String(agent.id)===sessionId?owner(ctx,agent):null;},
+    authorizeReview:async(caller,scope)=>{
+      const grant=await reviewAuthorization(caller,scope.sources,scope.projects),binding=await reviewBinding(caller.sessionId);
+      return binding?.bound?{grant,bindingKey:binding.bindingKey}:null;
+    },
+    readNewsBinding:newsBinding,readProjects:()=>service.watchedProjects(),isClosed:()=>disposed,cleanText:reviewClean,
+    deliverySupported:caller=>Boolean(familyDelegate.scopeFor(caller.sessionId)||standaloneBinding(caller.sessionId)),
+    deliveryNote:supported=>supported?'通过当前微信入口投递，手机送达仍需本人确认。':nativeReviewDeliveryNote,
+    ...(options.clock?{clock:options.clock}:{}),
+  });
   workbench.snapshot=async()=>{
-    const snapshot=await baseWorkbenchSnapshot(),unavailable={available:false,bindingRevision:snapshot.bindingRevision??null};
-    try{
-      const connection=await readWorkbenchConnection(),revision=bindingRevision(connection),agent=ctx.get('agents',false)?.get(connection.sessionId);
-      if(disposed||connection.state!=='bound'||!revision||revision!==snapshot.bindingRevision||!agent||String(agent.id)!==connection.sessionId)return{...snapshot,personalReview:unavailable};
-      const caller=owner(ctx,agent),review=await personalReview.snapshot(caller),newsState=await news.act(caller,{action:'status'});
-      const current=await readWorkbenchConnection();if(disposed||bindingRevision(current)!==revision)return{...snapshot,personalReview:unavailable};
-      const projects=await service.watchedProjects();
-      const deliverySupported=Boolean(familyDelegate.scopeFor(caller.sessionId)||standaloneBinding(caller.sessionId));
-      const safeReview={...review,projects:review.projects.map(root=>projects.find(p=>p.root===root)?.label??'已选项目'),items:review.items.map(item=>({...item,title:reviewClean(item.title)})),...(Array.isArray(review.goals)?{goals:review.goals.slice(0,5).map(goal=>({title:reviewClean(goal.title),status:['active','paused','completed'].includes(goal.status)?goal.status:'paused',meetingTitle:typeof goal.meetingTitle==='string'?reviewClean(goal.meetingTitle):null}))}:{}),text:reviewClean(review.text)};
-      if(!deliverySupported)safeReview.text+='\n'+nativeReviewDeliveryNote;
-      if(bindingRevision(await readWorkbenchConnection())!==revision)return{...snapshot,personalReview:unavailable};
-      return{...snapshot,personalReview:{available:true,bindingRevision:revision,deliverySupported,deliveryNote:deliverySupported?'通过当前微信入口投递，手机送达仍需本人确认。':nativeReviewDeliveryNote,review:safeReview,news:{topics:newsState.topics,topicSource:newsState.topicSource,text:reviewClean(newsState.text)}}};
-    }catch{return{...snapshot,personalReview:unavailable};}
+    const snapshot=await baseWorkbenchSnapshot();return{...snapshot,personalReview:await readReviewWorkbench(snapshot)};
   };
   workbenchActions=createWorkbenchActions({
     service,memory,followup,taskResults,readBinding,readConnection:readSetup,readReadonlyConnection:readWorkbenchConnection,isClosed:()=>disposed,

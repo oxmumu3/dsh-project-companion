@@ -13,7 +13,7 @@ export const reviewEvidenceSchema = z.object({ id: reviewId, source: z.enum(revi
 export const reviewCoverageSchema = z.object({ source: z.enum(reviewEvidenceSources), status: z.enum(['ok', 'partial', 'unavailable', 'failed']), count: z.number().int().min(0).max(100000).nullable(), truncated: z.boolean().optional(), from: reviewInstant.optional(), to: reviewInstant.optional() });
 export const reviewCandidateSchema = z.object({ key: reviewId, kind: z.enum(['risk', 'deadline', 'invitation', 'reply', 'change', 'progress', 'event']), title: prose(100), summary: prose(360), why: prose(160), action: prose(160), unknown: clean(180).refine(s => !/https?:\/\//iu.test(s)).default(''), evidenceIds: z.array(reviewId).min(1).max(8), priority: z.enum(['low', 'normal', 'high']), confidence: z.enum(['source', 'inferred']), dueAt: reviewInstant.optional(), eventStartAt: reviewInstant.optional(), eventEndAt: reviewInstant.optional() }).strict();
 const referenceSchema = reviewEvidenceSchema.omit({ text: true, contentDigest: true });
-export const reviewItemSchema = reviewCandidateSchema.omit({ evidenceIds: true }).extend({ id: reviewId, aliases: z.array(reviewId).max(20), evidence: z.array(referenceSchema).max(12), evidenceDigests: z.array(z.object({ locator: z.string().max(1900), source: z.enum(reviewEvidenceSources), digest: z.string().length(64) }).strict()).max(12), revision: z.number().int().min(1), notifiedRevision: z.number().int().min(0), dueAtBasis: z.enum(['source', 'relative']).optional(), firstSeenAt: reviewInstant, lastSeenAt: reviewInstant, status: z.enum(['open', 'handled', 'snoozed', 'dismissed']), snoozeUntil: reviewInstant.nullable(), lastNotifiedAt: reviewInstant.nullable(), notifications: z.array(z.string().max(100)).max(12), scopeKey: z.string().length(64), sourceTask: reviewSourceTaskSchema.optional(), sourceResolution: reviewTaskResolutionSchema.optional() }).strict();
+export const reviewItemSchema = reviewCandidateSchema.omit({ evidenceIds: true }).extend({ id: reviewId, aliases: z.array(reviewId).max(20), evidence: z.array(referenceSchema).max(12), evidenceDigests: z.array(z.object({ locator: z.string().max(1900), source: z.enum(reviewEvidenceSources), digest: z.string().length(64) }).strict()).max(12), revision: z.number().int().min(1), notifiedRevision: z.number().int().min(0), dueAtBasis: z.enum(['source', 'relative']).optional(), firstSeenAt: reviewInstant, lastSeenAt: reviewInstant, status: z.enum(['open', 'handled', 'snoozed', 'dismissed']), snoozeUntil: reviewInstant.nullable(), lastNotifiedAt: reviewInstant.nullable(), notifications: z.array(z.string().max(100)).max(12), scopeKey: z.string().length(64), grantScopeKey: z.string().regex(/^[a-f0-9]{64}$/).optional(), sourceTask: reviewSourceTaskSchema.optional(), sourceResolution: reviewTaskResolutionSchema.optional() }).strict();
 export const hashReview = value => createHash('sha256').update(value).digest('hex');
 const canon = value => value.normalize('NFKC').trim().toLowerCase().replace(/\s+/g, ' ');
 // URL fragments can identify the resource itself (for example Gmail #all/messageId).
@@ -46,7 +46,8 @@ export function validatePersonalReviewSummary(value, evidence) {
   return result;
 }
 
-export function mergeReviewItems(existing, candidates, evidence, { now, scopeKey }) {
+export function mergeReviewItems(existing, candidates, evidence, { now, scopeKey, grantScopeKey }) {
+  if(grantScopeKey!==undefined&&!/^[a-f0-9]{64}$/.test(grantScopeKey))throw new Error('Invalid review grant scope');
   const items = structuredClone(existing), known = new Map(evidence.map(e => [e.id, e]));
   for (const candidate of candidates) {
     const refs = candidate.evidenceIds.map(id => { const { text, contentDigest, ...ref } = known.get(id); return ref; });
@@ -58,10 +59,16 @@ export function mergeReviewItems(existing, candidates, evidence, { now, scopeKey
       item = { ...candidate, id: `review_${hashReview(taskKey ? JSON.stringify([scopeKey, 'source-task', taskKey]) : `${scopeKey}:${key}`).slice(0, 32)}`, aliases: [], evidence: [], evidenceDigests: [], revision: 1, notifiedRevision: 0, firstSeenAt: now, lastSeenAt: now, status: 'open', snoozeUntil: null, lastNotifiedAt: null, notifications: [], scopeKey, ...(sourceTask ? { sourceTask } : {}) };
       delete item.evidenceIds; items.push(item);
     }
+    // The marker comes only from the trusted generation seam, never the model.
+    // A new grant may reuse the same scope key; its actual current candidates
+    // cannot inherit evidence retained under an unproven or different grant.
+    const grantChanged=grantScopeKey!==undefined&&item.grantScopeKey!==grantScopeKey;
     // Compare source bodies, never model wording, document mtime, or display titles.
     // Merely adding corroboration from another source is not a new fact.
     const changed = digests.some(current => { const previous = item.evidenceDigests.find(d => d.locator === current.locator); return previous ? previous.digest !== current.digest : item.evidenceDigests.some(d => d.source === current.source) && !item.evidenceDigests.some(d => d.digest === current.digest); });
     if (changed || item.dueAt && candidate.dueAt && item.dueAt !== candidate.dueAt || item.eventStartAt && candidate.eventStartAt && item.eventStartAt !== candidate.eventStartAt || item.eventEndAt && candidate.eventEndAt && item.eventEndAt !== candidate.eventEndAt) item.revision++;
+    if(grantChanged){item.evidence=[];item.evidenceDigests=[];for(const field of ['sourceResolution','dueAt','dueAtBasis','eventStartAt','eventEndAt'])delete item[field];}
+    if(grantScopeKey!==undefined)item.grantScopeKey=grantScopeKey;
     // The fact identity and user feedback survive paraphrases and source revisions.
     const { evidenceIds, ...content } = candidate;
     if (candidate.kind === 'event') { delete item.dueAt; delete item.dueAtBasis; if (!candidate.eventEndAt) delete item.eventEndAt; }
