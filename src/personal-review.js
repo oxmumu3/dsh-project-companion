@@ -4,7 +4,7 @@ import { attentionDue, attentionStatus, selectAttentionItems } from './personal-
 import { randomUUID } from 'node:crypto';
 import { isAbsolute, resolve } from 'node:path';
 import { z } from 'zod';
-import { personalReviewFailure, personalReviewDiagnosticSchema } from './personal-review-diagnostics.js';
+import { personalReviewFailure, personalReviewDiagnosticSchema, personalReviewAvailabilitySchema, personalReviewGuardCodeSchema, personalReviewRecoveryDiagnosticSchema } from './personal-review-diagnostics.js';
 import { reviewTaskCheckSchema, reviewSourceTaskKey, trackedReviewSourceTasks, reconcileReviewSourceTasks, MAX_TRACKED_REVIEW_TASKS } from './personal-review-source-tasks.js';
 import { canonicalizeTimeZone, makeLocalFormatter, localProjection, resolveLocalInstant } from '../vendor/proactive/lib/domain.js';
 import { reviewSources, reviewId, reviewInstant, reviewEvidenceSchema, reviewCoverageSchema, reviewItemSchema, hashReview, validatePersonalReviewSummary, mergeReviewItems, selectReviewItems, markReviewNotified, renderPersonalReview } from './personal-review-ledger.js';
@@ -15,7 +15,7 @@ const callerSchema = z.object({ sessionId: reviewId, cwd: z.string().min(1).max(
 const scopeSchema = z.object({ caller: callerSchema, sources: z.array(z.enum(reviewSources)).max(5), projects: z.array(z.string().min(1).max(4096).refine(isAbsolute)).max(5), bindingKey: digest, grant: digest, key: digest }).strict();
 const scheduleSchema = z.object({ dailyTime: localTime.optional(), weeklyDay: z.number().int().min(0).max(6).optional(), weeklyTime: localTime.optional(), timeZone: z.string().min(1).max(100) }).strict().refine(s => Boolean(s.dailyTime || s.weeklyTime) && (s.weeklyTime === undefined) === (s.weeklyDay === undefined));
 const attentionSchema=z.object({enabled:z.boolean(),intervalMinutes:z.literal(120),startHour:z.literal(9),endHour:z.literal(19),maxMessagesPerDay:z.literal(2),createdAt:reviewInstant}).strict();
-const recoverySchema=z.object({key:digest,observedAt:reviewInstant,offlineSince:reviewInstant.nullable(),blocked:z.boolean()}).strict();
+const recoverySchema=z.object({key:digest,observedAt:reviewInstant,offlineSince:reviewInstant.nullable(),blocked:z.boolean(),diagnostic:personalReviewRecoveryDiagnosticSchema.optional()}).strict();
 const lastViewSchema=z.object({viewToken:reviewId.optional(),caller:callerSchema,scopeKey:digest,bindingKey:digest,grant:digest,at:reviewInstant,itemIds:z.array(reviewId).max(5)}).strict();
 const statuses = ['generating', 'dispatching', 'reported_sent', 'queued', 'uncertain', 'failed', 'cancelled', 'expired', 'quiet', 'unknown'];
 const jobSchema = z.object({ id: reviewId, sessionId: reviewId, requestId: reviewId, kind: z.enum(['daily', 'weekly', 'attention']), occurrence: reviewId, createdAt: reviewInstant, status: z.enum(statuses), itemIds: z.array(reviewId).max(5), diagnostic: personalReviewDiagnosticSchema.optional() }).strict();
@@ -327,18 +327,25 @@ export function createPersonalReviewService({ store, readBinding, readBindingSyn
   async function recoveryAdmission(plan,admission){
     const at=now(),key=hashReview(JSON.stringify([plan.key,plan.grant,plan.createdAt,plan.attention?.createdAt]));
     const enabled=plan.attention?.enabled===true&&!plan.paused;
-    let availability='current';
+    let availability='current',diagnostic;
     if(enabled){
-      try{availability=await readAvailability(copy(plan));}catch{availability='unknown';}
+      let route;
+      try{
+        const raw=await readAvailability(copy(plan));
+        const parsed=personalReviewAvailabilitySchema.safeParse(typeof raw==='string'?{state:raw,reason:raw==='current'?'CURRENT':raw==='offline'?'ROUTE_OFFLINE':raw==='changed'?'ROUTE_CHANGED':'ROUTE_UNKNOWN'}:raw);
+        route=parsed.success?parsed.data:{state:'unknown',reason:'ROUTE_INVALID'};
+      }catch{route={state:'unknown',reason:'ROUTE_FAILED'};}
+      availability=route.state;if(availability!=='current')diagnostic=route;
       if(availability==='current'){
-        const run=execution(plan);try{await guard(run);}catch{availability='changed';}finally{run.dispose();}
+        const run=execution(plan);try{await guard(run);}catch(error){availability='changed';const code=personalReviewGuardCodeSchema.safeParse(personalReviewFailure(error).code);diagnostic={state:'changed',reason:'GUARD_REJECTED',guardCode:code.success?code.data:'REVIEW_FAILED'};}finally{run.dispose();}
       }
     }
     if(closed||admission!==generation)return{blocked:true,check:null};
     const regularKind=['weekly','daily'].find(kind=>{const due=latestOccurrence(at,plan.schedule,kind);return due&&due.epoch>=Date.parse(plan.createdAt)&&at.getTime()-due.epoch<=15*60000&&!state.occurrences.includes(due.id);})??(attentionDue({now:at,timeZone:plan.schedule.timeZone,attention:plan.attention,createdAt:plan.attention?.createdAt??plan.createdAt,occurrences:state.occurrences,...plan.schedule}).status==='due'?'attention':null);
     const decision=recoveryCheck({now:at,key,previous:state.recovery,availability,enabled,timeZone:plan.schedule.timeZone,startHour:plan.attention?.startHour,endHour:plan.attention?.endHour,occurrences:state.occurrences,remaining:Math.max(0,(plan.attention?.maxMessagesPerDay??0)-usedAttention(plan)),regularDue:Boolean(regularKind)});
     const before=state.recovery,next=decision.observation;
-    const persistObservation=Boolean(!before!==!next||before&&next&&(before.key!==next.key||before.blocked!==next.blocked||before.offlineSince!==next.offlineSince||Math.floor(at.getTime()/RECOVERY_CHECKPOINT_INTERVAL)!==Math.floor(Date.parse(before.observedAt)/RECOVERY_CHECKPOINT_INTERVAL))||decision.check);
+    if(next&&diagnostic)next.diagnostic=diagnostic;
+    const persistObservation=Boolean(!before!==!next||before&&next&&(before.key!==next.key||before.blocked!==next.blocked||before.offlineSince!==next.offlineSince||JSON.stringify(before.diagnostic)!==JSON.stringify(next.diagnostic)||Math.floor(at.getTime()/RECOVERY_CHECKPOINT_INTERVAL)!==Math.floor(Date.parse(before.observedAt)/RECOVERY_CHECKPOINT_INTERVAL))||decision.check);
     // Keep the live timestamp accurate; persist at most once per five minutes
     // except state transitions. A short restart cannot become a false sleep gap.
     state.recovery=next;

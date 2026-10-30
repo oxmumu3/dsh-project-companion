@@ -429,7 +429,11 @@ export async function installCompanion(ctx,options={}){
     store:{get:key=>personalReviewTable.get(key),put:(key,value)=>personalReviewTable.put(key,personalReviewRowSchema.parse(value))},
     readBinding:reviewBinding,readBindingSync:reviewBindingSync,authorization:reviewAuthorization,authorizationSync:reviewAuthorizationSync,
     readAvailability:scope=>{
-      if(scope.caller.sessionId.startsWith('family_owner_')||familyDelegate.matchesSession(scope.caller.sessionId))return familyDelegate.routeState({sessionId:scope.caller.sessionId,bindingRevision:scope.bindingKey});
+      if(scope.caller.sessionId.startsWith('family_owner_')||familyDelegate.matchesSession(scope.caller.sessionId)){
+        let diagnostic;
+        const state=familyDelegate.routeState({sessionId:scope.caller.sessionId,bindingRevision:scope.bindingKey},value=>{diagnostic=value;});
+        return diagnostic?.state===state?diagnostic:state;
+      }
       try{const state=standaloneBridge()?.routeStatus?.({sessionId:scope.caller.sessionId,expectedBinding:scope.bindingKey});return ['current','offline','changed','unknown'].includes(state)?state:'unknown';}catch{return'unknown';}
     },
     canRun:async()=>!disposed&&!lifecycle.signal.aborted&&!await service.isPaused(),canRunSync:()=>!disposed&&!lifecycle.signal.aborted&&!service.isPausedSync(),
