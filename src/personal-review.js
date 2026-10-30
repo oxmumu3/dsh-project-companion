@@ -186,8 +186,16 @@ export function createPersonalReviewService({ store, readBinding, readBindingSyn
     const reconciled = reconcileReviewSourceTasks(state.items, data.taskChecks, { scopeKey: run.key, taskScopeKey });
     if (!data.coverage.some(c => ['ok', 'partial'].includes(c.status))) { generationStatus('unknown'); return { ...data, items: [], selected: [], ledger: reconciled, text: recoveryNote+renderPersonalReview([], data.coverage, { kind, now: at, unknown: true, timeZone }), unknown: true, at }; }
     const previousItems = reconciled.filter(i => i.scopeKey === run.key && currentTaskScope(i)).slice(-60).map(i => ({ id: i.id, key: i.key, kind: i.kind, title: i.title, summary: i.summary, status: i.status, dueAt: i.dueAt ?? null, evidenceIds: i.evidence.map(e => e.id), lastSeenAt: i.lastSeenAt }));
+    // Trusted control metadata comes from the guarded current subscription,
+    // never from project notes or collector-supplied fields. It grants no IO.
+    const checkedAt=now().toISOString(),subscription=state.subscription;
+    const confirmed=subscription&&sameCaller(subscription.caller,run.caller)&&subscription.key===run.key&&subscription.grant===run.grant&&subscription.bindingKey===run.bindingKey?subscription:null;
+    const scopeConfirmedAt=confirmed&&Date.parse(confirmed.createdAt)<=Date.parse(checkedAt)?confirmed.createdAt:null;
+    const attentionAt=confirmed&&!confirmed.paused&&confirmed.attention?.enabled===true?confirmed.attention.createdAt:null;
+    const attentionEnabledAt=scopeConfirmedAt&&attentionAt&&Date.parse(attentionAt)>=Date.parse(scopeConfirmedAt)&&Date.parse(attentionAt)<=Date.parse(checkedAt)?attentionAt:null;
+    const currentReview={checkedAt,scopeConfirmedAt,attentionEnabledAt,sourceCount:run.sources.length,projectCount:run.projects.length};
     let candidates = [];
-    if (data.evidence.length) { stage='model'; const summary = await race(() => summarize({ ...copy(data), previousItems, goals:activeReviewGoals(state.goals,run).map(g=>({objective:g.objective,project:g.project,meetingTitle:g.meetingTitle??null})), kind: materialKind, now: at, signal: run.signal, guard: () => guard(run), authorizeSync: () => authorizeSync(run) }), run.signal, 'REVIEW_MODEL_FAILED'); await guard(run); candidates = validatePersonalReviewSummary(summary, data.evidence).items; }
+    if (data.evidence.length) { stage='model'; const summary = await race(() => summarize({ ...copy(data), previousItems, currentReview, goals:activeReviewGoals(state.goals,run).map(g=>({objective:g.objective,project:g.project,meetingTitle:g.meetingTitle??null})), kind: materialKind, now: checkedAt, signal: run.signal, guard: () => guard(run), authorizeSync: () => authorizeSync(run) }), run.signal, 'REVIEW_MODEL_FAILED'); await guard(run); candidates = validatePersonalReviewSummary(summary, data.evidence).items; }
     const meetingCandidates=kind==='attention'&&calendarCoverageComplete(data.coverage)?prepareReviewMeeting(state.goals,run,data.evidence,candidates,at):[];
     const ledger = mergeReviewItems(reconciled, [...candidates,...meetingCandidates], data.evidence, { now: at, scopeKey: run.key, grantScopeKey: taskScopeKey });
     const attentionSelection=kind==='attention'?selectAttentionItems(ledger.filter(i=>currentTaskScope(i)&&i.lastSeenAt===at),{now:at,scopeKey:run.key,coverage:data.coverage,remaining:Math.max(0,(run.attention?.maxMessagesPerDay??2)-usedAttention(run))}):null;
