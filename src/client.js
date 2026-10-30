@@ -336,6 +336,7 @@ function createDotOverlay(React, adapters = {}) {
 .dot_overlay_body{position:relative;display:flex;flex:1;min-height:0;overflow:hidden}.dot_overlay_body> *{flex:1;min-height:0;min-width:0}
 .dot_overlay_fallback{padding:20px;font-size:13px;line-height:1.65;color:var(--dsw-alias-label-secondary,#5c6672)}
 .dot_overlay_notice{pointer-events:auto;max-width:min(320px,calc(100vw - 40px));padding:10px 14px;border:1px solid var(--dsw-alias-border-l3,rgba(44,55,68,.12));border-radius:12px;background:var(--dsw-alias-bg-layer-2,#fffdf8);font-size:12px;line-height:1.5;box-shadow:0 4px 20px rgba(22,34,48,.1)}
+.dot_overlay_notice button{display:block;min-height:44px;margin-top:6px;padding:7px 9px;border:1px solid #cbd2ce;border-radius:6px;background:#fff;color:#345ec7}
 .dot_overlay_fallback{background:#fff;color:#5b6973}.dot_overlay_fallback button{display:inline-flex;min-height:44px;align-items:center;justify-content:center;margin:12px 8px 0 0;padding:8px 12px;border:1px solid #cbd2ce;border-radius:7px;background:#fff;color:#345ec7}.dot_overlay_body .pc_dot_conversation{height:100%;max-height:none;min-height:0;border:0;border-radius:0;margin:0}.dot_overlay_body .pc_dot_conversation>div{min-height:0}.dot_overlay_body .dot_compact_history{padding:16px;font-size:13px}.dot_overlay_body .dot_compact_history_heading{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:14px;font-size:12px;color:#5b6973}.dot_overlay_body .dot_compact_history button{min-height:44px;background:none;border:0;color:#345ec7}.dot_overlay_body .dot_compact_history_role{display:block;color:#5b6973;font-size:11px;margin-bottom:4px}.dot_overlay_body .dot_compact_history_assistant{margin-top:14px}.dot_overlay_body .dot_compact_history_truncated{color:#5b6973;font-size:12px}.dot_overlay_body .dot_compact_history_actions button{min-height:44px;color:#345ec7;border:0;background:#fff}
 .dot_overlay_body .pc_dot_overlay_conversation{display:flex;flex-direction:column;min-height:0;overflow:hidden;background:#fff}.dot_overlay_body .pc_dot_overlay_conversation>.pc_dot_conversation{flex:1;min-height:160px;overflow:auto}.dot_overlay_body .pc_dot_overlay_status{flex-shrink:0;font-size:12px;line-height:1.6;padding:8px 14px;margin:0;color:#5b6973}.dot_overlay .pc_dot_retained_draft{flex-shrink:0;padding:10px 14px;margin:0;border-bottom:1px solid #cbd2ce;background:#edf2fc;color:#23313c;font-size:12px;line-height:1.6;max-height:220px;overflow:auto}.dot_overlay .pc_dot_retained_draft p{margin:4px 0;color:#5b6973}.dot_overlay .pc_dot_retained_draft pre{font:inherit;white-space:pre-wrap;overflow-wrap:anywhere;max-height:120px;overflow:auto}.dot_overlay .pc_dot_retained_draft summary{min-height:44px;padding:10px 0;cursor:pointer}.dot_overlay .pc_dot_retained_draft button{min-height:44px;margin:4px 8px 0 0;padding:7px 9px;border:1px solid #cbd2ce;border-radius:6px;background:#fff;color:#345ec7}
 @media(max-width:560px){.dot_overlay_dock{right:max(12px,env(safe-area-inset-right,0px));bottom:max(18px,calc(env(safe-area-inset-bottom,0px) + 14px))}.dot_overlay_panel{width:calc(100vw - 24px);height:calc(100dvh - var(--dsh-frame-overlay-top,68px) - 88px);border-radius:14px}.dot_overlay_subtitle{display:none}}
@@ -353,6 +354,7 @@ function createDotOverlay(React, adapters = {}) {
     const surface=typeof adapters.useSurface==='function'?adapters.useSurface(props):{};
     const [open, setOpen] = React.useState(false);
     const [error, setError] = React.useState('');
+    const [workbenchAttempt,setWorkbenchAttempt]=React.useState(0);
     const launcher = React.useRef(null);
     const panel = React.useRef(null);
     const pendingWorkbench = React.useRef(false);
@@ -379,9 +381,9 @@ function createDotOverlay(React, adapters = {}) {
         returnFocus.current = false;
         if (launcher.current?.isConnected !== false) launcher.current?.focus?.();
       }
-    }, [open]);
+    }, [open,workbenchAttempt]);
     const close = () => { returnFocus.current = true; setOpen(false); };
-    const openWorkbench = () => { pendingWorkbench.current = true; setError(''); setOpen(false); };
+    const openWorkbench = () => { pendingWorkbench.current = true; setError(''); setOpen(false);setWorkbenchAttempt(value=>value+1); };
     const escape = event => {
       if (!open || event.key !== 'Escape' || event.defaultPrevented || event.isComposing || event.nativeEvent?.isComposing || event.altKey || event.ctrlKey || event.metaKey) return;
       event.preventDefault?.(); event.stopPropagation?.(); close();
@@ -394,7 +396,7 @@ function createDotOverlay(React, adapters = {}) {
     return h('div', { className: 'dot_overlay', style: { position: 'absolute', inset: 0, pointerEvents: 'none' }, 'data-dot-overlay': true },
       h('style', null, css),
       h('div', { className: 'dot_overlay_dock' },
-        error && h('div', { className: 'dot_overlay_notice', role: 'status' }, error),
+        error && h('div', { className: 'dot_overlay_notice', role: 'status' }, error,h('button',{type:'button','aria-label':'重试打开 Dot 工作台',onClick:openWorkbench},'重试打开 Dot 工作台')),
         showing && h('section', { className: 'dot_overlay_panel', id: 'dsh-dot-overlay-dialog', ref: panel, tabIndex: -1, role: 'dialog', 'aria-label': '与 Dot 对话', onKeyDown: escape },
           h('header', { className: 'dot_overlay_header' }, mark(),
             h('div', { className: 'dot_overlay_heading' }, h('div', { className: 'dot_overlay_title' }, 'Dot'), h('div', { className: 'dot_overlay_subtitle' }, '你的一句交代，我接着跟进。')),
@@ -835,9 +837,9 @@ function registerDotOverlay(ctx, Component) {
       }
       function OverlayDesktopConversation(props={}){
         const [target,setTarget]=React.useState(null),[candidate,setCandidate]=React.useState(null),[loaded,setLoaded]=React.useState(false),[problem,setProblem]=React.useState(''),[creating,setCreating]=React.useState(false);
-        const live=React.useRef(false),creatingRef=React.useRef(false),draftOperation=React.useRef(null);
+        const live=React.useRef(false),creatingRef=React.useRef(false),draftOperation=React.useRef(null),requestedWorkbench=React.useRef(false);
         const activePanelId=typeof props.usePanelInfo==='function'?props.usePanelInfo(info=>info.activePanelId):undefined;
-        const mainSessionId=typeof props.useSessions==='function'?props.useSessions(state=>{const rows=Object.values(state.byId??{}).filter(row=>(row.retainedBy?.mainView??0)>0);return rows.length===1?rows[0].id:null;}):null;
+        const mainSessionId=typeof props.useSessions==='function'?props.useSessions(state=>{if(state.phase!=='ready'||Object.prototype.toString.call(state.byId)!=='[object Object]'||!Array.isArray(state.ids)||!state.ids.every(id=>state.byId?.[id]?.id===id))return null;const rows=state.ids.map(id=>state.byId[id]).filter(row=>(row.retainedBy?.mainView??0)>0);return rows.length===1?rows[0].id:null;}):null;
         const mainViewEmpty=typeof props.useSessions==='function'?props.useSessions(state=>state.phase==='ready'&&Object.prototype.toString.call(state.byId)==='[object Object]'&&Array.isArray(state.ids)&&state.ids.every(id=>state.byId?.[id]?.id===id)&&Object.values(state.byId??{}).every(row=>(row.retainedBy?.mainView??0)===0)):false;
         React.useEffect(()=>{live.current=true;const abort=new AbortController();void(async()=>{
           try{if(workbenchCache.localConversation){const cached=await desktopController.resolve(workbenchCache.localConversation);if(!cached)throw Error('cached desktop unavailable');if(live.current)setTarget(cached);return;}
@@ -851,8 +853,11 @@ function registerDotOverlay(ctx, Component) {
         };
         const continueCandidate=async()=>{if(creatingRef.current||!candidate)return;creatingRef.current=true;setCreating(true);try{const verified=await desktopController.resolve(candidate);if(!verified)throw Error('candidate unavailable');const remembered=await desktopController.remember(verified.sessionId);if(live.current){workbenchCache.localConversation=verified;setTarget(verified);setCandidate(null);if(!remembered)setProblem('本次对话可继续；入口暂未保存。');}}catch{if(live.current)setProblem('上次对话暂不可用，可新建对话或到原生历史核对。');}finally{creatingRef.current=false;if(live.current)setCreating(false);}};
         const recoverDraft=async()=>{if(creatingRef.current||!target)return;creatingRef.current=true;setCreating(true);const operation=new AbortController();draftOperation.current=operation;try{const receipt=await prepareCachedDesktopDraft(target,operation.signal);if(live.current)setProblem(receipt.status==='applied'?'电脑草稿已放入当前原生会话，由你发送。':'原生对话已有草稿，电脑原文继续完整保留。');}catch(failure){if(live.current)setProblem('草稿未能带入：原对话或草稿范围暂未确认。原文仍完整保留，可复制后继续。');}finally{draftOperation.current=null;creatingRef.current=false;if(live.current)setCreating(false);}};
+        const sameNativeMain=loaded&&Boolean(target)&&activePanelId===null&&mainSessionId===target.sessionId;
+        React.useEffect(()=>{if(!sameNativeMain||requestedWorkbench.current||typeof props.onOpenWorkbench!=='function')return;requestedWorkbench.current=true;props.onOpenWorkbench();},[sameNativeMain,target?.sessionId,target?.revision]);
         if(!loaded)return h('div',{className:'dot_overlay_fallback',role:'status'},'正在打开桌面对话…');
         if(target){
+          if(sameNativeMain&&typeof props.onOpenWorkbench==='function')return h('div',{className:'dot_overlay_fallback',role:'status'},'正在回到同一个 Dot 对话，原草稿会保留。');
           if(!desktopConversationCanEmbed({activePanelId,mainSessionId,mainViewEmpty},target.sessionId)||typeof props.SessionProvider!=='function'||typeof props.renderSlot!=='function')return h('div',{className:'dot_overlay_fallback'},h('p',null,mainSessionId===target.sessionId?'这个对话已在当前页面打开，可直接继续。':'请打开完整工作台继续对话。'),retainedDraftView(null,{onCopy:()=>copyCachedDraft(setProblem)}),h('button',{type:'button',onClick:props.onOpenWorkbench},'打开完整工作台'));
           return h('div',{className:'pc_dot_overlay_conversation'},problem?h('p',{className:'pc_dot_overlay_status',role:'status'},problem):null,retainedDraftView(target,{busy:creating,onApply:recoverDraft,onCopy:()=>copyCachedDraft(setProblem)}),h(DesktopConversation,{target,owner:'overlay',SessionProvider:props.SessionProvider,renderSlot:props.renderSlot,slotName:'dot.overlay.conversation',onOpenHistory:props.onOpenWorkbench}));
         }

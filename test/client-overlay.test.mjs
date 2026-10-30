@@ -81,6 +81,10 @@ test('workbench failure is visible without exposing exception content or retaini
   assert.match(text(tree),/工作台暂未打开/);assert.doesNotMatch(text(tree),/PRIVATE/);assert.equal(nodes(tree,n=>n.type==='native-conversation').length,0);
 });
 
+test('failed asynchronous return to Dot offers a usable retry after the overlay is closed',async()=>{
+ let attempts=0;const c=harness({activateDesktop:()=>{attempts++;return Promise.reject(Error('PRIVATE_WORKBENCH_FAILURE'));}});button(c.render(),'打开 Dot 对话').props.onClick();c.render();await c.flush();c.rendered.at(-1).onOpenWorkbench();c.render();await c.flush();let tree=c.render();assert.equal(nodes(tree,n=>n.type==='native-conversation').length,0);assert.match(text(tree),/工作台暂未打开/);assert.doesNotMatch(text(tree),/PRIVATE/);const retry=button(tree,'重试打开 Dot 工作台');assert.ok(retry);c.render();await c.flush();assert.equal(attempts,1,'a failed passive effect must not retry itself');c.adapters.activateDesktop=()=>{attempts++;c.activated.push(true);};retry.props.onClick();c.render();await c.flush();tree=c.render();assert.equal(c.activated.length,1);assert.equal(attempts,2);assert.doesNotMatch(text(tree),/工作台暂未打开/);
+});
+
 test('layout leaves the surrounding page interactive and constrains the panel to the viewport',()=>{
   const c=harness();const tree=c.render();assert.equal(tree.props.style.pointerEvents,'none');
   const style=text(nodes(tree,n=>n.type==='style')[0]);assert.match(style,/pointer-events:auto/);assert.match(style,/100dvh/);assert.match(style,/safe-area-inset-bottom/);assert.match(style,/--dsh-frame-overlay-top/);
