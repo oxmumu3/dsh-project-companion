@@ -55,9 +55,9 @@ export function createFamilyOwnerDelegation({store,getBridge,readGrantedLeases,r
     if(sessionId!==state.familySessionId||bindingRevision!==state.bindingRevision)return finish('changed','DELEGATION_BINDING_CHANGED');
     let status;
     try{
-      const bridge=getBridge();
-      if(typeof bridge?.ownerRouteStatus!=='function')return finish('unknown','BRIDGE_UNAVAILABLE');
-      status=bridge.ownerRouteStatus({sessionId,bindingRevision});
+      const bridge=getBridge(),method=bridge?.ownerRouteStatus;
+      if(typeof method!=='function')return finish('unknown','BRIDGE_UNAVAILABLE');
+      status=method.call(bridge,{sessionId,bindingRevision});
       if(!['current','offline','changed','unknown'].includes(status))return finish('unknown','BRIDGE_UNKNOWN');
       if(status==='changed'){void revoke();return finish('changed','BRIDGE_CHANGED');}
     }catch{return finish('unknown','BRIDGE_FAILED');}

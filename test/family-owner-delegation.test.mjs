@@ -131,3 +131,10 @@ test('early delegation route failures use closed categories and perform no bridg
  assert.equal(f.service.routeState({sessionId:'PRIVATE_FOREIGN_CANARY',bindingRevision:familyRevision}),'changed');
  assert.deepEqual(observed,[{state:'changed',reason:'DELEGATION_BINDING_CHANGED'}]);assert.deepEqual(f.counts(),before);assert.equal(f.saved().disabled,undefined);await f.service.close();
 });
+
+test('route method getter is read once with its original bridge receiver before revocation',async()=>{
+ const observed=[],f=await diagnosticFixture(value=>observed.push(value));let reads=0;
+ Object.defineProperty(f.bridge,'ownerRouteStatus',{configurable:true,get(){reads++;return reads===1?function(){assert.equal(this,f.bridge);return'changed';}:undefined;}});
+ assert.equal(f.service.routeState({sessionId:owner,bindingRevision:familyRevision}),'changed');assert.equal(reads,1);
+ assert.deepEqual(observed,[{state:'changed',reason:'BRIDGE_CHANGED'}]);await f.service.ready();assert.equal(f.saved().disabled,true);await f.service.close();
+});
