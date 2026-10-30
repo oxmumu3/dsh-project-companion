@@ -5,7 +5,10 @@ export const familyNewsInterestAction=action=>['set_topics','clear_topics'].incl
 const savedFocus='(?:[，,](?:使用已保存的关注点|按我的关注点))?';
 const number=word=>{if(/^\d+$/u.test(word))return Number(word);const d={'一':1,'二':2,'两':2,'三':3,'四':4,'五':5,'六':6,'七':7,'八':8,'九':9};if(word==='十')return 10;if(d[word])return d[word];const p=word.split('十');return p.length===2&&(!p[0]||d[p[0]])&&(!p[1]||d[p[1]])?(p[0]?d[p[0]]:1)*10+(p[1]?d[p[1]]:0):NaN;};
 export function deriveFamilyNewsRequest(scope,{action,now=new Date(),timeZone='UTC',activeCallVerified=false}={}){
- let text=assertFamilyOwnerRequest(scope,{now,activeCallVerified,requireFresh:action!=='status'}).replace(/[。！!]+$/u,'').replace(/^(?:请|帮我|麻烦)\s*/u,'');
+ let text;
+ try{text=assertFamilyOwnerRequest(scope,{now,activeCallVerified,requireFresh:action!=='status'});}
+ catch(error){if(error?.code==='FAMILY_REVIEW_SCOPE_UNSUPPORTED')fail();throw error;}
+ text=text.replace(/[。！!]+$/u,'').replace(/^(?:请|帮我|麻烦)\s*/u,'');
  const result={action,sourceRequestId:scope.sourceRequestId};
  if(action==='clear_topics'){if(!/^(?:清空|清除)(?:我的)?(?:AI\s*)?(?:资讯兴趣|日报关注点)$/iu.test(text))fail();return result;}
  if(action==='status'){if(!/^(?:查看|看看|查询)(?:我的)?(?:AI\s*)?(?:资讯(?:兴趣|状态)|日报(?:关注点|兴趣|状态))$/iu.test(text))fail();return result;}

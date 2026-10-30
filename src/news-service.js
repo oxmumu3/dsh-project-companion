@@ -6,13 +6,13 @@ import {normalizeNewsTopics} from './news-topics.js';
 import {safeModelCallDiagnostic} from './news-model.js';
 const NEWS_MODEL_CODES = new Set(['MODEL_UNAVAILABLE','MODEL_INVALID_INPUT','MODEL_INVALID_OUTPUT','MODEL_TOOL_OUTPUT','MODEL_INCOMPLETE','MODEL_TOKEN_LIMIT','MODEL_OUTPUT_LIMIT','MODEL_TIMEOUT','MODEL_ABORTED','MODEL_CLOSED','MODEL_AUTHORIZATION_CHANGED','MODEL_REQUEST_FAILED']);
 const NEWS_STAGE_CODES = {sources:'NEWS_SOURCE_FAILED',selection:'NEWS_SELECTION_FAILED',summary:'NEWS_SUMMARY_FAILED',article:'NEWS_ARTICLE_FAILED'};
-const NEWS_DIAGNOSTIC_STAGES = ['sources','selection','summary','article','authorization','unknown'];
-const NEWS_DIAGNOSTIC_CODES = [...NEWS_MODEL_CODES,...Object.values(NEWS_STAGE_CODES),'NEWS_AUTHORIZATION_CHANGED','NEWS_REQUEST_FAILED'];
+const NEWS_DIAGNOSTIC_STAGES = ['sources','selection','summary','article','authorization','cancelled','unknown'];
+const NEWS_DIAGNOSTIC_CODES = [...NEWS_MODEL_CODES,...Object.values(NEWS_STAGE_CODES),'NEWS_AUTHORIZATION_CHANGED','NEWS_REQUEST_FAILED','NEWS_CANCELLED','NEWS_PAUSED','NEWS_TIMEOUT'];
 const diagnosticCount=z.number().int().min(0).max(1000000000).nullable();
 const newsDiagnosticSchema=z.object({stage:z.enum(NEWS_DIAGNOSTIC_STAGES),code:z.enum(NEWS_DIAGNOSTIC_CODES),model:z.object({requestedMaxTokens:diagnosticCount,preparedMaxTokens:diagnosticCount,reasoningEffort:z.enum(['off','none','minimal','low','medium','high','max','other','unset']),finish:z.enum(['none','stop','max-tokens','other']),textChars:diagnosticCount,reasoningChars:diagnosticCount,outputTokens:diagnosticCount,reasoningTokens:diagnosticCount}).strict().optional()}).strict();
 function jobDiagnostic(error) {
   const code=NEWS_DIAGNOSTIC_CODES.includes(error?.code)?error.code:'NEWS_REQUEST_FAILED';
-  const stage=code==='NEWS_AUTHORIZATION_CHANGED'?'authorization':NEWS_DIAGNOSTIC_STAGES.includes(error?.newsDiagnostic?.stage)?error.newsDiagnostic.stage:'unknown';
+  const stage=code==='NEWS_AUTHORIZATION_CHANGED'?'authorization':['NEWS_CANCELLED','NEWS_PAUSED'].includes(code)?'cancelled':NEWS_DIAGNOSTIC_STAGES.includes(error?.newsDiagnostic?.stage)?error.newsDiagnostic.stage:'unknown';
   const model=safeModelCallDiagnostic(error?.newsDiagnostic?.model);
   return newsDiagnosticSchema.parse({stage,code,...(model?{model}:{})});
 }
@@ -45,7 +45,9 @@ function candidate(article){if(!article||typeof article.id!=='string'||!article.
 function summaryItems(result,articles){if(!result||Object.keys(result).some(k=>k!=='items')||!Array.isArray(result.items)||result.items.length!==articles.length)throw new Error('摘要必须对应全部选中 ID');const known=new Map(articles.map(a=>[a.id,a])),seen=new Set();for(const item of result.items){if(!item||Object.keys(item).some(k=>!['id','title','summary','why'].includes(k))||!known.has(item.id)||seen.has(item.id))throw new Error('摘要存在未知、重复 ID 或多余字段');seen.add(item.id);for(const key of ['summary','title','why']){if(key==='summary'&&(typeof item[key]!=='string'||!item[key].trim()))throw new Error('摘要正文不能为空');if(item[key]!==undefined&&(typeof item[key]!=='string'||item[key].length>2500||/(?:[a-z][a-z\d+.-]*:\/\/|www\.|\]\s*\()/i.test(item[key])))throw new Error('摘要包含无效文字或新增 URL 链接');}}
   return articles.map(a=>{const s=result.items.find(item=>item.id===a.id);return{...a,title:s.title??a.title,summary:s.summary,why:s.why??''};});
 }
-function external(fn,signal){signal.throwIfAborted();return new Promise((resolve,reject)=>{const abort=()=>reject(new Error('操作已取消或停止'));signal.addEventListener('abort',abort,{once:true});Promise.resolve().then(()=>{signal.throwIfAborted();return fn();}).then(value=>{signal.removeEventListener('abort',abort);if(signal.aborted)reject(new Error('操作已取消或停止'));else resolve(value);},error=>{signal.removeEventListener('abort',abort);reject(error);});});}
+function stoppedError(signal,message='操作已取消或停止'){return Object.assign(new Error(message),{code:signal?.aborted&&signal.reason instanceof DOMException&&signal.reason.name==='TimeoutError'?'NEWS_TIMEOUT':'NEWS_CANCELLED'});}
+const pausedError=message=>Object.assign(new Error(message),{code:'NEWS_PAUSED'});
+function external(fn,signal){if(signal.aborted)throw stoppedError(signal);return new Promise((resolve,reject)=>{const abort=()=>reject(stoppedError(signal));signal.addEventListener('abort',abort,{once:true});Promise.resolve().then(()=>{if(signal.aborted)throw stoppedError(signal);return fn();}).then(value=>{signal.removeEventListener('abort',abort);if(signal.aborted)reject(stoppedError(signal));else resolve(value);},error=>{signal.removeEventListener('abort',abort);reject(error);});});}
 
 export function createNewsService({store,fetchCandidates,selectArticles,readArticle,summarizeArticles,send,readBinding,canRun=async()=>true,canRunSync,clock=()=>new Date(),hostTimeZone=()=>Intl.DateTimeFormat().resolvedOptions().timeZone}={}){
   if(typeof store?.get!=='function'||typeof store?.put!=='function')throw new Error('需要持久化存储');
@@ -79,7 +81,7 @@ export function createNewsService({store,fetchCandidates,selectArticles,readArti
     if(closing||storageFailed||scope.signal.aborted||scope.generation!==generation)return false;
     try{authorizeSync(scope.request);if(canRunSync){const allowed=canRunSync();if(allowed&&typeof allowed.then==='function')Promise.resolve(allowed).catch(()=>{});if(allowed!==true)return false;}return true;}catch{return false;}
   }
-  async function active(scope){if(closing||scope.signal.aborted||scope.generation!==generation)throw new Error('操作已取消、关闭或停止');if(!await external(()=>canRun(),scope.signal))throw new Error('助理已暂停，资讯操作不可用');if(closing||scope.signal.aborted||scope.generation!==generation)throw new Error('操作已停止');if(scope.bindingKey){let route;try{route=await external(()=>readBinding(scope.sessionId),scope.signal);}catch{if(scope.signal.aborted)throw new Error('操作已取消或停止');throw authorizationError('微信绑定暂不可用');}if(!route?.bound||route.bindingKey!==scope.bindingKey)throw authorizationError('原微信绑定已变化或不可用');}await external(()=>authorizeRequest(scope.request),scope.signal);if(!current(scope))throw new Error('操作已停止');}
+  async function active(scope){if(closing||scope.signal.aborted||scope.generation!==generation)throw stoppedError(scope.signal,'操作已取消、关闭或停止');if(!await external(()=>canRun(),scope.signal))throw pausedError('助理已暂停，资讯操作不可用');if(closing||scope.signal.aborted||scope.generation!==generation)throw stoppedError(scope.signal);if(scope.bindingKey){let route;try{route=await external(()=>readBinding(scope.sessionId),scope.signal);}catch{if(scope.signal.aborted)throw stoppedError(scope.signal);throw authorizationError('微信绑定暂不可用');}if(!route?.bound||route.bindingKey!==scope.bindingKey)throw authorizationError('原微信绑定已变化或不可用');}await external(()=>authorizeRequest(scope.request),scope.signal);if(!current(scope))throw stoppedError(scope.signal);}
   async function connection(sessionId){let route;try{route=await readBinding(sessionId);}catch{throw authorizationError('微信绑定暂不可用');}if(!route?.bound||!binding.safeParse(route.bindingKey).success)throw authorizationError('请在原微信绑定会话明确设置日报');return route.bindingKey;}
   function scopeFor(sessionId,bindingKey,signal,requestedGeneration=generation,timeZone=typeof hostTimeZone==='function'?hostTimeZone():hostTimeZone,request={}){const controller=new AbortController();controllers.add(controller);const signals=[controller.signal,AbortSignal.timeout(PIPELINE_TIMEOUT)];if(signal)signals.push(signal);return{sessionId,bindingKey,timeZone,request:{guard:request.guard,authorizeSync:request.authorizeSync},generation:requestedGeneration,signal:AbortSignal.any(signals),dispose:()=>controllers.delete(controller)};}
   const modelGuards=scope=>({guard:()=>active(scope),authorizeSync:()=>current(scope)});
@@ -115,7 +117,7 @@ export function createNewsService({store,fetchCandidates,selectArticles,readArti
   function receiptCapacity(){state.receipts=state.receipts.filter(r=>now().getTime()-Date.parse(r.createdAt)<SIX_HOURS);if(state.receipts.length>=100)throw new Error('六小时内资讯设置请求过多，请稍后再试');}
   function pruneJobs(){if(state.jobs.length<50)return;const i=state.jobs.findIndex(j=>now().getTime()>=Date.parse(j.expiresAt)&&!['generating','dispatching'].includes(j.status));if(i<0)throw new Error('六小时内资讯任务过多，请稍后再试');state.jobs.splice(i,1);}
   async function deliver(job,scope){await active(scope);if(now().getTime()>=Date.parse(job.expiresAt)){job.status='expired';job.detail=deliveryLabels.expired;await save();return jobView(job);}job.status='dispatching';job.detail=deliveryLabels.dispatching;await save();await active(scope);const authorize=()=>current(scope)&&job.status==='dispatching'&&now().getTime()<Date.parse(job.expiresAt);let result;try{result=await external(()=>send({sessionId:job.sessionId,bindingKey:job.bindingKey,text:job.text,signal:scope.signal,requestId:'news-'+job.id,authorize}),scope.signal);}catch{result={status:'uncertain'};}job.status=['reported_sent','queued','uncertain','failed'].includes(result?.status)?result.status:'uncertain';job.detail=deliveryLabels[job.status];if(['reported_sent','queued','uncertain'].includes(job.status))history(job);await save();return jobView(job);}
-  async function runJob(job,signal,requestedGeneration=generation,request={}){const scope=scopeFor(job.sessionId,job.bindingKey,signal,requestedGeneration,job.timeZone,request);try{await active(scope);const output=await generate(scope,job.topics??undefined,{preview:false,topicSource:'saved'});await active(scope);job.text=output.text;job.articleIds=output.items.map(a=>a.id);if(!job.articleIds.length){job.status='failed';job.detail='没有符合窗口与去重条件的可用文章，本次未发送';await save();return jobView(job);}job.status='pending';await save();return await deliver(job,scope);}catch(error){if(!storageFailed&&job.status!=='uncertain'&&!['reported_sent','queued','failed','expired'].includes(job.status)){job.status=scope.signal.aborted||closing||scope.generation!==generation?'cancelled':'failed';job.detail=deliveryLabels[job.status];job.diagnostic=jobDiagnostic(error);await save();}throw error;}finally{scope.dispose();}}
+  async function runJob(job,signal,requestedGeneration=generation,request={}){const scope=scopeFor(job.sessionId,job.bindingKey,signal,requestedGeneration,job.timeZone,request);try{await active(scope);const output=await generate(scope,job.topics??undefined,{preview:false,topicSource:'saved'});await active(scope);job.text=output.text;job.articleIds=output.items.map(a=>a.id);if(!job.articleIds.length){job.status='failed';job.detail='没有符合窗口与去重条件的可用文章，本次未发送';await save();return jobView(job);}job.status='pending';await save();return await deliver(job,scope);}catch(error){if(!storageFailed&&job.status!=='uncertain'&&!['reported_sent','queued','failed','expired'].includes(job.status)){job.status=closing||scope.generation!==generation||scope.signal.aborted&&stoppedError(scope.signal).code!=='NEWS_TIMEOUT'?'cancelled':'failed';job.detail=deliveryLabels[job.status];job.diagnostic=jobDiagnostic(error);await save();}throw error;}finally{scope.dispose();}}
   const changes=new Set(['configure','cancel','set_topics','clear_topics']);
   const authorizationError=(message='本次资讯操作授权已变化或不可用')=>Object.assign(new Error(message),{code:'NEWS_AUTHORIZATION_CHANGED'});
   function authorizeSync(input){
@@ -129,8 +131,8 @@ export function createNewsService({store,fetchCandidates,selectArticles,readArti
     authorizeSync(input);
   }
   const duplicateSetting=(owner,input)=>state.receipts.some(r=>r.sessionId===owner.sessionId&&r.requestId===input.requestId);
-  function acceptChange(sequence){if(sequence<lastAcceptedChange)throw new Error('已有更新的用户设置，本次操作已取消或停止');lastAcceptedChange=sequence;invalidate();return generation;}
-  function stopped(input,expectedGeneration){if(closing||input.signal?.aborted||expectedGeneration!==generation)throw new Error('操作已取消或停止');}
+  function acceptChange(sequence){if(sequence<lastAcceptedChange)throw stoppedError(undefined,'已有更新的用户设置，本次操作已取消或停止');lastAcceptedChange=sequence;invalidate();return generation;}
+  function stopped(input,expectedGeneration){if(closing||input.signal?.aborted||expectedGeneration!==generation)throw stoppedError(input.signal);}
   function recordSetting(owner,input){state.receipts.push({sessionId:owner.sessionId,requestId:input.requestId,action:input.action,createdAt:now().toISOString()});}
   function setTopics(owner,key,topics){state.preferences={topics:copy(topics),source:'explicit',sessionId:owner.sessionId,bindingKey:key,updatedAt:now().toISOString()};}
   // Snapshot inputs before asynchronous admission; source/provider code never
@@ -150,7 +152,7 @@ export function createNewsService({store,fetchCandidates,selectArticles,readArti
       if(input.signal!==undefined&&!(input.signal instanceof AbortSignal))throw new Error('无效取消信号');
       if(input.guard!==undefined&&typeof input.guard!=='function'||input.authorizeSync!==undefined&&typeof input.authorizeSync!=='function')throw authorizationError();
       authorizeSync(input);
-      if(input.signal?.aborted)throw new Error('操作已取消或停止');
+      if(input.signal?.aborted)throw stoppedError(input.signal);
       if(changes.has(input.action))sequence=++changeSequence;
       // Original callers may stop their own outstanding work immediately. A
       // different caller must first prove the same live binding; replays never
@@ -161,17 +163,17 @@ export function createNewsService({store,fetchCandidates,selectArticles,readArti
     }catch(error){return Promise.reject(error);}
     const admit=async()=>{
       await load();
-      if(closing)throw new Error('资讯服务已关闭');
+      if(closing)throw stoppedError(undefined,'资讯服务已关闭');
       await authorizeRequest(input);
       if(changes.has(input.action)&&!duplicateSetting(owner,input)){
         await authorizedKey(owner);
-        if(input.action==='configure'&&!await canRun())throw new Error('助理已暂停，未启用日报');
-        if(closing||input.signal?.aborted)throw new Error('操作已停止');
+        if(input.action==='configure'&&!await canRun())throw pausedError('助理已暂停，未启用日报');
+        if(closing||input.signal?.aborted)throw stoppedError(input.signal);
         await authorizeRequest(input);
         if(!invalidated){requestedGeneration=acceptChange(sequence);invalidated=true;}
       }
       return serial(async()=>{
-        await load();if(closing)throw new Error('资讯服务已关闭');
+        await load();if(closing)throw stoppedError(undefined,'资讯服务已关闭');
         await authorizeRequest(input);
         if(input.action==='status'){const result=await visibleStatus(owner);authorizeSync(input);return result;}
         if(input.action==='preview'){
@@ -184,7 +186,7 @@ export function createNewsService({store,fetchCandidates,selectArticles,readArti
           if(duplicateSetting(owner,input)){const result={...await visibleStatus(owner),duplicate:true};authorizeSync(input);return result;}
           stopped(input,requestedGeneration);
           const key=await authorizedKey(owner);
-          if(input.action==='configure'&&!await canRun())throw new Error('助理已暂停，未启用日报');
+          if(input.action==='configure'&&!await canRun())throw pausedError('助理已暂停，未启用日报');
           await authorizeRequest(input);
           stopped(input,requestedGeneration);receiptCapacity();
           const previous=state;state=copy(state);
@@ -208,7 +210,7 @@ export function createNewsService({store,fetchCandidates,selectArticles,readArti
         const prior=state.jobs.find(j=>j.kind==='manual'&&j.sessionId===owner.sessionId&&j.requestId===input.requestId);
         if(prior)return jobView(prior,true);
         const key=await authorizedKey(owner);
-        if(!await canRun())throw new Error('助理已暂停，未发送资讯');
+        if(!await canRun())throw pausedError('助理已暂停，未发送资讯');
         await authorizeRequest(input);
         stopped(input,requestedGeneration);pruneJobs();
         const createdAt=now().toISOString(),job={id:`news_${randomUUID()}`,kind:'manual',requestId:input.requestId,sessionId:owner.sessionId,bindingKey:key,date:null,createdAt,expiresAt:new Date(now().getTime()+SIX_HOURS).toISOString(),status:'generating',articleIds:[],text:'',detail:deliveryLabels.generating,topics:state.preferences?copy(state.preferences.topics):null,timeZone:typeof hostTimeZone==='function'?hostTimeZone():hostTimeZone};

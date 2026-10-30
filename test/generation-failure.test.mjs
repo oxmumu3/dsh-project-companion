@@ -35,3 +35,11 @@ test('delivery and validation failures do not masquerade as source read failures
  const timeout=generationFailure('review',Object.assign(Error('private'),{code:'REVIEW_TIMEOUT'}));
  assert.match(timeout.text,/限定时间/);assert.doesNotMatch(timeout.text,/取消|暂停|再发预览/);
 });
+test('news cancellation and pause stay blocked while its total timeout is a generation failure',()=>{
+ for(const code of ['NEWS_CANCELLED','NEWS_PAUSED']){
+  const value=generationFailure('news',Object.assign(Error('private'),{code}));
+  assert.equal(value.status,'blocked');assert.match(value.text,/停止/);
+ }
+ const timeout=generationFailure('news',Object.assign(Error('private'),{code:'NEWS_TIMEOUT'}));
+ assert.equal(timeout.status,'failed');assert.match(timeout.text,/限定时间/);
+});

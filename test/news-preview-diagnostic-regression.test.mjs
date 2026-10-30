@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createNewsModel} from '../src/news-model.js';
 import {createNewsService,newsRowSchema} from '../src/news-service.js';
+import {deriveFamilyNewsRequest} from '../src/family-news-intent.js';
 const article={id:'a',title:'AI plugin engineering',sourceName:'Synthetic public RSS',publishedAt:'2026-10-30T05:00:00Z',excerpt:'Public source evidence.',url:'https://example.org/a'};
 const ctx={get(name){if(name==='agentDefaultModel')return{currentSelection:()=>({provider:'p',model:'m',reasoningEffort:'max'})};if(name==='llm')return{prepareCall:async config=>({config,stream:async function*(){yield{type:'reasoning-delta',index:0,text:'PRIVATE_REASONING'};yield{type:'usage',usage:{outputTokens:1800,reasoningTokens:1800}};yield{type:'finish',reason:{kind:'max-tokens'}};}})};throw Error('unavailable');}};
 const owner={sessionId:'synthetic',cwd:'/synthetic/public-news'};
@@ -50,4 +51,22 @@ test('scheduled failure persists only safe stage and model counters and survives
 test('scheduled source error cannot persist arbitrary diagnostic strings',async()=>{
  let persisted;const s=service({store:{get:async()=>persisted,put:async(_key,value)=>{persisted=structuredClone(value);}},fetchCandidates:async()=>{throw Object.assign(new Error('PRIVATE_TOKEN'),{code:'PRIVATE_CODE',newsDiagnostic:{stage:'PRIVATE_STAGE',code:'PRIVATE_CODE',model:{reasoningEffort:'PRIVATE_SECRET',finish:'PRIVATE_FINISH',textChars:'PRIVATE_TEXT'}}});}});
  try{await s.act(owner,{action:'configure',time:'06:00',timeZone:'UTC',userRequested:true,requestId:'schedule'});await s.tick();assert.deepEqual(persisted.jobs[0].diagnostic,{stage:'sources',code:'NEWS_SOURCE_FAILED'});assert.doesNotMatch(JSON.stringify(persisted),/PRIVATE/);}finally{await s.close();}
+});
+test('news rejects an unavailable Family Owner request with its own fixed scope category',()=>{
+ assert.throws(()=>deriveFamilyNewsRequest(undefined,{action:'preview',activeCallVerified:false}),{code:'FAMILY_NEWS_SCOPE_UNSUPPORTED'});
+});
+test('news distinguishes pause, caller cancellation and genuine timeout without reading sources',async()=>{
+ for(const [mode,code]of[['paused','NEWS_PAUSED'],['cancelled','NEWS_CANCELLED'],['timeout','NEWS_TIMEOUT'],['named-error','NEWS_CANCELLED']]){
+  let reads=0;const c=new AbortController();
+  if(mode==='cancelled')c.abort();if(mode==='timeout')c.abort(new DOMException('Synthetic timeout','TimeoutError'));if(mode==='named-error')c.abort(Object.assign(Error('Private fake timeout'),{name:'TimeoutError'}));
+  const s=service({canRun:async()=>mode!=='paused',fetchCandidates:async()=>{reads++;return{articles:[]};}});
+  try{await assert.rejects(s.act(owner,{action:'preview',signal:c.signal}),{code});assert.equal(reads,0);}finally{await s.close();}
+ }
+});
+test('a genuine in-flight news timeout persists failed rather than user cancellation',async()=>{
+ let persisted;const c=new AbortController();let enter;const started=new Promise(resolve=>{enter=resolve;});
+ const s=service({store:{get:async()=>persisted,put:async(_key,value)=>{persisted=structuredClone(value);}},fetchCandidates:async()=>{enter();return new Promise(()=>{});}});
+ const pending=s.act(owner,{action:'send_now',userRequested:true,requestId:'synthetic-timeout',signal:c.signal});
+ await started;const timer=setTimeout(()=>c.abort(new DOMException('Synthetic timeout','TimeoutError')),10);
+ try{await assert.rejects(pending,{code:'NEWS_TIMEOUT'});assert.equal(persisted.jobs[0].status,'failed');assert.equal(persisted.jobs[0].diagnostic.code,'NEWS_TIMEOUT');}finally{clearTimeout(timer);await s.close();}
 });
