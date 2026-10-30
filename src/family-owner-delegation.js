@@ -19,7 +19,7 @@ export function familyDelegationBinding(scope){
  * service must verify the exact active Owner WeChat tool call independently;
  * an apparent owner session ID alone is not an identity assertion.
  */
-export function createFamilyOwnerDelegation({store,getBridge,readGrantedLeases,readGrantedLeasesSync,readLegacySetup=async()=>({state:'unknown'})}={}){
+export function createFamilyOwnerDelegation({store,getBridge,readGrantedLeases,readGrantedLeasesSync,readLegacySetup=async()=>({state:'unknown'}),onRouteDiagnostic}={}){
   if(!store||typeof getBridge!=='function'||typeof readGrantedLeases!=='function'||typeof readGrantedLeasesSync!=='function')throw Error('FAMILY_DELEGATION_CONFIGURATION');
   let state,loaded=false,closed=false,generation=0,queue=Promise.resolve(),writes=Promise.resolve(),revocationWrite=Promise.resolve();
   const serial=fn=>{const next=queue.then(fn);queue=next.catch(()=>{});return next;};
@@ -44,24 +44,30 @@ export function createFamilyOwnerDelegation({store,getBridge,readGrantedLeases,r
     revocationWrite=write(revoked).catch(()=>{closed=true;generation++;});
     return revocationWrite;
   }
-  function routeState({sessionId,bindingRevision}={}){
-    if(closed||!loaded)return'unknown';
-    if(state?.disabled===true)return'changed';
-    if(!valid(state))return'unknown';
-    if(sessionId!==state.familySessionId||bindingRevision!==state.bindingRevision)return'changed';
+  function routeState({sessionId,bindingRevision}={},observe=onRouteDiagnostic){
+    // Only closed categories cross this optional boundary. Observer failures
+    // cannot alter admission or interrupt the existing revocation write.
+    const finish=(state,reason)=>{try{if(typeof observe==='function')void Promise.resolve(observe({state,reason})).catch(()=>{});}catch{}return state;};
+    if(closed)return finish('unknown','DELEGATION_CLOSED');
+    if(!loaded)return finish('unknown','DELEGATION_NOT_READY');
+    if(state?.disabled===true)return finish('changed','DELEGATION_DISABLED');
+    if(!valid(state))return finish('unknown','DELEGATION_INVALID');
+    if(sessionId!==state.familySessionId||bindingRevision!==state.bindingRevision)return finish('changed','DELEGATION_BINDING_CHANGED');
     let status;
     try{
-      status=getBridge()?.ownerRouteStatus?.({sessionId,bindingRevision});
-      if(!['current','offline','changed','unknown'].includes(status))return'unknown';
-      if(status==='changed'){void revoke();return'changed';}
-    }catch{return'unknown';}
-    let rows,leases;try{rows=readGrantedLeasesSync();leases=select(rows,state.originSessionId);}catch(error){return error?.code==='CONTEXT_BINDING_CHANGED'?'changed':'unknown';}
+      const bridge=getBridge();
+      if(typeof bridge?.ownerRouteStatus!=='function')return finish('unknown','BRIDGE_UNAVAILABLE');
+      status=bridge.ownerRouteStatus({sessionId,bindingRevision});
+      if(!['current','offline','changed','unknown'].includes(status))return finish('unknown','BRIDGE_UNKNOWN');
+      if(status==='changed'){void revoke();return finish('changed','BRIDGE_CHANGED');}
+    }catch{return finish('unknown','BRIDGE_FAILED');}
+    let rows,leases;try{rows=readGrantedLeasesSync();leases=select(rows,state.originSessionId);}catch(error){return error?.code==='CONTEXT_BINDING_CHANGED'?finish('changed','CREDENTIAL_BINDING_CHANGED'):finish('unknown','LEASES_UNAVAILABLE');}
     // A credential/grant update must stop old plans without destroying the
     // verified Owner identity needed for a new explicit recovery request.
     // A positively different origin/binding is still permanent revocation.
-    if(Array.isArray(rows)&&rows.some(row=>row?.sessionId!==state.originSessionId||row?.bindingKey!==state.originBindingKey)){void revoke();return'changed';}
-    if(!leases||leases.originBindingKey!==state.originBindingKey||leases.leaseFingerprint!==state.leaseFingerprint)return'changed';
-    return status;
+    if(Array.isArray(rows)&&rows.some(row=>row?.sessionId!==state.originSessionId||row?.bindingKey!==state.originBindingKey)){void revoke();return finish('changed','LEASE_BINDING_CHANGED');}
+    if(!leases||leases.originBindingKey!==state.originBindingKey||leases.leaseFingerprint!==state.leaseFingerprint)return finish('changed','LEASE_CHANGED');
+    return finish(status,status==='current'?'CURRENT':status==='offline'?'BRIDGE_OFFLINE':'BRIDGE_UNKNOWN');
   }
   function current(scope){
     if(closed||!valid(state)||!scope||scope.familySessionId!==state.familySessionId||scope.bindingRevision!==state.bindingRevision||scope.originSessionId!==state.originSessionId||scope.originBindingKey!==state.originBindingKey||scope.leaseFingerprint!==state.leaseFingerprint||scope.grantRevision!==state.grantRevision)return false;
