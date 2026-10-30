@@ -7,15 +7,17 @@
   "nativeImplementationPending": true,
   "dailyVersion": "0.18.0-preview.1",
   "files": {
-    "DESIGN.md": "39b0ba93c0bf5c8f3b8246429e46787db636a9b78e8d9ed5ba93c0061489d17d",
+    "DESIGN.md": "23f301c14732778486a86718a70bd4a30c4d080934ad5f2f02043ee754ff1339",
     "research.md": "236fee8e6469c7430f0ebd01a71970b69f9c1e8ea4dd904c9c5d4945599e400e",
     "native-implementation-audit.md": "c570603ae4235d0e486bda1697d232f4636b694f86ec493a44ce1a625bb1188f",
     "implementation-gaps.md": "55df3847be7b1350e0dabec72c97d889437466fdc16f2d19b9ba6a5e72a98041",
-    "prototype.html": "6728b7aae03566b80c605c6d2daa30c3f529fad352f245bb0d66be71023aaae5",
+    "prototype.html": "702de7eb0d2150e7f35be65c7dd3ed895ad5eb7de7e570f2cd5857a187527e94",
     "prototype-notes.md": "9064b47ad82ac4bac0139ffbff1a772e563186ac55524a2b7340e3a9caf4e508",
-    "QA.md": "5a1850735c98366827be9cdc1a6ba5587cb24faff610e1e3a2cfd06a7b0a9f91",
+    "QA.md": "eb1ac0a97868cca50cc5a6655c5829d56bc95d4ebb05d892b51c3ab448c67892",
     "visual-notes.md": "19a9101a3968890f19c8557e17837b9f488ebaa4429f2a143955245bece9c259",
-    "visual-proof.json": "54e3b26d321314a6623cf47aec208884693ab13f69566457ebf47c096a26b36a"
+    "visual-proof.json": "54e3b26d321314a6623cf47aec208884693ab13f69566457ebf47c096a26b36a",
+    "hallmark-proof.json": "edf697a785d106d07e84667e4e7979ae0a57b9215303e7bd5d4702c280cab5b0",
+    "hallmark-notes.md": "c1930ab6d3f1c7bc5f74d36a404b9e32a93d940c3b260c3bc17c0ec509c0a97c"
   },
   "localPreview": {
     "url": "http://127.0.0.1:60757/prototype.html",
@@ -23,7 +25,7 @@
     "bind": "127.0.0.1",
     "standaloneHtmlAlsoSaved": true
   },
-  "updatedAt": "2026-10-30T17:39:07.594109+00:00",
+  "updatedAt": "2026-10-30T18:08:04.475381+00:00",
   "priorDocumentationCommit": "23d8b66",
   "firstUse": {
     "inlineQr": true,
@@ -37,5 +39,15 @@
     "proof": "visual-proof.json",
     "nativeInstalled": false,
     "userAccepted": false
+  },
+  "hallmark": {
+    "version": "2.0.0",
+    "depth": "full",
+    "scope": "app",
+    "proof": "hallmark-proof.json",
+    "notes": "hallmark-notes.md",
+    "nativeInstalled": false,
+    "userAccepted": false,
+    "sourceSha256": "702de7eb0d2150e7f35be65c7dd3ed895ad5eb7de7e570f2cd5857a187527e94"
   }
 }
