@@ -676,7 +676,7 @@ window.__ModuleLoader__.load({
         const toggleAttention=async()=>{
           if(!active.current||flight.current||!reviewState?.deliverySupported||!reviewSchedule)return;
           const expectedBindingRevision=reviewState.bindingRevision;flight.current=true;setBusy(true);setError('');
-          try{const value=await request('/api/project_companion/review/attention',{enabled:reviewState.review.attention?.enabled!==true,expectedBindingRevision});if(active.current&&bindingOf(currentSnapshot.current)===expectedBindingRevision)setNotice(value.text);}
+          try{const value=await request('/api/project_companion/review/attention',{enabled:reviewState.review.attention?.enabled!==true,expectedBindingRevision});if(active.current&&revisionOf(currentSnapshot.current)===expectedBindingRevision)setNotice(value.text);}
           catch{if(active.current)setError('主动关注设置未更改或结果待核对，请刷新后检查。');}
           finally{flight.current=false;if(active.current){setBusy(false);await refresh();}}
         };

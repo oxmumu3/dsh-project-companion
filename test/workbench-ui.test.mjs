@@ -592,3 +592,9 @@ test('partial check history keeps failed-source uncertainty visible instead of c
  const h=await harness();h.context.snapshot.projects[0].followup={available:true,followup:null,once:{enabled:false,running:false,status:'completed',delivery:'wechat',lastReviewedAt:'2026-10-19T16:40:00Z',lastCheckOutcome:'partial'}};
  try{h.render();await h.flush();const view=h.render();assert.match(text(view),/部分来源仍无法确认/);assert.doesNotMatch(text(view),/本次可见范围无新变化，已静默/);assert.equal(actionPosts(h).length,0);}finally{h.dispose();}
 });
+test('shared Owner attention control submits only fixed intent and refreshes its visible result',async()=>{
+ const h=await harness();const revision='a'.repeat(64);h.context.snapshot.bindingRevision=revision;h.context.snapshot.connection.readOnly=true;
+ h.context.snapshot.personalReview={available:true,bindingRevision:revision,deliverySupported:true,review:{status:'enabled',schedule:{dailyTime:'09:00',timeZone:'UTC'},sources:['gmail'],projects:[],items:[],jobs:[],attention:{enabled:false,nextRun:null,quiet:false,remaining:0}},news:{topics:[],topicSource:'default'}};
+ h.context.onFetch=async(url,options)=>{if(url==='/api/project_companion/review/attention'){assert.deepEqual(JSON.parse(options.body),{enabled:true,expectedBindingRevision:revision});h.context.snapshot.personalReview.review.attention={enabled:true,nextRun:'2026-10-30T11:00:00.000Z',quiet:false,remaining:2};return Response.json({text:'已开启工作时段关注。'});}return Response.json(h.context.snapshot);};
+ h.render();await h.flush();let tree=h.render();await button(tree,'开启工作时段主动关注').props.onClick();await h.flush();tree=h.render();assert.match(text(tree),/已开启工作时段关注。/);assert.ok(button(tree,'关闭工作时段主动关注'));assert.equal(actionPosts(h).length,1);h.dispose();
+});
