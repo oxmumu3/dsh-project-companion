@@ -1,6 +1,7 @@
 import {createHash} from 'node:crypto';
 import {basename,isAbsolute} from 'node:path';
 import {reviewSourceTaskSchema,reviewSourceTaskKey,MAX_TRACKED_REVIEW_TASKS} from './personal-review-source-tasks.js';
+import {safeReviewSourceFailure} from './personal-review-source-diagnostics.js';
 
 const DAY=86400000;
 const SOURCES=new Set(['gmail','calendar','drive','flomo','dida']);
@@ -35,9 +36,9 @@ export function createPersonalReviewCollector({query,readProject,readMemory}={})
   if(!requestedFrom||!to||Date.parse(to)<=Date.parse(requestedFrom)||!['daily','weekly'].includes(kind)||!Array.isArray(sources)||sources.length>5||new Set(sources).size!==sources.length||sources.some(s=>!SOURCES.has(s))||!Array.isArray(projects)||projects.length>5||projects.some(p=>typeof p!=='string'||!isAbsolute(p))||typeof guard!=='function')throw Error('Invalid personal review collection scope');
   if(taskScopeKey!==undefined&&!/^[a-f0-9]{64}$/.test(taskScopeKey)||typeof trackedTasksIncomplete!=='boolean'||!Array.isArray(trackedTasks)||trackedTasks.length>MAX_TRACKED_REVIEW_TASKS||trackedTasks.some(task=>!reviewSourceTaskSchema.safeParse(task).success||task.scopeKey!==taskScopeKey||!sources.includes(task.source))||new Set(trackedTasks.map(reviewSourceTaskKey)).size!==trackedTasks.length)throw Error('Invalid tracked task scope');
   const from=new Date(Math.max(Date.parse(requestedFrom),Date.parse(to)-7*DAY)).toISOString(),clipped=from!==requestedFrom;
-  const evidence=[],coverage=[],taskChecks=[];
+  const evidence=[],coverage=[],taskChecks=[],sourceFailures=new Map();
   async function check(){signal?.throwIfAborted();if(await guard()!==true)throw Error('Personal review authorization revoked');signal?.throwIfAborted();}
-  async function attempt(fn){await check();let value;try{value=await fn();}catch{await check();return null;}await check();return value;}
+  async function attempt(fn,source,operation){await check();let value;try{value=await fn();}catch(error){await check();if(source&&!sourceFailures.has(source))sourceFailures.set(source,safeReviewSourceFailure(error,operation));return null;}await check();return value;}
   const add=(source,row,resource,extra={})=>{
    if(!resource||typeof resource!=='string'||resource.length>4096)return false;
    const id=`${source}_${createHash('sha256').update(resource).digest('hex').slice(0,32)}`;
@@ -54,7 +55,7 @@ export function createPersonalReviewCollector({query,readProject,readMemory}={})
    if(source==='dida'&&taskScopeKey){const task=reviewSourceTaskSchema.safeParse({source,projectId:row.projectId,taskId:row.id,scopeKey:taskScopeKey});if(task.success)item.sourceTask=task.data;}
    const i=evidence.findIndex(e=>e.id===id);if(i>=0)evidence[i]={...evidence[i],...item};else evidence.push(item);return true;
   };
-  async function read(source,args){return attempt(()=>query(caller,{...args,source,action:'query',userRequested:true,signal}));}
+  async function read(source,args){return attempt(()=>query(caller,{...args,source,action:'query',userRequested:true,signal}),source,args.operation);}
   for(const task of trackedTasks){
    const result=await read(task.source,{operation:'read',projectId:task.projectId,id:task.taskId});
    const row=result?.items?.length===1?result.items[0]:null;
@@ -105,7 +106,7 @@ export function createPersonalReviewCollector({query,readProject,readMemory}={})
      }
     }
    }
-   coverage.push({source,status:failed?'unavailable':partial?'partial':'ok',count:failed?null:evidence.filter(e=>e.source===source).length,truncated:!failed&&partial,from:windowFrom,to:windowTo});
+   coverage.push({source,status:failed?'unavailable':partial?'partial':'ok',count:failed?null:evidence.filter(e=>e.source===source).length,truncated:!failed&&partial,from:windowFrom,to:windowTo,...(sourceFailures.has(source)?{diagnostic:sourceFailures.get(source)}:{})});
   }
   for(const root of projects){
    const result=await attempt(()=>readProject(caller,root,{signal}));const rows=Array.isArray(result)?result:result?.sources;
