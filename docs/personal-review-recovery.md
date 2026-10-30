@@ -14,9 +14,9 @@
 
 ## 接入合同
 
-`createPersonalReviewService` 新增可选只读依赖 `readAvailability(scope)`。`scope` 包含 `caller.sessionId`、`bindingKey`、`grant` 及原订阅范围，返回 `current | offline | changed | unknown`。Family 与独立桥各自提供状态；没有明确状态时不能把连接失败猜成临时离线。原读取和发送前授权检查仍执行。
+`createPersonalReviewService` 的可选依赖 `readAvailability(scope)` 接收原订阅范围，兼容返回 `current | offline | changed | unknown`，也接受严格的 `{state, reason}` 闭集枚举。Family 适配器从同一次原有门控调用捕获原因，不为诊断另行调用生产接口。底层状态检查可能涉及既有撤权规则，不应由外部诊断工具当作无副作用探针。没有明确状态时不能把连接失败猜成临时离线，原读取和发送前授权检查继续执行。
 
-状态行新增可缺省为 `null` 的 `recovery`，只含授权代际指纹、观测时间、离线起点和阻止状态，不保存私人内容。实际检查继续以 `attention` 记账，采集／模型材料继续使用 `daily` 合同。
+状态行的 `recovery` 可缺省为 `null`；兼容原有字段，并允许可选的严格 `diagnostic`，只保存状态、原因和固定守卫错误码。不保存原异常消息、来源名称、账号、会话、路径或凭据。原因变化立即保存，相同原因沿用五分钟检查点节流；恢复 current 后清除诊断。实际检查继续以 `attention` 记账，采集／模型材料继续使用 `daily` 合同。旧记录可直接加载，增加诊断不代表旧失败已归因。
 
 ## 本轮验证边界
 
