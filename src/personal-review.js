@@ -132,7 +132,8 @@ export function createPersonalReviewService({ store, readBinding, readBindingSyn
     else if(attention.enabled){
       const pad=value=>String(value).padStart(2,'0');
       const next=attention.nextRun?localProjection(makeLocalFormatter(schedule.timeZone),Date.parse(attention.nextRun)):null;
-      attentionText=`工作时段主动关注：已开启。${pad(policy.startHour)}:00–${pad(policy.endHour)}:00，每${policy.intervalMinutes/60}小时检查；每日额外最多 ${policy.maxMessagesPerDay} 条，今天还可额外提醒 ${attention.remaining} 条。${next?`下次检查：${next.year}/${pad(next.month)}/${pad(next.day)} ${pad(next.hour)}:${pad(next.minute)}（${schedule.timeZone}）。`:'下次检查时间尚未确认。'}${attention.quiet?'当前不在工作时段。':''}只在有值得提醒的新变化时发送；开启不代表本次已完成检查或手机已收到。`;
+      const nextText=attention.remaining===0?'今天额外额度已用尽，今日剩余的额外检查与推送不再执行；每日和每周回顾仍按原计划运行。':next?`下次检查：${next.year}/${pad(next.month)}/${pad(next.day)} ${pad(next.hour)}:${pad(next.minute)}（${schedule.timeZone}）。`:'下次检查时间尚未确认。';
+      attentionText=`工作时段主动关注：已开启。${pad(policy.startHour)}:00–${pad(policy.endHour)}:00，每${policy.intervalMinutes/60}小时检查；每日额外最多 ${policy.maxMessagesPerDay} 条，今天还可额外提醒 ${attention.remaining} 条。${nextText}${attention.quiet?'当前不在工作时段。':''}只在有值得提醒的新变化时发送；开启不代表本次已完成检查或手机已收到。`;
     }
     const unconfirmed=includeScope&&scope&&state.items.some(item=>item.scopeKey===scope.key&&!['handled','dismissed'].includes(item.status)&&!itemInScope(item,scope));
     return { status: state.subscription ? state.subscription.paused ? 'paused' : 'enabled' : 'off', schedule: state.subscription ? copy(state.subscription.schedule) : null,

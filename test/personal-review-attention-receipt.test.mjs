@@ -67,10 +67,18 @@ test('quiet hours and exhausted budget retain truthful local scheduling and do n
  const initial=await fixture(t);await configure(initial);await enable(initial);const persisted=initial.row();
  persisted.attentionClaims=[{id:'synthetic-first',at:'2026-10-30T17:00:00.000Z',timeZone:'America/Mexico_City',status:'reported_sent'},{id:'synthetic-second',at:'2026-10-30T19:00:00.000Z',timeZone:'America/Mexico_City',status:'uncertain'}];
  const day=await fixture(t,{persisted,at:'2026-10-30T20:59:50.000Z'}),state=await day.service.act(caller,{action:'status'});
- assert.equal(state.attention.remaining,0);assert.match(visible(state),/今天还可额外提醒 0 条/);assert.equal(day.row().attentionClaims.length,2);
+ assert.equal(state.attention.remaining,0);assert.equal(state.attention.nextRun,'2026-10-30T21:00:00.000Z');assert.equal(day.row().attentionClaims.length,2);
+ const duplicate=await enable(day);assert.equal(duplicate.duplicate,true);
+ for(const result of [state,duplicate]){
+  assert.equal(result.attention.remaining,0);assert.match(result.text,/今天额外额度已用尽/);assert.match(result.text,/今日剩余的额外检查与推送不再执行/);assert.match(result.text,/每日和每周回顾仍按原计划运行/);
+  const text=visible(result);assert.match(text,/今天还可额外提醒 0 条/);assert.match(text,/今天额外额度已用尽/);assert.match(text,/每日和每周回顾仍按原计划运行/);assert.doesNotMatch(text,/下次检查|明天|明日/);
+ }
+ day.time('2026-10-30T21:00:00.000Z');await day.service.tick();assert.deepEqual(day.effects,{collect:0,model:0,send:0});assert.equal(day.row().attentionClaims.length,2);
  const night=await fixture(t,{persisted,at:'2026-10-31T02:00:00.000Z'}),later=await night.service.act(caller,{action:'status'});
- assert.equal(later.attention.quiet,true);assert.match(visible(later),/当前不在工作时段/);assert.match(visible(later),/下次检查：2026\/10\/31 11:00/);
+ assert.equal(later.attention.quiet,true);assert.equal(later.attention.remaining,0);assert.match(visible(later),/当前不在工作时段/);assert.match(visible(later),/今天额外额度已用尽/);assert.doesNotMatch(visible(later),/下次检查/);
  assert.doesNotMatch(visible(later),/没有变化|已送达/);assert.deepEqual(night.effects,{collect:0,model:0,send:0});
+ const tomorrow=await fixture(t,{persisted,at:'2026-10-31T16:00:00.000Z'}),fresh=await tomorrow.service.act(caller,{action:'status'});
+ assert.equal(fresh.attention.remaining,2);assert.match(visible(fresh),/下次检查：2026\/10\/31 11:00/);assert.doesNotMatch(visible(fresh),/今天额外额度已用尽/);
 });
 
 test('changed authority still blocks status instead of displaying a successful receipt',async t=>{
