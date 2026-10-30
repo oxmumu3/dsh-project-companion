@@ -10,7 +10,7 @@ async function fixture({persisted}={}){
  const service=createPersonalReviewService({store:{get:async()=>structuredClone(row),put:async(_key,value)=>{writes++;row=structuredClone(value);}},clock:()=>at,
   readAvailability:async()=>{availabilityReads++;if(failure)throw failure;return availability;},
   authorization:async()=>{authorizationReads++;if(grantMode==='throw')throw new Error('PRIVATE_AUTH_CANARY');return grantMode==='missing'?null:grantMode==='changed'?'c'.repeat(64):grant;},
-  readBinding:async()=>{bindingReads++;if(bindingMode==='throw')throw new Error('PRIVATE_BINDING_CANARY');return{bound:bindingMode!=='missing',bindingKey:bindingMode==='changed'?'d'.repeat(64):binding};},
+  readBinding:async()=>{bindingReads++;if(bindingMode==='throw')throw new Error('PRIVATE_BINDING_CANARY');if(bindingMode==='unexpected')return{bound:true,get bindingKey(){throw Object.assign(new Error('PRIVATE_GUARD_CANARY'),{code:'MODEL_INVALID_OUTPUT'});}};return{bound:bindingMode!=='missing',bindingKey:bindingMode==='changed'?'d'.repeat(64):binding};},
   canRun:async()=>enabled,
   collect:async()=>{calls.collect++;return{evidence:[],coverage:[{source:'gmail',status:'ok',count:0}]};},
   summarize:async()=>{calls.model++;return{items:[]};},send:async()=>{calls.send++;return{status:'reported_sent'};},
@@ -47,7 +47,7 @@ test('route exceptions persist only the fixed failure category',async()=>{
 test('pre-job guard failures persist only existing fixed authorization, binding and pause codes',async()=>{
  for(const [kind,value,code] of [
   ['grant','throw','REVIEW_AUTHORIZATION_UNAVAILABLE'],['grant','missing','REVIEW_AUTHORIZATION_REQUIRED'],['grant','changed','REVIEW_AUTHORIZATION_CHANGED'],
-  ['binding','throw','REVIEW_BINDING_CHANGED'],['binding','missing','REVIEW_BINDING_CHANGED'],['binding','changed','REVIEW_BINDING_CHANGED'],['pause',false,'REVIEW_PAUSED'],
+  ['binding','throw','REVIEW_BINDING_CHANGED'],['binding','missing','REVIEW_BINDING_CHANGED'],['binding','changed','REVIEW_BINDING_CHANGED'],['binding','unexpected','REVIEW_FAILED'],['pause',false,'REVIEW_PAUSED'],
  ]){
   const f=await fixture();await subscribe(f);if(kind==='grant')f.grantMode(value);else if(kind==='binding')f.bindingMode(value);else f.disable();
   f.time('2026-10-30T11:00:00Z');await f.service.tick();
