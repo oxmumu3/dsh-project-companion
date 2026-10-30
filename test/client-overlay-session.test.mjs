@@ -38,23 +38,23 @@ for(const deleted of [false,true])test(`overlay reopens an unsaved native sessio
   let tree=await f.settle();assert.equal(f.requests.length,0);
   button(tree,'打开 Dot 对话').props.onClick();tree=await f.settle();
   await button(tree,'开始桌面对话').props.onClick();tree=await f.settle();assert.equal(nodes(tree,n=>n.type==='native-composer').length,1);assert.deepEqual(f.retained,['synthetic-created']);
-  button(tree,'收起 Dot 对话').props.onClick();tree=await f.settle();assert.deepEqual(f.released,['synthetic-created']);
+  button(tree,'收起 Dot 对话').props.onClick();tree=await f.settle();assert.deepEqual(f.released,[],'closing releases the editable occurrence while the native draft binding remains retained');
   // The old source route must not replace the explicitly created conversation.
   Object.assign(f.route,{state:'ready',sessionId:'older-native-route',revision:'old'});
   if(deleted){f.state.ids=[];f.state.byId={};}
   button(tree,'打开 Dot 对话').props.onClick();tree=await f.settle();
-  assert.equal(f.requests.length,1,'cached identity must not fall back to an older source route');assert.equal(f.created,1);
-  assert.deepEqual(f.retained,deleted?['synthetic-created']:['synthetic-created','synthetic-created']);
+  assert.equal(f.requests.length,0,'cached identity must never read or fall back to the old source route');assert.equal(f.created,1);
+  assert.deepEqual(f.retained,['synthetic-created'],'a released surface reuses the same lifetime binding rather than risking draft loss');
   assert.equal(nodes(tree,n=>n.type==='native-composer').length,deleted?0:1);
   if(deleted)assert.match(text(tree),/已有桌面对话暂不可用/);
- }finally{f.dispose();}
+ }finally{f.dispose();assert.deepEqual(f.released,['synthetic-created'],'the binding is released exactly once when the plugin is disposed');}
 });
 
 for(const map of [undefined,null,[], 'invalid'])test(`overlay treats a missing or invalid native session map as unknown (${String(map)})`,async()=>{
  const f=await fixture();try{
-  f.props.usePanelInfo=selector=>selector({activePanelId:null});f.state.byId=map;
+  f.props.usePanelInfo=selector=>selector({activePanelId:null});f.props.useSessions=selector=>selector({phase:'ready',ids:[],byId:map});
   Object.assign(f.route,{state:'ready',sessionId:'original-native-route',revision:'original'});
-  let tree=await f.settle();button(tree,'打开 Dot 对话').props.onClick();tree=await f.settle();
+  let tree=await f.settle();button(tree,'打开 Dot 对话').props.onClick();tree=await f.settle();assert.equal(f.requests.length,0);assert.equal(f.created,0);await button(tree,'开始桌面对话').props.onClick();tree=await f.settle();
   assert.equal(nodes(tree,n=>n.type==='native-composer').length,0);assert.deepEqual(f.retained,[]);
   assert.match(text(tree),/请打开完整工作台继续对话/);
  }finally{f.dispose();}

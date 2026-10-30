@@ -159,43 +159,166 @@ window.__ModuleLoader__.load({
 
     // One editable occurrence across the workbench and any global Dot surface.
     // Native Conversation owns history, drafts, submission and permission UI.
-    function createDesktopConversationController(ctx){
-      let held=null,closed=false;
-      const release=owner=>{if(!held||held.owner!==owner)return;const record=held;held=null;try{record.reference.release();}catch{closed=true;}};
-      const nativeId=value=>typeof value==='string'&&/^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/.test(value)&&!value.startsWith('family_')&&value!=='family-no-legacy';
-      const form=()=>{try{return(ctx.configForms??ctx.get?.('configForms',false))?.get('project-companion');}catch{return null;}};
-      const metadata=async id=>{
-        if(closed||!nativeId(id)||typeof ctx.sessions?.refresh!=='function'||typeof ctx.sessions?.list?.getSnapshot!=='function')return false;
-        try{await ctx.sessions.refresh();const list=ctx.sessions.list.getSnapshot(),row=list?.byId?.[id];return !closed&&list?.phase==='ready'&&Array.isArray(list.ids)&&list.ids.includes(id)&&row?.id===id&&typeof row.cwd==='string'&&row.cwd.startsWith('/')&&row.origin!=='subagent';}catch{return false;}
-      };
-      return{
-        async acquire(owner,target){
-          if(closed||!['string','symbol'].includes(typeof owner)||!owner||typeof target?.sessionId!=='string'||!target.sessionId||target.sessionId.length>200||target.sessionId.startsWith('family_')||target.sessionId==='family-no-legacy')throw new Error('桌面对话范围不可用。');
-          if(held)throw Object.assign(new Error('对话已在另一处打开，请继续已有对话。'),{code:'desktop-conversation-held'});
-          if(typeof ctx.sessions?.retain!=='function')throw new Error('当前宿主的原生对话暂不可用。');
-          const reference=ctx.sessions.retain(target.sessionId,{source:'controllerOperation'}),record={owner,reference};held=record;
-          try{await reference.ready;if(closed||held!==record)throw new Error('对话入口已经关闭。');const binding=reference.binding;
-            if(binding?.sessionId!==target.sessionId||typeof ctx.sessions.binding==='function'&&ctx.sessions.binding(target.sessionId)!==binding)throw new Error('原生会话已变化，请重新打开。');
+function createDesktopConversationController(ctx) {
+  const listeners = new Set();
+  let lifetime = null, held = null, closed = false, revision = 0;
+  let snapshot = Object.freeze({owner:null,sessionId:null,closed:false,revision});
+  const publish = () => {
+    snapshot = Object.freeze({owner:held?.owner??null,sessionId:lifetime?.id??null,closed,revision:++revision});
+    for (const listener of [...listeners]) { try { listener(); } catch {} }
+  };
+  const nativeId = id => typeof id === 'string' && /^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/.test(id) && !id.startsWith('family_') && id !== 'family-no-legacy';
+  const unavailable = () => new Error('桌面对话范围不可用。');
+  const cancelled = () => Object.assign(new Error('对话入口已经关闭。'), {code:'desktop-conversation-cancelled'});
+  const form = () => { try { return (ctx.configForms??ctx.get?.('configForms',false))?.get('project-companion'); } catch { return null; } };
+  const readSelection = () => { try { const current=form()?.getSnapshot(); return current?.status==='ready'?current:null; } catch { return null; } };
+  const listedSubagent = id => { try { return ctx.sessions?.list?.getSnapshot()?.byId?.[id]?.origin === 'subagent'; } catch { return true; } };
+  const validBinding = life => {
+    const binding=life.reference.binding;
+    if (binding?.sessionId!==life.id || typeof ctx.sessions?.binding==='function' && ctx.sessions.binding(life.id)!==binding || listedSubagent(life.id)) return false;
+    try { if (binding.session?.getSnapshot?.()?.subagent) return false; } catch { return false; }
+    return true;
+  };
+  const discardLifetime = () => {
+    const life=lifetime; lifetime=null;
+    if (!life || life.released) return;
+    life.released=true;
+    try { life.reference.release(); } catch { closed=true; held=null; }
+  };
+  const metadata = async id => {
+    if (closed || !nativeId(id) || typeof ctx.sessions?.refresh!=='function' || typeof ctx.sessions?.list?.getSnapshot!=='function') return false;
+    try {
+      await ctx.sessions.refresh();
+      const list=ctx.sessions.list.getSnapshot(),row=list?.byId?.[id];
+      return !closed && list?.phase==='ready' && Array.isArray(list.ids) && list.ids.includes(id) && row?.id===id && typeof row.cwd==='string' && row.cwd.startsWith('/') && row.origin!=='subagent';
+    } catch { return false; }
+  };
+  const pointer = async confirmed => {
+    const current=readSelection(),id=current?.value?.desktopConversationSessionId;
+    if (!current || (current.value?.desktopConversationSelectionVersion===1)!==confirmed || !await metadata(id)) return null;
+    const after=readSelection();
+    return !closed && after?.value?.desktopConversationSessionId===id && (after.value?.desktopConversationSelectionVersion===1)===confirmed ? {sessionId:id,revision:`native:${id}`} : null;
+  };
+  return {
+    getSnapshot:()=>snapshot,
+    subscribe(listener) { if (closed || typeof listener!=='function') return ()=>{}; listeners.add(listener); return ()=>listeners.delete(listener); },
+    async acquire(owner,target) {
+      if (closed || !['string','symbol'].includes(typeof owner) || !owner || !nativeId(target?.sessionId) || listedSubagent(target.sessionId)) throw unavailable();
+      if (held) throw Object.assign(new Error('对话已在另一处打开，请继续已有对话。'), {code:'desktop-conversation-held'});
+      if (typeof ctx.sessions?.retain!=='function') throw unavailable();
+      const lease={owner,target,life:null}; held=lease;
+      try {
+        if (lifetime && lifetime.id!==target.sessionId) discardLifetime();
+        if (closed) throw unavailable();
+        if (!lifetime) {
+          const reference=ctx.sessions.retain(target.sessionId,{source:'controllerOperation'});
+          if (!reference || typeof reference.release!=='function') { closed=true; throw unavailable(); }
+          const life={id:target.sessionId,reference,released:false,isReady:false}; lifetime=life;
+          life.ready=(async()=>{
+            await reference.ready;
+            if (closed || lifetime!==life || life.released) throw cancelled();
+            if (!validBinding(life)) throw unavailable();
+            life.isReady=true;
             return reference;
-          }catch(error){if(held===record)release(owner);throw error;}
-        },
-        release,
-        async resolve(target){const id=target?.sessionId;return await metadata(id)?{sessionId:id,revision:`native:${id}`}:null;},
-        async restore(){try{const current=form()?.getSnapshot();const id=current?.status==='ready'?current.value?.desktopConversationSessionId:null;return await metadata(id)?{sessionId:id,revision:`native:${id}`}:null;}catch{return null;}},
-        async remember(id){
-          if(!await metadata(id))return false;
-          let settings,current;try{settings=form();current=settings?.getSnapshot();}catch{return false;}
-          if(closed||current?.status!=='ready'||current.writable!==true||typeof settings.mutate!=='function')return false;
-          try{const accepted=await settings.mutate([{op:'set',path:['desktopConversationSessionId'],value:id}],current.revision);return !closed&&accepted===true&&settings.getSnapshot()?.value?.desktopConversationSessionId===id;}catch{return false;}
-        },
-        close(){closed=true;if(held)release(held.owner);},
-      };
-    }
+          })();
+        }
+        const life=lifetime; lease.life=life; publish();
+        await life.ready;
+        if (closed || held!==lease || lifetime!==life || life.released) throw cancelled();
+        if (!validBinding(life)) throw unavailable();
+        return life.reference;
+      } catch (error) {
+        if (held===lease) held=null;
+        // A cancelled surface must not dispose the binding a newer owner uses.
+        if (error?.code!=='desktop-conversation-cancelled' && lease.life===lifetime) discardLifetime();
+        publish(); throw error;
+      }
+    },
+    release(owner) { if (!held || held.owner!==owner) return; held=null; publish(); },
+    async resolve(target) { const id=target?.sessionId; return await metadata(id)?{sessionId:id,revision:`native:${id}`}:null; },
+    restore:()=>pointer(true),
+    candidate:()=>pointer(false),
+    async remember(id) {
+      if (!await metadata(id)) return false;
+      const settings=form(),current=readSelection();
+      if (closed || !current || current.writable!==true || current.revision===undefined || typeof settings?.mutate!=='function') return false;
+      try {
+        const accepted=await settings.mutate([
+          {op:'set',path:['desktopConversationSessionId'],value:id},
+          {op:'set',path:['desktopConversationSelectionVersion'],value:1},
+        ],current.revision);
+        const after=readSelection();
+        return !closed && accepted===true && after?.value?.desktopConversationSessionId===id && after.value?.desktopConversationSelectionVersion===1;
+      } catch { return false; }
+    },
+    focus(target) {
+      const life=lifetime;
+      if (closed || !held || held.life!==life || !life?.isReady || target?.sessionId!==life.id || target.revision!==undefined && held.target.revision!==undefined && target.revision!==held.target.revision) return false;
+      try {
+        if (!validBinding(life)) return false;
+        const binding=life.reference.binding,input=binding.ctx?.get?.('conversation',false)?.input?.for?.(binding.ctx);
+        if (typeof input?.focus!=='function') return false;
+        input.focus(); return true;
+      } catch { return false; }
+    },
+    close() { if (closed && !lifetime) return; closed=true; held=null; discardLifetime(); publish(); listeners.clear(); },
+  };
+}
 
-    function desktopConversationCanEmbed(view,targetId){
-      if(typeof view?.activePanelId==='string')return true;
-      return view?.activePanelId===null&&(typeof view.mainSessionId==='string'?view.mainSessionId!==targetId:view.mainSessionId===null&&view.mainViewEmpty===true);
+function desktopConversationCanEmbed(view,targetId) {
+  if (typeof view?.activePanelId==='string') return true;
+  return view?.activePanelId===null && (typeof view.mainSessionId==='string' ? view.mainSessionId!==targetId : view.mainSessionId===null && view.mainViewEmpty===true);
+}
+
+function createDotConversationViews(React) {
+  const h=React.createElement;
+  const native = props => typeof props.renderSlot==='function' ? props.renderSlot('conversation.session',{view:'chat'}) : h('p',{role:'status'},'对话暂不可用，请打开原生会话继续。');
+  const turnOf = node => ['step','turn'].includes(node?.location?.kind) ? node.location.turn?.turn : undefined;
+  const bounded = (text,limit) => { const chars=Array.from(text); return {text:chars.length>limit?chars.slice(0,limit).join('')+'…':text,truncated:chars.length>limit}; };
+  const preview = (chat,session,input,pending) => {
+    if (!session || session.openState!=='open' || session.running!==false || session.openError || session.promptError || pending || !Array.isArray(session.pendingSubmissions) || session.pendingSubmissions.length || !input || !['plain','claimed'].includes(input.phase) || !Array.isArray(input.attachmentIds) || input.attachmentIds.length || !Array.isArray(input.occurrences) || input.occurrences.length || !Array.isArray(input.queue) || input.queue.length) return null;
+    if (!Array.isArray(chat?.order) || typeof chat.nodes?.get!=='function' || !Array.isArray(chat.timeline?.turnOrder) || typeof chat.timeline.turns?.get!=='function') return null;
+    const projected=chat.order.map(key=>chat.nodes.get(key));
+    if (projected.some(node=>!node)) return null;
+    const ordered=projected.filter(node=>node.visibility!=='hidden');
+    const userIndex=ordered.findLastIndex(node=>['user','steering'].includes(node.kind) && node.data?.source?.kind==='user');
+    if (userIndex<0) return null;
+    const user=ordered[userIndex],turn=turnOf(user),currentTurn=chat.timeline.turnOrder.at(-1);
+    if (turn===undefined || turn!==currentTurn || chat.timeline.turns.get(turn)?.status!=='closed') return null;
+    const tailIndex=ordered.findLastIndex(node=>node.kind==='turn-tail' && turnOf(node)===turn);
+    if (tailIndex<=userIndex) return null;
+    const closing=ordered[tailIndex].data?.closing;
+    if (closing?.status!=='settled' || !closing.finalNode || closing.finalNode.interrupted || closing.turn!==turn || !Number.isFinite(closing.finalNode.seq) || !Number.isFinite(user.data?.seq) || closing.finalNode.seq<=user.data.seq) return null;
+    const safeKinds=new Set(['user','steering','assistant-step','turn-tail','turn-process','context','system-prompt']);
+    for (const node of ordered) {
+      if (turnOf(node)!==turn) continue;
+      if (!safeKinds.has(node.kind)) return null;
+      if (node.kind==='assistant-step' && (node.data?.status!=='settled' || node.data?.finalNode?.interrupted || !Array.isArray(node.data?.blocks) || node.data.blocks.some(block=>!['text','reasoning'].includes(block?.kind)))) return null;
     }
+    if (!Array.isArray(user.data.content) || !user.data.content.length || user.data.content.some(block=>block?.type!=='text' || typeof block.text!=='string') || user.data.referenceLabels?.length || user.data.skillNames?.length) return null;
+    if (!Array.isArray(closing.blocks) || closing.blocks.some(block=>!['text','reasoning'].includes(block?.kind) || typeof block.text!=='string')) return null;
+    const question=user.data.content.map(block=>block.text).join(''),answer=closing.blocks.filter(block=>block.kind==='text').map(block=>block.text).join('');
+    if (!question.trim() || !answer.trim()) return null;
+    return {question:bounded(question,600),answer:bounded(answer,1800)};
+  };
+  function CompactHistory(props) {
+    const chat=props.useChat(value=>value),session=props.useSession(value=>value),input=props.useInput(value=>value);
+    const status=props.useSessionStatus(value=>value);
+    const pending=typeof status?.get==='function'?status.get(props.sessionId)?.pendingInteraction:true;
+    const [full,setFull]=React.useState(false);
+    if (full) return h(React.Fragment,null,h('div',{className:'dot_compact_history_actions'},h('button',{type:'button',onClick:()=>setFull(false)},'回到最近对话')),native(props));
+    const current=preview(chat,session,input,pending);
+    if (!current) return native(props);
+    return h('section',{className:'dot_compact_history','data-dot-compact-history':true,'aria-label':'最近对话'},
+      h('div',{className:'dot_compact_history_heading'},h('span',null,'最近对话'),h('button',{type:'button',onClick:()=>setFull(true)},'查看完整对话')),
+      h('div',{className:'dot_compact_history_user'},h('span',{className:'dot_compact_history_role'},'你'),h('p',{style:{whiteSpace:'pre-wrap',overflowWrap:'anywhere'}},current.question.text)),
+      h('div',{className:'dot_compact_history_assistant'},h('span',{className:'dot_compact_history_role'},'Dot'),h('p',{style:{whiteSpace:'pre-wrap',overflowWrap:'anywhere'}},current.answer.text)),
+      (current.question.truncated||current.answer.truncated)&&h('p',{className:'dot_compact_history_truncated'},'内容较长，完整对话中可继续查看。'));
+  }
+  return function CompactViews(props={}) {
+    return ['useChat','useSession','useInput','useSessionStatus'].every(name=>typeof props[name]==='function') ? h(CompactHistory,props) : native(props);
+  };
+}
 
     // BEGIN synchronized Dot overlay factories
 function createDotOverlay(React, adapters = {}) {
@@ -206,15 +329,17 @@ function createDotOverlay(React, adapters = {}) {
 .dot_overlay button{font:inherit;cursor:pointer;color:inherit}.dot_overlay button:focus-visible{outline:2px solid var(--dsw-alias-state-business-primary,#4176e6);outline-offset:3px}
 .dot_overlay_launcher{pointer-events:auto;display:inline-flex;align-items:center;justify-content:center;gap:8px;min-height:44px;padding:9px 15px;border:1px solid var(--dsw-alias-border-l3,rgba(44,55,68,.12));border-radius:24px;background:var(--dsw-alias-bg-layer-2,#fffdf8);box-shadow:0 5px 24px rgba(22,34,48,.14);font-size:14px!important;font-weight:600!important}
 .dot_overlay_mark{display:inline-flex;color:var(--dsw-alias-state-business-primary,#4176e6)}
-.dot_overlay_panel{pointer-events:auto;display:flex;flex-direction:column;width:min(420px,calc(100vw - 32px));height:min(620px,calc(100vh - var(--dsh-frame-overlay-top,68px) - 104px));height:min(620px,calc(100dvh - var(--dsh-frame-overlay-top,68px) - 104px));max-height:100%;border:1px solid var(--dsw-alias-border-l3,rgba(44,55,68,.12));border-radius:18px;background:var(--dsw-alias-bg-layer-2,#fffdf8);box-shadow:0 12px 48px rgba(22,34,48,.18);overflow:hidden}
+.dot_overlay_panel{pointer-events:auto;display:flex;flex-direction:column;width:min(440px,calc(100vw - 32px));height:min(620px,calc(100vh - var(--dsh-frame-overlay-top,68px) - 104px));height:min(620px,calc(100dvh - var(--dsh-frame-overlay-top,68px) - 104px));max-height:100%;border:1px solid #cbd2ce;border-radius:10px;background:#fff;color:#23313c;box-shadow:0 12px 48px rgba(22,34,48,.18);overflow:hidden;--dsw-alias-bg-base:#fff;--dsw-alias-bg-layer-1:#fff;--dsw-alias-bg-layer-2:#fff;--dsw-alias-bg-layer-3:#fff;--dsw-alias-label-primary:#23313c;--dsw-alias-label-secondary:#5b6973;--dsw-alias-state-business-primary:#345ec7}
 .dot_overlay_header{display:flex;align-items:center;gap:10px;padding:13px 14px;border-bottom:1px solid var(--dsw-alias-border-l4,rgba(44,55,68,.08));flex-shrink:0}
 .dot_overlay_heading{min-width:0;flex:1}.dot_overlay_title{font-size:15px;font-weight:650}.dot_overlay_subtitle{font-size:11px;color:var(--dsw-alias-label-secondary,#5c6672);margin-top:2px}
-.dot_overlay_action{display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;width:32px;height:32px;border:0;border-radius:8px;background:transparent}.dot_overlay_action:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(48,63,79,.06))}
+.dot_overlay_action{display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;width:44px;height:44px;border:0;border-radius:8px;background:transparent}.dot_overlay_action:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(48,63,79,.06))}
 .dot_overlay_body{position:relative;display:flex;flex:1;min-height:0;overflow:hidden}.dot_overlay_body> *{flex:1;min-height:0;min-width:0}
 .dot_overlay_fallback{padding:20px;font-size:13px;line-height:1.65;color:var(--dsw-alias-label-secondary,#5c6672)}
 .dot_overlay_notice{pointer-events:auto;max-width:min(320px,calc(100vw - 40px));padding:10px 14px;border:1px solid var(--dsw-alias-border-l3,rgba(44,55,68,.12));border-radius:12px;background:var(--dsw-alias-bg-layer-2,#fffdf8);font-size:12px;line-height:1.5;box-shadow:0 4px 20px rgba(22,34,48,.1)}
+.dot_overlay_fallback{background:#fff;color:#5b6973}.dot_overlay_fallback button{display:inline-flex;min-height:44px;align-items:center;justify-content:center;margin:12px 8px 0 0;padding:8px 12px;border:1px solid #cbd2ce;border-radius:7px;background:#fff;color:#345ec7}.dot_overlay_body .pc_dot_conversation{height:100%;max-height:none;min-height:0;border:0;border-radius:0;margin:0}.dot_overlay_body .pc_dot_conversation>div{min-height:0}.dot_overlay_body .dot_compact_history{padding:16px;font-size:13px}.dot_overlay_body .dot_compact_history_heading{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:14px;font-size:12px;color:#5b6973}.dot_overlay_body .dot_compact_history button{min-height:44px;background:none;border:0;color:#345ec7}.dot_overlay_body .dot_compact_history_role{display:block;color:#5b6973;font-size:11px;margin-bottom:4px}.dot_overlay_body .dot_compact_history_assistant{margin-top:14px}.dot_overlay_body .dot_compact_history_truncated{color:#5b6973;font-size:12px}.dot_overlay_body .dot_compact_history_actions button{min-height:44px;color:#345ec7;border:0;background:#fff}
 @media(max-width:560px){.dot_overlay_dock{right:max(12px,env(safe-area-inset-right,0px));bottom:max(18px,calc(env(safe-area-inset-bottom,0px) + 14px))}.dot_overlay_panel{width:calc(100vw - 24px);height:calc(100dvh - var(--dsh-frame-overlay-top,68px) - 88px);border-radius:14px}.dot_overlay_subtitle{display:none}}
-@media(max-height:440px){.dot_overlay_dock{bottom:max(8px,env(safe-area-inset-bottom,0px));gap:6px}.dot_overlay_panel{height:calc(100dvh - var(--dsh-frame-overlay-top,68px) - 66px)}.dot_overlay_header{padding:7px 12px}.dot_overlay_launcher{min-height:36px;padding:5px 13px}}
+@media(max-height:440px){.dot_overlay_dock{bottom:max(8px,env(safe-area-inset-bottom,0px));gap:6px}.dot_overlay_panel{height:calc(100dvh - var(--dsh-frame-overlay-top,68px) - 66px)}.dot_overlay_header{padding:7px 12px}.dot_overlay_launcher{min-height:44px;padding:5px 13px}}
+@media(prefers-reduced-motion:reduce){.dot_overlay *{animation:none!important;transition:none!important;scroll-behavior:auto!important}}
 `;
   const mark = () => h('span', { className: 'dot_overlay_mark', 'aria-hidden': true },
     h('svg', { width: 22, height: 22, viewBox: '0 0 24 24', fill: 'none' },
@@ -224,6 +349,7 @@ function createDotOverlay(React, adapters = {}) {
   const icon = kind => h('svg', { width: 16, height: 16, viewBox: '0 0 20 20', fill: 'none', 'aria-hidden': true },
     h('path', { d: kind === 'close' ? 'M5 5l10 10M15 5L5 15' : 'M11 4h5v5M16 4l-7 7M7 4H4v12h12v-3', stroke: 'currentColor', strokeWidth: 1.5, strokeLinecap: 'round', strokeLinejoin: 'round' }));
   return function DotOverlay(props = {}) {
+    const surface=typeof adapters.useSurface==='function'?adapters.useSurface(props):{};
     const [open, setOpen] = React.useState(false);
     const [error, setError] = React.useState('');
     const launcher = React.useRef(null);
@@ -231,7 +357,9 @@ function createDotOverlay(React, adapters = {}) {
     const pendingWorkbench = React.useRef(false);
     const returnFocus = React.useRef(false);
     const live = React.useRef(true);
+    const showing=open&&surface.homeActive!==true;
     React.useEffect(() => { live.current = true; return () => { live.current = false; }; }, []);
+    React.useEffect(()=>{if(surface.homeActive&&open)setOpen(false);},[surface.homeActive,open]);
     React.useEffect(() => {
       if (open) { panel.current?.focus?.(); return; }
       if (pendingWorkbench.current) {
@@ -257,7 +385,7 @@ function createDotOverlay(React, adapters = {}) {
       if (!open || event.key !== 'Escape' || event.defaultPrevented || event.isComposing || event.nativeEvent?.isComposing || event.altKey || event.ctrlKey || event.metaKey) return;
       event.preventDefault?.(); event.stopPropagation?.(); close();
     };
-    const content = open
+    const content = showing
       ? typeof adapters.renderConversation === 'function'
         ? adapters.renderConversation({ ...props, location: 'overlay', onOpenWorkbench: openWorkbench })
         : h('div', { className: 'dot_overlay_fallback' }, '请打开完整工作台，与 Dot 继续对话。')
@@ -266,14 +394,14 @@ function createDotOverlay(React, adapters = {}) {
       h('style', null, css),
       h('div', { className: 'dot_overlay_dock' },
         error && h('div', { className: 'dot_overlay_notice', role: 'status' }, error),
-        open && h('section', { className: 'dot_overlay_panel', id: 'dsh-dot-overlay-dialog', ref: panel, tabIndex: -1, role: 'dialog', 'aria-label': '与 Dot 对话', onKeyDown: escape },
+        showing && h('section', { className: 'dot_overlay_panel', id: 'dsh-dot-overlay-dialog', ref: panel, tabIndex: -1, role: 'dialog', 'aria-label': '与 Dot 对话', onKeyDown: escape },
           h('header', { className: 'dot_overlay_header' }, mark(),
             h('div', { className: 'dot_overlay_heading' }, h('div', { className: 'dot_overlay_title' }, 'Dot'), h('div', { className: 'dot_overlay_subtitle' }, '你的一句交代，我接着跟进。')),
             h('button', { className: 'dot_overlay_action', type: 'button', 'aria-label': '打开完整工作台', title: '打开完整工作台', onClick: openWorkbench }, icon('expand')),
             h('button', { className: 'dot_overlay_action', type: 'button', 'aria-label': '收起 Dot 对话', title: '收起', onClick: close }, icon('close'))),
           h('div', { className: 'dot_overlay_body' }, content)),
-        h('button', { className: 'dot_overlay_launcher', type: 'button', ref: launcher, 'aria-label': open ? '收起 Dot 对话' : '打开 Dot 对话', 'aria-expanded': open, 'aria-controls': open ? 'dsh-dot-overlay-dialog' : undefined, onKeyDown: escape,
-          onClick: () => { setError(''); if (open) close(); else setOpen(true); } }, mark(), h('span', null, 'Dot'))));
+        !(surface.homeActive&&surface.homeReady) && h('button', { className: 'dot_overlay_launcher', type: 'button', ref: launcher, 'aria-label': showing ? '收起 Dot 对话' : '打开 Dot 对话', 'aria-expanded': showing, 'aria-controls': showing ? 'dsh-dot-overlay-dialog' : undefined, onKeyDown: escape,
+          onClick: () => { setError(''); if(surface.homeActive){adapters.focusHome?.();return;} if (open) close(); else setOpen(true); } }, mark(), h('span', null, 'Dot'))));
   };
 }
 
@@ -290,15 +418,19 @@ function registerDotOverlay(ctx, Component) {
     function apply(ctx){
       const appearance=createDotAppearance(ctx);
       const desktopController=createDesktopConversationController(ctx);
+      const CompactViews=createDotConversationViews(React);
       ctx.effect(()=>()=>desktopController.close());
-      function DesktopConversation({target,owner='home',SessionProvider,renderSlot,onOpenHistory,slotName='dot.desktop.conversation'}){
+      function DesktopConversation({target,owner='home',SessionProvider,renderSlot,onOpenHistory,onReady,slotName='dot.desktop.conversation'}){
         const [ready,setReady]=React.useState(null),[problem,setProblem]=React.useState('');
         const occurrence=React.useRef(Symbol(owner));
-        React.useEffect(()=>{let live=true;setReady(null);setProblem('');void desktopController.acquire(occurrence.current,target).then(reference=>{if(live)setReady({reference,id:target.sessionId,revision:target.revision});}).catch(error=>{if(live)setProblem(error?.code==='desktop-conversation-held'?'对话已在工作台打开，请继续已有对话；原草稿会保留。':'对话暂未打开。请打开完整对话继续；原草稿会保留。');});return()=>{live=false;desktopController.release(occurrence.current);};},[owner,target.sessionId,target.revision]);
+        React.useEffect(()=>{let live=true,acquiring=false,attached=false;setReady(null);setProblem('');
+          const acquire=()=>{if(!live||acquiring||attached||desktopController.getSnapshot().owner!==null)return;acquiring=true;void desktopController.acquire(occurrence.current,target).then(reference=>{if(live){attached=true;setReady({reference,id:target.sessionId,revision:target.revision});onReady?.(true);}}).catch(error=>{if(live&&error?.code!=='desktop-conversation-cancelled')setProblem(error?.code==='desktop-conversation-held'?'正在交接同一个对话，原草稿会保留。':'对话暂未打开。请打开完整对话继续；原草稿会保留。');}).finally(()=>{acquiring=false;});};
+          const unsubscribe=desktopController.subscribe(acquire);acquire();return()=>{live=false;unsubscribe();onReady?.(false);desktopController.release(occurrence.current);};
+        },[owner,target.sessionId,target.revision]);
         const reference=ready?.id===target.sessionId&&ready?.revision===target.revision?ready.reference:null;
         return h('div',{className:'pc_dot_conversation','data-dot-desktop-conversation':target.sessionId},problem?h('div',{role:'status'},h('p',null,problem),h('button',{type:'button',onClick:onOpenHistory},'打开完整对话')):reference?h(SessionProvider,{session:reference},renderSlot(slotName,{})):h('p',{role:'status'},'正在打开对话…'));
       }
-      function DesktopConversationContent({renderFactorySlot}){return renderFactorySlot('conversation.content',{variant:'embedded',phase:'active',hero:false});}
+      function DesktopConversationContent({renderFactorySlot}){return renderFactorySlot('conversation.content',{variant:'embedded',phase:'active',hero:false},{slots:{views:CompactViews}});}
       ctx.effect(()=>()=>appearance.close());
       function useAppearance(){
         const [value,setValue]=React.useState(()=>appearance.getSnapshot());
@@ -639,6 +771,20 @@ function registerDotOverlay(ctx, Component) {
         @media(max-width:900px){.pc_dot_inner{padding:22px}.pc_dot_home_grid{gap:24px;grid-template-columns:minmax(0,1.4fr) minmax(240px,1fr)}.pc_dot_header>.pc_dot_actions>span{display:none}.pc_dot_brand p{max-width:180px}}
         @media(max-width:700px){.pc_dot_inner{padding:18px 16px 28px}.pc_dot_home_grid,.pc_dot_project_cards{grid-template-columns:1fr;gap:16px}.pc_dot_header{gap:12px;flex-wrap:wrap}.pc_dot_header .pc_dot_actions{gap:6px}.pc_dot_tabs{gap:24px;margin:16px 0 22px}.pc_dot h1{font-size:26px}.pc_dot_welcome h1{font-size:30px}.pc_dot_compose_bottom{gap:8px;flex-wrap:wrap}.pc_dot_compose_bottom select{min-width:0;max-width:100%;flex:1}.pc_dot_keyboard{display:none}.pc_dot_steps{gap:12px}.pc_dot_steps strong{font-size:12px}.pc_dot_modal{padding:18px}.pc_dot_row{flex-wrap:wrap}.pc_dot_result{padding:16px}.pc_dot_memory_scope{align-items:stretch;flex-direction:column}.pc_dot_drawer_tabs{gap:18px}}
         @media(prefers-reduced-motion:reduce){.pc_dot *,.pc_dot_modal *{animation:none!important;transition:none!important;scroll-behavior:auto!important}}
+        /* Approved paper/ink/blue workstation. The native writing surface is white. */
+        .pc_dot,.pc_dot_modal{--dot-paper:#f6f5f0;--dot-card:#fffefa;--dot-white:#fff;--dot-ink:#23313c;--dot-muted:#5b6973;--dot-line:#cbd2ce;--dot-blue:#345ec7;font-family:${dotFont};font-size:14px;line-height:1.6}
+        .pc_dot_inner{max-width:1192px;padding:24px 28px 32px}.pc_dot h1{font:400 24px/1.35 ${dotFont};letter-spacing:0}.pc_dot h2{font-size:18px;font-weight:600}.pc_dot h3{font-size:16px;line-height:1.45}.pc_dot p{max-width:75ch}.pc_dot_muted{font-size:12px;line-height:1.75}.pc_dot_brand_mark{border-radius:14px;width:43px;height:43px;background:var(--dot-card)}.pc_dot_brand h2{font-size:20px}.pc_dot_brand p{margin-top:4px}.pc_dot_header>.pc_dot_actions{font-size:12px;gap:12px}
+        .pc_dot button,.pc_dot_drawer button{border-radius:7px;min-height:44px;font-size:13px}.pc_dot_tabs{width:max-content;max-width:100%;gap:4px;padding:4px;margin:20px 0 24px;background:#eeefea;border:1px solid var(--dot-line);border-radius:10px}.pc_dot_tabs button{min-width:76px;padding:7px 16px;border:0;border-radius:7px;font-size:14px}.pc_dot_tabs button.active{color:var(--dot-blue);background:var(--dot-white);box-shadow:0 1px 3px #23313c10}.pc_dot_home_grid{grid-template-columns:minmax(0,1fr) 268px;gap:32px}.pc_dot_column{min-width:0}.pc_dot_hero{max-width:none;margin:0 0 20px}.pc_dot_hero>p{margin:8px 0 12px}.pc_dot_composer,.pc_dot_conversation{background:var(--dot-white);border:1px solid #7e8e98;border-radius:8px;box-shadow:0 2px 10px #23313c08;color:#23313c;--dsw-alias-bg-base:#fff;--dsw-alias-bg-layer-1:#fff;--dsw-alias-bg-layer-2:#fff;--dsw-alias-bg-layer-3:#fff;--dsw-alias-label-primary:#23313c;--dsw-alias-label-secondary:#5b6973;--dsw-alias-state-business-primary:#345ec7}.pc_dot_composer{padding:16px;margin:14px 0 8px}.pc_dot_composer textarea{background:#fff;color:#23313c;min-height:68px;resize:vertical}.pc_dot_composer textarea::placeholder{color:#5b6973}.pc_dot_composer select{background:#fff;border-color:#cbd2ce;min-width:140px}.pc_dot_conversation{height:auto;min-height:180px;max-height:480px;margin-top:14px;overflow:auto}.pc_dot_conversation>div{min-height:0}.pc_dot_shortcuts{gap:8px}.pc_dot_shortcuts button{padding:6px 10px;border:1px solid var(--dot-line);background:var(--dot-card);font-size:12px;min-height:44px}.pc_dot_compose_bottom{gap:8px}.pc_dot_keyboard{font-size:11px}.pc_dot_section{padding-top:18px;margin-top:22px}.pc_dot_rail .pc_dot_section{margin:0 0 24px;padding:0 0 24px;border-top:0;border-bottom:1px solid var(--dot-line)}.pc_dot_rail h3{font-size:14px;margin-bottom:16px}
+        .pc_dot_inline_wechat{display:grid;grid-template-columns:minmax(0,1fr) 188px;border:1px solid var(--dot-line);border-radius:8px;overflow:hidden;background:var(--dot-card);margin-bottom:22px}.pc_dot_pair_copy{padding:22px}.pc_dot_pair_copy h2{font-size:24px;font-weight:400;line-height:1.35}.pc_dot_pair_copy>p{font-size:14px;color:var(--dot-muted);margin-top:8px;line-height:1.75}.pc_dot_pair_copy>p.pc_dot_muted{font-size:12px}.pc_dot_text_button{border:0!important;padding-left:0!important;color:var(--dot-blue)!important;margin-top:8px}.pc_dot_inline_code{padding:16px 14px;background:#edf2fc;border-left:1px solid var(--dot-line);text-align:center;display:flex;flex-direction:column;align-items:center;gap:8px}.pc_dot_inline_code p{font-size:12px;line-height:1.5}.pc_dot_inline_code img{width:136px;height:136px;object-fit:contain;display:block;background:#fff;padding:4px;border-radius:6px}.pc_dot_inline_code button{font-size:12px;min-height:44px;background:#fff}.pc_dot_intro{font-size:14px;color:var(--dot-muted);padding:10px 0 20px}
+        .pc_dot_attention_item{padding:18px 0;border-bottom:1px solid var(--dot-line);overflow-wrap:anywhere}.pc_dot_attention_item:first-of-type{border-top:1px solid var(--dot-line)}.pc_dot_item_kicker{display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;color:var(--dot-muted);font-size:12px;margin-bottom:5px}.pc_dot_attention_item h3{font-size:16px;font-weight:600}.pc_dot_attention_item p{font-size:14px;color:var(--dot-muted);line-height:1.75;margin-top:6px}.pc_dot_attention_item p.pc_dot_item_next{color:var(--dot-ink)}.pc_dot_attention_item>.pc_dot_actions{margin-top:8px;justify-content:space-between;align-items:flex-start}.pc_dot_attention_item .pc_dot_actions>button{border:0;padding-left:0;color:var(--dot-blue);font-size:12px}.pc_dot_attention_item details{font-size:12px;color:var(--dot-muted);max-width:100%}.pc_dot_attention_item summary{padding:10px 0}.pc_dot_item_source{padding:8px 0;max-width:55ch}.pc_dot_item_source strong,.pc_dot_item_source span{display:block;font-size:12px}.pc_dot_item_source span{color:var(--dot-muted)}
+        .pc_dot_schedule_item{position:relative;padding:0 0 18px 14px;margin:0 0 0 3px;border-left:1px solid var(--dot-line);overflow-wrap:anywhere}.pc_dot_schedule_item:before{content:'';position:absolute;left:-3px;top:7px;width:5px;height:5px;border-radius:50%;background:#7e8e98}.pc_dot_schedule_item strong{display:block;font-size:14px;font-weight:550}.pc_dot_schedule_item p{font-size:12px;color:var(--dot-muted);margin-top:3px;line-height:1.65}.pc_dot_plan_status{font-size:11px;color:var(--dot-muted)}.pc_dot_rail_note{font-size:12px;color:var(--dot-muted);line-height:1.75;margin-top:8px!important}.pc_dot_recovery{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;border:1px solid var(--dot-line);border-radius:8px;background:#f4ebdc;padding:12px 16px;margin-bottom:18px!important;color:var(--dot-ink)}.pc_dot_recovery strong{font-weight:600}.pc_dot_recovery p{font-size:12px;margin-top:4px}.pc_dot_recovery>button{flex-shrink:0;background:var(--dot-card)}.pc_dot_recovery details{font-size:12px;color:var(--dot-muted)}.pc_dot_recovery summary{padding:6px 0;min-height:44px}.pc_dot_history,.pc_dot_legacy_details,.pc_dot_review_details{border-top:1px solid var(--dot-line);margin-top:20px;font-size:12px;color:var(--dot-muted)}.pc_dot_history>summary,.pc_dot_legacy_details>summary,.pc_dot_review_details>summary{min-height:44px}.pc_dot_history .pc_dot_update{padding:14px 0}.pc_dot_history h3{font-size:14px}.pc_dot_footer{font-size:11px;margin-top:24px}.pc_dot_project_cards{display:block}.pc_dot_project_card{border-width:0 0 1px;border-radius:0;padding:18px 0;background:transparent}.pc_dot_project_card:first-child{border-top:1px solid var(--dot-line)}.pc_dot_project_card h2{font-size:17px}.pc_dot_project_card .pc_dot_eyebrow{display:none}
+        .pc_dot_conversation .dot_compact_history{padding:16px;font-size:14px;line-height:1.75;color:#23313c;background:#fff}.pc_dot_conversation .dot_compact_history_heading{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:12px;font-size:12px;color:#5b6973}.pc_dot_conversation .dot_compact_history_heading button{border:0;min-height:44px;color:#345ec7;padding:6px 0}.pc_dot_conversation .dot_compact_history_role{display:block;font-size:11px;color:#5b6973;margin-bottom:4px}.pc_dot_conversation .dot_compact_history_user{padding-bottom:14px;border-bottom:1px solid #cbd2ce}.pc_dot_conversation .dot_compact_history_assistant{padding-top:14px}.pc_dot_conversation .dot_compact_history_truncated{font-size:12px;color:#5b6973;margin-top:12px}.pc_dot_conversation .dot_compact_history_actions{padding:0 16px}.pc_dot_conversation .dot_compact_history_actions button{border:0;min-height:44px;color:#345ec7;background:#fff}
+        @media(max-width:1000px){.pc_dot_home_grid{grid-template-columns:minmax(0,1fr) 236px;gap:24px}.pc_dot_inner{padding:22px}.pc_dot_inline_wechat{grid-template-columns:minmax(0,1fr) 164px}.pc_dot_pair_copy{padding:18px}.pc_dot_inline_code{padding:14px 10px}.pc_dot_inline_code img{width:128px;height:128px}}
+        @media(max-width:760px){.pc_dot_inner{padding:18px 16px 28px}.pc_dot_home_grid{grid-template-columns:1fr;gap:24px}.pc_dot_rail{border-top:1px solid var(--dot-line);padding-top:22px}.pc_dot_tabs{margin:16px 0 20px;gap:2px;width:100%}.pc_dot_tabs button{flex:1;min-width:0;padding:7px 9px}.pc_dot h1{font-size:22px}.pc_dot_header>.pc_dot_actions{gap:6px}.pc_dot_header>.pc_dot_actions>span{display:none}.pc_dot_brand p{max-width:none}.pc_dot_hero{margin-bottom:16px}.pc_dot_recovery{gap:8px;flex-wrap:wrap}.pc_dot_composer{padding:14px}.pc_dot_compose_bottom select{max-width:180px}.pc_dot_inline_wechat{grid-template-columns:minmax(0,1fr) 150px}.pc_dot_pair_copy{padding:16px}.pc_dot_pair_copy h2{font-size:21px}.pc_dot_pair_copy>p{font-size:13px}.pc_dot_inline_code{padding:14px 8px}.pc_dot_inline_code img{width:116px;height:116px}.pc_dot_pair_copy>p.pc_dot_muted{font-size:11px}.pc_dot_conversation{max-height:420px}}
+        @media(max-width:400px){.pc_dot_brand p{font-size:11px}.pc_dot_header{gap:8px}.pc_dot_header>.pc_dot_actions button{font-size:12px;padding:7px 9px}.pc_dot_inline_wechat{grid-template-columns:minmax(0,1fr) 140px}.pc_dot_pair_copy{padding:14px 12px}.pc_dot_inline_code img{width:112px;height:112px}.pc_dot_composer select{max-width:148px;min-width:0}.pc_dot_shortcuts{gap:5px}.pc_dot_shortcuts button{padding:6px 8px;font-size:11px}}
+        .pc_dot_inline_code{padding-top:12px;padding-bottom:12px}.pc_dot_inline_code img{width:128px;height:128px}.pc_dot_brand,.pc_dot_header>.pc_dot_actions{min-width:0}.pc_dot_column,.pc_dot_rail,.pc_dot_history,.pc_dot_legacy_details{overflow-wrap:anywhere}
+        @media(max-width:400px){.pc_dot_inline_code img{width:112px;height:112px}}
+        @media(max-width:340px){.pc_dot_inline_wechat{grid-template-columns:1fr}.pc_dot_inline_code{border-left:0;border-top:1px solid var(--dot-line)}.pc_dot_inline_code img{width:128px;height:128px}.pc_dot_tabs button{padding:7px 5px;font-size:12px}.pc_dot_header{align-items:flex-start}.pc_dot_header>.pc_dot_actions{flex-wrap:wrap}.pc_dot_brand p{max-width:130px}.pc_dot_compose_bottom{align-items:stretch}.pc_dot_compose_bottom select{max-width:100%;width:100%}.pc_dot_compose_bottom>.pc_dot_primary{width:100%}}
       `;
       const personalCss='';
       function DotIcon({size=20}={}){
@@ -647,36 +793,46 @@ function registerDotOverlay(ctx, Component) {
       // Keep drafts only for this plugin lifetime. No private text is stored in
       // browser storage, and a different owner/binding never inherits the cache.
       const workbenchCache={binding:null,draft:'',selected:'',localConversation:null,memory:new Map(),follow:new Map()};
+      let workbenchSurface={page:null,ready:false,target:null,focus:null};
+      const surfaceListeners=new Set();
+      const publishWorkbenchSurface=value=>{workbenchSurface={...workbenchSurface,...value};surfaceListeners.forEach(fn=>fn());};
+      function useWorkbenchSurface(props={}){
+        const [surface,setSurface]=React.useState(workbenchSurface);
+        const activePanelId=typeof props.usePanelInfo==='function'?props.usePanelInfo(info=>info.activePanelId):undefined;
+        React.useEffect(()=>{const update=()=>setSurface(workbenchSurface);surfaceListeners.add(update);update();return()=>surfaceListeners.delete(update);},[]);
+        return{homeActive:activePanelId===dotPanel&&surface.page==='home',homeReady:surface.ready,focus:surface.focus};
+      }
       function OverlayDesktopConversation(props={}){
-        const [target,setTarget]=React.useState(null),[loaded,setLoaded]=React.useState(false),[problem,setProblem]=React.useState(''),[creating,setCreating]=React.useState(false);
+        const [target,setTarget]=React.useState(null),[candidate,setCandidate]=React.useState(null),[loaded,setLoaded]=React.useState(false),[problem,setProblem]=React.useState(''),[creating,setCreating]=React.useState(false);
         const live=React.useRef(false),creatingRef=React.useRef(false);
         const activePanelId=typeof props.usePanelInfo==='function'?props.usePanelInfo(info=>info.activePanelId):undefined;
         const mainSessionId=typeof props.useSessions==='function'?props.useSessions(state=>{const rows=Object.values(state.byId??{}).filter(row=>(row.retainedBy?.mainView??0)>0);return rows.length===1?rows[0].id:null;}):null;
         const mainViewEmpty=typeof props.useSessions==='function'?props.useSessions(state=>state.phase==='ready'&&Object.prototype.toString.call(state.byId)==='[object Object]'&&Array.isArray(state.ids)&&state.ids.every(id=>state.byId?.[id]?.id===id)&&Object.values(state.byId??{}).every(row=>(row.retainedBy?.mainView??0)===0)):false;
         React.useEffect(()=>{live.current=true;const abort=new AbortController();void(async()=>{
           try{if(workbenchCache.localConversation){const cached=await desktopController.resolve(workbenchCache.localConversation);if(!cached)throw Error('cached desktop unavailable');if(live.current)setTarget(cached);return;}
-            const saved=await desktopController.restore();if(saved){if(live.current)setTarget(saved);return;}
-            const response=await fetch('/api/project_companion/desktop-conversation',{method:'GET',credentials:'same-origin',redirect:'error',cache:'no-store',signal:abort.signal});const row=await response.json();
-            if(!response.ok)throw Error('desktop route unavailable');
-            if(live.current&&row?.state==='ready'&&typeof row.sessionId==='string'&&!row.sessionId.startsWith('family_')&&typeof row.revision==='string')setTarget({sessionId:row.sessionId,revision:row.revision});
+            const saved=await desktopController.restore();if(saved){if(live.current){setTarget(saved);workbenchCache.localConversation=saved;}return;}
+            const previous=await desktopController.candidate();if(live.current)setCandidate(previous);
           }catch{if(live.current)setProblem('已有桌面对话暂不可用；可以打开工作台核对。');}finally{if(live.current)setLoaded(true);}
         })();return()=>{live.current=false;abort.abort();};},[]);
         const create=async()=>{if(creatingRef.current||typeof ctx.sessions?.create!=='function')return;creatingRef.current=true;setCreating(true);setProblem('');
           try{const id=await ctx.sessions.create({});if(typeof id!=='string'||!id||id.startsWith('family_'))throw Error('native session unavailable');const created={sessionId:id,revision:`native:${id}`};workbenchCache.localConversation=created;const remembered=await desktopController.remember(id);if(live.current){setTarget(created);if(!remembered)setProblem('本次会话可继续；入口暂未保存，可从原生历史找回。');}}
           catch{if(live.current)setProblem('会话暂未创建，请打开完整工作台重试。');}finally{creatingRef.current=false;if(live.current)setCreating(false);}
         };
+        const continueCandidate=async()=>{if(creatingRef.current||!candidate)return;creatingRef.current=true;setCreating(true);try{const verified=await desktopController.resolve(candidate);if(!verified)throw Error('candidate unavailable');const remembered=await desktopController.remember(verified.sessionId);if(live.current){workbenchCache.localConversation=verified;setTarget(verified);setCandidate(null);if(!remembered)setProblem('本次对话可继续；入口暂未保存。');}}catch{if(live.current)setProblem('上次对话暂不可用，可新建对话或到原生历史核对。');}finally{creatingRef.current=false;if(live.current)setCreating(false);}};
         if(!loaded)return h('div',{className:'dot_overlay_fallback',role:'status'},'正在打开桌面对话…');
         if(target){
           if(!desktopConversationCanEmbed({activePanelId,mainSessionId,mainViewEmpty},target.sessionId)||typeof props.SessionProvider!=='function'||typeof props.renderSlot!=='function')return h('div',{className:'dot_overlay_fallback'},h('p',null,mainSessionId===target.sessionId?'这个对话已在当前页面打开，可直接继续。':'请打开完整工作台继续对话。'),h('button',{type:'button',onClick:props.onOpenWorkbench},'打开完整工作台'));
           return h(DesktopConversation,{target,owner:'overlay',SessionProvider:props.SessionProvider,renderSlot:props.renderSlot,slotName:'dot.overlay.conversation',onOpenHistory:props.onOpenWorkbench});
         }
-        return h('div',{className:'dot_overlay_fallback'},h('p',null,problem||'从一句话开始，桌面对话无需连接微信。'),h('button',{type:'button',disabled:creating||typeof ctx.sessions?.create!=='function',onClick:create},creating?'正在打开…':'开始桌面对话'));
+        return h('div',{className:'dot_overlay_fallback'},h('p',null,problem||'从一句话开始，桌面对话无需连接微信。'),h('button',{type:'button',disabled:creating||typeof ctx.sessions?.create!=='function',onClick:create},creating?'正在打开…':'开始桌面对话'),candidate?h('button',{type:'button',disabled:creating,onClick:continueCandidate},'继续上次对话'):null);
       }
       function Workbench(props={}){
         const sessions=typeof props.useSessions==='function'?props.useSessions(s=>s.byId):null;
         const appearanceState=useAppearance();
         const [snapshot,setSnapshot]=React.useState(null),[selected,setSelectedState]=React.useState(workbenchCache.selected),[busy,setBusy]=React.useState(false),[error,setError]=React.useState(''),[notice,setNotice]=React.useState('');
-        const [localConversation,setLocalConversation]=React.useState(workbenchCache.localConversation);
+        const [localConversation,setLocalConversation]=React.useState(workbenchCache.localConversation),[conversationCandidate,setConversationCandidate]=React.useState(null);
+        const [inlineConnection,setInlineConnection]=React.useState(null),[inlineConnectionError,setInlineConnectionError]=React.useState(''),[qrFailed,setQrFailed]=React.useState(false),[nativeHomeReady,setNativeHomeReady]=React.useState(false);
+        const inlineFlight=React.useRef(false),composerStart=React.useRef(null);
         const [page,setPage]=React.useState('home'),[drawer,setDrawer]=React.useState(null),[tab,setTab]=React.useState('summary'),[setup,setSetup]=React.useState(false),[draft,setDraftState]=React.useState(workbenchCache.draft);
         const [detailProjectId,setDetailProjectId]=React.useState(null),[memoryProjectId,setMemoryProjectId]=React.useState(''),[connectionsSeen,setConnectionsSeen]=React.useState(false),[closeReview,setCloseReview]=React.useState(false);
         const [followView,setFollowView]=React.useState(null),[followMode,setFollowMode]=React.useState('once'),[followTime,setFollowTime]=React.useState(''),[cadence,setCadence]=React.useState(60),[reviewFollow,setReviewFollow]=React.useState(false);
@@ -732,13 +888,26 @@ function registerDotOverlay(ctx, Component) {
               workbenchCache.memory.clear();workbenchCache.follow.clear();setDraft('');setSelected('');viewEpoch.current++;scopeRef.current=null;setDrawer(null);setCloseReview(false);setEditing(null);setStaleMemoryDraft(null);setFollowView(null);setNotice('微信会话或账号绑定已变化。旧范围的草稿已关闭，请重新核对项目和资料来源。');
             }
             workbenchCache.binding=nextBinding;currentSnapshot.current=value;setSnapshot(value);
-            const restored=await desktopController.restore();if(active.current&&restored){workbenchCache.localConversation=restored;setLocalConversation(restored);}
+            const restored=await desktopController.restore();if(active.current&&restored){workbenchCache.localConversation=restored;setLocalConversation(restored);}else if(active.current){const candidate=await desktopController.candidate();if(active.current)setConversationCandidate(candidate);}
             if(selected&& !value.projects.some(p=>p.id===selected)){setSelected('');setNotice('原草稿关联的项目已不在关注列表，请重新选择后继续。');}
             setMemoryProjectId(current=>value.projects.some(p=>p.id===current)?current:value.projects[0]?.id??'');
           }catch{if(active.current){clearCatalog();currentSnapshot.current=null;setSnapshot(null);setError('项目总览暂不可用。请确认 Harness 连接后，点击刷新重试。');}}
           finally{flight.current=false;if(active.current)setBusy(false);}
         };
         React.useEffect(()=>{active.current=true;void refresh();return()=>{active.current=false;viewEpoch.current++;for(const c of controllers.current)c.abort();controllers.current.clear();};},[]);
+        // This is a passive view of the bridge's existing pairing state. Unknown
+        // or Family bindings never enter the legacy pairing path.
+        const readInlineConnection=async()=>{
+          if(!active.current||inlineFlight.current||currentSnapshot.current?.connection?.state!=='missing'||currentSnapshot.current?.connection?.readOnly===true)return;
+          inlineFlight.current=true;
+          try{const value=await request(endpoint);if(!active.current||currentSnapshot.current?.connection?.state!=='missing'||currentSnapshot.current?.connection?.readOnly===true)return;
+            if(value?.version!==1||!['missing','unknown','waiting-qr','scanned','awaiting-message','bound','failed'].includes(value.connection?.state))throw Error('connection unavailable');
+            setInlineConnection(value.connection);setInlineConnectionError('');setQrFailed(false);
+          }catch{if(active.current)setInlineConnectionError('微信连接状态暂未确认；电脑对话可以继续。');}
+          finally{inlineFlight.current=false;}
+        };
+        React.useEffect(()=>{if(snapshot?.connection?.state==='missing'&&snapshot.connection.readOnly!==true)void readInlineConnection();else{setInlineConnection(null);setInlineConnectionError('');}},[snapshot?.connection?.state,snapshot?.connection?.readOnly]);
+        React.useEffect(()=>{if(!['waiting-qr','scanned','awaiting-message'].includes(inlineConnection?.state))return;const timer=setInterval(()=>void readInlineConnection(),5000);return()=>clearInterval(timer);},[inlineConnection?.state]);
         React.useEffect(()=>{if(page==='projects'&&bindingOf(snapshot)&&!catalog&&!catalogError)void loadCatalog();},[page,bindingOf(snapshot)]);
         const action=async(body,scope=scoped(body.projectId,body.id),epoch=viewEpoch.current)=>{
           if(!active.current||flight.current)return null;
@@ -756,9 +925,10 @@ function registerDotOverlay(ctx, Component) {
           if(row)return row.state==='ready'&&validId(row.sessionId)&&!row.sessionId.startsWith('family_')&&row.sessionId!=='family-no-legacy'&&typeof row.revision==='string'?{sessionId:row.sessionId,revision:row.revision}:null;
           const connection=value?.connection;return connection?.state==='bound'&&connection.readOnly!==true&&validId(connection.sessionId)&&!connection.sessionId.startsWith('family_')?{sessionId:connection.sessionId,revision:revisionOf(value)}:null;
         };
-        const desktopTarget=localConversation??desktopTargetOf(snapshot);
+        const desktopTarget=localConversation;
         const embedded=Boolean(desktopTarget&&typeof props.SessionProvider==='function'&&typeof props.renderSlot==='function'&&typeof ctx.sessions?.retain==='function');
         const contextRevision=snapshot&&Object.hasOwn(snapshot,'contextBindingRevision')?snapshot.contextBindingRevision:revisionOf(snapshot);
+        React.useEffect(()=>{if(workbenchCache.localConversation!==localConversation)setLocalConversation(workbenchCache.localConversation);publishWorkbenchSurface({page,ready:page==='home'&&nativeHomeReady,target:desktopTarget,focus:()=>desktopTarget?desktopController.focus(desktopTarget):Boolean(composerStart.current?.focus?.()??composerStart.current)});return()=>publishWorkbenchSurface({page:null,ready:false,focus:null});},[page,nativeHomeReady,desktopTarget?.sessionId,desktopTarget?.revision]);
         const availability=snapshot?.availability??{projects:false,plans:false,jobs:false};
         const states={prepared:'等待提交',admitted:'等待处理',running:'正在处理',completed:'已有回复，待验收',blocked:'需要你核对',unknown:'执行状态未知',mixed:'输入变化，需核对',not_admitted:'未提交',discarded:'已取消',error:'执行出错',aborted:'已中止',interrupted:'被中断',expired:'跟踪已结束',no_text:'没有文本回复','max-tokens':'达到输出上限',forked:'分支结束，需核对'};
         const deliveries={pending:'等待回传',dispatching:'正在回传，结果未确认',queued:'交给通道时已排队，后续送达待核对',reported_sent:'通道报告已发出，手机送达未知',blocked:'回传通道受阻',uncertain:'回传结果不确定',failed:'回传失败',expired:'回传窗口已结束',cancelled:'回传已取消',history_pruned:'发送记录已不在当前窗口'};
@@ -784,11 +954,11 @@ function registerDotOverlay(ctx, Component) {
         const chat=async(value,p=undefined)=>{
           if(flight.current)return;const prompt=value??draft,target=p??(value===undefined?composerProject:project);
           if(!prompt.trim()){setNotice('先写一句你希望 Dot 帮忙的事。');return;}
-          const scope=scoped(target?.id),desktop=localConversation??desktopTargetOf(snapshot);let id=desktop?.sessionId??(!readOnly&&target?.sessionIds.length===1?target.sessionIds[0]:null);
+          const scope=scoped(target?.id),desktop=localConversation;let id=desktop?.sessionId??null;
           if(!id&&typeof ctx.sessions?.create!=='function'){setNotice('原生会话入口尚未就绪，请在 Harness 新建一个本地会话继续。输入已保留。');return;}
           setError('');setNotice('');setBusy(true);flight.current=true;const controller=new AbortController();controllers.current.add(controller);
           try{if(!id){id=await ctx.sessions.create({});if(!validId(id)||id.startsWith('family_'))throw new Error('原生会话创建未完成，输入已保留。');const created={sessionId:id,revision:`native:${id}`};workbenchCache.localConversation=created;if(active.current)setLocalConversation(created);const remembered=await desktopController.remember(id);if(active.current&&!remembered)setNotice('本次会话已创建；入口暂未保存，可从原生历史继续。');}
-            const result=await prepareDotDraft(ctx,id,promptFor(prompt,target),controller.signal,async()=>{const fresh=await request(workbenchEndpoint);if(!active.current||desktop&&desktop.revision!==`native:${id}`&&(desktopTargetOf(fresh)?.sessionId!==id||desktopTargetOf(fresh)?.revision!==desktop.revision)||target&&!fresh.projects?.some(p=>p.id===target.id))throw new Error('原微信绑定或项目范围已变化，未放入原生草稿。请刷新后重新核对；输入仍保留。');},()=>{if(value!==undefined||workbenchCache.draft!==prompt||workbenchCache.selected!==selected||workbenchCache.binding!==scope.binding)return;workbenchCache.draft='';if(active.current)setDraftState('');return()=>{if(workbenchCache.draft===''&&workbenchCache.selected===selected&&workbenchCache.binding===scope.binding){workbenchCache.draft=prompt;if(active.current)setDraftState(prompt);}};},Boolean(typeof props.SessionProvider==='function'&&typeof props.renderSlot==='function'));if(active.current&&scope.binding===bindingOf(currentSnapshot.current)&&result.status==='preserved')setNotice('Dot 会话里已有草稿，已为你保留。请先打开会话处理；这里的新问题也保留着。');}
+            const result=await prepareDotDraft(ctx,id,promptFor(prompt,target),controller.signal,async()=>{const fresh=await request(workbenchEndpoint);if(!active.current||scope.binding!==bindingOf(fresh)||desktop&&workbenchCache.localConversation?.sessionId!==id||target&&!fresh.projects?.some(p=>p.id===target.id))throw new Error('原微信绑定或项目范围已变化，未放入原生草稿。请刷新后重新核对；输入仍保留。');},()=>{if(value!==undefined||workbenchCache.draft!==prompt||workbenchCache.selected!==selected||workbenchCache.binding!==scope.binding)return;workbenchCache.draft='';if(active.current)setDraftState('');return()=>{if(workbenchCache.draft===''&&workbenchCache.selected===selected&&workbenchCache.binding===scope.binding){workbenchCache.draft=prompt;if(active.current)setDraftState(prompt);}};},Boolean(typeof props.SessionProvider==='function'&&typeof props.renderSlot==='function'));if(active.current&&scope.binding===bindingOf(currentSnapshot.current)&&result.status==='preserved')setNotice('Dot 会话里已有草稿，已为你保留。请先打开会话处理；这里的新问题也保留着。');}
           catch(failure){if(active.current)setError(failure.message||'原生草稿未能准备，请打开 Dot 会话核对。');}
           finally{flight.current=false;controllers.current.delete(controller);if(active.current)setBusy(false);}
         };
@@ -874,17 +1044,33 @@ function registerDotOverlay(ctx, Component) {
           h('p',{className:'pc_dot_muted'},!reviewState?.news||reviewState.news.topicSource==='unavailable'?'资讯关注点暂无法确认，请刷新后核对。':reviewState.news.topicSource==='explicit'&&Array.isArray(reviewState.news.topics)?reviewState.news.topics.join(' · '):'尚未设置专属关注点，沿用公开 AI 资讯主题。'),
           readOnly?h('p',{className:'pc_dot_muted'},'在微信说「AI 日报关注：Agent 产品、插件生态……」即可保存。资讯只使用公开来源，不会带入私人邮件。'):button('调整资讯关注点',()=>stageDraft('AI 日报关注：',''),{disabled:busy||!bound}),
           h('p',{className:'pc_dot_muted'},'电脑与 Harness 需保持在线；来源限量读取，不代表全账号覆盖。'));
-        const currentResult=recentJobs[0];
-        const attention=recentJobs.filter(job=>['blocked','unknown','mixed','error','aborted','interrupted','no_text','max-tokens','forked'].includes(job.status)||['blocked','uncertain','failed'].includes(job.delivery?.status));
         const upcoming=projects.flatMap(p=>p.followup?.available===true?[['followup',p.followup.followup],['once',p.followup.once]].filter(([,plan])=>plan?.enabled===true).map(([kind,plan])=>({project:p,kind,plan})):[]).sort((a,b)=>(Date.parse(a.plan.nextDueAt)||Infinity)-(Date.parse(b.plan.nextDueAt)||Infinity));
         const recentChecks=projects.flatMap(p=>p.followup?.available===true?[['followup',p.followup.followup],['once',p.followup.once]].filter(([,plan])=>plan&&typeof plan.lastReviewedAt==='string'&&Number.isFinite(Date.parse(plan.lastReviewedAt))).map(([kind,plan])=>({project:p,kind,plan})):[]).sort((a,b)=>Date.parse(b.plan.lastReviewedAt)-Date.parse(a.plan.lastReviewedAt)).slice(0,5);
         const checkHistory=section('上次已核验检查',recentChecks.length?recentChecks.map(({project:p,kind,plan})=>h('div',{className:'pc_dot_row',key:`checked:${p.id}:${kind}`},h('div',null,h('strong',null,p.label),h('small',{className:'pc_dot_muted'},`${kind==='once'?'单次检查':'持续跟进'} · ${date(plan.lastReviewedAt)}`),h('p',{className:'pc_dot_muted'},plan.lastCheckOutcome==='quiet'?'本次可见范围无新变化，已静默；不代表全账号无变化。':plan.lastCheckOutcome==='partial'?'部分来源仍无法确认；这是检查记录，不代表资料已完整读取。':'已完成检查流程；具体资料与结果见原会话。'),['failed','blocked','cancelled'].includes(plan.status)?h('p',{className:'pc_dot_muted'},`当前${plan.status==='failed'?'检查失败':plan.status==='blocked'?'受阻':'已取消'}，上方为此前已核验记录。`):null),button('查看安排',()=>openFollow(p)))):h('p',{className:'pc_dot_muted'},projects.some(p=>p.followup?.available===true)?'尚无已核验检查记录。':'检查记录暂无法确认；不据此判断未执行。'));
-        const jobCard=job=>h('article',{className:'pc_dot_update',key:job.id,'data-dot-job':job.id},h('p',{className:'pc_dot_muted'},`${job.projectLabel} · ${states[job.status]??'状态待核对'}`),h('h3',null,job.task),job.delivery?h('p',{className:'pc_dot_muted'},deliveries[job.delivery.status]??'回传状态待核对'):null,h('div',{className:'pc_dot_actions'},button('看看这次结果',()=>openTask(job)),readOnly?null:button('和 Dot 接着聊',()=>continueJob(job))));
         const plans=section('下一次跟进',upcoming.length?upcoming.map(({project:p,kind,plan})=>h('div',{className:'pc_dot_row',key:`${p.id}:${kind}`},h('div',null,h('strong',null,p.label),h('small',{className:'pc_dot_muted'},kind==='once'?'单次检查':followFrequency(plan),plan.blocked?' · 当前受阻':plan.running===false?(kind==='once'?' · 等待到期':' · 已保存，运行器未启动'):'',plan.loopId?' · 含已选个人资料':'',` · 原微信会话`),h('small',{className:'pc_dot_muted'},`下次 ${date(plan.nextDueAt)}`)),button('查看安排',()=>openFollow(p)))):projects.some(p=>p.followup?.available===false||!p.followup)?h('p',{className:'pc_dot_muted'},'项目跟进状态尚未确认，可在项目详情中查询。'):h('p',{className:'pc_dot_muted'},'还没有开启项目跟进。先交代目标，再决定什么时候回来看看。'),
           !availability.plans?h('p',{className:'pc_dot_muted'},readOnly?'共享微信的提醒与日报，请在原微信查询或安排；这里不混入独立 Dot 会话的旧计划。':'提醒与日报状态尚未确认，请刷新核对。'):h('div',null,...reminders.map(r=>h('div',{className:'pc_dot_row',key:r.id},h('div',null,h('strong',null,r.title),h('small',{className:'pc_dot_muted'},'明确提醒 · 原微信会话')),h('span',{className:'pc_dot_muted'},date(r.dueAt)))),!readOnly&&!reminders.length?h('p',{className:'pc_dot_muted'},'暂无待触发的明确提醒。'):null,snapshot?.counts?.activeReminders>reminders.length?h('p',{className:'pc_dot_muted'},`仅显示 ${reminders.length} 条活动提醒，其余请在 Dot 会话中查询。`):null,readOnly?null:h('p',{className:'pc_dot_muted'},snapshot?.daily?.enabled?`项目资料日报：每天 ${snapshot.daily.time}（${snapshot.daily.timeZone}）`:'项目资料日报未开启。'),h('div',{className:'pc_dot_actions'},readOnly?null:button('安排提醒',()=>stageDraft('请提醒我：','')),readOnly?null:button('设置日报',()=>stageDraft('请帮我设置项目资料日报。先和我确认每天的发送时间、时区和关注项目，再开启。','')))));
-        const composer=embedded?h('section',{className:'pc_dot_hero'},h('h1',null,'今天想推进哪件事？'),h(DesktopConversation,{target:desktopTarget,SessionProvider:props.SessionProvider,renderSlot:props.renderSlot,onOpenHistory:()=>navigate(desktopTarget.sessionId)})):h('section',{className:'pc_dot_hero'},h('p',{className:'pc_dot_eyebrow'},'从一句交代开始'),h('h1',null,'今天想推进哪件事？'),h('p',{className:'pc_dot_muted'},'说说背景和目标，和 Dot 一起整理下一步。'),h('div',{className:'pc_dot_composer'},h('textarea',{'aria-label':'交代给 Dot 的事情',placeholder:'把背景、想做的事，或刚刚变化的情况告诉我…',maxLength:3500,value:draft,disabled:busy,onChange:e=>{if(!flight.current)setDraft(e.target.value);},onKeyDown:e=>{if((e.metaKey||e.ctrlKey)&&e.key==='Enter'&&!e.isComposing){e.preventDefault();void chat();}}}),h('div',{className:'pc_dot_compose_bottom'},h('select',{'aria-label':'这句话关联的项目',value:selected??'',disabled:busy,onChange:e=>{if(!flight.current)setSelected(e.target.value);}},h('option',{value:''},'不关联项目'),...projects.map(p=>h('option',{value:p.id,key:p.id},p.label))),h('span',{className:'pc_dot_keyboard'},'⌘ / Ctrl + Enter'),button('开始对话　→',()=>chat(),{className:'pc_dot_primary'}))),h('p',{className:'pc_dot_muted'},'带入原生 Dot 会话后，由你发送；已有会话草稿会保留。'),h('div',{className:'pc_dot_actions pc_dot_shortcuts'},...shortcuts.map(([label,prompt])=>button(label,()=>stageDraft(prompt),{key:label}))));
-        const home=h('div',null,composer,h('div',{className:'pc_dot_home_grid'},h('div',{className:'pc_dot_column'},section('最近一次交办',!availability.jobs?h('p',{className:'pc_dot_muted'},'当前 Dot 会话的交办状态尚未确认，请在连接恢复后刷新核对。'):currentResult?h('article',{className:'pc_dot_result','data-dot-current-result':currentResult.id},h('header',null,h('span',{className:'pc_dot_muted'},currentResult.projectLabel),h('span',{className:'pc_dot_badge'},states[currentResult.status]??'状态待核对')),h('h3',null,currentResult.task),currentResult.result?.available===true&&typeof currentResult.result.text==='string'?h('p',{className:'pc_dot_excerpt'},currentResult.result.text):h('p',{className:'pc_dot_muted'},currentResult.status==='completed'?'这次交办已有回复，打开查看具体内容。':'状态来自已有交办记录，页面不会重新执行。'),currentResult.result?.truncated?h('p',{className:'pc_dot_muted'},'原回复较长，此处为摘录。'):null,h('p',{className:'pc_dot_muted'},`来源：这次交办记录 · ${date(currentResult.finishedAt??currentResult.createdAt)}`),h('p',{className:'pc_dot_muted'},deliveries[currentResult.delivery?.status]??'尚无发送回执'),h('div',{className:'pc_dot_actions'},button('看看这次结果',()=>openTask(currentResult),{className:'pc_dot_primary'}),readOnly?null:button('和 Dot 接着聊',()=>continueJob(currentResult)))):h('p',{className:'pc_dot_empty'},'暂无当前 Dot 会话的交办记录。有事直接告诉我。'),
-          availability.jobs?h('details',{'data-dot-history':true},h('summary',null,`最近交办记录（${jobs.length}）`),recentJobs.length?recentJobs.map(jobCard):h('p',{className:'pc_dot_muted'},'这个窗口里还没有交办记录。'),h('p',{className:'pc_dot_muted'},'这里展示最近的有限记录；更早的原始内容在 Dot 会话中。'),bound?button('打开完整会话历史',()=>navigate(snapshot.connection.sessionId)):null):null),section('正在关注',!availability.projects?h('p',null,'关注列表暂不可用，请刷新核对。'):projects.length?projects.map(p=>button(h('span',null,h('strong',null,p.label),h('small',{className:'pc_dot_muted'},latest(p)?`资料更新 ${date(latest(p))}`:'尚无近期资料')),()=>openProject(p.id),{key:p.id,className:'pc_dot_project_mini'})):h('p',null,'还没有关注项目，请先选择。'),readOnly?null:button('选择关注项目',()=>setSetup(true)))),h('aside',{className:'pc_dot_column','aria-label':'需要关注与后续安排'},section('需要你关注',!availability.jobs?h('p',{className:'pc_dot_muted'},'交办状态尚未确认。'):attention.length?attention.map(jobCard):h('p',{className:'pc_dot_muted'},'当前记录里没有需要你处理的异常。新任务和最终结果仍由你核对。')),reviewCard,plans,checkHistory)));
+        const currentResult=recentJobs[0];
+        const firstUse=snapshot?.connection?.state==='missing'&&!readOnly;
+        const attentionProjection=snapshot?.personalReview?.attentionItems;
+        const scheduleProjection=snapshot?.personalReview?.schedules;
+        const attentionItems=attentionProjection?.available===true&&Array.isArray(attentionProjection.items)?attentionProjection.items.slice(0,5):null;
+        const scheduleItems=Array.isArray(scheduleProjection?.items)?scheduleProjection.items.slice(0,12):null;
+        const unknownScopes=[!availability.projects?'关注项目':null,!availability.jobs?'交办记录':null,!availability.plans?'已有安排':null,!attentionItems?'当前事项':attentionProjection.coverage==='unconfirmed'?'部分事项覆盖':null,scheduleProjection?.available!==true?'下一次安排':null,snapshot?.connection?.state==='unknown'?'微信连接':null].filter(Boolean);
+        const recovery=!firstUse&&unknownScopes.length?h('div',{className:'pc_dot_notice pc_dot_recovery',role:'status','data-dot-recovery':true},h('div',null,h('strong',null,'部分状态暂未确认，电脑对话可以继续'),h('p',null,`${unknownScopes.join('、')}尚未核对。保留原安排，不会据此判断没有事项或重新创建。`),h('details',null,h('summary',null,'查看影响范围'),h('p',null,[attentionProjection?.note,scheduleProjection?.note].filter(v=>typeof v==='string'&&v).join(' ')||'恢复连接后重试状态，现有记录不会自动重做。'))),h('div',{className:'pc_dot_actions'},button('查看连接',()=>changePage('settings')),button('重试状态',refresh))):null;
+        const jobCard=job=>h('article',{className:'pc_dot_update',key:job.id,'data-dot-job':job.id},h('p',{className:'pc_dot_muted'},`${job.projectLabel} · ${states[job.status]??'状态待核对'}`),h('h3',null,job.task),job.result?.available===true&&typeof job.result.text==='string'?h('p',{className:'pc_dot_excerpt'},job.result.text):null,job.result?.truncated?h('p',{className:'pc_dot_muted'},'原回复较长，此处为摘录。'):null,job.delivery?h('p',{className:'pc_dot_muted'},deliveries[job.delivery.status]??'回传状态待核对'):null,h('div',{className:'pc_dot_actions'},button('看看这次结果',()=>openTask(job)),readOnly?null:button('和 Dot 接着聊',()=>continueJob(job))));
+        const focusComposer=()=>{composerStart.current?.focus?.();composerStart.current?.scrollIntoView?.({block:'nearest'});};
+        const continueDesktopCandidate=async()=>{if(!conversationCandidate||flight.current)return;flight.current=true;setBusy(true);try{const candidate=await desktopController.resolve(conversationCandidate);if(!candidate)throw Error('candidate unavailable');const remembered=await desktopController.remember(candidate.sessionId);if(active.current){workbenchCache.localConversation=candidate;setLocalConversation(candidate);setConversationCandidate(null);setNotice(remembered?'已选择上次对话，沿用原草稿。':'本次可继续上次对话；入口暂未保存，可从原生历史找回。');}}catch{if(active.current)setError('上次对话暂不可用，请从原生历史核对；当前草稿仍保留。');}finally{flight.current=false;if(active.current)setBusy(false);}};
+        const inlineState=inlineConnection?.state;
+        const connectionCopy={missing:'微信桥接尚未就绪。先在电脑上聊，也可到连接页查看微信设置。',unknown:'微信连接状态暂未确认，保留原连接；先在电脑上继续。','waiting-qr':'微信扫一扫 · 等待扫码',scanned:'已扫码，请在手机上确认。','awaiting-message':'请在微信给小助手发送“你好”，完成入口确认。',bound:'微信已连接，沿用已有入口。',failed:'微信连接暂时受阻。先查看已有连接状态，不会重置绑定。'};
+        const inlineWechat=firstUse?h('section',{className:'pc_dot_inline_wechat','data-dot-inline-wechat':true,'aria-label':'连接微信'},h('div',{className:'pc_dot_pair_copy'},h('h2',null,inlineState==='bound'?'微信已连接':'把 Dot 带到微信里'),h('p',null,'在手机上交代任务、收结果，也能收到你已开启的提醒。'),button('先在电脑上试试',focusComposer,{className:'pc_dot_text_button'}),h('p',{className:'pc_dot_muted'},'电脑和 Harness 需保持在线。扫码不会自动开启推送。')),h('div',{className:'pc_dot_inline_code'},h('p',{role:'status'},inlineConnectionError||(qrFailed?'二维码暂不可用，请刷新连接状态。':connectionCopy[inlineState]??'正在读取现有微信连接…')),inlineState==='waiting-qr'&&inlineConnection?.qrAvailable===true&&!qrFailed?h('img',{src:'/wechat/api/qr-image'+(/^[a-f0-9]{16}$/.test(inlineConnection.qrRevision??'')?`?v=${inlineConnection.qrRevision}`:''),alt:'用微信扫描，连接 Dot',onError:()=>setQrFailed(true)}):null,button('刷新连接状态',readInlineConnection),inlineState==='missing'||inlineState==='failed'?button('查看微信设置',()=>changePage('settings')):null)):null;
+        const composer=embedded?h('section',{className:'pc_dot_hero','aria-label':'和 Dot 继续对话'},h('h1',null,'今天想推进哪件事？'),h(DesktopConversation,{target:desktopTarget,SessionProvider:props.SessionProvider,renderSlot:props.renderSlot,onOpenHistory:()=>navigate(desktopTarget.sessionId),onReady:setNativeHomeReady})):h('section',{className:'pc_dot_hero'},h('h1',null,firstUse?'先把一件事交给 Dot。':'今天想推进哪件事？'),h('p',{className:'pc_dot_muted'},'说说背景和目标，需要资料时再按需连接。'),h('div',{className:'pc_dot_composer'},h('textarea',{ref:composerStart,'aria-label':'交代给 Dot 的事情',placeholder:'把背景、想做的事，或刚刚变化的情况告诉我…',maxLength:3500,value:draft,disabled:busy,onChange:e=>{if(!flight.current)setDraft(e.target.value);},onKeyDown:e=>{if((e.metaKey||e.ctrlKey)&&e.key==='Enter'&&!e.isComposing&&e.keyCode!==229&&!e.nativeEvent?.isComposing){e.preventDefault();void chat();}}}),h('div',{className:'pc_dot_compose_bottom'},h('select',{'aria-label':'这句话关联的项目',value:selected??'',disabled:busy,onChange:e=>{if(!flight.current)setSelected(e.target.value);}},h('option',{value:''},'不关联项目'),...projects.map(p=>h('option',{value:p.id,key:p.id},p.label))),h('span',{className:'pc_dot_keyboard'},'⌘ / Ctrl + Enter'),button('开始对话',()=>chat(),{className:'pc_dot_primary'}))),h('p',{className:'pc_dot_muted'},'带入原生 Dot 会话后，由你发送；已有会话草稿会保留。'),conversationCandidate?button('继续上次对话',continueDesktopCandidate,{className:'pc_dot_text_button'}):null,h('div',{className:'pc_dot_actions pc_dot_shortcuts'},...shortcuts.slice(0,3).map(([label,prompt])=>button(label,()=>stageDraft(prompt),{key:label}))));
+        const sourceMeta=source=>h('div',{className:'pc_dot_item_source',key:`${source.source??''}:${source.title??''}`},h('strong',null,source.label||source.title||source.source||'来源'),h('span',null,[source.source,source.at?date(source.at):null,['metadata_only','metadata-only'].includes(source.contentState)?'仅来源信息':null,source.contentState==='unread'?'正文未读':null,source.contentState==='unavailable'?'内容尚未确认':null,source.contentState==='actual_empty'?'返回内容为空':null,source.truncated?'内容已截断':null].filter(Boolean).join(' · ')));
+        const attentionCard=item=>h('article',{className:'pc_dot_attention_item',key:item.id,'data-dot-attention-item':item.id},h('div',{className:'pc_dot_item_kicker'},h('span',null,({deadline:'截止事项',risk:'需要留意',invitation:'待确认邀请',reply:'待回复',change:'近期变化',progress:'项目进展',event:'近期安排'}[item.kind]??'当前事项')),h('span',null,item.dueAt?`${item.dueAtBasis==='relative'?'估算期限':'截止'} ${date(item.dueAt)}`:item.eventStartAt?`开始 ${date(item.eventStartAt)}`:item.time?date(item.time):'')),h('h3',null,item.title),typeof item.summary==='string'&&item.summary?h('p',{className:'pc_dot_item_summary'},item.summary):null,typeof item.why==='string'&&item.why?h('p',{className:'pc_dot_item_why'},item.why):null,typeof item.action==='string'&&item.action?h('p',{className:'pc_dot_item_next'},item.action):null,typeof item.unknown==='string'&&item.unknown?h('p',{className:'pc_dot_item_unknown'},`待确认：${item.unknown}`):null,item.confidence==='inferred'?h('p',{className:'pc_dot_muted'},'这是基于已保存资料的判断，仍需核对。'):null,h('div',{className:'pc_dot_actions'},button('和 Dot 接着聊',()=>stageDraft(`请围绕这条事项继续：${item.title}\n事项 ID：${item.id}\n请先核对原事项及已授权来源，再帮我梳理下一步；不要自动重做旧任务或扩大读取范围。`,'')),Array.isArray(item.sources)&&item.sources.length?h('details',null,h('summary',null,'查看依据'),...item.sources.slice(0,5).map(sourceMeta)):null));
+        const attentionView=section('值得你留意',attentionItems?attentionItems.length?attentionItems.map(attentionCard):h('p',{className:'pc_dot_empty'},'当前已核对的范围内，没有待处理事项。有事可以直接告诉 Dot。'):h('p',{className:'pc_dot_empty'},'当前事项尚未核对，恢复入口见上方提示。'),typeof attentionProjection?.note==='string'&&attentionProjection.note?h('p',{className:'pc_dot_muted'},attentionProjection.note):null,attentionProjection?.truncated?h('p',{className:'pc_dot_muted'},'这里只展示最近 5 条事项，其他内容请在原会话核对。'):null);
+        const scheduleTime=item=>item.nextDueAt?date(item.nextDueAt):[item.dailyTime?`每天 ${item.dailyTime}`:'',Number.isInteger(item.weeklyDay)&&item.weeklyTime?`每周${['日','一','二','三','四','五','六'][item.weeklyDay]} ${item.weeklyTime}`:'',Number.isInteger(item.everyMinutes)?`每 ${item.everyMinutes} 分钟`:''].filter(Boolean).join(' · ')||'下次时间待确认';
+        const scheduleRail=h('section',{className:'pc_dot_section pc_dot_schedule','data-dot-schedule-rail':true},h('h3',null,'下一次安排'),scheduleItems?scheduleItems.length?scheduleItems.map(item=>h('div',{className:'pc_dot_schedule_item',key:item.id},h('strong',null,item.title),h('span',{className:'pc_dot_plan_status'},({stored:'已保存',paused:'已暂停',blocked:'当前受阻'}[item.status]??'状态待核对')),h('p',null,scheduleTime(item)),h('p',{className:'pc_dot_muted'},item.timeZone||'时区待核对'),h('p',{className:'pc_dot_muted'},({['personal-review']:'个人回顾',news:'AI 日报',['project-followup']:'项目跟进'}[item.source]??'原安排')))):scheduleProjection?.available===true?h('p',{className:'pc_dot_empty'},'当前范围没有已保存的安排。想跟进一件事，可以直接告诉 Dot。'):h('p',{className:'pc_dot_empty'},'安排状态见上方提示。'):h('p',{className:'pc_dot_empty'},'安排状态见上方提示。'),scheduleProjection?.available!==true&&scheduleItems?.length?h('p',{className:'pc_dot_muted'},'部分安排尚未确认；这里保留已核对的安排。'):null,scheduleItems?.length?h('p',{className:'pc_dot_rail_note'},'这里显示已保存的安排；运行尚未核验，手机收到仍未确认。'):null,scheduleProjection?.truncated?h('p',{className:'pc_dot_muted'},'此处为有限安排，其余请在原入口核对。'):null);
+        const history=availability.jobs?h('details',{className:'pc_dot_history','data-dot-history':true},h('summary',null,`找到之前聊过的事（${jobs.length}）`),recentJobs.length?recentJobs.map(jobCard):h('p',{className:'pc_dot_muted'},'这个窗口里还没有交办记录。'),h('p',{className:'pc_dot_muted'},'这里展示最近的有限记录；更早的原始内容在 Dot 会话中。'),desktopTarget?button('打开完整会话历史',()=>navigate(desktopTarget.sessionId)):bound&&!readOnly?button('打开完整会话历史',()=>navigate(snapshot.connection.sessionId)):null):null;
+        const home=h('div',null,recovery,h('div',{className:'pc_dot_home_grid'},h('div',{className:'pc_dot_column'},inlineWechat,composer,firstUse?h('p',{className:'pc_dot_intro'},'不用先把所有东西配好。先聊手上的任务，用到邮件、日程或项目时，再连接需要的资料。'):attentionView,history,h('details',{className:'pc_dot_legacy_details'},h('summary',null,'更多原会话安排与检查'),plans,checkHistory)),h('aside',{className:'pc_dot_column pc_dot_rail','aria-label':'后续安排与资料范围'},firstUse?section('从你手上的事开始',h('p',{className:'pc_dot_muted'},'先交代一个目标，Dot 会接着整理下一步。用到资料时再连接；想定时跟进时再安排。')):scheduleRail,section('正在关注',availability.projects?projects.length?projects.map(p=>button(h('span',null,h('strong',null,p.label),h('small',{className:'pc_dot_muted'},latest(p)?`资料更新 ${date(latest(p))}`:'尚无近期资料')),()=>openProject(p.id),{key:p.id,className:'pc_dot_project_mini'})):h('p',{className:'pc_dot_muted'},'先从手头的一件事开始，需要时再关注项目。'):h('p',{className:'pc_dot_muted'},'关注范围见上方提示。'),readOnly?null:button('选择关注项目',()=>setSetup(true))),reviewState?h('details',{className:'pc_dot_review_details'},h('summary',null,'个人回顾与资讯设置'),reviewCard):null)));
         const catalogView=section(`全部项目${catalog?` · ${catalog.total}`:''}`,
           h('p',{className:'pc_dot_muted'},'按名称找到 Harness 已登记的项目，单次查看不占持续关注名额。列目录不会读取项目内容。'),
           !bound?h('p',{className:'pc_dot_empty'},'先确认微信连接，再查看你的项目目录。'):h('div',null,
@@ -911,7 +1097,7 @@ function registerDotOverlay(ctx, Component) {
         ctx.effect(()=>ctx.slots.inject('main',()=>ctx.slots.register({name:'main',key:dotPanel,children:{'dot.desktop.conversation':{kind:'single',scope:'session'}}},Workbench)));
         ctx.effect(()=>ctx.slots.inject('dot.desktop.conversation',()=>ctx.slots.register({name:'dot.desktop.conversation'},DesktopConversationContent)));
         ctx.effect(()=>ctx.slots.inject('dot.overlay.conversation',()=>ctx.slots.register({name:'dot.overlay.conversation'},DesktopConversationContent)));
-        const DotOverlay=createDotOverlay(React,{renderConversation:props=>h(OverlayDesktopConversation,props),activateDesktop:()=>ctx.layout.selectPanel(dotPanel)});
+        const DotOverlay=createDotOverlay(React,{renderConversation:props=>h(OverlayDesktopConversation,props),activateDesktop:()=>ctx.layout.selectPanel(dotPanel),useSurface:useWorkbenchSurface,focusHome:()=>workbenchSurface.focus?.()});
         registerDotOverlay(ctx,DotOverlay);
         ctx.effect(()=>ctx.slots.inject('sidebar.panellist',()=>ctx.slots.register({name:'sidebar.panellist',id:dotPanel,order:5,label:'DSH Dot'},DotIcon)));
       }

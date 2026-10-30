@@ -10,15 +10,17 @@ export function createDotOverlay(React, adapters = {}) {
 .dot_overlay button{font:inherit;cursor:pointer;color:inherit}.dot_overlay button:focus-visible{outline:2px solid var(--dsw-alias-state-business-primary,#4176e6);outline-offset:3px}
 .dot_overlay_launcher{pointer-events:auto;display:inline-flex;align-items:center;justify-content:center;gap:8px;min-height:44px;padding:9px 15px;border:1px solid var(--dsw-alias-border-l3,rgba(44,55,68,.12));border-radius:24px;background:var(--dsw-alias-bg-layer-2,#fffdf8);box-shadow:0 5px 24px rgba(22,34,48,.14);font-size:14px!important;font-weight:600!important}
 .dot_overlay_mark{display:inline-flex;color:var(--dsw-alias-state-business-primary,#4176e6)}
-.dot_overlay_panel{pointer-events:auto;display:flex;flex-direction:column;width:min(420px,calc(100vw - 32px));height:min(620px,calc(100vh - var(--dsh-frame-overlay-top,68px) - 104px));height:min(620px,calc(100dvh - var(--dsh-frame-overlay-top,68px) - 104px));max-height:100%;border:1px solid var(--dsw-alias-border-l3,rgba(44,55,68,.12));border-radius:18px;background:var(--dsw-alias-bg-layer-2,#fffdf8);box-shadow:0 12px 48px rgba(22,34,48,.18);overflow:hidden}
+.dot_overlay_panel{pointer-events:auto;display:flex;flex-direction:column;width:min(440px,calc(100vw - 32px));height:min(620px,calc(100vh - var(--dsh-frame-overlay-top,68px) - 104px));height:min(620px,calc(100dvh - var(--dsh-frame-overlay-top,68px) - 104px));max-height:100%;border:1px solid #cbd2ce;border-radius:10px;background:#fff;color:#23313c;box-shadow:0 12px 48px rgba(22,34,48,.18);overflow:hidden;--dsw-alias-bg-base:#fff;--dsw-alias-bg-layer-1:#fff;--dsw-alias-bg-layer-2:#fff;--dsw-alias-bg-layer-3:#fff;--dsw-alias-label-primary:#23313c;--dsw-alias-label-secondary:#5b6973;--dsw-alias-state-business-primary:#345ec7}
 .dot_overlay_header{display:flex;align-items:center;gap:10px;padding:13px 14px;border-bottom:1px solid var(--dsw-alias-border-l4,rgba(44,55,68,.08));flex-shrink:0}
 .dot_overlay_heading{min-width:0;flex:1}.dot_overlay_title{font-size:15px;font-weight:650}.dot_overlay_subtitle{font-size:11px;color:var(--dsw-alias-label-secondary,#5c6672);margin-top:2px}
-.dot_overlay_action{display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;width:32px;height:32px;border:0;border-radius:8px;background:transparent}.dot_overlay_action:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(48,63,79,.06))}
+.dot_overlay_action{display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;width:44px;height:44px;border:0;border-radius:8px;background:transparent}.dot_overlay_action:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(48,63,79,.06))}
 .dot_overlay_body{position:relative;display:flex;flex:1;min-height:0;overflow:hidden}.dot_overlay_body> *{flex:1;min-height:0;min-width:0}
 .dot_overlay_fallback{padding:20px;font-size:13px;line-height:1.65;color:var(--dsw-alias-label-secondary,#5c6672)}
 .dot_overlay_notice{pointer-events:auto;max-width:min(320px,calc(100vw - 40px));padding:10px 14px;border:1px solid var(--dsw-alias-border-l3,rgba(44,55,68,.12));border-radius:12px;background:var(--dsw-alias-bg-layer-2,#fffdf8);font-size:12px;line-height:1.5;box-shadow:0 4px 20px rgba(22,34,48,.1)}
+.dot_overlay_fallback{background:#fff;color:#5b6973}.dot_overlay_fallback button{display:inline-flex;min-height:44px;align-items:center;justify-content:center;margin:12px 8px 0 0;padding:8px 12px;border:1px solid #cbd2ce;border-radius:7px;background:#fff;color:#345ec7}.dot_overlay_body .pc_dot_conversation{height:100%;max-height:none;min-height:0;border:0;border-radius:0;margin:0}.dot_overlay_body .pc_dot_conversation>div{min-height:0}.dot_overlay_body .dot_compact_history{padding:16px;font-size:13px}.dot_overlay_body .dot_compact_history_heading{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:14px;font-size:12px;color:#5b6973}.dot_overlay_body .dot_compact_history button{min-height:44px;background:none;border:0;color:#345ec7}.dot_overlay_body .dot_compact_history_role{display:block;color:#5b6973;font-size:11px;margin-bottom:4px}.dot_overlay_body .dot_compact_history_assistant{margin-top:14px}.dot_overlay_body .dot_compact_history_truncated{color:#5b6973;font-size:12px}.dot_overlay_body .dot_compact_history_actions button{min-height:44px;color:#345ec7;border:0;background:#fff}
 @media(max-width:560px){.dot_overlay_dock{right:max(12px,env(safe-area-inset-right,0px));bottom:max(18px,calc(env(safe-area-inset-bottom,0px) + 14px))}.dot_overlay_panel{width:calc(100vw - 24px);height:calc(100dvh - var(--dsh-frame-overlay-top,68px) - 88px);border-radius:14px}.dot_overlay_subtitle{display:none}}
-@media(max-height:440px){.dot_overlay_dock{bottom:max(8px,env(safe-area-inset-bottom,0px));gap:6px}.dot_overlay_panel{height:calc(100dvh - var(--dsh-frame-overlay-top,68px) - 66px)}.dot_overlay_header{padding:7px 12px}.dot_overlay_launcher{min-height:36px;padding:5px 13px}}
+@media(max-height:440px){.dot_overlay_dock{bottom:max(8px,env(safe-area-inset-bottom,0px));gap:6px}.dot_overlay_panel{height:calc(100dvh - var(--dsh-frame-overlay-top,68px) - 66px)}.dot_overlay_header{padding:7px 12px}.dot_overlay_launcher{min-height:44px;padding:5px 13px}}
+@media(prefers-reduced-motion:reduce){.dot_overlay *{animation:none!important;transition:none!important;scroll-behavior:auto!important}}
 `;
   const mark = () => h('span', { className: 'dot_overlay_mark', 'aria-hidden': true },
     h('svg', { width: 22, height: 22, viewBox: '0 0 24 24', fill: 'none' },
@@ -28,6 +30,7 @@ export function createDotOverlay(React, adapters = {}) {
   const icon = kind => h('svg', { width: 16, height: 16, viewBox: '0 0 20 20', fill: 'none', 'aria-hidden': true },
     h('path', { d: kind === 'close' ? 'M5 5l10 10M15 5L5 15' : 'M11 4h5v5M16 4l-7 7M7 4H4v12h12v-3', stroke: 'currentColor', strokeWidth: 1.5, strokeLinecap: 'round', strokeLinejoin: 'round' }));
   return function DotOverlay(props = {}) {
+    const surface=typeof adapters.useSurface==='function'?adapters.useSurface(props):{};
     const [open, setOpen] = React.useState(false);
     const [error, setError] = React.useState('');
     const launcher = React.useRef(null);
@@ -35,7 +38,9 @@ export function createDotOverlay(React, adapters = {}) {
     const pendingWorkbench = React.useRef(false);
     const returnFocus = React.useRef(false);
     const live = React.useRef(true);
+    const showing=open&&surface.homeActive!==true;
     React.useEffect(() => { live.current = true; return () => { live.current = false; }; }, []);
+    React.useEffect(()=>{if(surface.homeActive&&open)setOpen(false);},[surface.homeActive,open]);
     React.useEffect(() => {
       if (open) { panel.current?.focus?.(); return; }
       if (pendingWorkbench.current) {
@@ -61,7 +66,7 @@ export function createDotOverlay(React, adapters = {}) {
       if (!open || event.key !== 'Escape' || event.defaultPrevented || event.isComposing || event.nativeEvent?.isComposing || event.altKey || event.ctrlKey || event.metaKey) return;
       event.preventDefault?.(); event.stopPropagation?.(); close();
     };
-    const content = open
+    const content = showing
       ? typeof adapters.renderConversation === 'function'
         ? adapters.renderConversation({ ...props, location: 'overlay', onOpenWorkbench: openWorkbench })
         : h('div', { className: 'dot_overlay_fallback' }, '请打开完整工作台，与 Dot 继续对话。')
@@ -70,14 +75,14 @@ export function createDotOverlay(React, adapters = {}) {
       h('style', null, css),
       h('div', { className: 'dot_overlay_dock' },
         error && h('div', { className: 'dot_overlay_notice', role: 'status' }, error),
-        open && h('section', { className: 'dot_overlay_panel', id: 'dsh-dot-overlay-dialog', ref: panel, tabIndex: -1, role: 'dialog', 'aria-label': '与 Dot 对话', onKeyDown: escape },
+        showing && h('section', { className: 'dot_overlay_panel', id: 'dsh-dot-overlay-dialog', ref: panel, tabIndex: -1, role: 'dialog', 'aria-label': '与 Dot 对话', onKeyDown: escape },
           h('header', { className: 'dot_overlay_header' }, mark(),
             h('div', { className: 'dot_overlay_heading' }, h('div', { className: 'dot_overlay_title' }, 'Dot'), h('div', { className: 'dot_overlay_subtitle' }, '你的一句交代，我接着跟进。')),
             h('button', { className: 'dot_overlay_action', type: 'button', 'aria-label': '打开完整工作台', title: '打开完整工作台', onClick: openWorkbench }, icon('expand')),
             h('button', { className: 'dot_overlay_action', type: 'button', 'aria-label': '收起 Dot 对话', title: '收起', onClick: close }, icon('close'))),
           h('div', { className: 'dot_overlay_body' }, content)),
-        h('button', { className: 'dot_overlay_launcher', type: 'button', ref: launcher, 'aria-label': open ? '收起 Dot 对话' : '打开 Dot 对话', 'aria-expanded': open, 'aria-controls': open ? 'dsh-dot-overlay-dialog' : undefined, onKeyDown: escape,
-          onClick: () => { setError(''); if (open) close(); else setOpen(true); } }, mark(), h('span', null, 'Dot'))));
+        !(surface.homeActive&&surface.homeReady) && h('button', { className: 'dot_overlay_launcher', type: 'button', ref: launcher, 'aria-label': showing ? '收起 Dot 对话' : '打开 Dot 对话', 'aria-expanded': showing, 'aria-controls': showing ? 'dsh-dot-overlay-dialog' : undefined, onKeyDown: escape,
+          onClick: () => { setError(''); if(surface.homeActive){adapters.focusHome?.();return;} if (open) close(); else setOpen(true); } }, mark(), h('span', null, 'Dot'))));
   };
 }
 
