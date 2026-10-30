@@ -65,6 +65,32 @@ test('native reset unknown scopes share one recoverable banner while attention r
  try{h.render();await h.flush();const view=h.render(),banner=nodes(view,n=>n.props['data-dot-recovery']);assert.equal(banner.length,1);assert.match(text(banner[0]),/关注项目.*交办记录.*已有安排.*当前事项/);assert.ok(button(banner[0],'重试状态'));assert.doesNotMatch(text(view),/当前记录里没有需要你处理|还没有开启项目跟进|暂无当前 Dot 会话/);assert.match(text(view),/SOURCE_STATUS_UNCONFIRMED/);assert.deepEqual(actionPosts(h),[]);}finally{h.dispose();}
 });
 
+function sharedOwnerProjection(h){
+ h.context.snapshot.connection={state:'bound',sessionId:'family-owner',readOnly:true};
+ h.context.snapshot.availability.plans=false;
+ h.context.snapshot.personalReview={available:true,attentionItems:{available:true,coverage:'only-enabled-sources',items:[]},schedules:{available:true,items:[{id:'review',title:'SHARED_OWNER_REVIEW',status:'stored',source:'personal-review',dailyTime:'09:00',timeZone:'America/Mexico_City'}]}};
+}
+
+test('shared Owner intentionally excluded legacy plans do not produce a recovery warning',async()=>{
+ const h=await harness();sharedOwnerProjection(h);
+ try{h.render();await h.flush();const view=h.render();assert.equal(nodes(view,n=>n.props['data-dot-recovery']).length,0);assert.match(text(nodes(view,n=>n.props['data-dot-schedule-rail'])[0]),/SHARED_OWNER_REVIEW.*09:00/);assert.match(text(view),/这里不混入独立 Dot 会话的旧计划/);assert.deepEqual(actionPosts(h),[]);}finally{h.dispose();}
+});
+
+for(const scope of ['schedules','projects','jobs','coverage','connection'])test(`shared Owner still reports actual ${scope} uncertainty`,async()=>{
+ const h=await harness();sharedOwnerProjection(h);
+ if(scope==='schedules')h.context.snapshot.personalReview.schedules.available=false;
+ if(scope==='projects'||scope==='jobs')h.context.snapshot.availability[scope]=false;
+ if(scope==='coverage')h.context.snapshot.personalReview.attentionItems.coverage='unconfirmed';
+ if(scope==='connection')h.context.snapshot.connection.state='failed';
+ const expected={schedules:'下一次安排',projects:'关注项目',jobs:'交办记录',coverage:'部分事项覆盖',connection:'微信连接'}[scope];
+ try{h.render();await h.flush();const view=h.render(),banner=nodes(view,n=>n.props['data-dot-recovery']);assert.equal(banner.length,1);assert.ok(text(banner[0]).includes(expected));assert.doesNotMatch(text(banner[0]),/已有安排尚未核对/);assert.match(text(nodes(view,n=>n.props['data-dot-schedule-rail'])[0]),/SHARED_OWNER_REVIEW/);assert.deepEqual(actionPosts(h),[]);}finally{h.dispose();}
+});
+
+test('independent Dot still reports unavailable legacy plans',async()=>{
+ const h=await harness();sharedOwnerProjection(h);h.context.snapshot.connection={state:'bound',sessionId:'dot-source'};
+ try{h.render();await h.flush();const banner=nodes(h.render(),n=>n.props['data-dot-recovery']);assert.equal(banner.length,1);assert.match(text(banner[0]),/已有安排尚未核对/);assert.deepEqual(actionPosts(h),[]);}finally{h.dispose();}
+});
+
 test('native reset schedule rail uses stored scope timezone and unverified runtime without claiming phone receipt',async()=>{
  const h=await harness();h.context.snapshot.personalReview={available:true,attentionItems:{available:true,items:[]},schedules:{available:true,items:[{id:'review',kind:'daily',title:'REAL_DAILY_REVIEW',status:'stored',source:'personal-review',timeZone:'America/Mexico_City',dailyTime:'09:00',runtime:'unverified',phoneReceipt:'unverified'},{id:'news',kind:'daily',title:'REAL_NEWS',status:'paused',source:'news',timeZone:'Asia/Shanghai',dailyTime:'09:10',runtime:'unverified',phoneReceipt:'unverified'}]},review:{status:'enabled'},news:{topics:[]}};
  try{h.render();await h.flush();const view=h.render(),rail=nodes(view,n=>n.props['data-dot-schedule-rail'])[0];assert.ok(rail);assert.match(text(rail),/REAL_DAILY_REVIEW.*09:00.*America\/Mexico_City/);assert.match(text(rail),/REAL_NEWS.*已暂停.*09:10.*Asia\/Shanghai/);assert.match(text(rail),/运行.*未核验.*手机.*未确认/);assert.deepEqual(actionPosts(h),[]);}finally{h.dispose();}
