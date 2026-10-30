@@ -144,6 +144,8 @@ export function createPersonalReviewService({ store, readBinding, readBindingSyn
     return parsed;
   }
   async function generate(run, kind, occurrence) {
+    // Attention uses daily material while retaining its own scheduling and notification policy.
+    const materialKind = kind === 'attention' ? 'daily' : kind;
     const started=Date.now();let stage='authorization',counts={sourceCount:run.sources.length,projectCount:run.projects.length};
     const generationStatus=(status,diagnostic)=>{lastGeneration={caller:copy(run.caller),value:{status,kind,at:now().toISOString(),...(diagnostic?{diagnostic}:{}),persisted:false}};};
     generationStatus('running');
@@ -153,12 +155,12 @@ export function createPersonalReviewService({ store, readBinding, readBindingSyn
     const starts = Object.values(sourceWatermarks).map(value => Date.parse(value) - 2 * 3600000);
     const from = new Date(Math.max(now().getTime() - 30 * DAY, starts.length ? Math.min(...starts, now().getTime() - window) : now().getTime() - window)).toISOString();
     stage='collection';
-    const raw = await race(() => collect({ caller: copy(run.caller), sources: copy(run.sources), projects: copy(run.projects), from, to: at, sourceWatermarks, kind, signal: run.signal, guard: () => guard(run) }), run.signal, 'REVIEW_COLLECTION_FAILED');
+    const raw = await race(() => collect({ caller: copy(run.caller), sources: copy(run.sources), projects: copy(run.projects), from, to: at, sourceWatermarks, kind: materialKind, signal: run.signal, guard: () => guard(run) }), run.signal, 'REVIEW_COLLECTION_FAILED');
     await guard(run); stage='validation'; const data = normalizeCollection(raw, run); counts={...counts,evidenceCount:data.evidence.length,coverageCount:data.coverage.length};
     if (!data.coverage.some(c => ['ok', 'partial'].includes(c.status))) { generationStatus('unknown'); return { ...data, items: [], selected: [], ledger: state.items, text: renderPersonalReview([], data.coverage, { kind, now: at, unknown: true, timeZone }), unknown: true, at }; }
     const previousItems = state.items.filter(i => i.scopeKey === run.key).slice(-60).map(i => ({ id: i.id, key: i.key, kind: i.kind, title: i.title, summary: i.summary, status: i.status, dueAt: i.dueAt ?? null, evidenceIds: i.evidence.map(e => e.id), lastSeenAt: i.lastSeenAt }));
     let candidates = [];
-    if (data.evidence.length) { stage='model'; const summary = await race(() => summarize({ ...copy(data), previousItems, kind, now: at, signal: run.signal, guard: () => guard(run), authorizeSync: () => authorizeSync(run) }), run.signal, 'REVIEW_MODEL_FAILED'); await guard(run); candidates = validatePersonalReviewSummary(summary, data.evidence).items; }
+    if (data.evidence.length) { stage='model'; const summary = await race(() => summarize({ ...copy(data), previousItems, kind: materialKind, now: at, signal: run.signal, guard: () => guard(run), authorizeSync: () => authorizeSync(run) }), run.signal, 'REVIEW_MODEL_FAILED'); await guard(run); candidates = validatePersonalReviewSummary(summary, data.evidence).items; }
     const ledger = mergeReviewItems(state.items, candidates, data.evidence, { now: at, scopeKey: run.key });
     const attentionSelection=kind==='attention'?selectAttentionItems(ledger.filter(i=>i.lastSeenAt===at),{now:at,scopeKey:run.key,coverage:data.coverage,remaining:Math.max(0,(run.attention?.maxMessagesPerDay??2)-usedAttention(run))}):null;
     let selected = attentionSelection?.selected ?? selectReviewItems(ledger, { now: at, kind, occurrence, scopeKey: run.key });
