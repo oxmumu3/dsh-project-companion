@@ -1,3 +1,4 @@
+import {reviewRuntimeHealth} from './review-runtime-health.js';
 import {personalReviewRowSchema} from './personal-review.js';
 import {newsRowSchema} from './news-service.js';
 import {hashReview} from './personal-review-ledger.js';
@@ -90,10 +91,10 @@ export function projectReviewWorkbench({reviewState,newsState,caller,bindingKey,
   const cards=actionable.slice(0,5).map(item=>{
     const prose=Object.fromEntries([['title',100],['summary',360],['why',160],['action',160],['unknown',180]].map(([key,max])=>[key,clean(item[key],max)]));
     const sources=item.evidence.slice(0,3).map(ref=>({source:ref.source,label:sourceLabels[ref.source],at:at(ref.at),contentState:ref.contentState??null,truncated:ref.contentState==='truncated',url:safeUrl(ref.url,ref.source,cleanText)}));
-    return{id:item.id,kind:item.kind,...prose,status:item.status,priority:item.priority,confidence:item.confidence,dueAt:at(item.dueAt),dueAtBasis:item.dueAtBasis??null,eventStartAt:at(item.eventStartAt),eventEndAt:at(item.eventEndAt),snoozeUntil:at(item.snoozeUntil),lastSeenAt:at(item.lastSeenAt),sources,truncated:item.evidence.length>3||sources.some(ref=>ref.truncated)||Object.keys(prose).some(key=>prose[key]!==item[key])};
+    return{id:item.id,kind:item.kind,...prose,execution:item.execution?{status:item.execution.status,outdated:item.execution.itemRevision!==item.revision}:null,status:item.status,priority:item.priority,confidence:item.confidence,dueAt:at(item.dueAt),dueAtBasis:item.dueAtBasis??null,eventStartAt:at(item.eventStartAt),eventEndAt:at(item.eventEndAt),snoozeUntil:at(item.snoozeUntil),lastSeenAt:at(item.lastSeenAt),sources,truncated:item.evidence.length>3||sources.some(ref=>ref.truncated)||Object.keys(prose).some(key=>prose[key]!==item[key])};
   });
   const attentionItems={available:!unconfirmed||cards.length>0,items:cards,truncated:actionable.length>5,coverage:unconfirmed?'unconfirmed':'stored-only',note:unconfirmed?unknownNote:storedNote};
-  const review={status:plan?plan.paused?'paused':'enabled':'off',schedule:plan?structuredClone(plan.schedule):null,attention:attentionView(state,plan,now),sources:scope?[...scope.sources]:[],projects:scope?scope.projects.map(root=>clean(projects.find(p=>p.root===root)?.label??'已选项目',80)):[],
+  const review={health:reviewRuntimeHealth({subscription:plan,jobs:state.jobs.filter(job=>job.sessionId===caller.sessionId),now}),status:plan?plan.paused?'paused':'enabled':'off',schedule:plan?structuredClone(plan.schedule):null,attention:attentionView(state,plan,now),sources:scope?[...scope.sources]:[],projects:scope?scope.projects.map(root=>clean(projects.find(p=>p.root===root)?.label??'已选项目',80)):[],
     items:cards.map(item=>({id:item.id,title:item.title,status:item.status,dueAt:item.dueAt,snoozeUntil:item.snoozeUntil})),goals:scope?state.goals.filter(goal=>goal.scopeKey===scope.key&&goal.grant===scope.grant).slice(0,5).map(goal=>({title:clean(goal.title,100),status:goal.status,meetingTitle:goal.meetingTitle?clean(goal.meetingTitle,100):null})):[],
     jobs:state.jobs.filter(job=>job.sessionId===caller.sessionId).slice(-8).map(job=>({kind:job.kind,status:job.status,createdAt:job.createdAt,detail:statusLabels[job.status]})),lastGeneration:null,text:`个人回顾：${plan?plan.paused?'已暂停':'已保存定时安排':'未启用定时计划'}。只读取已确认的来源与项目；电脑与宿主须在线。`};
   const scheduleItems=[];

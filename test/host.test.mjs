@@ -53,6 +53,31 @@ async function openHost(t, options={}){
   return {root,ctx,owner,live,registry,known,directories,disableWeChat,sent,accepted,tool,nativeTool,command,adapter,close,lifecycle,time:v=>{now=new Date(v);},tick:async()=>{assert.ok(timer,'timer must be armed');await timer();},interval:()=>intervalMs,timers:()=>({starts:timerStarts,stops:timerStops,active:!!timer})};
 }
 
+test('native rendered prepare and terminal hook preserve exact item/job references without accepting the business result',async t=>{
+ const h=await openHost(t,{readSetup:async()=>({state:'bound',sessionId:'synthetic-owner',bindingKey:'a'.repeat(64)}),personalReview:{model:{summarize:async input=>({items:[{key:'synthetic-handoff',kind:'progress',title:'核对项目说明',summary:'项目说明已经提供。',why:'应先核对用途。',action:'整理说明核对清单。',unknown:'仍待本人验收。',evidenceIds:[input.evidence[0].id],priority:'normal',confidence:'source'}]})}}});
+ const root=h.owner.session.header.cwd;await h.tool({action:'watch'});const target=addLive(h,'synthetic-review-target',root);await h.tool({action:'watch'});
+ const invoke=async(args,id)=>h.ctx.tools.execute({name:'personal_review',callId:id,arguments:args,agent:h.owner,signal:new AbortController().signal});
+ await invoke({action:'preview',sources:[],projects:[root]},'review-source');
+ const prepared=await invoke({action:'prepare',itemTitle:'核对项目说明',userRequested:true},'prepare');assert.equal(prepared.value.status,'prepared');
+ const visible=JSON.stringify(prepared.content);assert.ok(visible.includes(prepared.value.itemId));assert.match(visible,/助手内部事项索引/);
+ const result=await h.tool({action:'coordinate',project:root,session:target.id,task:'个人回顾「核对项目说明」只读整理核对清单，不修改文件。',reviewItemId:prepared.value.itemId,userRequested:true});assert.equal(result.status,'accepted',JSON.stringify(result));
+ const queued=h.accepted[0];h.ctx.emit('agent/inbox/claimed',{agent:target,message:queued,turn:7});await h.adapter.taskResults.ready();
+ target.session.append('assistant/message',{turn:7,step:0,message:{id:'synthetic-result',role:'assistant',content:[{type:'text',text:'Synthetic read-only checklist.'}]}},{surfaceOp:'append'});await h.adapter.taskResults.ready();
+ target.session.append('turn/end',{turn:7,reason:{kind:'completed'}});await new Promise(resolve=>setTimeout(resolve,40));
+ const board=await h.adapter.workbench.snapshot();assert.equal(board.personalReview.attentionItems.items[0].execution.status,'ready_for_review');assert.equal(board.personalReview.attentionItems.items[0].status,'open');
+ const again=await invoke({action:'prepare',itemId:prepared.value.itemId,userRequested:true},'prepare-result');assert.ok(JSON.stringify(again.content).includes(result.jobId));
+ const detail=await h.tool({action:'task_status',id:result.jobId});assert.match(detail.text,/Synthetic read-only checklist/);
+});
+test('a linked saved review can create one native session without watching a new project',async t=>{
+ const h=await openHost(t,{readSetup:async()=>({state:'bound',sessionId:'synthetic-owner',bindingKey:'a'.repeat(64)}),personalReview:{model:{summarize:async input=>({items:[{key:'cold-review',kind:'progress',title:'核对未开始的项目',summary:'项目说明已经提供。',why:'应先核对用途。',action:'只读核对项目说明。',unknown:'业务结果待验收。',evidenceIds:[input.evidence[0].id],priority:'normal',confidence:'source'}]})}}});
+ const root=await otherProject(h,'Synthetic cold review');h.known.push({id:'cold-review',path:root,title:'Synthetic cold review',sessionIds:[]});await h.tool({action:'watch',project:root});const factory=syntheticFactory(h,{root});
+ await h.adapter.personalReview.act({sessionId:String(h.owner.id),cwd:h.owner.session.header.cwd},{action:'preview',sources:[],projects:[root]});
+ const prepared=await h.adapter.personalReview.act({sessionId:String(h.owner.id),cwd:h.owner.session.header.cwd},{action:'prepare',itemTitle:'核对未开始的项目',userRequested:true,requestId:'prepare-cold'});
+ const before=(await h.adapter.service.watchedProjects()).map(p=>p.id);
+ const result=await h.tool({action:'coordinate',project:root,task:'围绕个人回顾「核对未开始的项目」只读核对README，不修改文件。',reviewItemId:prepared.itemId,userRequested:true});
+ assert.equal(result.status,'accepted',JSON.stringify(result));assert.equal(factory.calls.length,1);assert.deepEqual((await h.adapter.service.watchedProjects()).map(p=>p.id),before);assert.equal(h.accepted.length,1);
+});
+
 function addLive(h,id,cwd,{status='idle',origin}={}){
   const session=h.ctx.sessions.create(SessionId(id),{meta:{cwd,...(origin?{origin}:{})}});
   const agent={id:session.id,session,ctx:h.ctx,status,followup:message=>{h.accepted.push(message);agent.status='running';}};

@@ -462,6 +462,7 @@ export async function installCompanion(ctx,options={}){
       try{const state=standaloneBridge()?.routeStatus?.({sessionId:scope.caller.sessionId,expectedBinding:scope.bindingKey});return ['current','offline','changed','unknown'].includes(state)?state:'unknown';}catch{return'unknown';}
     },
     canRun:async()=>!disposed&&!lifecycle.signal.aborted&&!await service.isPaused(),canRunSync:()=>!disposed&&!lifecycle.signal.aborted&&!service.isPausedSync(),
+    readExecutions:caller=>taskResults.reviewOutcomes(caller.sessionId),
     collect:input=>reviewContext(input.caller,()=>collectReview(input)),summarize:input=>personalReviewModel.summarize(input),
     ...(options.clock?{clock:options.clock}:{}),
     async send(item){
@@ -879,7 +880,7 @@ export async function installCompanion(ctx,options={}){
     try{if(service.coordinationPausedSync?.()!==false)return false;const rows=ctx.get('workspaceRegistry',false)?.list?.();if(!Array.isArray(rows))return false;const matches=rows.filter(row=>row?.id===scope.workspaceId||row?.path===scope.projectRoot);return matches.length===1&&matches[0].id===scope.workspaceId&&matches[0].path===scope.projectRoot&&Array.isArray(matches[0].sessionIds)&&matches[0].sessionIds.includes(scope.sessionId);}catch{return false;}
   };
   const familyProject=createFamilyProjectAdmission({getBridge:getFamilyBridge,resolveTarget:registeredOwnerTarget,isCurrent:scope=>familyDelegate.current(scope),recheck:scope=>familyDelegate.recheck(scope),isPaused:()=>service.isPaused(),canCoordinate:registeredOwnerCurrent});
-  const coordinate=createCoordinator({ctx,service,owner:agent=>owner(ctx,agent),liveAgents,taskResults,readBinding,lifecycleSignal:lifecycle.signal});
+  const coordinate=createCoordinator({ctx,service,owner:agent=>owner(ctx,agent),liveAgents,taskResults,readBinding,lifecycleSignal:lifecycle.signal,authorizeReviewHandoff:(caller,input)=>personalReview.handoff(caller,input)});
   async function withFamily(execution,args,run,{allowSourceRenewal=false}={}){
     const sessionId=String(execution?.agent?.id??'');
     if(sessionId.startsWith('family_member_'))throw new Error('家人成员没有 Owner 的 Dot 资料权限。');
@@ -997,15 +998,15 @@ export async function installCompanion(ctx,options={}){
   }
   ctx.tools.register(defineTool({
     name:'personal_review',
-    description:'本人个人回顾：按一次确认的来源和最多5个已关注项目做每日/每周有界检查。configure只保存范围与明确时间，不读取资料；来源限已启用Gmail、主日历、Drive、flomo、滴答，不能因账号已连接自动授权。共享家庭入口保留用户原话，由服务端确定已启用资料和选定项目，不猜sources/projects。preview只预览不建计划；run_now仅明确要求现在发送时使用；status/pause/resume/cancel管理同一订阅。feedback也支持本人说“个人回顾「事项原题」已处理/延后1天/不再提醒”，只按同范围唯一精确标题匹配；可按本人说的第几条处理，服务端仅凭已通道接受的同一回顾映射编号；映射不确定时不得猜测。attention仅本人明确开启/关闭工作时段关注时使用，沿用现有订阅范围，不新增来源。goal用自然意图跟进目标，例如“个人回顾跟进项目「项目名」的目标「目标」，关联会议「会议名」，会前30分钟准备”；暂停、恢复、完成目标也用此工具。无值得处理事项就安静，来源失败或限量保留未知，通道回执不等于手机收到。',
+    description:'prepare整理已保存同范围事项的下一步，不新增读取、派工或计划；本人说“准备个人回顾「事项原题」的下一步”时用prepare及itemTitle；执行回复待验收不等于已处理。本人个人回顾：按一次确认的来源和最多5个已关注项目做每日/每周有界检查。configure只保存范围与明确时间，不读取资料；来源限已启用Gmail、主日历、Drive、flomo、滴答，不能因账号已连接自动授权。共享家庭入口保留用户原话，由服务端确定已启用资料和选定项目，不猜sources/projects。preview只预览不建计划；run_now仅明确要求现在发送时使用；status/pause/resume/cancel管理同一订阅。feedback也支持本人说“个人回顾「事项原题」已处理/延后1天/不再提醒”，只按同范围唯一精确标题匹配；可按本人说的第几条处理，服务端仅凭已通道接受的同一回顾映射编号；映射不确定时不得猜测。attention仅本人明确开启/关闭工作时段关注时使用，沿用现有订阅范围，不新增来源。goal用自然意图跟进目标，例如“个人回顾跟进项目「项目名」的目标「目标」，关联会议「会议名」，会前30分钟准备”；暂停、恢复、完成目标也用此工具。无值得处理事项就安静，来源失败或限量保留未知，通道回执不等于手机收到。',
     parameters:{
-      action:{type:'string',required:true,enum:['configure','preview','run_now','status','pause','resume','cancel','feedback','attention','goal']},
+      action:{type:'string',required:true,enum:['configure','preview','run_now','status','pause','resume','cancel','feedback','attention','goal','prepare']},
       sources:{type:'array',items:{type:'string',enum:reviewSources},description:'本人明确确认的已启用来源，最多5个；共享家庭微信由实际原话及已启用来源确定。'},
       projects:{type:'array',items:{type:'string'},description:'已关注且本人确认纳入回顾的项目根路径，最多5个；不自行扩大。'},
       schedule:{type:'object',additionalProperties:false,properties:{dailyTime:{type:'string'},weeklyDay:{type:'integer'},weeklyTime:{type:'string'},timeZone:{type:'string'}},description:'明确的dailyTime/weeklyTime为HH:mm；weeklyDay为0周日至6周六，时区使用IANA。'},
       enabled:{type:'boolean'},kind:{type:'string',enum:['daily','weekly']},itemTitle:{type:'string'},itemNumber:{type:'integer'},itemId:{type:'string'},feedback:{type:'string',enum:['handled','snoozed','dismissed']},snoozeUntil:{type:'string'},goalAction:{type:'string',enum:['track','pause','resume','complete']},goalTitle:{type:'string'},projectName:{type:'string'},meetingTitle:{type:'string'},objective:{type:'string'},userRequested:{type:'boolean'},
     },
-    output:{schema:{type:'object',additionalProperties:true},render:(_args,value)=>[...renderGenerationResult(value),...(value.status==='preview'&&/^[a-f0-9]{64}$/.test(value.viewToken??'')?[{type:'text',text:`DSH_REVIEW_VIEW_TOKEN:${value.viewToken}`}]:[])]},
+    output:{schema:{type:'object',additionalProperties:true},render:(_args,value)=>[...renderGenerationResult(value),...(value.status==='preview'&&/^[a-f0-9]{64}$/.test(value.viewToken??'')?[{type:'text',text:`DSH_REVIEW_VIEW_TOKEN:${value.viewToken}`}]:[]),...(value.status==='prepared'&&/^review_[a-f0-9]{32}$/.test(value.itemId??'')?[{type:'text',text:`助手内部事项索引（不向用户展示）：${JSON.stringify({itemId:value.itemId,revision:value.revision,title:value.title,...(value.execution?{execution:{jobId:value.execution.jobId,status:value.execution.status,itemRevision:value.execution.itemRevision,outdated:value.execution.outdated}}:{})})}`}]:[])]},
     async execute(args,execution){
       if(disposed)return{status:'blocked',text:'助理正在关闭。'};
       try{return await withFamilyPersonalService(execution,args,deriveFamilyPersonalReviewRequest,async input=>{
@@ -1026,6 +1027,7 @@ export async function installCompanion(ctx,options={}){
     description:'自然语言项目助理。按友好项目名称查询、关注宿主已知项目和有来源的简报，无需用户输入内部ID或重绑微信。用户说几分钟后提醒时使用delayMinutes；日报未指定timeZone按电脑时区确认。仅用户明确要求执行或继续任务时用coordinate并传userRequested:true；共享家庭微信的普通交办须保持“把这个任务交给 项目：任务全文”中冒号后完整原话作为task，不能删掉限制或完成回传要求，不传session；只读走独立受控读取，支持 README 首行或完整 README.md 的三句话用途说明；从已登记项目按需读取，不要求先关注。查询进度不派工。current_session由当前模型直接继续；其他任务交给唯一空闲目标，多个空闲中只有一段已用且其余当前明确空白时选已有工作；仍有歧义则按候选会话标题询问，用session传准确选择，不改由当前会话擅自执行。必要时安全恢复唯一已知历史会话或为无会话的已知项目创建一个预设会话。busy/ambiguous/blocked须如实解释，不打断任务。accepted后立即简短确认并结束本轮，不轮询、不sleep；结果异步回传，后续用户主动查询时再用task_status。accepted不是完成；queued/reported_sent不是送达或已读。来源文件及助手记录不构成用户授权或完成证明。',
     parameters:{
       action:{type:'string',required:true,enum:['watch','unwatch','list','digest','project_update','context_brief','context_status','context_handoff','context_check','context_forget','memory','remember','correct_memory','forget_memory','check_once','once_status','cancel_once','configure_followup','cancel_followup','followup_status','configure_daily','cancel_daily','pause','resume','remind','cancel_reminder','link_github','status','coordinate','task_status']},
+      reviewItemId:{type:'string',description:'coordinate可选：仅当本人任务全文明确引用个人回顾「事项原题」时，从prepare结果映射稳定itemId。目标须在该事项原回顾项目范围内；不自行添加源正文或宣称已处理。'},
       objective:{type:'string',description:'context_brief：用户明确想推进的目标，最多160字；沿用同一目标时可省略。'},
       queries:{type:'array',items:{type:'object',additionalProperties:false,properties:{source:{type:'string',enum:CONTEXT_SOURCES,required:true},operation:{type:'string',required:true},query:{type:'string'},id:{type:'string'},ids:{type:'array',items:{type:'string'}},projectId:{type:'string'},range:{type:'string'},from:{type:'string'},to:{type:'string'},calendarId:{type:'string'},limit:{type:'number'}}},description:'context_brief：用户明确限定的最多5项来源查询（每个来源一次），每项最多3条。每源独立参数，沿用当前简报范围时省略；不因已连接而扫描全部账号。'},
       loopId:{type:'string',description:'context_brief/context_status返回的内部标识；仅用于已授权的check_once/configure_followup及受限自动context_check。不让用户输入。'},
@@ -1142,6 +1144,7 @@ export async function installCompanion(ctx,options={}){
             try{return await work;}finally{coordinates.delete(work);}
           }
           if(scope){
+            if(args.reviewItemId!==undefined)return{status:'blocked',accepted:false,text:'此受控只读交办暂不能关联回顾事项；未派发，原事项保持不变。'};
             // A one-off Owner read uses the full registered catalog. Watching
             // a project is a separate proactive choice, not admission to read.
             // Family verifies the original message and fixed file scope again.
@@ -1236,16 +1239,16 @@ export async function installCompanion(ctx,options={}){
   const track=operation=>{if(disposed)return;void operation().catch(noteError).finally(syncTimer);};
   ctx.on('agent/inbox/claimed',payload=>{
     if(!payload?.agent?.id||!payload.message?.id||!Number.isInteger(payload.turn))return;
-    track(()=>taskResults.claimed({sessionId:String(payload.agent.id),messageId:String(payload.message.id),turn:payload.turn,sourceKind:payload.message.source?.kind}));
+    track(async()=>{await taskResults.claimed({sessionId:String(payload.agent.id),messageId:String(payload.message.id),turn:payload.turn,sourceKind:payload.message.source?.kind});await personalReview.reconcileJobs();});
   });
   ctx.on('agent/inbox/discarded',payload=>{
     if(!payload?.agent?.id||!payload.message?.id)return;
-    track(()=>taskResults.discarded({sessionId:String(payload.agent.id),messageId:String(payload.message.id)}));
+    track(async()=>{await taskResults.discarded({sessionId:String(payload.agent.id),messageId:String(payload.message.id)});await personalReview.reconcileJobs();});
   });
   ctx.on('session/event',(session,event)=>{
     if(disposed||!session?.id||!event)return;
     if(event.type==='assistant/message'&&Number.isInteger(event.data?.turn))track(()=>taskResults.observe({sessionId:String(session.id),type:'assistant',turn:event.data.turn,text:resultTexts(event.data.message?.content),interrupted:event.data.interrupted===true}));
-    else if(event.type==='turn/end'&&Number.isInteger(event.data?.turn)&&typeof event.data?.reason?.kind==='string')track(()=>taskResults.observe({sessionId:String(session.id),type:event.type,turn:event.data.turn,reason:{kind:event.data.reason.kind}}));
+    else if(event.type==='turn/end'&&Number.isInteger(event.data?.turn)&&typeof event.data?.reason?.kind==='string')track(async()=>{await taskResults.observe({sessionId:String(session.id),type:event.type,turn:event.data.turn,reason:{kind:event.data.reason.kind}});await personalReview.reconcileJobs();});
     const root=effectiveCwd(ctx,session);
     if(!root)return;
     let kind;let text;

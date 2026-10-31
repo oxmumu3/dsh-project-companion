@@ -10,11 +10,13 @@ export function cleanGoalSource(value,max=3000){
 }
 /** Explicit read only; never activates Agents, mutates plans or sends results. */
 export function createGoalBoardCollector({access,readProject=readProjectFiles,listSessions=async()=>[],readSession}={}){
- return async function collect(snapshot,{signal,cursor=0}={}){
-  const check=async()=>{signal?.throwIfAborted();await access.assertCurrent(snapshot);signal?.throwIfAborted();};await check();
+ return async function collect(snapshot,{signal,cursor=0,workspaceIds,guard}={}){
+  const check=async()=>{signal?.throwIfAborted();await guard?.();await access.assertCurrent(snapshot);signal?.throwIfAborted();await guard?.();};await check();
   if(!Number.isSafeInteger(cursor)||cursor<0)throw Error('GOAL_ARGUMENT');
   if(!snapshot.grants.length)return{fragments:[],coverage:[],nextCursor:0};
-  const start=cursor%snapshot.grants.length,chosen=[];for(let i=0;i<Math.min(MAX_WORKSPACES,snapshot.grants.length);i++)chosen.push(snapshot.grants[(start+i)%snapshot.grants.length]);
+  const start=cursor%snapshot.grants.length,chosen=[];
+  if(workspaceIds!==undefined){if(!Array.isArray(workspaceIds)||workspaceIds.length>MAX_WORKSPACES||new Set(workspaceIds).size!==workspaceIds.length||workspaceIds.some(id=>!snapshot.grants.some(g=>g.workspaceId===id)))throw Error('GOAL_ARGUMENT');for(const id of workspaceIds)chosen.push(snapshot.grants.find(g=>g.workspaceId===id));}
+  else for(let i=0;i<Math.min(MAX_WORKSPACES,snapshot.grants.length);i++)chosen.push(snapshot.grants[(start+i)%snapshot.grants.length]);
   let metadata=[],metadataAvailable=true;try{metadata=await listSessions(snapshot,{signal});if(!Array.isArray(metadata))throw Error();}catch{metadataAvailable=false;}await check();
   const fragments=[],coverage=[];let chars=0;
   const add=(grant,row)=>{const remaining=Math.min(3000,MAX_CHARS-chars);if(remaining<=0||fragments.length>=MAX_FRAGMENTS)return false;const original=cleanGoalSource(row.text,3001),text=cleanGoalSource(row.text,remaining);if(!text.trim())return true;const reference=String(row.reference??'').slice(0,500);fragments.push({id:'src_'+hash(JSON.stringify([grant.workspaceId,grant.root,row.sessionId??null,reference,text])),workspaceId:grant.workspaceId,workspaceLabel:cleanGoalSource(grant.label,200),sessionId:row.sessionId??null,kind:row.kind,reference,text,at:stamp(row.at),truncated:row.truncated===true||original.length>text.length});chars+=text.length;return true;};

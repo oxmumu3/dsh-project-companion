@@ -15,6 +15,17 @@ import SessionStore,{SessionId} from '@deepseek-ai/dsh-session';
 import {installCompanion} from '../index.js';
 const familyRoot=process.env.FAMILY_BRIDGE_ROOT;
 const complete='每天早上9点、每周一早上9点，根据我已启用的资料和选定项目做个人回顾，有风险或临期事项告诉我。';
+
+test('real Family Owner can prepare a saved review item without another collection or send',{skip:!familyRoot},async t=>{
+ let reads=0;
+ const f=await fixture(t,{personalReview:{collect:async input=>{reads++;return{evidence:[{id:'synthetic-project-fact',source:'project',projectRoot:input.projects[0],title:'Synthetic README',text:'Synthetic project description.'}],coverage:[{source:'project',status:'ok',count:1}]};},model:{summarize:async input=>({items:[{key:'synthetic-prepare',kind:'progress',title:'核对合成项目说明',summary:'有一份合成项目说明。',why:'应核对用途。',action:'只读核对清单。',unknown:'验收未完成。',evidenceIds:[input.evidence[0].id],priority:'normal',confidence:'source'}]})}}});
+ await f.message('预览一份个人回顾，使用我在电脑启用的资料和已关注项目，不建立计划。');
+ assert.equal((await f.tool('personal_review',{action:'preview'})).status,'preview');const before=reads;
+ await f.message('准备个人回顾「核对合成项目说明」的下一步。');
+ const prepared=await f.tool('personal_review',{action:'prepare',itemTitle:'model must not substitute this title'});
+ assert.equal(prepared.status,'prepared',JSON.stringify(prepared));assert.equal(prepared.title,'核对合成项目说明');assert.equal(reads,before);assert.equal(f.sent.length,0);
+ assert.equal((await f.member('personal_review',{action:'prepare',itemTitle:prepared.title})).status,'blocked');
+});
 async function fixture(t,options={}){
  assert.ok(isAbsolute(familyRoot));
  const {createRuntime}=await import(pathToFileURL(join(familyRoot,'src/runtime.mjs')).href);

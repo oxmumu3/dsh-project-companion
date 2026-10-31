@@ -4,28 +4,30 @@
 
 作者：牛村木木山 · [正式仓库](https://github.com/oxmumu3/dsh-project-companion) · MIT。社区开源项目，非 DeepSeek 或 OpenAI 官方产品。
 
-**当前公开预览：`0.20.0-preview.5`，只需安装一个标准插件包。** 新工作台、逻辑项目看板、首次及后续工作区选择、个人回顾和兴趣 AI 日报已包含在本版。自动回顾仍属实验能力：flomo 近期读取及历史模型失败的自然运行验收尚未完成。Google 数据权限审核中，仍有未验证提示与已知累计 100 个账号上限。详见[本版验收与限制](docs/verification.md)。
+**当前公开预览：`0.21.0-preview.1`，只需安装一个标准插件包。** 新增一次保存后连续整理工作区、回顾事项的下一步准备与执行关联，改善原生输入框和浮层草稿体验，强化兴趣日报去重。自动关注仍为实验能力：10月31日11:00自然检查记录为来源覆盖未知，不能算完整主动推送通过。Google 数据权限审核中，仍有未验证提示与已知累计100个账号上限。详见[本版验收与限制](docs/verification.md)。
 
 ## 只安装一个标准插件
 
 本版将经过固定来源与 MIT 许可审计的微信组件内置到 Dot。新用户无需再装第二个微信插件，也无需下载 ZIP、解压或运行 macOS 安装脚本。
 
 1. 打开已初始化的官方 DeepSeek Harness，进入「插件 → 添加插件」。
-2. 粘贴下面的插件地址，安装并点击「立即启用」。也可[下载插件包](https://github.com/oxmumu3/dsh-project-companion/releases/download/v0.20.0-preview.5/dsh-project-companion-0.20.0-preview.5.tgz)后填写本地文件路径。
+2. 粘贴下面的插件地址，安装并点击「立即启用」。也可[下载插件包](https://github.com/oxmumu3/dsh-project-companion/releases/download/v0.21.0-preview.1/oxmumu3-dsh-project-companion-0.21.0-preview.1.tgz)后填写本地文件路径。
 3. 打开左侧「DSH Dot」。首页连接微信，或先在电脑对话；再按需选择工作区和资料来源。
 
 ```text
-https://github.com/oxmumu3/dsh-project-companion/releases/download/v0.20.0-preview.5/dsh-project-companion-0.20.0-preview.5.tgz
+https://github.com/oxmumu3/dsh-project-companion/releases/download/v0.21.0-preview.1/oxmumu3-dsh-project-companion-0.21.0-preview.1.tgz
 ```
+
+新用户也可直接添加 `@oxmumu3/dsh-project-companion@0.21.0-preview.1`。若已有旧包名 `dsh-project-companion`，仅按[旧版同名更新分支](docs/install.md#已有用户)更新，不能同时再添加 npm 别名。
 
 已有兼容微信组件时沿用现有组件，包括它的禁用状态；不会为安装 Dot 重置绑定或覆盖组件配置。已有家庭入口继续按已配置的 Owner 委托运行，家人权限独立。Dot 不安装、升级 Family，也不自动扩大任何账号或资料授权。
 
-这是通过 GitHub Release 分发的标准 Harness 插件，npm latest 同步为本版，尚未上架官方插件市场。[发布与下载](https://github.com/oxmumu3/dsh-project-companion/releases/tag/v0.20.0-preview.5) · [安装说明](docs/install.md)。本版已完成官方隔离单包安装验证；新用户手机收件与多日运行仍分别验收。
+这是通过 GitHub Release 分发的标准 Harness 插件，npm latest 同步为本版，尚未上架官方插件市场。[发布与下载](https://github.com/oxmumu3/dsh-project-companion/releases/tag/v0.21.0-preview.1) · [安装说明](docs/install.md)。本版已完成官方隔离单包安装验证；新用户手机收件与多日运行仍分别验收。
 
 ## 第一次打开，先做一件有用的事
 
 1. **连微信**：首页直接显示首次连接二维码；已有兼容绑定直接沿用。连接后能在手机交代任务、收执行回复和已开启的提醒。也能先在电脑聊。
-2. **选工作区**：想整理正在推进的项目时，先选一两个 Harness 已登记工作区，再明确点击整理。以后可在「连接」增减；保存选择不会读取正文或扫描电脑。
+2. **选工作区**：想整理正在推进的项目时，先选一两个 Harness 已登记工作区，点“保存并整理项目”一次发起后连续分批处理；只想记住范围则点“仅保存范围”。以后可在「连接」增减，不会扫描未选工作区。
 3. **继续事情**：在首页输入目标，或从「项目」看板点进一个项目，在当前视野继续原生对话。草稿、附件和原生审批保留，不会静默填入屏幕外文本框。
 4. **按需连资料**：在「连接」登录 Google、flomo 或滴答，再启用愿意读取的来源。账号连接、来源启用、一次读取和持续跟进分别授权；安装不会默认开启推送。
 
@@ -55,15 +57,16 @@ https://github.com/oxmumu3/dsh-project-companion/releases/download/v0.20.0-previ
 - 「开启个人回顾的工作时段主动关注。」
 - 「AI 日报关注：Agent 产品、插件生态、增长实践。」
 - 「每天09:10发AI日报。」
+- 「准备个人回顾「事项原题」的下一步。」（使用最近回顾中的准确标题）
 - 「暂停个人回顾。」或「取消AI日报。」
 
 交办中的项目名称使用目标 Harness 已登记工作区名称；看板整理出的逻辑项目在专属桌面对话继续。时间未指定时区时按电脑时区，并在确认中说明。私人来源先本人登录、启用并确认范围；家庭共享入口只开放已配置的 Owner 权限。更多范围与示例见[个人资料闭环](docs/context-loop.md)、[个人回顾](docs/personal-review.md)和[AI 日报](docs/news.md)。
 
 ## 公开预览的边界
 
-- **电脑端验证**：最终单包通过官方隔离 Host 五种安装/兼容场景；三套官方 SDK 的最终相关回归各 125 项零失败/跳过，32 项组件生命周期合成测试及独立审读通过。公开包运行文件与该精确受测包一致，只补发布文档。新用户手机收件、日常升级与长期自然运行不包含在这项验证中。
-- **真实使用记录**：维护者此前收到过有限五源简报、项目交办的一份结果、提醒和变化推送；10月30日15:01也确认收到一份自然回顾。这些历史记录不能替代新版自然运行或新用户开箱验收。
-- **尚待验证／已知问题**：flomo 的近期读取出现过范围校验失败，历史模型输出失败仍需下一轮自然运行确认；本版已合成复现并修复一种无来源精确时间导致的失败，不宣称所有故障已经修复。新用户从模型配置、扫码到收件，以及多日、断网和休眠恢复尚未完整验收。见[验证记录](docs/verification.md)。
+- **电脑端验证**：运行源码三套SDK各2254项通过，零失败/跳过；独立审读、精确官方隔离Host、原生输入与草稿附件切换及日常升级已验。本次公开npm身份另做精确包安装与兼容检查，验证结果见验证记录。手机和长期运行分别验收。
+- **真实使用记录**：维护者此前确认收到有限五源简报、项目交办、提醒、变化推送及10月30日一份自然回顾。10月31日09:00回顾与09:10资讯通道报告已发出，手机收到未核对；11:00检查状态为来源覆盖未知，并非“没有变化”。
+- **尚待验证／已知问题**：历史flomo范围投影与模型输出失败未全部归因；本轮没有将它们凭空归为已修。新用户从模型配置、扫码到收件，多日、断网、休眠恢复及真实macOS输入法仍待实际验收。运行健康只显示持久记录，不自动重放不确定发送。执行完成是待验收，不自动认定业务事项已处理。见[验证记录](docs/verification.md)。
 - **Google**：品牌验证已通过，三项数据权限已提交但未批准，CASA 未完成、已知累计 100 个账号上限未解除；不保证任意账号均能接入。看到未验证提示时核对应用与只读范围，由本人决定是否继续。flomo 需要 MAX。
 - **运行条件**：电脑、Harness、网络和相关会话需可用。微信连续主动消息窗口有限，通道回执不等于手机收到。取消不能撤回已交给通道的消息。
 - **数据与权限**：授权数据和状态保存在本机；读取结果可能进入 Harness 会话、宿主记录、你配置的模型以及微信通道，并非资料永远不离开电脑。工作区授权不是原生 Agent 文件系统沙箱。不要用保存的助手结论代替业务验收。参见[隐私说明](https://dot.finvo.ai/privacy.html)。
@@ -78,4 +81,4 @@ https://github.com/oxmumu3/dsh-project-companion/releases/download/v0.20.0-previ
 
 ## 源码与发布线
 
-本页安装包与验收对应固定标签 [`v0.20.0-preview.5`](https://github.com/oxmumu3/dsh-project-companion/tree/v0.20.0-preview.5)。开发本版请检出该标签或 `release/0.20.0-preview.5`；仓库 `main` 为 scoped npm 发布线，运行功能与本版相同，仅包身份与客户端注册名适配 scoped 安装。
+本页安装包与验收对应固定标签 [`v0.21.0-preview.1`](https://github.com/oxmumu3/dsh-project-companion/tree/v0.21.0-preview.1)。开发本版请检出该标签或 `release/0.21.0-preview.1`；仓库 `main` 为 scoped npm 发布线，运行功能与本版相同，仅包身份与客户端注册名适配 scoped 安装。

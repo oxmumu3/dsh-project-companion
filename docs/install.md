@@ -1,16 +1,16 @@
-# 安装 DSH Dot 0.20.0-preview.5
+# 安装 DSH Dot 0.21.0-preview.1
 
 ## 在创造模式中安装／更新
 
 复制这段请求交给 Harness：
 
 ```text
-请安装或更新并启用 DSH Dot。先检查现有插件，避免重复添加和降级。若已安装旧 GitHub 版 dsh-project-companion，沿原包名更新到 https://github.com/oxmumu3/dsh-project-companion/releases/download/v0.20.0-preview.5/dsh-project-companion-0.20.0-preview.5.tgz；否则从 npm 官方源实时查询 @oxmumu3/dsh-project-companion 的 latest，按查到的精确版本安装或更新，不直接采用本机缓存的旧 latest。保留已有微信绑定、账号授权、资料范围、设置和其他插件，不自动读取或新建计划。核对实际版本、启用状态，再打开 DSH Dot。
+请安装或更新并启用 DSH Dot。先检查现有插件，避免重复添加和降级。若已安装旧 GitHub 版 dsh-project-companion，沿原包名更新到 https://github.com/oxmumu3/dsh-project-companion/releases/download/v0.21.0-preview.1/dsh-project-companion-0.21.0-preview.1.tgz；否则从 npm 官方源实时查询 @oxmumu3/dsh-project-companion 的 latest，按查到的精确版本安装或更新，不直接采用本机缓存的旧 latest。保留已有微信绑定、账号授权、资料范围、设置和其他插件，不自动读取或新建计划。核对实际版本、启用状态，再打开 DSH Dot。
 ```
 
-新用户也可在「插件 → 添加插件」填写 `@oxmumu3/dsh-project-companion@0.20.0-preview.5`，安装后启用。它是一个标准插件包，已内置独立微信组件。已有未带 namespace 的历史安装应沿原包更新；不要将两个名称当成同一个插件重复添加。本版提供兼容的原名称更新包，保留原插件配置位置。
+新用户也可在「插件 → 添加插件」填写 `@oxmumu3/dsh-project-companion@0.21.0-preview.1`，安装后启用。它是一个标准插件包，已内置独立微信组件。已有未带 namespace 的历史安装应沿原包更新；不要将两个名称当成同一个插件重复添加。本版提供兼容的原名称更新包，保留原插件配置位置。
 
-下方固定链接用于已有原名称安装的更新或精确版本验收。
+下方默认链接使用npm命名身份；已有旧原名称安装仅使用上方条件分支中的兼容链接。
 
 
 牛村木木山制作的 DeepSeek Harness 社区插件，非 DeepSeek 或 OpenAI 官方产品。本版内置微信组件，只需添加一个标准 `.tgz`，不包含 Harness 应用或 Family 家庭助手。
@@ -22,12 +22,12 @@
 3. 打开左侧「DSH Dot」，从首页连接微信，或先在电脑对话。后续授权工作区和个人来源分别按需进行。
 
 ```text
-https://github.com/oxmumu3/dsh-project-companion/releases/download/v0.20.0-preview.5/dsh-project-companion-0.20.0-preview.5.tgz
+https://github.com/oxmumu3/dsh-project-companion/releases/download/v0.21.0-preview.1/oxmumu3-dsh-project-companion-0.21.0-preview.1.tgz
 ```
 
-也可[直接下载插件包](https://github.com/oxmumu3/dsh-project-companion/releases/download/v0.20.0-preview.5/dsh-project-companion-0.20.0-preview.5.tgz)，在官方管理器填写下载后的文件实际路径。无需解压 `.tgz`、另装微信组件或运行 macOS 脚本。
+也可[直接下载插件包](https://github.com/oxmumu3/dsh-project-companion/releases/download/v0.21.0-preview.1/oxmumu3-dsh-project-companion-0.21.0-preview.1.tgz)，在官方管理器填写下载后的文件实际路径。无需解压 `.tgz`、另装微信组件或运行 macOS 脚本。
 
-[本版发布页](https://github.com/oxmumu3/dsh-project-companion/releases/tag/v0.20.0-preview.5)提供校验文件。插件由 GitHub Release 分发，尚未上架官方插件市场，npm latest 同步为本版；不要用旧版 ZIP 或第二个微信安装包代替这条单插件路径。
+[本版发布页](https://github.com/oxmumu3/dsh-project-companion/releases/tag/v0.21.0-preview.1)提供校验文件。插件由 GitHub Release 分发，尚未上架官方插件市场，npm latest 同步为本版；不要用旧版 ZIP 或第二个微信安装包代替这条单插件路径。
 
 ## 已有用户
 
@@ -48,12 +48,12 @@ https://github.com/oxmumu3/dsh-project-companion/releases/download/v0.20.0-previ
 ## 安装后先用起来
 
 1. 打开左侧「DSH Dot」。首次首页直接显示微信二维码；已有兼容绑定沿用，第一次由本人扫码，再从微信发一句「你好」。也能先在电脑聊。
-2. 想整理项目时，先选择一两个 Harness 已登记工作区并保存，再明确点击「整理这些工作区的项目」。保存选择不读正文、不开模型、不建计划；后续在「连接」增减范围。
+2. 想整理项目时，先选择一两个 Harness 已登记工作区，点「保存并整理项目」；明确发起后按每批最多8个连续处理，可停止并保留已有结果。点「仅保存范围」则不读正文、不开模型；后续在「连接」增减范围。
 3. 项目是持续目标，目录是工作区，会话负责讨论和执行。保留识别建议或写明自己的目标，再从项目详情继续原生对话；不必把所有文件夹一次授权。
 4. 需要个人资料时，在「连接」用服务商官方登录，由本人同意并启用所需来源。连接与启用不会自动开启推送。
 5. 要回顾、日报或提醒时，用自然语言说清来源、项目、时间或频次，并核对保存的安排。电脑、Harness 和网络需在线。
 
-完整操作见[首次使用](first-use.md)、[逻辑项目](https://github.com/oxmumu3/dsh-project-companion/blob/v0.20.0-preview.5/docs/logical-projects.md)、[个人回顾](https://github.com/oxmumu3/dsh-project-companion/blob/v0.20.0-preview.5/docs/personal-review.md)与[快速开始](https://github.com/oxmumu3/dsh-project-companion/blob/v0.20.0-preview.5/docs/quickstart.md)。
+完整操作见[首次使用](first-use.md)、[逻辑项目](https://github.com/oxmumu3/dsh-project-companion/blob/v0.21.0-preview.1/docs/logical-projects.md)、[个人回顾](https://github.com/oxmumu3/dsh-project-companion/blob/v0.21.0-preview.1/docs/personal-review.md)与[快速开始](https://github.com/oxmumu3/dsh-project-companion/blob/v0.21.0-preview.1/docs/quickstart.md)。
 
 ## Google、flomo、滴答
 
@@ -65,13 +65,13 @@ Google 品牌已验证，Gmail、日历、Drive 数据权限已提交审核但�
 
 ## 共用已有家庭微信
 
-本包不安装、升级 Family 或自动配置 Owner 委托。已配置兼容共用入口的维护者组合为 Family `0.2.0-preview.33-diary.6-dot.3-travel.1-review.3`，此前维护者组合升级保留过原绑定、五源账号范围、家人权限与安排；本版仅完成隔离兼容验证，不能将历史结果冒作本版日常升级。未配置的读者先使用普通独立 Dot；家人成员不会获得 Owner 的私人来源或项目权限。详情见[闭环说明](https://github.com/oxmumu3/dsh-project-companion/blob/v0.20.0-preview.5/docs/context-loop.md)。
+本包不安装、升级 Family 或自动配置 Owner 委托。已配置兼容共用入口的维护者组合为 Family `0.2.0-preview.33-diary.6-dot.3-travel.1-review.3`。维护者已把同源原包名运行版升级到本版，原绑定、五源账号范围、家人权限和安排均保留；公开npm身份另外通过隔离新装与同名更新验证。这两种证明分别成立，不能替代新读者手机收件或长期稳定性。未配置的读者先使用普通独立Dot；家人成员不会获得Owner私人来源或项目权限。详情见[闭环说明](https://github.com/oxmumu3/dsh-project-companion/blob/v0.21.0-preview.1/docs/context-loop.md)。
 
 ## 本版验证与已知问题
 
-本版最终单包通过官方隔离 Host 五种安装/兼容场景，三SDK最终相关回归各125项零失败/跳过，32项生命周期测试及独立审读通过。隔离安装不等于维护者已升级日常 App、新用户手机已收到消息或长期自然推送已稳定。
+本轮运行源码三套SDK各2254项通过，零失败/跳过；双阶段独立审读、精确官方隔离Host与原生输入/草稿附件切换已验，维护者日常已安全升级并保留原绑定、授权与安排。公开npm身份精确安装与兼容检查另留证明；不能把它当新用户手机收件或长期运行通过。
 
-自动回顾仍为实验能力：flomo近期查询曾出现范围投影失败，历史自然模型输出失败尚未全部归因；本版修复了一种无依据精确时间导致的失败，不能据合成验证宣称自然任务已完全修好。新版自然执行、独立新用户扫码到收件、多日与休眠恢复仍分别验收。通道报告发送不等于手机收到。详见[验证记录](https://github.com/oxmumu3/dsh-project-companion/blob/v0.20.0-preview.5/docs/verification.md)。
+自动回顾仍为实验能力：10月31日09:00回顾、09:10资讯通道报告已发出；11:00关注为来源覆盖未知，不判断无变化。历史flomo范围投影与模型失败未全部归因。新用户独立扫码到收件、多日与休眠恢复、真实macOS输入法仍分别验收。通道报告发送不等于手机收到。详见[验证记录](https://github.com/oxmumu3/dsh-project-companion/blob/v0.21.0-preview.1/docs/verification.md)。
 
 ## 来源与维护
 

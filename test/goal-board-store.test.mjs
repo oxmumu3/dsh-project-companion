@@ -24,3 +24,9 @@ test('files or one conversation cannot invent an objective; existing confirmed v
  assert.throws(()=>validateGoalBoardResult({...output,groups:[{...group,projectId:'goal1'}]},[fragment('a','s1'),fragment('b','s1')],existing),{code:'MODEL_INVALID_OUTPUT'});
  assert.equal(validateGoalBoardResult({...output,groups:[{...group,projectId:'goal1',title:'Canonical',goal:'Canonical goal'}]},[fragment('a','s1'),fragment('b','s1')],existing).groups.length,1);
 });
+
+test('sweep progress is paired, bounded and reconciles with committed workspace coverage',async()=>{
+ const {goalScanSchema}=await import('../src/goal-board-store.js');const scan={phase:'running',at:null,coverage:[]};
+ for(const invalid of [{processed:1,total:0},{processed:0},{total:1},{processed:1,total:2},{processed:0,total:1001}])assert.equal(goalScanSchema.safeParse({...scan,...invalid}).success,false);
+ assert.equal(goalScanSchema.safeParse({...scan,processed:0,total:21}).success,true);
+});

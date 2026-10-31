@@ -1,3 +1,5 @@
+import {reviewRuntimeHealth} from './review-runtime-health.js';
+import {prepareReviewContinuation,reviewOrigin,mergeReviewExecutions} from './review-continuation.js';
 import {reviewGoalSchema,meetingCacheSchema,changeReviewGoal,activeReviewGoals,calendarCoverageComplete,captureReviewMeetings,dueReviewMeeting,prepareReviewMeeting,selectMeetingPreparation,meetingWorkHours} from './personal-review-goals.js';
 import {recoveryCheck,recoveryWindow,recoveryWorkTime,RECOVERY_CHECKPOINT_INTERVAL} from './personal-review-recovery.js';
 import { attentionDue, attentionStatus, selectAttentionItems } from './personal-review-attention.js';
@@ -54,7 +56,7 @@ function race(fn, signal, message) {
   });
 }
 
-export function createPersonalReviewService({ store, readBinding, readBindingSync, authorization, authorizationSync, canRun = async () => true, canRunSync, readAvailability=async()=> 'current', collect, summarize, send, clock = () => new Date() } = {}) {
+export function createPersonalReviewService({ store, readBinding, readBindingSync, authorization, authorizationSync, canRun = async () => true, canRunSync, readAvailability=async()=> 'current', collect, summarize, send, readExecutions = async () => [], clock = () => new Date() } = {}) {
   for (const [name, dependency] of Object.entries({ get: store?.get, put: store?.put, readBinding, authorization, canRun, collect, summarize, send })) if (typeof dependency !== 'function') throw new Error(`Missing personal review dependency: ${name}`);
   let state, queue = Promise.resolve(), generation = 0, closed = false, storageFailed = false, lastGeneration=null;
   for (const dependency of [authorizationSync, readBindingSync, canRunSync,readAvailability]) if (dependency !== undefined && typeof dependency !== 'function') throw new Error('Invalid personal review synchronous guard');
@@ -138,7 +140,7 @@ export function createPersonalReviewService({ store, readBinding, readBindingSyn
     }
     const unconfirmed=includeScope&&scope&&state.items.some(item=>item.scopeKey===scope.key&&!['handled','dismissed'].includes(item.status)&&!itemInScope(item,scope));
     return { status: state.subscription ? state.subscription.paused ? 'paused' : 'enabled' : 'off', schedule: state.subscription ? copy(state.subscription.schedule) : null,
-      attention,goals:includeScope&&scope?state.goals.filter(g=>g.scopeKey===scope.key&&g.grant===scope.grant).sort((a,b)=>Number(a.status==='completed')-Number(b.status==='completed')).slice(0,5).map(g=>({title:g.title,objective:g.objective,status:g.status,meetingTitle:g.meetingTitle??null})):[],
+      health:reviewRuntimeHealth({subscription:state.subscription,jobs:state.jobs,now:now()}),attention,goals:includeScope&&scope?state.goals.filter(g=>g.scopeKey===scope.key&&g.grant===scope.grant).sort((a,b)=>Number(a.status==='completed')-Number(b.status==='completed')).slice(0,5).map(g=>({title:g.title,objective:g.objective,status:g.status,meetingTitle:g.meetingTitle??null})):[],
       sources: includeScope ? scope?.sources ?? [] : [], projects: includeScope ? scope?.projects ?? [] : [], items: includeScope ? state.items.filter(i => itemInScope(i,scope)).map(i => ({ id: i.id, title: i.title, status: i.status, dueAt: i.dueAt ?? null, snoozeUntil: i.snoozeUntil })) : [],
       jobs: state.jobs.slice(-8).map(j => ({ kind: j.kind, status: j.status, createdAt: j.createdAt, detail: labels[j.status],...(j.diagnostic?{diagnostic:copy(j.diagnostic)}:{}) })),
       lastGeneration: includeScope&&scope&&lastGeneration&&sameCaller(scope.caller,lastGeneration.caller)?copy(lastGeneration.value):null,
@@ -171,7 +173,7 @@ export function createPersonalReviewService({ store, readBinding, readBindingSyn
     const generationStatus=(status,diagnostic)=>{lastGeneration={caller:copy(run.caller),value:{status,kind,at:now().toISOString(),...(diagnostic?{diagnostic}:{}),persisted:false}};};
     generationStatus('running');
     try {
-    await guard(run); const at = now().toISOString(), window = kind === 'weekly' ? 7 * DAY : DAY, timeZone = run.schedule?.timeZone ?? (state.subscription?.key === run.key ? state.subscription.schedule.timeZone : 'UTC');
+    await guard(run);await reconcileExecutions(run); const at = now().toISOString(), window = kind === 'weekly' ? 7 * DAY : DAY, timeZone = run.schedule?.timeZone ?? (state.subscription?.key === run.key ? state.subscription.schedule.timeZone : 'UTC');
     const sourceWatermarks = Object.fromEntries(Object.entries(state.scope?.key === run.key && state.scope?.grant === run.grant ? state.watermarks : {}).flatMap(([source, value]) => value[kind] ? [[source, value[kind]]] : []));
     const taskScopeKey = hashReview(JSON.stringify({ key: run.key, grant: run.grant }));
     const currentTaskScope = i => i.grantScopeKey === taskScopeKey && (!i.sourceTask || i.sourceTask.scopeKey === taskScopeKey);
@@ -259,10 +261,34 @@ export function createPersonalReviewService({ store, readBinding, readBindingSyn
       if (!storageFailed) await save(); throw error;
     } finally { run.dispose(); }
   }
+  async function reconcileExecutions(run) {
+    const rows=await race(()=>readExecutions(copy(run.caller)),run.signal,'REVIEW_COLLECTION_FAILED');
+    if(!Array.isArray(rows)||!rows.length)return;
+    await guard(run,{allowPaused:true});
+    // The local reader provides only immutable job links and status metadata.
+    const draft=copy(state);draft.items=mergeReviewExecutions(draft.items,rows,run,now());
+    if(JSON.stringify(draft.items)!==JSON.stringify(state.items)){await persist(draft,run.request);state.items=draft.items;}
+  }
+  function selectedItem(input,scope){
+    const matches=state.items.filter(item=>itemInScope(item,scope)&&(input.itemId!==undefined?item.id===input.itemId:typeof input.itemTitle==='string'&&item.title===input.itemTitle));
+    if(matches.length!==1)throw Error('未找到同一授权范围内的唯一事项，请用原事项名称核对');return matches[0];
+  }
+  async function handoff(rawCaller,input={}){
+    const caller=requireCaller(rawCaller);
+    return serial(async()=>{
+      await load();const scope=displayScope();if(!scope||!sameCaller(caller,scope.caller)||input.userRequested!==true||input.signal?.aborted)throw Error('需要原本人会话的明确交办');
+      const item=selectedItem({itemId:input.reviewItemId},scope);
+      if(typeof input.project!=='string'||!scope.projects.includes(input.project)||typeof input.task!=='string'||!input.task.includes(`个人回顾「${item.title}」`)||['handled','dismissed'].includes(item.status))throw Error('交办须明确引用原回顾事项与已确认项目，不扩大范围');
+      const run=execution(scope,input.signal,input),revision=item.revision;
+      const current=()=>{const latest=state.items.find(row=>row.id===item.id);return authorizeSync(run)&&latest&&itemInScope(latest,displayScope())&&latest.revision===revision&&!['handled','dismissed'].includes(latest.status);};
+      try{await guard(run);if(!current())throw Error('回顾事项或授权已变化');}catch(error){run.dispose();throw error;}
+      return{reference:reviewOrigin(item),authorize:async()=>{try{await guard(run);return current();}catch{return false;}},authorizeSync:current,dispose:run.dispose};
+    });
+  }
   async function act(rawCaller, input = {}) {
     const caller = requireCaller(rawCaller), action = input.action;
     input = { ...input, receiptSessionId: caller.sessionId };
-    if (!['configure', 'preview', 'run_now', 'status', 'pause', 'resume', 'cancel', 'feedback', 'attention','goal'].includes(action)) throw new Error('未知个人回顾操作');
+    if (!['configure', 'preview', 'run_now', 'status', 'pause', 'resume', 'cancel', 'feedback', 'attention','goal','prepare'].includes(action)) throw new Error('未知个人回顾操作');
     if (input.signal !== undefined && !(input.signal instanceof AbortSignal)) throw new Error('无效取消信号');
     if (input.guard !== undefined && typeof input.guard !== 'function' || input.authorizeSync !== undefined && typeof input.authorizeSync !== 'function') throw new Error('无效本次请求授权检查');
     if (!['preview', 'status'].includes(action) && (input.userRequested !== true || !reviewId.safeParse(input.requestId).success)) throw new Error('需要用户明确要求及本次请求 ID');
@@ -279,6 +305,10 @@ export function createPersonalReviewService({ store, readBinding, readBindingSyn
       if (state.receipts.some(r => r.sessionId === caller.sessionId && r.requestId === input.requestId)) {
         if (!['cancel', 'pause'].includes(action) && displayScope()) { const run = execution(displayScope(), input.signal, input); try { await guard(run); } finally { run.dispose(); } }
         return { ...view(!['cancel', 'pause'].includes(action)), duplicate: true };
+      }
+      if (action === 'prepare') {
+        const scope=displayScope();if(!scope)throw Error('没有当前已保存回顾');const run=execution(scope,input.signal,input);
+        try{await reconcileExecutions(run);const item=selectedItem(input,scope);await guard(run,{allowPaused:true});return prepareReviewContinuation(item);}finally{run.dispose();}
       }
       if (action === 'status') { if (displayScope()) { const run = execution(displayScope(), input.signal, input); try { await guard(run, { allowPaused: true }); } finally { run.dispose(); } } return view(); }
       if (action === 'configure') {
@@ -380,10 +410,12 @@ export function createPersonalReviewService({ store, readBinding, readBindingSyn
     if(persistObservation)await save();
     return{...decision,regularKind,blocked:enabled&&availability!=='current'};
   }
-  return { act, snapshot: caller => act(caller, { action: 'status' }), ready: () => serial(load), needsTimer: () => !closed && !storageFailed && Boolean(state?.subscription && !state.subscription.paused), suspend: invalidate,
+  const reconcileJobs=()=>serial(async()=>{await load();const scope=displayScope();if(!scope||closed)return;const run=execution(scope);try{await reconcileExecutions(run);}finally{run.dispose();}});
+  return { act, handoff, reconcileJobs, snapshot: caller => act(caller, { action: 'status' }), ready: () => serial(load), needsTimer: () => !closed && !storageFailed && Boolean(state?.subscription && !state.subscription.paused), suspend: invalidate,
     tick: () => { const admission = generation; return serial(async () => {
       await load(); if (closed || admission !== generation || !state.subscription || state.subscription.paused) return [];
       const output=[],plan=state.subscription;
+      const outcomeRun=execution(plan);try{await reconcileExecutions(outcomeRun);}catch{/* Never guess or overwrite an unknown execution outcome. */}finally{outcomeRun.dispose();}
       const recovery=await recoveryAdmission(plan,admission);
       if(recovery.blocked)return output;
       if(recovery.check||recovery.regularRecovery){

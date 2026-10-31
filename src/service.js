@@ -437,6 +437,21 @@ export function createService(options = {}) {
   });
   const needsTimer = () => !!state && !state.paused && (state.daily?.enabled || state.reminders.some(r => r.status === 'scheduled') || state.outbox.some(r => ['pending', 'blocked'].includes(r.status)));
   const coordinationTarget = projectId => serial(async()=>{await load();return structuredClone(projectMatch(state.projects,projectId,{optional:true}));});
+  // Refresh metadata only for an existing watched identity. Unlike watch this
+  // cannot create a project, read its files or restore a revoked watch choice.
+  const refreshCoordinationTarget=(caller,scope)=>serial(async()=>{
+    await load();const owner=requireOwner(caller),current=()=>!state.paused&&typeof scope?.authorizeSync==='function'&&scope.authorizeSync()===true;
+    if(!current())return null;
+    const project=state.projects.find(p=>p.id===scope.projectId&&p.root===scope.projectRoot);if(!project)return null;
+    const known=(await candidates(owner)).find(p=>p.root===project.root);
+    if(!known||!current()||!state.projects.includes(project))return null;
+    const sessionIds=[...new Set([...project.sessionIds,...known.sessionIds])].slice(-30);
+    if(JSON.stringify(sessionIds)!==JSON.stringify(project.sessionIds)){
+      const draft=structuredClone(state);draft.projects.find(p=>p.id===project.id).sessionIds=sessionIds;
+      await store.put('profile',draft);project.sessionIds=sessionIds;
+    }
+    return current()&&state.projects.includes(project)?structuredClone(project):null;
+  });
   const registeredProjectTarget=reference=>serial(async()=>{await load();return options.catalog?.registeredProjectTarget(reference)??null;});
   const authorizeRegisteredCoordinationSync=scope=>coordinationReady&&!state?.paused&&options.catalog?.authorizeRegisteredCoordinationSync(scope)===true;
   // Final inbox admission cannot yield: read only this service's initialized current state.
@@ -463,5 +478,5 @@ export function createService(options = {}) {
   const watchedProjects = () => serial(async()=>{await load();return structuredClone(state.projects);});
   const isPaused = () => serial(async()=>{await load();return state.paused;});
   const isPausedSync = () => !coordinationReady||state?.paused!==false;
-  return { ready, act, record, tick, needsTimer, coordinationTarget, canCoordinate, coordinationPausedSync:isPausedSync, watchedProjects, isPaused, isPausedSync, fixedProjectAnalysis, canReadProjectUpdate, isWatchedProjectSync, registeredProjectTarget, authorizeRegisteredCoordinationSync };
+  return { ready, act, record, tick, needsTimer, coordinationTarget, refreshCoordinationTarget, canCoordinate, coordinationPausedSync:isPausedSync, watchedProjects, isPaused, isPausedSync, fixedProjectAnalysis, canReadProjectUpdate, isWatchedProjectSync, registeredProjectTarget, authorizeRegisteredCoordinationSync };
 }

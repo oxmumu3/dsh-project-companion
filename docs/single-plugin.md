@@ -1,8 +1,8 @@
 # 单插件分发边界
 
-本版 0.20.0-preview.5 在一个标准 dsh.bundle 中承载 Dot，并将以固定 dsh-wechat 0.11.1-dot.3 为基线、补充二维码取消保护的运行文件内置在 vendor/dsh-wechat。来源与每文件 SHA256 见 bridge-maintenance/EMBEDDED.json；保留完整 MIT 许可、原作者版权、维护补丁来源。内置补丁只修正二维码生命周期取消，防止停用后的旧响应写回 token；不更改资料查询、限额、投递或权限规则。
+本版 0.21.0-preview.1 在一个标准 dsh.bundle 中承载 Dot，并将以固定 dsh-wechat 0.11.1-dot.3 为基线、补充二维码取消保护的运行文件内置在 vendor/dsh-wechat。来源与每文件 SHA256 见 bridge-maintenance/EMBEDDED.json；保留完整 MIT 许可、原作者版权、维护补丁来源。内置补丁只修正二维码生命周期取消，防止停用后的旧响应写回 token；不更改资料查询、限额、投递或权限规则。
 
-官方插件管理器仍只安装 dsh-project-companion 一个直接依赖。Dot 等官方 pluginManager 可用后检查已登记组件；外部组件已配置、已禁用、待启动或失败时都不另开内置组件。只有已确认不存在外部组件的环境才创建 Cordis 所有的子组件。明确启用 Family Owner 委托时不启动独立内置微信。
+官方插件管理器只安装一个Dot直接依赖：新用户为 `@oxmumu3/dsh-project-companion`；原包名历史用户沿 `dsh-project-companion` 同名更新，不并装两个身份。Dot 等官方 pluginManager 可用后检查已登记组件；外部组件已配置、已禁用、待启动或失败时都不另开内置组件。只有已确认不存在外部组件的环境才创建 Cordis 所有的子组件。明确启用 Family Owner 委托时不启动独立内置微信。
 
 标准插件安装不包含账号同意、扫码、来源启用、私人读取或定时订阅，这些不会因打包合并而合并授权。目录与组件变少也不代表 Google 已通过数据权限审核。
 

@@ -116,3 +116,13 @@ test('select all integrates with the real catalog 50-row ceiling without saving 
  await c.open();assert.equal(await c.selectAll(),true);assert.equal(c.getSnapshot().selectedIds.length,137);assert.equal(writes,0);
  assert.ok(calls.every(x=>x.action==='list'&&x.limit<=50));c.cancel();assert.equal((await access.list()).selectedCount,0);c.close();
 });
+
+test('save-only performs no organization while explicit save-and-organize uses the confirmed new scope once',async()=>{
+ const f=scopeFixture(),organized=[],c=workspace({request:f.request,onOrganize:async revision=>{organized.push(revision);return true;}});await c.open();c.toggle('workspace-2');await c.save();assert.deepEqual(organized,[]);await c.open();c.toggle('workspace-3');assert.equal(await c.save({organize:true}),true);assert.equal(organized.length,1);assert.equal(organized[0],c.getSnapshot().summary.revision);c.close();
+});
+test('confirmed scope survives organization failure and unchanged saved scope can explicitly organize',async()=>{
+ const f=scopeFixture(),c=workspace({request:f.request,onOrganize:async()=>false});await c.open();c.toggle('workspace-2');assert.equal(await c.save({organize:true}),false);assert.equal(c.getSnapshot().open,false);assert.ok(c.getSnapshot().summary.selectedIds.includes('workspace-2'));assert.match(c.getSnapshot().error,/已保存.*整理/);await c.open();const before=f.calls.filter(x=>x.action==='save').length;await c.save({organize:true});assert.equal(f.calls.filter(x=>x.action==='save').length,before);c.close();
+});
+test('explicit organize refreshes both guards and sends sweep; cancel is distinct from restart',async()=>{
+ const f=goalFixture(),c=goals({request:async body=>body.action==='cancel'?{...await f.request({action:'status'}),scan:{phase:'failed',coverage:[],code:'GOAL_CANCELLED',processed:8,total:21}}:f.request(body)});await c.refresh();assert.equal(typeof c.organize,'function');await c.organize('scope-1');assert.deepEqual(f.calls.at(-1),{action:'recognize',expectedRevision:'board-1',expectedAccessRevision:'scope-1',sweep:true});assert.equal(typeof c.cancelRecognition,'function');await c.cancelRecognition();assert.equal(c.getSnapshot().status.scan.code,'GOAL_CANCELLED');c.close();
+});

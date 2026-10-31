@@ -1,3 +1,4 @@
+import {reviewOriginSchema} from './review-continuation.js';
 import { randomUUID } from 'node:crypto';
 import { isAbsolute, resolve } from 'node:path';
 import { z } from 'zod';
@@ -18,7 +19,7 @@ const familyOriginSchema=z.object({sessionId:identity,bindingRevision:z.string()
 const jobSchema = z.object({
   id:identity, originSessionId:identity, originToolCallId:identity, targetSessionId:identity, targetMessageId:identity,
   projectRoot:z.string().max(4096), projectLabel:z.string().max(80), task:z.string().min(1).max(8000),
-  familyOrigin:familyOriginSchema.optional(),returnBinding:bindingSchema.nullable(),createdAt:timestamp,expiresAt:timestamp,status:executionStatus,
+  familyOrigin:familyOriginSchema.optional(),reviewOrigin:reviewOriginSchema.optional(),returnBinding:bindingSchema.nullable(),createdAt:timestamp,expiresAt:timestamp,status:executionStatus,
   turn:z.number().int().nonnegative().nullable(),reply:z.string().max(MAX_REPLY),replyTruncated:z.boolean(),
   reason:z.enum([...knownReasons,'unknown']).nullable(),finishedAt:timestamp.nullable(),delivery:deliverySchema.nullable(),
 }).strict();
@@ -194,6 +195,7 @@ export function createTaskResults({store,clock = () => new Date(),send = async (
     if (typeof value.task !== 'string' || !value.task.trim() || value.task.length > 8000) throw new Error('A bounded explicit task is required');
     const returnBinding = bindingSchema.nullable().parse(value.returnBinding ?? null);
     const familyOrigin=value.familyOrigin===undefined?undefined:familyOriginSchema.parse(value.familyOrigin);
+    const reviewOrigin=value.reviewOrigin===undefined?undefined:reviewOriginSchema.parse(value.reviewOrigin);
     if(familyOrigin&&(familyOrigin.sessionId!==value.originSessionId||familyOrigin.root!==value.projectRoot))throw new Error('Family task origin mismatch');
     await expire();
     if (state.jobs.filter(active).length >= 10) throw new Error('最多保留10项活动交办，请先等待结果。');
@@ -207,7 +209,7 @@ export function createTaskResults({store,clock = () => new Date(),send = async (
     const createdAt = now().toISOString();
     const job = {id:`task_${randomUUID()}`,originSessionId:value.originSessionId,originToolCallId:value.originToolCallId,
       targetSessionId:value.targetSessionId,targetMessageId:value.targetMessageId,projectRoot:value.projectRoot,
-      projectLabel:line(value.projectLabel,80),task:clean(value.task),...(familyOrigin?{familyOrigin}:{}),returnBinding,createdAt,
+      projectLabel:line(value.projectLabel,80),task:clean(value.task),...(familyOrigin?{familyOrigin}:{}),...(reviewOrigin?{reviewOrigin}:{}),returnBinding,createdAt,
       expiresAt:new Date(Date.parse(createdAt)+SIX_HOURS).toISOString(),status:'prepared',turn:null,
       reply:'',replyTruncated:false,reason:null,finishedAt:null,delivery:null};
     state.jobs.push(job); await save(); return {job:snapshot(job),duplicate:false};
@@ -366,6 +368,11 @@ export function createTaskResults({store,clock = () => new Date(),send = async (
     const targets=[...new Set(recent.map(job=>job.targetSessionId))];
     return targets.length===1?{targetSessionId:targets[0]}:null;
   });
+  const reviewOutcomes = originSessionId => serial(async()=>{
+    identity.parse(originSessionId);if(closing||storageFailed)return [];
+    const snapshot=taskResultsRowSchema.parse(copy(state??await store.get('profile')??freshState()));
+    return snapshot.jobs.filter(j=>j.originSessionId===originSessionId&&j.reviewOrigin).map(j=>({id:j.id,originSessionId:j.originSessionId,projectRoot:j.projectRoot,reviewOrigin:copy(j.reviewOrigin),status:j.status,createdAt:j.createdAt,finishedAt:j.finishedAt}));
+  });
   const tick = () => serial(async () => { if (closing) return; await load(); await expire(); clearInactiveClaims(); await flush(); });
   const needsTimer = () => !closing && Boolean(state?.jobs.some(active));
   const close = () => {
@@ -373,5 +380,5 @@ export function createTaskResults({store,clock = () => new Date(),send = async (
     closePromise ??= serial(async()=>{await load();directClaims.clear();});
     return closePromise;
   };
-  return {ready,byRequest,prepare,admitted,notAdmitted,claimed,discarded,observe,status,inspect,trustedLastTarget,tick,needsTimer,close};
+  return {ready,byRequest,reviewOutcomes,prepare,admitted,notAdmitted,claimed,discarded,observe,status,inspect,trustedLastTarget,tick,needsTimer,close};
 }

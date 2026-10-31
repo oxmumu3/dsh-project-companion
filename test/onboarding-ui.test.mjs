@@ -56,7 +56,7 @@ test('a stale retry button cannot repeat an accepted or uncertain attempt',async
 
 test('client keeps WeChat setup explicit and registers no first-run blocking onboarding',async()=>{
   const c=await loadClient();c.context.snapshot=snapshot({state:'waiting-qr',qrAvailable:true,qrRevision:'1234567890abcdef'});
-  assert.equal(c.descriptor.id,'@oxmumu3/dsh-project-companion');
+  assert.equal(c.descriptor.id,'dsh-project-companion');
   assert.equal(c.registrations.length,1);assert.equal(c.registrations.some(row=>row.definition.name==='settings.onboarding'),false);
   c.render();await c.flush();const view=c.render();
   assert.equal(c.requests.length,1);assert.equal(c.requests[0].url,endpoint);assert.equal(c.requests[0].options.method??'GET','GET');

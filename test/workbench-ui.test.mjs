@@ -710,3 +710,17 @@ test('native embedded draft handoff stays on the workbench and preserves the ori
  h.ctx.sessions={retain:()=>({binding,ready:Promise.resolve(),release:()=>releases++})};
  try{const result=await h.module.prepareDotDraft(h.ctx,binding.sessionId,'合成的新问题',undefined,async()=>{},undefined,true);assert.equal(result.status,'applied');assert.equal(prepared.length,1);assert.equal(prepared[0].clearPreviousDraft,false);assert.equal(h.opened.length,0);assert.equal(h.panels.length,0);assert.equal(releases,1);}finally{h.dispose();}
 });
+
+test('attention continuation stages an exact saved-item preparation request without delegation or source reads',async()=>{
+ const h=await harness();h.context.snapshot.personalReview={available:true,attentionItems:{available:true,items:[{id:'stable-item-1',title:'核对已保存的交付事项',kind:'reply',sources:[]}]},schedules:{available:true,items:[]},review:{status:'off'},news:{topics:[]}};
+ try{h.render();await h.flush();button(h.render(),'和 Dot 接着聊').props.onClick();const view=h.render(),draft=nodes(view,n=>n.type==='textarea'&&n.props['aria-label']==='交代给 Dot 的事情')[0].props.value;assert.match(draft,/请准备个人回顾「核对已保存的交付事项」的下一步/);assert.match(draft,/事项 ID：stable-item-1/);assert.match(draft,/不要自动重做旧任务或扩大读取范围/);assert.deepEqual(actionPosts(h),[]);}finally{h.dispose();}
+});
+
+test('attention cards distinguish execution from acceptance and show when its evidence is outdated',async()=>{
+ const labels={in_progress:'正在执行',ready_for_review:'已有结果，待你验收',blocked:'执行当前受阻',unknown:'执行结果尚未确认'};
+ for(const [status,label] of Object.entries(labels)){const h=await harness();h.context.snapshot.personalReview={available:true,attentionItems:{available:true,items:[{id:'execution-item',title:'合成事项',kind:'reply',execution:{status,outdated:true},sources:[]}]},schedules:{available:true,items:[]},review:{status:'off'},news:{topics:[]}};try{h.render();await h.flush();const card=nodes(h.render(),n=>n.props['data-dot-attention-item'])[0];assert.ok(text(card).includes(label));assert.match(text(card),/旧版资料.*重新核对/);assert.deepEqual(actionPosts(h),[]);}finally{h.dispose();}}
+});
+test('recent review health is a compact status within the schedule rail with receipt still unverified',async()=>{
+ const h=await harness();h.context.snapshot.personalReview={available:true,attentionItems:{available:true,items:[]},schedules:{available:true,items:[]},review:{status:'enabled',health:{state:'blocked',label:'本轮来源读取受阻',kind:'attention',at:'2026-10-31T10:00:00Z',phoneReceipt:'unverified',retryAllowed:false}},news:{topics:[]}};
+ try{h.render();await h.flush();const view=h.render(),rail=nodes(view,n=>n.props['data-dot-schedule-rail'])[0],health=nodes(rail,n=>n.props['data-dot-review-health'])[0];assert.ok(health);assert.match(text(health),/最近运行.*本轮来源读取受阻.*手机收到仍未确认/);assert.equal(health.props.role,undefined);assert.equal(nodes(view,n=>n.props['data-dot-recovery']).length,0);assert.deepEqual(actionPosts(h),[]);}finally{h.dispose();}
+});
