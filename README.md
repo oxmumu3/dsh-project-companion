@@ -4,29 +4,23 @@
 
 作者：牛村木木山 · [正式仓库](https://github.com/oxmumu3/dsh-project-companion) · MIT。社区开源项目，非 DeepSeek 或 OpenAI 官方产品。
 
-**当前公开预览：`0.20.0-preview.2`。** 新工作台、逻辑项目看板、首次及后续工作区选择、个人回顾和兴趣 AI 日报已包含在本版。自动回顾仍属实验能力：flomo 近期读取及历史模型失败的自然运行验收尚未完成。Google 数据权限审核中，仍有未验证提示与已知累计 100 个账号上限。详见[本版验收与限制](docs/verification.md)。
+**当前公开预览：`0.20.0-preview.3`，只需安装一个标准插件包。** 新工作台、逻辑项目看板、首次及后续工作区选择、个人回顾和兴趣 AI 日报已包含在本版。自动回顾仍属实验能力：flomo 近期读取及历史模型失败的自然运行验收尚未完成。Google 数据权限审核中，仍有未验证提示与已知累计 100 个账号上限。详见[本版验收与限制](docs/verification.md)。
 
-## 安装
+## 只安装一个标准插件
 
-**DSH Dot 是安装在 DeepSeek Harness 里的标准插件。** 本版通过 GitHub Release 分发标准 `.tgz` 插件包，尚未上架官方插件市场。
+本版将经过固定来源与 MIT 许可审计的微信组件内置到 Dot。新用户无需再装第二个微信插件，也无需下载 ZIP、解压或运行 macOS 安装脚本。
 
-已有 Harness：在官方插件管理器中添加本版配套[微信组件](https://github.com/oxmumu3/dsh-project-companion/releases/download/v0.20.0-preview.2/dsh-wechat-0.11.1-dot.3.tgz)，再添加 [DSH Dot 插件](https://github.com/oxmumu3/dsh-project-companion/releases/download/v0.20.0-preview.2/dsh-project-companion-0.20.0-preview.2.tgz)，启用后打开左侧「DSH Dot」。插件管理器可使用下载地址或本地 `.tgz` 文件路径。首次使用 Harness，先完成官方应用初始化与模型配置。
+1. 打开已初始化的官方 DeepSeek Harness，进入「插件 → 添加插件」。
+2. 粘贴下面的插件地址，安装并点击「立即启用」。也可[下载插件包](https://github.com/oxmumu3/dsh-project-companion/releases/download/v0.20.0-preview.3/dsh-project-companion-0.20.0-preview.3.tgz)后填写本地文件路径。
+3. 打开左侧「DSH Dot」。首页连接微信，或先在电脑对话；再按需选择工作区和资料来源。
 
-[详细安装说明](docs/install.md) · [固定版本发布页](https://github.com/oxmumu3/dsh-project-companion/releases/tag/v0.20.0-preview.2)
-
-### 可选：macOS 配套安装辅助包
-
-[下载 macOS 安装辅助包](https://github.com/oxmumu3/dsh-project-companion/releases/download/v0.20.0-preview.2/dsh-dot-0.20.0-preview.2-macos.zip)。ZIP 把上述两个标准插件包、校验文件和安装脚本放在一起，帮助检查版本并调用官方插件安装命令；不包含 Harness 应用。已有微信绑定、需要升级版本时，可用它检查兼容性。
-
-先打开一次官方 Harness，保存工作并正常退出。把这一行粘贴到 macOS「终端」：
-
-```sh
-(dsh_dot_dir="$(mktemp -d)" && cd "$dsh_dot_dir" && curl -fLO "https://github.com/oxmumu3/dsh-project-companion/releases/download/v0.20.0-preview.2/dsh-dot-0.20.0-preview.2-macos.zip" && curl -fLO "https://github.com/oxmumu3/dsh-project-companion/releases/download/v0.20.0-preview.2/dsh-dot-0.20.0-preview.2-macos.zip.sha256" && shasum -a 256 -c "dsh-dot-0.20.0-preview.2-macos.zip.sha256" && ditto -x -k "dsh-dot-0.20.0-preview.2-macos.zip" . && open "dsh-dot-0.20.0-preview.2-macos/Install.command")
+```text
+https://github.com/oxmumu3/dsh-project-companion/releases/download/v0.20.0-preview.3/dsh-project-companion-0.20.0-preview.3.tgz
 ```
 
-命令会下载固定版本、核对 SHA256、解压并打开安装辅助入口。安装后重开 Harness，从左侧进入「DSH Dot」。支持官方 DSH `0.2.0-rc.2`、`0.2.1-rc.2`、`0.2.1-rc.3`。Windows 安装流程未验证；macOS 辅助脚本的支持范围不代表其他平台已通过验收。
+已有兼容微信组件时沿用现有组件，包括它的禁用状态；不会为安装 Dot 重置绑定或覆盖组件配置。已有家庭入口继续按已配置的 Owner 委托运行，家人权限独立。Dot 不安装、升级 Family，也不自动扩大任何账号或资料授权。
 
-完整包包含 Dot 和维护桥 `dsh-wechat@0.11.1-dot.3`，沿用兼容的原微信绑定。已有 Family 家庭入口和账号授权不会被安装器重置；本包不会安装、升级 Family 或自动建立 Owner 委托。需要共用家庭微信时另行配置，家人的权限独立。
+这是通过 GitHub Release 分发的标准 Harness 插件，尚未上架官方插件市场，也未升级 npm 包。[发布与下载](https://github.com/oxmumu3/dsh-project-companion/releases/tag/v0.20.0-preview.3) · [安装说明](docs/install.md)。本版已完成官方隔离单包安装验证；维护者日常 App 仍为 `.2`，新用户手机收件与多日运行仍分别验收。
 
 ## 第一次打开，先做一件有用的事
 
@@ -67,7 +61,7 @@
 
 ## 公开预览的边界
 
-- **电脑端验证**：本版运行代码三套官方 SDK 各 2165 项零失败/跳过，独立审读、精确安装包隔离官方 Host 与日常原生界面已验。公开包的 125 个运行文件与本机已验代码一致；文档独立更新。
+- **电脑端验证**：最终单包通过官方隔离 Host 五种安装/兼容场景；三套官方 SDK 的最终相关回归各 125 项零失败/跳过，32 项组件生命周期合成测试及独立审读通过。公开包运行文件与该精确受测包一致，只补发布文档。新用户手机收件、日常升级与长期自然运行不包含在这项验证中。
 - **真实使用记录**：维护者此前收到过有限五源简报、项目交办的一份结果、提醒和变化推送；10月30日15:01也确认收到一份自然回顾。这些历史记录不能替代新版自然运行或新用户开箱验收。
 - **尚待验证／已知问题**：flomo 的近期读取出现过范围校验失败，历史模型输出失败仍需下一轮自然运行确认；本版已合成复现并修复一种无来源精确时间导致的失败，不宣称所有故障已经修复。新用户从模型配置、扫码到收件，以及多日、断网和休眠恢复尚未完整验收。见[验证记录](docs/verification.md)。
 - **Google**：品牌验证已通过，三项数据权限已提交但未批准，CASA 未完成、已知累计 100 个账号上限未解除；不保证任意账号均能接入。看到未验证提示时核对应用与只读范围，由本人决定是否继续。flomo 需要 MAX。
@@ -78,10 +72,10 @@
 
 ## 社区复用与许可
 
-微信能力复用 [pan17/dsh-wechat](https://github.com/pan17/dsh-wechat)；项目记忆选取 `dsh-yolo` 的 SQLite 存储库，调度与唤醒选取 `dsh-proactive` 的库，并保留固定来源、完整 MIT 许可和版权。不需要额外启用这些整包。完整来源、修改与许可证见[第三方声明](THIRD_PARTY_NOTICES.md)及[桥接维护说明](bridge-maintenance/README.md)。
+微信能力复用 [pan17/dsh-wechat](https://github.com/pan17/dsh-wechat)；项目记忆选取 `dsh-yolo` 的 SQLite 存储库，调度与唤醒选取 `dsh-proactive` 的库，并保留固定来源、完整 MIT 许可和版权。不需要额外启用这些整包。完整来源、修改与许可证见[第三方声明](THIRD_PARTY_NOTICES.md)及[桥接维护说明](https://github.com/oxmumu3/dsh-project-companion/blob/v0.20.0-preview.3/bridge-maintenance/README.md)。
 
 问题反馈：[GitHub Issues](https://github.com/oxmumu3/dsh-project-companion/issues)。请勿提交令牌、授权回调网址、私人邮件或家人资料；提供版本、操作步骤和已脱敏提示即可。
 
 ## 源码与发布线
 
-本页安装包与验收对应固定标签 [`v0.20.0-preview.2`](https://github.com/oxmumu3/dsh-project-companion/tree/v0.20.0-preview.2)。开发本版请检出该标签或 `release/0.20.0-preview.2`；仓库 `main` 保留独立 npm 发布线，本次未发布或升级 npm 包。
+本页安装包与验收对应固定标签 [`v0.20.0-preview.3`](https://github.com/oxmumu3/dsh-project-companion/tree/v0.20.0-preview.3)。开发本版请检出该标签或 `release/0.20.0-preview.3`；仓库 `main` 保留独立 npm 发布线，本次未发布或升级 npm 包。
