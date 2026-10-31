@@ -1,3 +1,5 @@
+> These notices describe the v0.20.0-preview.2 GitHub release and its fixed source tag; the default branch retains a separate historical npm release line.
+
 # Third-party components and acknowledgements
 
 DSH Project Companion / DeepSeek专属Dot is a community project by 牛村木木山. It is not an official DeepSeek or upstream-author product. Our own MIT LICENSE does not replace the notices below.
@@ -7,9 +9,10 @@ DSH Project Companion / DeepSeek专属Dot is a community project by 牛村木木
 - Upstream: https://github.com/pan17/dsh-wechat
 - Original npm release: 0.11.0, independently pinned by SHA256 `993e1e1afce3c0dcd2610bf9e84ffbfd6d08768f5c4b4fa30eeec50dc2e97d3f`.
 - DSH Dot maintenance release: 0.11.1-dot.2, based on upstream source tag v0.11.0 at `218537511681be7637589f5ae0eab84f80267dc8`; locally reviewed source commit `19c3f40c85bcdd49525a09d07007978e61521f83`. This is a local maintained fork, not an upstream publication or endorsement.
+- Current GitHub preview bridge: `0.11.1-dot.3`, maintained source commit `1aa862728afcba1d811ce9ba442d6fb1bcd45ee0`, archive SHA256 `2205931694cf84eadea55c7445d7f5ff5b2ae4c76a8f658b495120c811a7c41c`; provenance and rebuild delta remain in the fixed [v0.20.0-preview.2 source](https://github.com/oxmumu3/dsh-project-companion/tree/v0.20.0-preview.2/bridge-maintenance). Earlier maintenance versions above are retained for upgrade provenance.
 - Copyright (c) 2026 dsh-wechat contributors. MIT; full text: `third-party-licenses/pan17-dsh-wechat.txt`.
 - Reuse: separately installed WeChat login, message transport, approvals and session integration. Companion invokes its registered `send_wechat` tool, public local binding status and the maintenance version's synchronous transport-recovery admission hook. We do not claim original authorship of this transport.
-- Maintenance by DSH Dot / 牛村木木山: conservative known-unsent queue retry, preserved message budgets, timeout/receipt correctness, redacted diagnostics and pre-enqueue transport-only recovery. Original LICENSE bytes and contributor copyright remain unchanged. The source delta, exact archive/source hashes, tests and rebuild instructions remain in the [public source repository](https://github.com/oxmumu3/dsh-project-companion/tree/d389852e3aebfab061325d72b8286ba40de319ee/bridge-maintenance); the complete bridge runtime is a separate pinned package in the installer kit. Phone delivery is not inferred from a send wrapper or local tests.
+- Maintenance by DSH Dot / 牛村木木山: conservative known-unsent queue retry, preserved message budgets, timeout/receipt correctness, redacted diagnostics and pre-enqueue transport-only recovery. Original LICENSE bytes and contributor copyright remain unchanged. The source delta, exact archive/source hashes, tests and rebuild instructions are shipped in `bridge-maintenance/` of the fixed release source; the complete bridge runtime is a separate pinned package in the installer kit. Phone delivery is not inferred from a send wrapper or local tests.
 
 ## hanshanyike/dsh-yolo — selected library modules
 
@@ -26,10 +29,10 @@ DSH Project Companion / DeepSeek专属Dot is a community project by 牛村木木
 - Upstream: https://github.com/john-walks-slow/dsh-proactive
 - Version 0.3.1; associated research commit: `7a959839f6486aa521e6024a67425b33f098aa0b`.
 - Copyright (c) 2026 dsh-proactive contributors. MIT; full text: `third-party-licenses/dsh-proactive.txt` and `vendor/proactive/LICENSE`.
-- Runtime is the integrity-verified npm 0.3.1 distribution, independently pinned by tar integrity and per-file hashes in `vendor/proactive/SOURCE.json`. The npm archive is not claimed byte-equivalent to an unavailable gitHead mapping.
-- Reuse: ProactiveStore, ProactiveScheduler, WakeDriver, alarm validation and their dependency closure. Upstream compiled runtime files are unchanged.
+- Runtime starts from the integrity-verified npm 0.3.1 distribution, independently pinned by tar integrity and original per-file hashes in `vendor/proactive/SOURCE.json`. The scheduler has one DSH Dot maintenance patch, recorded separately with original and patched hashes in that manifest and `vendor/proactive/PATCHES.md`. The npm archive is not claimed byte-equivalent to an unavailable gitHead mapping.
+- Reuse: ProactiveStore, ProactiveScheduler, WakeDriver, alarm validation and their dependency closure. All selected runtime files except the explicitly recorded scheduler patch preserve their upstream bytes.
 - Adaptation: our adapter provides an explicit project-local data directory, exact original-session target, current watched-root checks, binding checks, pause/cancel gates and a read-only tool policy for autonomous wakes. No upstream global tool/panel/settings registration, dynamic workspace target or default schedule is enabled.
-- This package's tested SDK range describes the composed adapter. It does not alter or claim that the unmodified upstream plugin's peer range accepts SDK0.2.1.
+- This package's tested SDK range describes the composed adapter. It does not alter or claim that the upstream plugin's peer range accepts SDK0.2.1.
 
 ## Distribution
 
