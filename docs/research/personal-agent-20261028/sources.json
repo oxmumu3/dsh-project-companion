@@ -1,0 +1,386 @@
+{
+  "researchedAtUTC": "2026-10-28T13:36:07.211825+00:00",
+  "author": "牛村木木山",
+  "namespace": "oxmumu3",
+  "localBaseline": "f57e5fb6b00a41c423e71ee7899181d40b151361",
+  "browser": {
+    "runtime": "ego lite v2",
+    "spaceId": 39,
+    "dailyChromeUsed": false
+  },
+  "method": "Read-only primary product pages, repository README, pinned source and full root LICENSE. No product installation or runtime comparison.",
+  "evidenceClasses": [
+    "official_product_claim",
+    "primary_design_guidance",
+    "source_code",
+    "license",
+    "repository_document",
+    "discovery_only",
+    "unavailable_primary_page"
+  ],
+  "userFeedback": {
+    "independentSampleCollected": false,
+    "officialCuratedTestimonials": "Grok Bot launch page only; no preference ranking inferred"
+  },
+  "repositories": [
+    {
+      "repository": "HKUDS/nanobot",
+      "sha": "8f7a7d17590de7ab187650381894dba2b9e060ab",
+      "commitTimeUTC": "2026-10-28T09:28:59Z",
+      "licenseVerified": "MIT",
+      "licenseScope": "root LICENSE only",
+      "headEvidence": "evidence/HKUDS--nanobot-head.json",
+      "licenseEvidence": "evidence/HKUDS--nanobot-LICENSE.json"
+    },
+    {
+      "repository": "NousResearch/hermes-agent",
+      "sha": "0431192d69d4afd2443a7da15bb9e129a424414c",
+      "commitTimeUTC": "2026-10-28T11:36:43Z",
+      "licenseVerified": "MIT",
+      "licenseScope": "root LICENSE only",
+      "headEvidence": "evidence/NousResearch--hermes-agent-head.json",
+      "licenseEvidence": "evidence/NousResearch--hermes-agent-LICENSE.json"
+    },
+    {
+      "repository": "openclaw/openclaw",
+      "sha": "a74f408db7fbabcdca1089cec8d50f16d6a4f418",
+      "commitTimeUTC": "2026-10-28T13:23:46Z",
+      "licenseVerified": "MIT",
+      "licenseScope": "root LICENSE only",
+      "headEvidence": "evidence/openclaw--openclaw-head.json",
+      "licenseEvidence": "evidence/openclaw--openclaw-LICENSE.json"
+    },
+    {
+      "repository": "pan17/dsh-wechat",
+      "sha": "312e9834831ab840c3a48f88f0fe95ee33ef2cda",
+      "commitTimeUTC": "2026-10-26T12:34:37Z",
+      "licenseVerified": "MIT",
+      "licenseScope": "root LICENSE only",
+      "headEvidence": "evidence/pan17--dsh-wechat-head.json",
+      "licenseEvidence": "evidence/pan17--dsh-wechat-LICENSE.json"
+    }
+  ],
+  "sources": [
+    {
+      "file": "evidence/HKUDS--nanobot-LICENSE.json",
+      "classification": "license",
+      "url": "https://raw.githubusercontent.com/HKUDS/nanobot/8f7a7d17590de7ab187650381894dba2b9e060ab/LICENSE",
+      "status": 200,
+      "sha": "8f7a7d17590de7ab187650381894dba2b9e060ab",
+      "bytes": 1321,
+      "fileSha256": "89bc229bb092a996b5498705e4084b89dfe06b0e12c6ff94a77bd8635ec5c32d"
+    },
+    {
+      "file": "evidence/HKUDS--nanobot-README.md.json",
+      "classification": "repository_document",
+      "url": "https://raw.githubusercontent.com/HKUDS/nanobot/8f7a7d17590de7ab187650381894dba2b9e060ab/README.md",
+      "status": 200,
+      "sha": "8f7a7d17590de7ab187650381894dba2b9e060ab",
+      "bytes": 97329,
+      "fileSha256": "506267da71b188962aaea2196fff2ad3b8b0cf8dcf08496b110e414d55a5a98d"
+    },
+    {
+      "file": "evidence/HKUDS--nanobot-docs__automations.md.json",
+      "classification": "repository_document",
+      "url": "https://raw.githubusercontent.com/HKUDS/nanobot/8f7a7d17590de7ab187650381894dba2b9e060ab/docs/automations.md",
+      "status": 200,
+      "sha": "8f7a7d17590de7ab187650381894dba2b9e060ab",
+      "bytes": 20527,
+      "fileSha256": "5bd147e388f2eee13a6afb9aead250b9a8f63e8151d6b36fa1fa675e0a4de40d"
+    },
+    {
+      "file": "evidence/HKUDS--nanobot-head.json",
+      "classification": "repository_head",
+      "url": "https://api.github.com/repos/HKUDS/nanobot/commits/HEAD",
+      "status": 200,
+      "sha": null,
+      "bytes": 293,
+      "fileSha256": "28fbaacc6acc5e2ea82f09a0449e0c28ec6ce1d83444f316b96c0907dce83e8c"
+    },
+    {
+      "file": "evidence/HKUDS--nanobot-nanobot__agent__memory.py.json",
+      "classification": "source_code",
+      "url": "https://raw.githubusercontent.com/HKUDS/nanobot/8f7a7d17590de7ab187650381894dba2b9e060ab/nanobot/agent/memory.py",
+      "status": 200,
+      "sha": "8f7a7d17590de7ab187650381894dba2b9e060ab",
+      "bytes": 53481,
+      "fileSha256": "4ed4684029b7fea3fa19e7089a4dcc5d094d276a90da37c8c03ef2dd6b2fa346"
+    },
+    {
+      "file": "evidence/HKUDS--nanobot-nanobot__channels__outbox.py.json",
+      "classification": "source_code",
+      "url": "https://raw.githubusercontent.com/HKUDS/nanobot/8f7a7d17590de7ab187650381894dba2b9e060ab/nanobot/channels/outbox.py",
+      "status": 200,
+      "sha": "8f7a7d17590de7ab187650381894dba2b9e060ab",
+      "bytes": 7613,
+      "fileSha256": "8e6d137e50287b1a49e528a97a804957e155addc04603240c2f8042c8d86f773"
+    },
+    {
+      "file": "evidence/NousResearch--hermes-agent-LICENSE.json",
+      "classification": "license",
+      "url": "https://raw.githubusercontent.com/NousResearch/hermes-agent/0431192d69d4afd2443a7da15bb9e129a424414c/LICENSE",
+      "status": 200,
+      "sha": "0431192d69d4afd2443a7da15bb9e129a424414c",
+      "bytes": 1302,
+      "fileSha256": "bf5f5b696279f8962eb5a11bfd25a2b3167b1eea78bc1e3dd05a1c743da4588f"
+    },
+    {
+      "file": "evidence/NousResearch--hermes-agent-README.md.json",
+      "classification": "repository_document",
+      "url": "https://raw.githubusercontent.com/NousResearch/hermes-agent/0431192d69d4afd2443a7da15bb9e129a424414c/README.md",
+      "status": 200,
+      "sha": "0431192d69d4afd2443a7da15bb9e129a424414c",
+      "bytes": 18031,
+      "fileSha256": "cbbd59e08554a4cee7064d6cfe05c6334dffee77bcc74dc4f78550c1798741b7"
+    },
+    {
+      "file": "evidence/NousResearch--hermes-agent-agent__onboarding_first_tasks.py.json",
+      "classification": "source_code",
+      "url": "https://raw.githubusercontent.com/NousResearch/hermes-agent/0431192d69d4afd2443a7da15bb9e129a424414c/agent/onboarding_first_tasks.py",
+      "status": 200,
+      "sha": "0431192d69d4afd2443a7da15bb9e129a424414c",
+      "bytes": 20403,
+      "fileSha256": "47ab8d94266309712c74d447ddfdb58191c562d13d6ef07242f5a2ea82ad7b1b"
+    },
+    {
+      "file": "evidence/NousResearch--hermes-agent-head.json",
+      "classification": "repository_head",
+      "url": "https://api.github.com/repos/NousResearch/hermes-agent/commits/HEAD",
+      "status": 200,
+      "sha": null,
+      "bytes": 305,
+      "fileSha256": "ed44355dc5e8273da09dc81e997ec45c419e421215c1918dd4b494c3fe5bc311"
+    },
+    {
+      "file": "evidence/NousResearch--hermes-agent-website__docs__user-guide__features__cron.md.json",
+      "classification": "repository_document",
+      "url": "https://raw.githubusercontent.com/NousResearch/hermes-agent/0431192d69d4afd2443a7da15bb9e129a424414c/website/docs/user-guide/features/cron.md",
+      "status": 200,
+      "sha": "0431192d69d4afd2443a7da15bb9e129a424414c",
+      "bytes": 82261,
+      "fileSha256": "d3c48817840ca164a7d1249928dc7b8eadd0e39199261ce3238010fc8afa97fe"
+    },
+    {
+      "file": "evidence/discovery-meta-muse.json",
+      "classification": "discovery_only",
+      "url": "https://www.google.com/search?q=Meta+Muse+personal+AI+agent",
+      "status": null,
+      "sha": null,
+      "bytes": 857,
+      "fileSha256": "4c3b380699a583129bf5ece6e4a037f74bf15668ec86ffb64474281b53695d47"
+    },
+    {
+      "file": "evidence/meta-muse.json",
+      "classification": "official_product_claim",
+      "url": "https://about.fb.com/news/2026/09/introducing-muse-personal-ai-agent/",
+      "status": null,
+      "sha": null,
+      "bytes": 636,
+      "fileSha256": "7afa2e4c63282ccfa2f8451a3c2fee19a5a2434008e3d44432a713f18bf1ed3a"
+    },
+    {
+      "file": "evidence/openai-dots.json",
+      "classification": "official_product_claim",
+      "url": "https://openai.com/zh-Hans-CN/index/introducing-dots/",
+      "status": null,
+      "sha": null,
+      "bytes": 516,
+      "fileSha256": "1f80fb239b19ff8948a5c5046f7637ec3c91149c02851d82f983ff9e34ebf0db"
+    },
+    {
+      "file": "evidence/openclaw--openclaw-LICENSE.json",
+      "classification": "license",
+      "url": "https://raw.githubusercontent.com/openclaw/openclaw/a74f408db7fbabcdca1089cec8d50f16d6a4f418/LICENSE",
+      "status": 200,
+      "sha": "a74f408db7fbabcdca1089cec8d50f16d6a4f418",
+      "bytes": 1300,
+      "fileSha256": "a7ebeab88cf2eb63fc56e4ae9a40bf2aee4ae39b23e379b38e669b903738fb43"
+    },
+    {
+      "file": "evidence/openclaw--openclaw-README.md.json",
+      "classification": "repository_document",
+      "url": "https://raw.githubusercontent.com/openclaw/openclaw/a74f408db7fbabcdca1089cec8d50f16d6a4f418/README.md",
+      "status": 200,
+      "sha": "a74f408db7fbabcdca1089cec8d50f16d6a4f418",
+      "bytes": 120357,
+      "fileSha256": "7f1f56f11b4296027630d4d48c77a9c0a6b897b14f94dc78c39fae4e1e6a95d7"
+    },
+    {
+      "file": "evidence/openclaw--openclaw-docs__automation__cron-jobs__delivery.md.json",
+      "classification": "repository_document",
+      "url": "https://raw.githubusercontent.com/openclaw/openclaw/a74f408db7fbabcdca1089cec8d50f16d6a4f418/docs/automation/cron-jobs/delivery.md",
+      "status": 200,
+      "sha": "a74f408db7fbabcdca1089cec8d50f16d6a4f418",
+      "bytes": 29087,
+      "fileSha256": "84d25d955573554dfd0b62eef5b046111df00b2f891cc2c8100e12dc42da686b"
+    },
+    {
+      "file": "evidence/openclaw--openclaw-docs__automation__cron-jobs__payloads.md.json",
+      "classification": "repository_document",
+      "url": "https://raw.githubusercontent.com/openclaw/openclaw/a74f408db7fbabcdca1089cec8d50f16d6a4f418/docs/automation/cron-jobs/payloads.md",
+      "status": 200,
+      "sha": "a74f408db7fbabcdca1089cec8d50f16d6a4f418",
+      "bytes": 47165,
+      "fileSha256": "b8574c27a3ce87d169ecd828ce1f97ab1c7b145bf428661edb3df8e844d889ee"
+    },
+    {
+      "file": "evidence/openclaw--openclaw-docs__tools__lobster.md.json",
+      "classification": "repository_document",
+      "url": "https://raw.githubusercontent.com/openclaw/openclaw/a74f408db7fbabcdca1089cec8d50f16d6a4f418/docs/tools/lobster.md",
+      "status": 200,
+      "sha": "a74f408db7fbabcdca1089cec8d50f16d6a4f418",
+      "bytes": 16432,
+      "fileSha256": "e7f02a53cff9497127211d6a25f0849d4f9bd6cf2690fceed82422442cb2e184"
+    },
+    {
+      "file": "evidence/openclaw--openclaw-head.json",
+      "classification": "repository_head",
+      "url": "https://api.github.com/repos/openclaw/openclaw/commits/HEAD",
+      "status": 200,
+      "sha": null,
+      "bytes": 297,
+      "fileSha256": "f043672d7c2ccd235fc87e33fe65320ead1a6d3f3de452cd1489440b1c95ce35"
+    },
+    {
+      "file": "evidence/openclaw--openclaw-src__agents__tools__cron-tool.ts.json",
+      "classification": "source_code",
+      "url": "https://raw.githubusercontent.com/openclaw/openclaw/a74f408db7fbabcdca1089cec8d50f16d6a4f418/src/agents/tools/cron-tool.ts",
+      "status": 200,
+      "sha": "a74f408db7fbabcdca1089cec8d50f16d6a4f418",
+      "bytes": 34531,
+      "fileSha256": "ce9929abdc5a53140c609ff4b9f6c32a4c1f7095e3a98e0f800b6ac9ea58615b"
+    },
+    {
+      "file": "evidence/openclaw--openclaw-src__cron__isolated-agent__run.ts.json",
+      "classification": "source_code",
+      "url": "https://raw.githubusercontent.com/openclaw/openclaw/a74f408db7fbabcdca1089cec8d50f16d6a4f418/src/cron/isolated-agent/run.ts",
+      "status": 200,
+      "sha": "a74f408db7fbabcdca1089cec8d50f16d6a4f418",
+      "bytes": 30324,
+      "fileSha256": "e467bf58a97bc66a9dd6ad4bc06c897febc5daab5be22ee0472abef7048a9127"
+    },
+    {
+      "file": "evidence/openclaw--openclaw-src__cron__service__timer.ts.json",
+      "classification": "source_code",
+      "url": "https://raw.githubusercontent.com/openclaw/openclaw/a74f408db7fbabcdca1089cec8d50f16d6a4f418/src/cron/service/timer.ts",
+      "status": 404,
+      "sha": "a74f408db7fbabcdca1089cec8d50f16d6a4f418",
+      "bytes": 231,
+      "fileSha256": "61cbeae16688ff47857972e828a025ff67a0bef2798ce7ea7fdc49a875f1ffe1"
+    },
+    {
+      "file": "evidence/openclaw--openclaw-src__cron__types.ts.json",
+      "classification": "source_code",
+      "url": "https://raw.githubusercontent.com/openclaw/openclaw/a74f408db7fbabcdca1089cec8d50f16d6a4f418/src/cron/types.ts",
+      "status": 200,
+      "sha": "a74f408db7fbabcdca1089cec8d50f16d6a4f418",
+      "bytes": 23062,
+      "fileSha256": "27fcfc233fd3e03199fc6c7879cb72a34fdf52b6c6beee5f59b4093d286386ed"
+    },
+    {
+      "file": "evidence/pan17--dsh-wechat-LICENSE.json",
+      "classification": "license",
+      "url": "https://raw.githubusercontent.com/pan17/dsh-wechat/312e9834831ab840c3a48f88f0fe95ee33ef2cda/LICENSE",
+      "status": 200,
+      "sha": "312e9834831ab840c3a48f88f0fe95ee33ef2cda",
+      "bytes": 1303,
+      "fileSha256": "58ca2be5a9fa669658ed847941823cbffa7aa908d600fd25095d6f8863d4166c"
+    },
+    {
+      "file": "evidence/pan17--dsh-wechat-README.md.json",
+      "classification": "repository_document",
+      "url": "https://raw.githubusercontent.com/pan17/dsh-wechat/312e9834831ab840c3a48f88f0fe95ee33ef2cda/README.md",
+      "status": 200,
+      "sha": "312e9834831ab840c3a48f88f0fe95ee33ef2cda",
+      "bytes": 5350,
+      "fileSha256": "cd15bc2f50bc94faaf3081d1500bb17cb13c3ee560c25699e4c148b19a3cbbdc"
+    },
+    {
+      "file": "evidence/pan17--dsh-wechat-head.json",
+      "classification": "repository_head",
+      "url": "https://api.github.com/repos/pan17/dsh-wechat/commits/HEAD",
+      "status": 200,
+      "sha": null,
+      "bytes": 296,
+      "fileSha256": "18971a3d739b4d2bca1dbb594624ca3fb28fb35d09a344c6c63b0f33704b921e"
+    },
+    {
+      "file": "evidence/pan17--dsh-wechat-package.json.json",
+      "classification": "repository_document",
+      "url": "https://raw.githubusercontent.com/pan17/dsh-wechat/312e9834831ab840c3a48f88f0fe95ee33ef2cda/package.json",
+      "status": 200,
+      "sha": "312e9834831ab840c3a48f88f0fe95ee33ef2cda",
+      "bytes": 2134,
+      "fileSha256": "8e16ad9cb94d7057c90a477dc3578a4f1f1b7d5610e86f71bcc9e210410f3e26"
+    },
+    {
+      "file": "evidence/ux-carbon.json",
+      "classification": "primary_design_guidance",
+      "url": "https://www.carbondesignsystem.com/building-blocks/core/components/ai-label/guidelines",
+      "status": null,
+      "sha": null,
+      "bytes": 533,
+      "fileSha256": "04e1065e19c9428c4eb25f76515859df8aa8a2b4de25467ae3edae1718affd84"
+    },
+    {
+      "file": "evidence/ux-hax.json",
+      "classification": "unavailable_primary_page",
+      "url": "https://www.microsoft.com/en-us/research/publication/guidelines-for-human-ai-interaction/",
+      "status": null,
+      "sha": null,
+      "bytes": 512,
+      "fileSha256": "caeb6f8603c175b2482a0fff1fd76415ce8404c752d109fecb9f7409f0043ae6"
+    },
+    {
+      "file": "evidence/ux-pair.json",
+      "classification": "primary_design_guidance",
+      "url": "https://pair.withgoogle.com/chapter/explainability-trust/",
+      "status": null,
+      "sha": null,
+      "bytes": 497,
+      "fileSha256": "e1b9cda4e06c4112c2c4a2aa30a8f52a56ecac0b005d688ba07ed82b2535dcb8"
+    },
+    {
+      "file": "evidence/ux-wcag-status.json",
+      "classification": "primary_design_guidance",
+      "url": "https://www.w3.org/WAI/WCAG22/Understanding/status-messages.html",
+      "status": null,
+      "sha": null,
+      "bytes": 618,
+      "fileSha256": "9c60c5db1ed085504717e6294d729e5d06212659e7e096ba5397cd7859db115b"
+    },
+    {
+      "file": "evidence/xai-grok-bot.json",
+      "classification": "official_product_claim",
+      "url": "https://x.ai/news/introducing-grok-bot",
+      "status": null,
+      "sha": null,
+      "bytes": 530,
+      "fileSha256": "ddb5b854e2a3cc471e5bc738fb7db9d2cb7e08433b349a0253cae372885189ea"
+    }
+  ],
+  "knownFailures": [
+    {
+      "source": "Microsoft HAX / Microsoft Research",
+      "result": "official page unavailable or high-demand; not relied upon"
+    },
+    {
+      "source": "GitHub recursive trees",
+      "result": "background fetch failed; direct pinned raw source reads succeeded"
+    },
+    {
+      "source": "src/cron/service/timer.ts",
+      "result": "404 at pinned OpenClaw SHA; not used as implementation evidence"
+    }
+  ],
+  "mutations": [
+    "Created only this new research directory"
+  ],
+  "notClaimed": [
+    "same-task superiority",
+    "real-phone receipt",
+    "user acceptance",
+    "independent popularity",
+    "Google review approval"
+  ]
+}

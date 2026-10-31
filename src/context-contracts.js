@@ -1,5 +1,6 @@
 /** Fixed read-only provider contracts. Provider content remains untrusted data. */
 import { createHash } from 'node:crypto';
+import {calendarEventBounds} from './calendar-window.js';
 
 export const SOURCE_INFO = Object.freeze(Object.fromEntries([
   ['gmail', 'Gmail', 'google'], ['calendar', 'Google 日历', 'google'], ['drive', 'Google Drive', 'google'],
@@ -10,18 +11,19 @@ export const SOURCE_INFO = Object.freeze(Object.fromEntries([
 const INPUT_KEYS = new Set(['operation', 'query', 'id', 'ids', 'projectId', 'range', 'from', 'to', 'calendarId', 'limit']);
 const OPERATION_INPUTS = {
   gmail: { search: ['query', 'limit'], read: ['id'] }, calendar: { upcoming: ['from', 'to', 'calendarId', 'limit'] },
-  drive: { search: ['query', 'limit'], read: ['id'] }, docs: { read: ['id'] }, sheets: { read: ['id', 'range'] }, slides: { read: ['id'] },
-  dida: { projects: ['limit'], tasks: ['projectId'], read: ['id', 'projectId'], search: ['query'] },
-  flomo: { search: ['query', 'limit'], read: ['id', 'ids'] },
+  drive: { search: ['query', 'limit'], recent: ['from', 'to', 'limit'], read: ['id'] }, docs: { read: ['id'] }, sheets: { read: ['id', 'range'] }, slides: { read: ['id'] },
+  dida: { projects: ['limit'], tasks: ['projectId', 'query', 'limit'], read: ['id', 'projectId'], search: ['query'] },
+  flomo: { search: ['query', 'limit'], recent: ['from', 'to', 'limit'], read: ['id', 'ids'] },
 };
-const READ_TOOLS = new Set(['search_threads', 'get_message', 'list_events', 'search_files', 'read_file_content', 'read_doc', 'get_values', 'read_presentation', 'list_projects', 'get_project_with_undone_tasks', 'get_task_in_project', 'search', 'memo_search', 'memo_batch_get']);
+const READ_TOOLS = new Set(['search_threads', 'get_message', 'list_events', 'search_files', 'read_file_content', 'read_doc', 'get_values', 'read_presentation', 'list_projects', 'get_project_with_undone_tasks', 'get_project_tasks_bounded', 'get_named_project_with_undone_tasks', 'get_task_in_project', 'search', 'memo_search', 'memo_batch_get']);
 const ARG_KEYS = {
   search_threads: ['query', 'pageSize', 'includeTrash', 'view'], get_message: ['messageId', 'messageFormat'],
   list_events: ['calendarId', 'startTime', 'endTime', 'orderBy', 'pageSize'], search_files: ['query', 'pageSize', 'excludeContentSnippets'],
   read_file_content: ['fileId', 'includeComments'], read_doc: ['documentId', 'commentsIncluded'], get_values: ['spreadsheetId', 'range'],
   read_presentation: ['presentationId', 'fields', 'commentsIncluded'], list_projects: ['limit', 'offset'],
-  get_project_with_undone_tasks: ['project_id'], get_task_in_project: ['project_id', 'task_id'], search: ['query'],
-  memo_search: ['keywords', 'limit'], memo_batch_get: ['ids'],
+  get_project_with_undone_tasks: ['project_id'], get_project_tasks_bounded: ['project_id','limit'], get_task_in_project: ['project_id', 'task_id'], search: ['query'],
+  get_named_project_with_undone_tasks: ['project_name', 'limit'],
+  memo_search: ['keywords', 'limit', 'start_date', 'end_date'], memo_batch_get: ['ids'],
 };
 const plain = value => value !== null && typeof value === 'object' && !Array.isArray(value) && (Object.getPrototypeOf(value) === Object.prototype || Object.getPrototypeOf(value) === null);
 function fail(code = 'CONTEXT_INVALID_INPUT') { throw Object.assign(new Error('Context request rejected by the read-only contract'), { code }); }
@@ -53,6 +55,13 @@ export function buildContextCall(source, input, { now = new Date() } = {}) {
   const accepted = OPERATION_INPUTS[source]?.[operation];
   if (!accepted || Object.keys(input).some(key => key !== 'operation' && input[key] !== undefined && !accepted.includes(key))) fail('CONTEXT_UNSUPPORTED_OPERATION');
   const make = (name, args) => ({ name, args });
+  if (operation === 'recent' && ['drive','flomo'].includes(source)) {
+    const from=date(input.from),to=date(input.to),duration=Date.parse(to)-Date.parse(from);
+    if(duration<=0||duration>7*86400000)fail();
+    return source==='drive'
+      ? make('search_files',{query:`modifiedTime >= '${from}' and modifiedTime <= '${to}'`,pageSize:max,excludeContentSnippets:true})
+      : make('memo_search',{start_date:from,end_date:to,limit:limit(input.limit,5)});
+  }
   if (source === 'gmail') {
     if (operation === 'search') return make('search_threads', { query: string(input.query), pageSize: max, includeTrash: false, view: 'THREAD_VIEW_METADATA_ONLY' });
     if (operation === 'read') return make('get_message', { messageId: id(input.id), messageFormat: 'FULL_CONTENT' });
@@ -75,7 +84,11 @@ export function buildContextCall(source, input, { now = new Date() } = {}) {
   if (source === 'slides' && operation === 'read') return make('read_presentation', { presentationId: id(input.id), fields: ['presentationId', 'title', 'slides.pageElements(objectId,shape.text)'], commentsIncluded: false });
   if (source === 'dida') {
     if (operation === 'projects') return make('list_projects', { limit: max, offset: 0 });
-    if (operation === 'tasks') return make('get_project_with_undone_tasks', { project_id: id(input.projectId) });
+    if (operation === 'tasks') {
+      if (input.query !== undefined) { if (input.projectId !== undefined) fail(); return make('get_named_project_with_undone_tasks', { project_name: string(input.query,180), limit:max }); }
+      if (input.limit !== undefined) return make('get_project_tasks_bounded', {project_id:id(input.projectId),limit:max});
+      return make('get_project_with_undone_tasks', { project_id: id(input.projectId) });
+    }
     if (operation === 'read') return make('get_task_in_project', { project_id: id(input.projectId), task_id: id(input.id) });
     if (operation === 'search') return make('search', { query: string(input.query) });
   }
@@ -129,7 +142,7 @@ export function validateContextCall(call, catalog) {
     const known = new Set(Object.values(OPERATION_INPUTS).flatMap(operations => Object.keys(operations)));
     const denied = catalog.unsupportedOperations;
     if (catalog.provenance !== 'bundled-contract' || !Array.isArray(denied) || denied.length > known.size || new Set(denied).size !== denied.length || denied.some(operation => !known.has(operation))) fail('CONTEXT_SCHEMA_MISMATCH');
-    const operation = { search: 'search', search_threads: 'search', search_files: 'search', memo_search: 'search', list_projects: 'projects', get_project_with_undone_tasks: 'tasks', list_events: 'upcoming' }[call.name] ?? 'read';
+    const operation = { search: 'search', search_threads: 'search', search_files: 'search', memo_search: 'search', list_projects: 'projects', get_project_with_undone_tasks: 'tasks', get_project_tasks_bounded:'tasks', list_events: 'upcoming' }[call.name] ?? 'read';
     if (denied.includes(operation)) fail('CONTEXT_UNSUPPORTED_OPERATION');
   }
   const tools = Array.isArray(catalog) ? catalog : catalog?.tools;
@@ -192,10 +205,12 @@ function projectRow(source, row, operation) {
   const coverage = { truncated: false };
   const base = { id: firstText(row.id, row.documentId, row.presentationId, row.spreadsheetId, row.fileId, row.taskId), title: firstText(row.title, row.name, row.summary, row.subject), text: '' };
   const modified = firstText(row.updated_at, row.updatedAt, row.updated, row.modifiedTime, row.modifiedDate); if (modified && Number.isFinite(Date.parse(modified))) base.updatedAt = modified;
+  const created=firstText(row.created_at,row.createdAt,row.createdTime);if(created&&Number.isFinite(Date.parse(created)))base.createdAt=new Date(created).toISOString();
   const url = safeUrl(firstText(row.url, row.htmlLink, row.webViewLink, row.viewUrl), source); if (url) base.url = url;
   if (source === 'flomo') base.text = firstText(row.content, row.text);
   if (source === 'dida') {
     base.text = firstText(row.content, row.desc, row.text);
+    const due=firstText(row.dueDate,row.dueAt);if(due&&Number.isFinite(Date.parse(due)))base.dueAt=new Date(due).toISOString();
     const project = firstText(row.projectId, row.project_id);
     if (project) { try { base.projectId = id(project); } catch { /* A malformed ownership hint is not a citation. */ } }
     if (row.status === 2 || row.status === 'completed' || row.done === true) base.status = 'completed';
@@ -206,15 +221,19 @@ function projectRow(source, row, operation) {
     base.title = firstText(base.title, message?.subject, header(message, 'Subject'));
     base.text = firstText(row.snippet, message?.snippet, row.text);
     if (operation === 'read') base.text = firstText(row.plaintextBody, message?.plaintextBody, row.body?.text, row.bodyText, row.text, message?.text, base.text);
+    const receipt=firstText(row.receivedAt,message?.receivedAt);if(receipt&&Number.isFinite(Date.parse(receipt)))base.receivedAt=new Date(receipt).toISOString();
+    const received=header(message,'Date');if(typeof received==='string'&&Number.isFinite(Date.parse(received)))base.createdAt=new Date(received).toISOString();
     base.status = operation === 'search' ? 'metadata_only' : 'read';
   }
   if (source === 'calendar') {
     const start = firstText(row.start?.dateTime, row.start?.date), end = firstText(row.end?.dateTime, row.end?.date);
+    if(start.includes('T')&&Number.isFinite(Date.parse(start)))base.dueAt=new Date(start).toISOString();
+    if(row.start?.date){base.allDay=true;try{const bounds=calendarEventBounds(row);base.startAt=new Date(bounds.startMs).toISOString();base.endAt=new Date(bounds.endMs).toISOString();base.calendarTimeZone=row.calendarTimeZone;}catch{/* Source timezone missing: explicit window validation must fail closed. */}}
     base.text = [start && `开始：${start}`, end && `结束：${end}`, cleanText(row.description)].filter(Boolean).join('\n');
     if (['confirmed', 'tentative', 'cancelled'].includes(row.status)) base.status = row.status;
   }
   if (source === 'drive') {
-    base.text = operation === 'search' ? '' : firstText(row.fileContent, row.text, row.content, row.bodyText);
+    base.text = ['search','recent'].includes(operation) ? '' : firstText(row.fileContent, row.text, row.content, row.bodyText);
     if (operation === 'read' && !base.text && row.textFormattingNotSupported === true) { base.text = 'Google Drive 未提供此文件的可读正文；当前格式不支持。'; base.status = 'unsupported_content'; }
   }
   if (source === 'docs') base.text = firstText(row.text, typeof row.content === 'string' ? row.content : '', row.body?.text, docText(row.body?.content, 0, coverage));

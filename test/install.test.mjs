@@ -5,6 +5,9 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {createHash} from 'node:crypto';
 import {gzipSync} from 'node:zlib';
+import {execFile} from 'node:child_process';
+import {promisify} from 'node:util';
+const execFileAsync=promisify(execFile);
 
 const installer=await import('../src/installation.js').catch(error=>{
   if(error.code==='ERR_MODULE_NOT_FOUND')return {};
@@ -69,6 +72,54 @@ test('installer previews exact packages without profile or package-manager write
   const result=await ready()(f);
   assert.equal(result.status,'ready');assert.equal(result.mode,'dry_run');assert.equal(result.steps.length,2);
   assert.equal(f.calls.filter(c=>c.args.includes('add')).length,0);assert.equal(await readFile(join(f.profile,'package.json'),'utf8'),before);
+});
+test('uninitialized empty desktop profile is not ready in preview or install and is never created',async t=>{
+ for(const absent of [true,false])for(const install of [false,true]){
+  const f=await fixture(t);await rm(f.profile,{recursive:true});if(!absent)await mkdir(f.profile,{recursive:true});
+  const result=await ready()({...f,install});assert.equal(result.status,'needs_initialization');assert.match(result.message,/打开.*一次.*正常退出/);assert.equal(result.mode,install?'install':'dry_run');assert.equal(f.calls.some(c=>c.args.includes('add')),false);await assert.rejects(readFile(join(f.profile,'package.json')),{code:'ENOENT'});
+ }
+});
+test('missing manifest with residual profile data is not mistaken for first use',async t=>{
+ const f=await fixture(t);await rm(join(f.profile,'package.json'));await mkdir(join(f.profile,'node_modules'),{recursive:true});await writeFile(join(f.profile,'cordis.patch.yml'),'[]\n');
+ await assert.rejects(ready()({...f,install:true}),e=>e.code==='INCONSISTENT_PROFILE');assert.equal(f.calls.some(c=>c.args.includes('add')),false);assert.equal(await readFile(join(f.profile,'cordis.patch.yml'),'utf8'),'[]\n');
+});
+test('malformed profile metadata is repair-needed and never automatically initialized',async t=>{
+ for(const value of [null,[],{}, {dependencies:[],dsh:{profile:{bundles:[]}}},{dependencies:{},dsh:{profile:{bundles:'invalid'}}}]){
+  const f=await fixture(t);await writeFile(join(f.profile,'package.json'),JSON.stringify(value));
+  await assert.rejects(ready()(f),e=>e.code==='INVALID_LOCAL_METADATA');assert.equal(f.calls.some(c=>c.args.includes('add')),false);assert.equal(await readFile(join(f.profile,'package.json'),'utf8'),JSON.stringify(value));
+ }
+});
+test('official initialized profile with no installed dependencies is eligible without rewriting it',async t=>{
+ const f=await fixture(t),manifest={name:'dsh-profile-desktop',private:true,dependencies:{},dsh:{profile:{bundles:['@deepseek-ai/dsh-base','@deepseek-ai/dsh-web-app']}}};await writeFile(join(f.profile,'package.json'),JSON.stringify(manifest));
+ assert.equal((await ready()(f)).status,'ready');assert.deepEqual(JSON.parse(await readFile(join(f.profile,'package.json'),'utf8')),manifest);
+});
+test('Install.command waits and retries in the same window for initialization then normal exit without terminating the App',async t=>{
+ const f=await fixture(t),dir=join(f.homeDir,'entry');await mkdir(dir,{recursive:true});
+ const counter=join(dir,'count'),opens=join(dir,'opens'),openStub=join(dir,'open-stub');
+ await writeFile(join(f.appPath,'Contents/MacOS/DeepSeek Harness'),'#!/bin/zsh\nn=0\n[[ -f "$INSTALL_TEST_COUNTER" ]] && n=$(cat "$INSTALL_TEST_COUNTER")\nn=$((n+1))\nprintf "%s" "$n" > "$INSTALL_TEST_COUNTER"\ncase $n in\n1) exit 3;;\n2) exit 4;;\n*) exit 0;;\nesac\n');
+ await writeFile(openStub,'#!/bin/zsh\nprintf "%s\\n" "$*" >> "$INSTALL_TEST_OPENS"\n');await chmod(openStub,0o755);
+ let entry=await readFile(new URL('../Install.command',import.meta.url),'utf8');assert.doesNotMatch(entry,/\b(?:kill|killall|pkill|osascript)\b/);
+ const quote=value=>"'"+value.replaceAll("'","'\\''")+"'";
+ entry=entry.replace("for candidate in '/Applications/DeepSeek Harness.app' \"$HOME/Applications/DeepSeek Harness.app\"; do",`for candidate in ${quote(f.appPath)}; do`).replaceAll('/usr/bin/open',quote(openStub));
+ const script=join(dir,'Install.command');await writeFile(script,entry);
+ const child=(await import('node:child_process')).spawn('/bin/zsh',[script],{env:{...process.env,INSTALL_TEST_COUNTER:counter,INSTALL_TEST_OPENS:opens},stdio:['pipe','pipe','pipe']});let stdout='';child.stdout.on('data',chunk=>stdout+=chunk);let stderr='';child.stderr.on('data',chunk=>stderr+=chunk);child.stdin.end('\n\n\n');
+ const code=await new Promise((resolve,reject)=>{child.on('error',reject);child.on('close',resolve);});
+ assert.equal(code,0,stderr);assert.equal(await readFile(counter,'utf8'),'3');assert.equal((await readFile(opens,'utf8')).trim(),f.appPath);assert.match(stdout,/正常退出/);assert.match(stdout,/回车继续/);
+});
+test('CLI returns a distinct initialization status without invoking package installation',async t=>{
+ const f=await fixture(t);await rm(f.profile,{recursive:true});await writeFile(join(f.appPath,'Contents/MacOS/DeepSeek Harness'),'#!/bin/sh\nprintf \'%s\\n\' \'{"runtimeVersion":"0.2.1-rc.2","sdkVersion":"0.2.1-rc.2"}\'\n');
+ let result;try{result=await execFileAsync(process.execPath,[new URL('../scripts/install.mjs',import.meta.url).pathname,'--bundle-dir',f.bundleDir,'--app',f.appPath,'--install'],{env:{...process.env,DSH_HOME:join(f.homeDir,'.dsh')}});}catch(error){result=error;}
+ assert.equal(result.code,3);assert.match(result.stdout,/needs_initialization/);await assert.rejects(readFile(join(f.profile,'package.json')),{code:'ENOENT'});
+});
+test('verified 0.2.1-rc.3 host and SDK match the candidate manifest without exemptions',async t=>{
+  const f=await fixture(t);f.manifest.runtimeVersions.push('0.2.1-rc.3');await writeFile(join(f.bundleDir,'bundle-manifest.json'),JSON.stringify(f.manifest));
+  const runner=async(c,a,o)=>a.includes('--eval')?{code:0,stdout:JSON.stringify({runtimeVersion:'0.2.1-rc.3',sdkVersion:'0.2.1-rc.3'})}:f.runner(c,a,o);
+  const r=await ready()({...f,runner});assert.equal(r.status,'ready');assert.equal(r.runtimeVersion,'0.2.1-rc.3');assert.equal(f.calls.some(c=>c.args.includes('add')),false);
+});
+test('new host with a mismatched SDK remains blocked',async t=>{
+  const f=await fixture(t);f.manifest.runtimeVersions.push('0.2.1-rc.3');await writeFile(join(f.bundleDir,'bundle-manifest.json'),JSON.stringify(f.manifest));
+  const runner=async(c,a,o)=>a.includes('--eval')?{code:0,stdout:JSON.stringify({runtimeVersion:'0.2.1-rc.3',sdkVersion:'0.2.1-rc.2'})}:f.runner(c,a,o);
+  await assert.rejects(ready()({...f,runner}),e=>e.code==='UNSUPPORTED_RUNTIME');
 });
 test('missing official App returns needs_harness without installing or downloading',async t=>{
   const f=await fixture(t);await rm(f.appPath,{recursive:true});const r=await ready()({...f,install:true});
@@ -199,6 +250,19 @@ test('second audited maintenance bridge upgrades original or first maintenance w
 });
 test('second maintenance bridge cannot downgrade or accept an unknown intervening fork',async t=>{
  for(const [prior,next] of [['0.11.1-dot.2','0.11.1-dot.1'],['0.11.1-other.1','0.11.1-dot.2']]){
+  const f=await fixture(t,{installed:{'dsh-wechat':prior},bridgeVersion:next});await assert.rejects(ready()({...f,install:true}),e=>e.code==='BRIDGE_VERSION_CONFLICT');assert.equal(f.calls.some(c=>c.args.includes('add')),false);
+ }
+});
+
+test('guarded proactive bridge upgrades every reviewed predecessor and preserves pairing',async t=>{
+ for(const prior of ['0.11.0','0.11.1-dot.1','0.11.1-dot.2']){
+  const f=await fixture(t,{installed:{'dsh-wechat':prior},bridgeVersion:'0.11.1-dot.3'});
+  const state=join(f.profile,'wechat-pairing.json');await writeFile(state,'synthetic-original-pairing');
+  const result=await ready()({...f,install:true});assert.equal(result.status,'installed');assert.equal(result.steps[0].action,'upgrade');assert.equal(result.steps[0].version,'0.11.1-dot.3');assert.equal(await readFile(state,'utf8'),'synthetic-original-pairing');
+ }
+});
+test('guarded proactive bridge never downgrades or accepts an unknown predecessor',async t=>{
+ for(const [prior,next] of [['0.11.1-dot.3','0.11.1-dot.2'],['0.11.1-other.1','0.11.1-dot.3']]){
   const f=await fixture(t,{installed:{'dsh-wechat':prior},bridgeVersion:next});await assert.rejects(ready()({...f,install:true}),e=>e.code==='BRIDGE_VERSION_CONFLICT');assert.equal(f.calls.some(c=>c.args.includes('add')),false);
  }
 });

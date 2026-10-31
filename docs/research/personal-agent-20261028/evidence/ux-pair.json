@@ -1,0 +1,10 @@
+{
+  "fetchedAt": "2026-10-28T13:30:14.409Z",
+  "title": "Explainability + Trust",
+  "url": "https://pair.withgoogle.com/chapter/explainability-trust/",
+  "classification": "primary_design_guidance",
+  "observedExcerpt": "Tie explanations to user actions",
+  "note": "解释数据来源、用途和缺项，并在用户动作发生时解释，有助于校准信任。",
+  "observedTextSha256": "42c574b7fe54342bf641726c3e7e135317246d22763d60e6c9e8e8a33285a5eb",
+  "observedTextCharacters": 41712
+}

@@ -1,8 +1,10 @@
 import {matchesBindingRevision} from './workbench-scope.js';
 import {createHash} from 'node:crypto';
+import {projectDailySchedule} from './followup-schedule.js';
 import {isAbsolute,resolve,parse} from 'node:path';
 
 const identity=value=>typeof value==='string'&&/^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/.test(value);
+const loopIdentity=value=>typeof value==='string'&&/^[a-zA-Z0-9_-]{1,100}$/.test(value);
 const bound=value=>value?.state==='bound'&&identity(value.sessionId)&&/^[a-f0-9]{64}$/.test(value.bindingKey??'');
 const same=(a,b)=>bound(a)&&bound(b)&&a.sessionId===b.sessionId&&a.bindingKey===b.bindingKey;
 const validReturnBinding=value=>value&&/^[a-f0-9]{64}$/.test(value.userHash??'')&&(value.botHash===undefined||/^[a-f0-9]{64}$/.test(value.botHash));
@@ -19,16 +21,18 @@ const unavailable=()=>{throw new Error('工作台操作未完成，请刷新后�
 const rootValid=root=>typeof root==='string'&&isAbsolute(root)&&root===resolve(root)&&root!==parse(root).root&&root.length<=4096;
 
 /** Explicit owner-authenticated controls. It owns no scheduler, store or model. */
-export function createWorkbenchActions({service,memory,followup,taskResults,readBinding,readConnection,resolveOwner,activateOwner,isClosed=()=>false,clock=()=>new Date()}={}){
+export function createWorkbenchActions({service,memory,followup,taskResults,readBinding,readConnection,readReadonlyConnection=readConnection,resolveOwner,activateOwner,isClosed=()=>false,clock=()=>new Date()}={}){
   let closed=false;
   const open=()=>{if(closed||isClosed())unavailable();};
   const now=()=>{const value=clock();const epoch=value instanceof Date?value.getTime():Number(value);if(!Number.isFinite(epoch))unavailable();return epoch;};
-  const connection=async()=>{
-    open();const value=await readConnection?.();open();
+  const connectionReaders=new WeakMap();
+  const connection=async(readonly=false)=>{
+    open();const value=await (readonly?readReadonlyConnection:readConnection)?.();open();
     // Never retain a mutable carrier object across another await.
-    return bound(value)?{state:'bound',sessionId:value.sessionId,bindingKey:value.bindingKey}:{state:'unknown'};
+    const result=bound(value)?{state:'bound',sessionId:value.sessionId,bindingKey:value.bindingKey,...(value.readOnly===true?{readOnly:true}:{})}:{state:'unknown'};
+    connectionReaders.set(result,readonly);return result;
   };
-  const checkBinding=async expected=>{if(!same(expected,await connection()))unavailable();};
+  const checkBinding=async expected=>{const readonly=connectionReaders.get(expected);if(!readonly){const visible=await connection(true);if(visible.readOnly===true||!same(expected,visible))unavailable();}if(!same(expected,await connection(readonly)))unavailable();};
   async function scope(expected,projectId){
     open();const projects=await service.watchedProjects();await checkBinding(expected);
     if(!Array.isArray(projects)||projects.length>5||projects.some(row=>!rootValid(row?.root)))unavailable();
@@ -79,10 +83,13 @@ export function createWorkbenchActions({service,memory,followup,taskResults,read
   function plan(value,{once=false,clean}){
     if(!value||typeof value!=='object'||typeof value.enabled!=='boolean'||typeof value.running!=='boolean')unavailable();
     if(once&&value.status!==undefined&&!ONCE_STATES.has(value.status))unavailable();
-    const out={enabled:value.enabled,running:value.running,delivery:once&&['native','wechat'].includes(value.delivery)?value.delivery:'wechat'};
+    if(value.loopId!==undefined&&!loopIdentity(value.loopId))unavailable();
+    const out={...(value.loopId!==undefined?{loopId:value.loopId}:{}),enabled:value.enabled,running:value.running,delivery:once&&['native','wechat'].includes(value.delivery)?value.delivery:'wechat'};
     if(once&&ONCE_STATES.has(value.status))out.status=value.status;
     if(!once&&Number.isSafeInteger(value.everyMinutes)&&value.everyMinutes>=30&&value.everyMinutes<=1440)out.everyMinutes=value.everyMinutes;
+    if(!once)Object.assign(out,projectDailySchedule(value));
     for(const key of ['nextDueAt','lastRunAt','lastReviewedAt'])out[key]=timestamp(value[key]);
+    if(value.lastCheckOutcome!==undefined){if(!['quiet','reviewed','partial'].includes(value.lastCheckOutcome)||!timestamp(value.lastReviewedAt))unavailable();out.lastCheckOutcome=value.lastCheckOutcome;}
     if(typeof value.blocked==='string')out.blocked=clean(value.blocked,200);
     if(Number.isSafeInteger(value.runCount)&&value.runCount>=0)out.runCount=value.runCount;
     return out;
@@ -104,7 +111,7 @@ export function createWorkbenchActions({service,memory,followup,taskResults,read
   }
   return{
     async action(input){
-      open();input=structuredClone(input);const write=validate(input),expected=await connection();if(!bound(expected)||!matchesBindingRevision(input,expected))unavailable();
+      open();input=structuredClone(input);const write=validate(input),expected=await connection(!write);if(!bound(expected)||!matchesBindingRevision(input,expected))unavailable();
       let authorized=await scope(expected,input.projectId);
       if(write){await readyOwner(expected,input.projectId);authorized=await scope(expected,input.projectId);}
       const clean=cleaner(authorized.roots,expected),base={action:input.action,...(input.projectId?{projectId:input.projectId}:{})};
@@ -156,7 +163,14 @@ export function createWorkbenchActions({service,memory,followup,taskResults,read
       }
       const method={followup_configure:'configure',followup_cancel:'cancel',check_once:'checkOnce',cancel_once:'cancelOnce'}[input.action];if(typeof followup?.[method]!=='function')unavailable();
       const once=['check_once','cancel_once'].includes(input.action);
-      const params={...args,authorizeMutation,expectedBinding:{sessionId:expected.sessionId,bindingKey:expected.bindingKey},...(input.action==='followup_configure'?{everyMinutes:input.everyMinutes,projectLabel:authorized.project.label}:{}),...(input.action==='check_once'?{projectLabel:authorized.project.label,delivery:'wechat',...(input.dueAt!==undefined?{dueAt:timestamp(input.dueAt)}:{delaySeconds:input.delaySeconds??60})}:{})};
+      let loopId;
+      if(['followup_configure','check_once'].includes(input.action)){
+        if(typeof followup?.inspect!=='function')unavailable();
+        const stored=await followup.inspect({...args,expectedBinding:{sessionId:expected.sessionId,bindingKey:expected.bindingKey}});await scope(expected,input.projectId);
+        const existing=stored?.[once?'once':'followup'];
+        if(existing!==null){const original=plan(existing,{once,clean});loopId=original.loopId;}
+      }
+      const params={...args,...(loopId!==undefined?{loopId}:{}),authorizeMutation,expectedBinding:{sessionId:expected.sessionId,bindingKey:expected.bindingKey},...(input.action==='followup_configure'?{everyMinutes:input.everyMinutes,projectLabel:authorized.project.label}:{}),...(input.action==='check_once'?{projectLabel:authorized.project.label,delivery:'wechat',...(input.dueAt!==undefined?{dueAt:timestamp(input.dueAt)}:{delaySeconds:input.delaySeconds??60})}:{})};
       const value=await followup[method](params);await scope(expected,input.projectId);
       return{...base,[once?'once':'followup']:plan(value,{once,clean}),limitations:[...limitations]};
     },

@@ -1,3 +1,4 @@
+import {withAuthDiagnostic,oauthHttpDiagnostic} from './auth-diagnostics.js';
 import { createServer } from 'node:http';
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { readContextConfig } from './context-config.js';
@@ -33,11 +34,12 @@ export function contextAccountCredentialState(source, config, now = Date.now()) 
 }
 
 /** User-initiated public-client DCR + PKCE. Passwords remain on the provider's sign-in page. */
-export function createContextAccountAuth({ source, readConfig, saveCredentials, fetch: fetchImpl = globalThis.fetch, clock = Date.now } = {}) {
+export function createContextAccountAuth({ source, readConfig, saveCredentials, fetch: fetchImpl = globalThis.fetch, clock = Date.now, flowTtlMs = FLOW_TTL, expiredGraceMs = 300_000, serverFactory = createServer } = {}) {
   if (!Object.hasOwn(PROVIDERS, source)) throw new Error('不支持此资料来源的账号连接。');
+  if (typeof serverFactory !== 'function' || !Number.isSafeInteger(flowTtlMs) || flowTtlMs < 1 || flowTtlMs > FLOW_TTL || !Number.isSafeInteger(expiredGraceMs) || expiredGraceMs < 1 || expiredGraceMs > FLOW_TTL) throw new Error('连接时限无效。');
   const provider = PROVIDERS[source], field = source + 'OAuthCredentials', legacyField = source + 'Token';
   const error = (message = `${provider.label} 连接失败，请返回设置重新连接。`) => new Error(message);
-  let closed = false, pending = null, starting = null, refreshing = null;
+  let closed = false, pending = null, retired = null, starting = null, refreshing = null;
   const controllers = new Set(), flights = new Set(), closingServers = new Set();
   const now = () => Number(clock());
   const open = () => { if (closed) throw error(`${provider.label} 连接已关闭。`); };
@@ -72,7 +74,7 @@ export function createContextAccountAuth({ source, readConfig, saveCredentials, 
       const abort = () => { cleanup(); reject(error()); };
       const cleanup = () => signal.removeEventListener('abort', abort);
       signal.addEventListener('abort', abort, { once: true });
-      Promise.resolve(promise).then(value => { cleanup(); signal.aborted ? reject(error()) : resolve(value); }, () => { cleanup(); reject(error()); });
+      Promise.resolve(promise).then(value => { cleanup(); signal.aborted ? reject(error()) : resolve(value); }, reason => { cleanup(); reject(reason?.authDiagnostic ? withAuthDiagnostic(error(),reason.authDiagnostic) : error()); });
     });
   }
   async function requestJson(url, fields, jsonBody, external) {
@@ -82,10 +84,12 @@ export function createContextAccountAuth({ source, readConfig, saveCredentials, 
     else external?.addEventListener('abort', cancel, { once: true });
     controllers.add(controller);
     const timer = setTimeout(cancel, REQUEST_TIMEOUT);
+    let stage='network';
     try {
       const response = await bounded(Promise.resolve().then(() => fetchImpl(url, { method: 'POST', redirect: 'error', headers: { accept: 'application/json', 'content-type': jsonBody ? 'application/json' : 'application/x-www-form-urlencoded' }, body: jsonBody ? JSON.stringify(fields) : new URLSearchParams(fields).toString(), signal: controller.signal })), controller.signal);
-      if (!response.ok || closed || Number(response.headers?.get?.('content-length')) > MAX_BODY) throw error();
-      let body;
+      if (!response.ok) throw withAuthDiagnostic(error(),await oauthHttpDiagnostic(response,controller.signal));
+      if (closed || Number(response.headers?.get?.('content-length')) > MAX_BODY) throw withAuthDiagnostic(error(),{stage:'parse'});
+      stage='parse';let body;
       if (response.body?.getReader) {
         const reader = response.body.getReader(), chunks = []; let size = 0;
         try {
@@ -105,21 +109,22 @@ export function createContextAccountAuth({ source, readConfig, saveCredentials, 
       const value = JSON.parse(body);
       if (!plain(value) || controller.signal.aborted || closed) throw error();
       return value;
-    } catch { throw error(closed || external?.aborted ? `${provider.label} 连接请求已取消。` : undefined); }
+    } catch (failure) { throw withAuthDiagnostic(error(closed || external?.aborted ? `${provider.label} 连接请求已取消。` : undefined), failure?.authDiagnostic??{stage}); }
     finally { clearTimeout(timer); controllers.delete(controller); external?.removeEventListener('abort', cancel); }
   }
   async function exchange(fields, signal, previousRefresh = '') {
     const value = await requestJson(provider.token, { ...fields, resource: provider.resource }, false, signal);
-    if (!text(value.access_token) || typeof value.token_type !== 'string' || value.token_type.toLowerCase() !== 'bearer') throw error();
+    if (!text(value.access_token) || typeof value.token_type !== 'string' || value.token_type.toLowerCase() !== 'bearer') throw withAuthDiagnostic(error(),{stage:'parse'});
     // A missing expires_in gets a one-hour local reuse lease, never unlimited persistence.
     const ttl = value.expires_in === undefined ? 3600 : Number(value.expires_in);
-    if (!Number.isFinite(ttl) || ttl <= 0 || (value.scope !== undefined && (typeof value.scope !== 'string' || value.scope.trim().split(/\s+/).length !== 1 || value.scope.trim() !== provider.scope))) throw error();
-    if (value.refresh_token !== undefined && !text(value.refresh_token)) throw error();
+    if (!Number.isFinite(ttl) || ttl <= 0 || (value.scope !== undefined && (typeof value.scope !== 'string' || value.scope.trim().split(/\s+/).length !== 1 || value.scope.trim() !== provider.scope))) throw withAuthDiagnostic(error(),{stage:'parse'});
+    if (value.refresh_token !== undefined && !text(value.refresh_token)) throw withAuthDiagnostic(error(),{stage:'parse'});
     return { accessToken: value.access_token, refreshToken: provider.refresh ? value.refresh_token ?? previousRefresh : '', expiresAt: now() + Math.min(ttl, 31_536_000) * 1000, scope: provider.scope };
   }
   function stopServer(flow) {
-    clearTimeout(flow.timer);
+    clearTimeout(flow.timer); clearTimeout(flow.retireTimer);
     if (pending === flow) pending = null;
+    if (retired === flow) retired = null;
     if (flow.stopped) return flow.stopped;
     flow.stopped = new Promise(resolve => { flow.server.close(resolve); flow.server.closeIdleConnections?.(); });
     closingServers.add(flow.stopped);
@@ -127,9 +132,17 @@ export function createContextAccountAuth({ source, readConfig, saveCredentials, 
     return flow.stopped;
   }
   function dropFlow(flow) { flow.used = true; flow.abort.abort(); return stopServer(flow); }
-  function respond(response, status, success = false) {
+  function expireFlow(flow) {
+    if (flow.expired || flow.stopped) return;
+    flow.expired = true; flow.used = true; flow.abort.abort(); clearTimeout(flow.timer);
+    if (pending === flow) pending = null;
+    if (retired && retired !== flow) void stopServer(retired);
+    retired = flow;
+    flow.retireTimer = setTimeout(() => { void stopServer(flow); }, expiredGraceMs); flow.retireTimer.unref?.();
+  }
+  function respond(response, status, success = false, expired = false) {
     response.writeHead(status, { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-store', 'content-security-policy': "default-src 'none'; frame-ancestors 'none'", 'x-content-type-options': 'nosniff', connection: 'close' });
-    response.end(success ? `${provider.label} 已连接，可以关闭此页面并返回 DeepSeek Dot。` : `${provider.label} 连接未完成，请返回 DeepSeek Dot 重新连接。`);
+    response.end(success ? `${provider.label} 已连接，可以关闭此页面并返回 DeepSeek Dot。` : expired ? `${provider.label} 连接已过期，请返回 DeepSeek Dot 重新连接。` : `${provider.label} 连接未完成，请返回 DeepSeek Dot 重新连接。`);
   }
   async function persist(value, expectedConfig, signal, guard) {
     open();
@@ -162,7 +175,8 @@ export function createContextAccountAuth({ source, readConfig, saveCredentials, 
     try { url = new URL(request.url, flow.redirectUri); } catch { respond(response, 400); return; }
     if (request.method !== 'GET' || url.pathname !== '/oauth2/callback') { respond(response, 404); return; }
     if (request.headers.host !== flow.host || url.origin !== new URL(flow.redirectUri).origin) { respond(response, 400); return; }
-    if (closed || pending !== flow || flow.used || now() >= flow.expiresAt || key(read()) !== flow.configKey) { respond(response, 400); if (pending === flow && !flow.used) void dropFlow(flow); return; }
+    if (flow.expired || (!closed && pending === flow && now() >= flow.expiresAt)) { expireFlow(flow); respond(response, 410, false, true); return; }
+    if (closed || pending !== flow || flow.used || key(read()) !== flow.configKey) { respond(response, 400); if (pending === flow && !flow.used) void dropFlow(flow); return; }
     const state = url.searchParams.getAll('state'), code = url.searchParams.getAll('code'), issuer = url.searchParams.getAll('iss'), errors = url.searchParams.getAll('error');
     if (state.length !== 1 || !same(state[0], flow.state) || issuer.length > 1 || (issuer.length === 1 && issuer[0] !== provider.issuer)) { respond(response, 400); return; }
     // Only a verified, unambiguous denial may end the flow and unlock a fresh login.
@@ -187,7 +201,7 @@ export function createContextAccountAuth({ source, readConfig, saveCredentials, 
     if (typeof saveCredentials !== 'function') throw error('原生凭据保存不可用，不能开始账号连接。');
     await authorizeMutation(options.authorizeMutation);
     const expectedConfig = read(), configKey = key(expectedConfig);
-    if (pending && !pending.used && now() < pending.expiresAt && pending.configKey === configKey && pending.url) {
+    if (pending && pending.server.listening && !pending.used && now() < pending.expiresAt && pending.configKey === configKey && pending.url) {
       const existing = pending;
       try {
         await authorizeMutation(existing.authorizeMutation, existing.abort.signal);
@@ -195,10 +209,11 @@ export function createContextAccountAuth({ source, readConfig, saveCredentials, 
         return { url: existing.url, expiresAt: new Date(existing.expiresAt).toISOString() };
       } catch { await dropFlow(existing); }
     }
+    if (pending && now() >= pending.expiresAt) expireFlow(pending);
     if (pending) await dropFlow(pending);
     open();
-    const flow = { state: randomBytes(32).toString('base64url'), verifier: randomBytes(48).toString('base64url'), configKey, expectedConfig, authorizeMutation: options.authorizeMutation, expiresAt: now() + FLOW_TTL, used: false, abort: new AbortController() };
-    const server = createServer({ maxHeaderSize: 16384 }, (request, response) => { track(callback(flow, request, response).catch(() => { if (!response.headersSent) respond(response, 400); else response.end(); })); });
+    const flow = { state: randomBytes(32).toString('base64url'), verifier: randomBytes(48).toString('base64url'), configKey, expectedConfig, authorizeMutation: options.authorizeMutation, expiresAt: now() + flowTtlMs, used: false, abort: new AbortController() };
+    const server = serverFactory({ maxHeaderSize: 16384 }, (request, response) => { track(callback(flow, request, response).catch(() => { if (!response.headersSent) respond(response, 400); else response.end(); })); });
     flow.server = server;
     server.requestTimeout = 10000; server.headersTimeout = 10000; server.keepAliveTimeout = 1000;
     try {
@@ -207,7 +222,7 @@ export function createContextAccountAuth({ source, readConfig, saveCredentials, 
       flow.redirectUri = `http://${flow.host}/oauth2/callback`;
       open();
       pending = flow;
-      flow.timer = setTimeout(() => { void dropFlow(flow); }, FLOW_TTL); flow.timer.unref?.(); server.unref();
+      flow.timer = setTimeout(() => { expireFlow(flow); }, flowTtlMs); flow.timer.unref?.(); server.unref();
       await authorizeMutation(flow.authorizeMutation, flow.abort.signal);
       if (key(read()) !== configKey) throw error();
       const registration = await requestJson(provider.registration, { client_name: `DeepSeek Dot (${provider.label})`, redirect_uris: [flow.redirectUri], token_endpoint_auth_method: 'none', grant_types: provider.refresh ? ['authorization_code', 'refresh_token'] : ['authorization_code'], response_types: ['code'], scope: provider.scope }, true, flow.abort.signal);
@@ -222,7 +237,7 @@ export function createContextAccountAuth({ source, readConfig, saveCredentials, 
   async function getTokenInner({ signal, authorizeMutation: guard } = {}) {
     open();
     if (signal?.aborted) throw error();
-    await authorizeMutation(guard, signal);
+    try{await authorizeMutation(guard, signal);}catch{throw withAuthDiagnostic(error(),{stage:'guard'});}
     const config = read(), current = credentials(config), configKey = key(config);
     if (!current) {
       if (text(config[legacyField])) return config[legacyField];
@@ -239,8 +254,8 @@ export function createContextAccountAuth({ source, readConfig, saveCredentials, 
       const flight = { key: configKey, promise }; refreshing = flight;
       promise.then(() => { if (refreshing === flight) refreshing = null; }, () => { if (refreshing === flight) refreshing = null; });
     }
-    const token = await (signal ? bounded(refreshing.promise, signal) : refreshing.promise);
-    await authorizeMutation(guard, signal);
+    let token;try{token=await (signal ? bounded(refreshing.promise, signal) : refreshing.promise);}catch(failure){throw withAuthDiagnostic(error(),failure?.authDiagnostic??{stage:'persist'});}
+    try{await authorizeMutation(guard, signal);}catch{throw withAuthDiagnostic(error(),{stage:'guard'});}
     return token;
   }
   return {
@@ -248,7 +263,7 @@ export function createContextAccountAuth({ source, readConfig, saveCredentials, 
       let current = null;
       try { current = credentials(read()); } catch {}
       // Consuming the code is not completion: keep polling through exchange and save.
-      const active = !closed && pending && now() < pending.expiresAt;
+      const active = !closed && pending && pending.server.listening && now() < pending.expiresAt;
       return { clientConfigured: true, refreshConfigured: Boolean(current && (current.expiresAt - 30000 > now() || (provider.refresh && current.refreshToken))), authInProgress: Boolean(active), ...(active ? { expiresAt: new Date(pending.expiresAt).toISOString() } : {}) };
     },
     start(options) {
@@ -263,6 +278,7 @@ export function createContextAccountAuth({ source, readConfig, saveCredentials, 
       closed = true;
       for (const controller of controllers) controller.abort();
       if (pending) void dropFlow(pending);
+      if (retired) void dropFlow(retired);
       await Promise.allSettled([...flights]);
       await Promise.allSettled([...closingServers]);
     },

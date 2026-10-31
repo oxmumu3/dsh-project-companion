@@ -36,3 +36,21 @@ test('renaming, hash substitution and arbitrary bridge versions cannot bypass th
 test('release archive audit rejects inner bridge metadata that differs from the reviewed version', () => {
   python('import io,json,tarfile,tempfile\nfrom pathlib import Path\nwith tempfile.TemporaryDirectory() as directory:\n path=Path(directory)/"synthetic.tgz"\n with tarfile.open(path,"w:gz") as archive:\n  raw=json.dumps({"name":"dsh-wechat","version":"0.12.0","license":"MIT","dsh":{"bundle":{"patch":"./cordis.patch.yml"}}}).encode()\n  member=tarfile.TarInfo("package/package.json");member.size=len(raw);archive.addfile(member,io.BytesIO(raw))\n try:\n  release.package_audit(path,"dsh-wechat","0.11.1-dot.1")\n except ValueError:\n  pass\n else:\n  raise AssertionError("unreviewed inner metadata accepted")\n');
 });
+
+test('kit first-use instructions stay on the exact packaged release instead of the divergent default branch', () => {
+  const rows = JSON.parse(python(`import json\nfrom pathlib import Path\nversion=json.loads((Path(release.__file__).parent.parent/"package.json").read_text())["version"]\ntext="[首次使用](first-use.md) · [许可](../THIRD_PARTY_NOTICES.md)"\nprint(json.dumps([[v,release.install_doc_for_kit(text,"https://github.com/oxmumu3/dsh-project-companion",v)] for v in [version,"9.8.7-preview.6"]]))\n`));
+  for (const [version, rendered] of rows) {
+    assert.equal(rendered, `[首次使用](https://github.com/oxmumu3/dsh-project-companion/blob/v${version}/docs/first-use.md) · [许可](THIRD_PARTY_NOTICES.md)`);
+    assert(!rendered.includes('/blob/main/'));
+  }
+});
+
+test('kit rendering preserves the unverified-homepage fallback instead of constructing another public owner link', () => {
+  const rendered = python('print(release.install_doc_for_kit("[首次使用](first-use.md) · [许可](../THIRD_PARTY_NOTICES.md)","https://example.invalid/unverified","9.8.7-preview.6"))\n').trim();
+  assert.equal(rendered, '首次使用（正式仓库入口仍待核验） · [许可](THIRD_PARTY_NOTICES.md)');
+});
+
+test('guarded bridge package has an exact reviewed immutable provenance pin',()=>{
+ const row=JSON.parse(python('import json\nprint(json.dumps(release.reviewed_bridge("dsh-wechat-0.11.1-dot.3.tgz","2205931694cf84eadea55c7445d7f5ff5b2ae4c76a8f658b495120c811a7c41c")))\n'));
+ assert.equal(row.sourceCommit,"1aa862728afcba1d811ce9ba442d6fb1bcd45ee0");assert.equal(row.deltaSha256,"794558129efb162a596c9ec9511ad24196327c3a0c1b882fbc48b751d7972a5d");
+});

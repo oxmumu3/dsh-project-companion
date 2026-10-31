@@ -16,8 +16,8 @@ import {createUserMessage} from '@deepseek-ai/dsh-llm';
 import {createScope,scopeTarget} from '@deepseek-ai/dsh-scope';
 
 test('host integration runs against the selected verified official SDK packages',()=>{
-  const sdk=process.env.DSH_TEST_SDK_VERSION??'0.2.1-rc.3';
-  const cordis=['0.2.1-rc.2','0.2.1-rc.3'].includes(sdk)?'4.0.5':'4.0.4';
+  const sdk=process.env.DSH_TEST_SDK_VERSION??'0.2.0-rc.2';
+  const cordis=sdk.startsWith('0.2.1-')?'4.0.5':'4.0.4';
   assert.ok(['0.2.0-rc.2','0.2.1-rc.2','0.2.1-rc.3'].includes(sdk),'unsupported test SDK version');
   const require=createRequire(import.meta.url);
   assert.equal(require('@deepseek-ai/cordis/package.json').version,cordis);
@@ -37,11 +37,13 @@ async function openHost(t, options={}){
   const registry={get:id=>live.get(id),list:()=>[...live.values()]};ctx.provide('agents',registry);
   const known=[];ctx.provide('workspaceRegistry',{list:()=>known,resolveByPath:async path=>known.find(x=>x.path===path)});
   if(options.connection)ctx.provide('connection',options.connection);
+  if(options.familyBridge)ctx.provide('familyDotBridge',options.familyBridge);
+  if(options.guardedBridge)ctx.provide('dotWechatGuarded',options.guardedBridge);
   const directories=new Map();ctx.provide('workingDirectory',{get:session=>directories.get(String(session.id))??session.header.cwd});
   const session=ctx.sessions.create(SessionId('synthetic-owner'),{meta:{cwd:workspace}});
   const owner={id:session.id,session,ctx,status:'idle',followup:message=>accepted.push(message)};live.set(owner.id,owner);
   const disableWeChat=ctx.tools.register(defineTool({name:'send_wechat',description:'Synthetic queue only; no real network',parameters:{text:{type:'string',required:true}},output:{schema:{type:'object',additionalProperties:true},render:(_args,value)=>[{type:'text',text:JSON.stringify(value)}]},execute:(_args,execution)=>{sent.push(execution);return options.sendResponse?.(execution)??{ok:true,message:'queued synthetic message; not real WeChat'};}}));
-  const lifecycle=await ctx.plugin({name:'synthetic-companion-mount',inject:['tools','commands','storageDomain','sessions','systemPrompt'],async apply(scope){adapter=await installCompanion(scope,{clock:()=>now,hostTimeZone:()=>options.hostTimeZone??'America/Mexico_City',...(options.readBinding?{readBinding:options.readBinding}:{}),...(options.readSetup?{readSetup:options.readSetup}:{}),...(options.readNativeRoute?{readNativeRoute:options.readNativeRoute}:{}),...(options.news?{news:options.news}:{}),...(options.projectUpdates?{projectUpdates:options.projectUpdates}:{}),timers:{setInterval:(fn,ms)=>{intervalMs=ms;timer=fn;timerStarts++;return {unref(){}};},clearInterval:()=>{timer=undefined;timerStops++;}}});}});
+  const lifecycle=await ctx.plugin({name:'synthetic-companion-mount',inject:['tools','commands','storageDomain','sessions','systemPrompt'],async apply(scope){adapter=await installCompanion(scope,{clock:()=>now,hostTimeZone:()=>options.hostTimeZone??'America/Mexico_City',...(options.family?{family:options.family}:{}),...(options.readBinding?{readBinding:options.readBinding}:{}),...(options.readSetup?{readSetup:options.readSetup}:{}),...(options.readNativeRoute?{readNativeRoute:options.readNativeRoute}:{}),...(options.news?{news:options.news}:{}),...(options.projectUpdates?{projectUpdates:options.projectUpdates}:{}),...(options.personalReview?{personalReview:options.personalReview}:{}),...(options.context?{context:options.context}:{}),timers:{setInterval:(fn,ms)=>{intervalMs=ms;timer=fn;timerStarts++;return {unref(){}};},clearInterval:()=>{timer=undefined;timerStops++;}}});}});
   let count=0;const signal=()=>new AbortController().signal;
   const nativeTool=async(args,agent=owner,callId=`synthetic-call-${++count}`)=>{const r=await ctx.tools.execute({callId,name:'project_companion',arguments:args,agent,signal:signal()});assert.equal(r.isError,false,JSON.stringify(r));return r;};
   const tool=async(...args)=>(await nativeTool(...args)).value;
@@ -56,9 +58,68 @@ function addLive(h,id,cwd,{status='idle',origin}={}){
   const agent={id:session.id,session,ctx:h.ctx,status,followup:message=>{h.accepted.push(message);agent.status='running';}};
   h.live.set(id,agent);return agent;
 }
+test('logical board domains start empty and desktop scope works before WeChat pairing',async t=>{
+ const routes=[];const h=await openHost(t,{connection:{fetch:{register:r=>{routes.push(r);return()=>{};}}},readSetup:async()=>({state:'unbound'})});
+ h.known.push({id:'logical-fixture',path:h.root,title:'测试工作区',sessionIds:[]});
+ const request=async(path,input)=>{const r=routes.find(x=>x.path===path);assert.ok(r,path);const response=await r.fetch(new Request('http://synthetic.invalid'+path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(input)}));assert.equal(response.status,200);return response.json();};
+ const first=await request('/api/project_companion/workspaces',{action:'list'});assert.equal(first.selectedCount,0);
+ const state=await request('/api/project_companion/goals',{action:'status'});assert.deepEqual(state.projects,[]);assert.equal(state.scan.phase,'idle');
+ await request('/api/project_companion/workspaces',{action:'save',expectedRevision:first.revision,expectedCatalogRevision:first.catalogRevision,workspaceIds:[first.items[0].id]});
+ assert.equal((await h.adapter.workspaceAccess.list()).selectedCount,1);assert.equal((await h.adapter.goalBoard.status()).scan.phase,'idle');assert.equal(h.sent.length,0);assert.equal(h.accepted.length,0);
+});
+test('logical project discussion contributes only its own canonical context to native prompt',async t=>{
+ const h=await openHost(t);const headers=new Map();
+ h.ctx.provide('sessionPersistence',{stat:async id=>headers.has(id)?{header:headers.get(id),sizeBytes:100}:undefined});
+ h.ctx.provide('sessionController',{create:async({sessionId})=>{const agent=addLive(h,sessionId,h.root);headers.set(sessionId,agent.session.header);return{sessionId};}});
+ let status=await h.adapter.goalBoard.status();status=await h.adapter.goalBoard.vision({projectId:null,title:'测试逻辑目标',goal:'保留用户目标',constraints:['不发消息'],expectedRevision:status.revision});
+ const target=await h.adapter.goalBoardController.action({action:'conversation',projectId:status.projects[0].id,expectedRevision:status.revision});
+ const agent=h.live.get(target.conversation.sessionId);const own=await h.ctx.systemPrompt.assemble({scope:agent,agent});assert.ok(own.contexts.find(x=>x.name==='project-companion:logical-goal')?.text.includes('保留用户目标'));
+ const other=await h.ctx.systemPrompt.assemble({scope:h.owner,agent:h.owner});assert.ok(!other.contexts.some(x=>x.name==='project-companion:logical-goal'));assert.equal(h.accepted.length,0);assert.equal(h.sent.length,0);
+});
 async function otherProject(h,label='另一个项目'){
   const root=join(h.root,label);await mkdir(root,{recursive:true});await writeFile(join(root,'README.md'),'SYNTHETIC target');return root;
 }
+
+test('registered catalog exposes all137 metadata through paged native tool and owner route',async t=>{
+  const routes=[];const h=await openHost(t,{connection:{fetch:{register:r=>{routes.push(r);return()=>{};}}},readSetup:async()=>({state:'bound',sessionId:'synthetic-owner',bindingKey:'a'.repeat(64)})});
+  h.known.push(...Array.from({length:137},(_,i)=>({id:`registry-${i}`,path:`/SYNTHETIC-NOT-ON-DISK/catalog-${i}`,title:`目录项目 ${i}`,sessionIds:[`catalog-session-${i}`]})));
+  const schema=h.ctx.tools.schemas(h.owner).find(s=>s.name==='project_companion').parameters.properties;
+  for(const name of ['query','offset','limit','catalogRevision'])assert.ok(schema[name],name);
+  const first=await h.tool({action:'list',limit:20});assert.equal(first.candidateCount,137);assert.equal(first.complete,true);assert.equal(first.scope,'registered');assert.equal(first.candidates.length,20);
+  const last=await h.tool({action:'list',query:'目录项目 136',limit:20,catalogRevision:first.catalogRevision});assert.equal(last.candidates.length,1);assert.equal(last.candidates[0].label,'目录项目 136');
+  const route=routes.find(r=>r.path==='/api/project_companion/catalog');assert.ok(route);
+  const response=await route.fetch(new Request('http://synthetic.invalid/api/project_companion/catalog',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'list',offset:120,limit:20})}));
+  assert.equal(response.status,200);const page=await response.json();assert.equal(page.items.length,17);assert.equal(page.total,137);assert.equal(page.complete,true);assert.doesNotMatch(JSON.stringify(page),/SYNTHETIC-NOT-ON-DISK|catalog-session-/);
+  const target=await h.adapter.registeredProjectTarget(page.items[16].id);assert.equal(target.workspaceId,'registry-136');assert.equal(h.adapter.authorizeRegisteredCoordinationSync({workspaceId:target.workspaceId,projectRoot:target.root,sessionId:'catalog-session-136'}),true);
+  h.known.pop();assert.equal(h.adapter.authorizeRegisteredCoordinationSync({workspaceId:target.workspaceId,projectRoot:target.root,sessionId:'catalog-session-136'}),false);
+  assert.equal((await h.adapter.service.watchedProjects()).length,0);assert.equal(h.accepted.length,0);assert.equal(h.sent.length,0);
+});
+
+test('catalog route denies Family members and previews only an explicitly selected registered project',async t=>{
+  let connection={state:'bound',sessionId:'family_member_synthetic',bindingKey:'a'.repeat(64)};const routes=[];
+  const h=await openHost(t,{connection:{fetch:{register:r=>{routes.push(r);return()=>{};}}},readSetup:async()=>connection});
+  h.known.push({id:'registered-preview',path:h.owner.session.header.cwd,title:'合成按需项目',sessionIds:[String(h.owner.id)]});
+  const route=routes.find(r=>r.path==='/api/project_companion/catalog');assert.ok(route);
+  const post=body=>route.fetch(new Request('http://synthetic.invalid/api/project_companion/catalog',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}));
+  assert.equal((await post({action:'list'})).status,400);
+  connection={state:'bound',sessionId:'synthetic-owner',bindingKey:'a'.repeat(64)};
+  const page=await(await post({action:'list'})).json();const preview=await(await post({action:'preview',projectId:page.items[0].id,expectedRevision:page.revision})).json();
+  assert.equal(preview.previewOnly,true);assert.equal(preview.sources.find(s=>s.path==='README.md').text,'SYNTHETIC host project source');
+  assert.equal((await h.adapter.service.watchedProjects()).length,0);assert.equal(h.accepted.length,0);assert.equal(h.sent.length,0);
+});
+
+test('Family Owner native catalog entry lists137 metadata but rejects other senders and unsupported qualifiers',async t=>{
+  const sessionId='family_owner_synthetic_catalog';let text='列出我的Harness项目',valid=true;
+  const bridge={resolveOwnerCall:async call=>valid&&call.sessionId===sessionId?{sessionId,bindingRevision:'d'.repeat(64),userText:text}:null,isOwnerRevisionCurrent:()=>valid,ownerRouteStatus:()=>valid?'current':'changed'};
+  const h=await openHost(t,{familyBridge:bridge,family:{enabled:true},readSetup:async()=>({state:'unbound'})});
+  h.known.push(...Array.from({length:137},(_,i)=>({id:`catalog-family-${i}`,path:`/SYNTHETIC-NOT-ON-DISK/family-${i}`,title:`目录项目 ${i}`,sessionIds:[]})));
+  const caller=addLive(h,sessionId,h.owner.session.header.cwd);const first=await h.tool({action:'list'},caller);assert.equal(first.complete,true);assert.equal(first.total,137);assert.equal(first.items.length,20);assert.doesNotMatch(JSON.stringify(first),/SYNTHETIC-NOT-ON-DISK|catalog-family-/);
+  text='搜索我的Harness项目「目录项目 136」';const search=await h.tool({action:'list',query:'目录项目 136'},caller);assert.equal(search.items.length,1);assert.equal(search.items[0].label,'目录项目 136');
+  text='搜索我的Harness项目「目录项目」';const pagedSearch=await h.tool({action:'list',query:'目录项目'},caller);assert.match(pagedSearch.text,/搜索我的Harness项目「目录项目」第2页/);
+  text='列出我的Harness项目，只看未完成';assert.equal((await h.tool({action:'list'},caller)).status,'blocked');
+  text='列出我的Harness项目';const member=addLive(h,'family_member_synthetic_catalog',h.owner.session.header.cwd);assert.equal((await h.tool({action:'list'},member)).status,'blocked');
+  valid=false;assert.equal((await h.tool({action:'list'},caller)).status,'blocked');assert.equal(h.accepted.length,0);assert.equal(h.sent.length,0);assert.equal((await h.adapter.service.watchedProjects()).length,0);
+});
 function syntheticFactory(h,{root,logged={provider:'saved-provider',model:'saved-model'},failResume=false,resumeRoot=root}={}){
   const calls=[];const mounted=[];const owned=[];
   h.ctx.provide('agentPresets',{defaultId:'default-preset',mount:async(_scope,id)=>{mounted.push(id);}});
@@ -267,6 +328,7 @@ test('natural-language guidance refreshes host time and obeys tool scope and plu
 
 test('model tool accepts relative reminders and host timezone defaults without rebinding WeChat for reads',async t=>{
   const h=await openHost(t,{hostTimeZone:'Asia/Shanghai'});await h.disableWeChat();
+  h.known.push({id:'registered-read-source',path:h.owner.session.header.cwd,title:'synthetic-project',sessionIds:[String(h.owner.id)]});
   assert.ok(h.ctx.tools.schemas(h.owner).find(x=>x.name==='project_companion').parameters.properties.delayMinutes);
   assert.ok((await h.tool({action:'list'})).candidates.length);await h.tool({action:'watch',project:'synthetic-project'});
   assert.match((await h.tool({action:'digest',project:'synthetic-project'})).text,/SYNTHETIC/);
@@ -922,28 +984,89 @@ test('workbench actions register on official owner transport and use real scoped
  const h=await openHost(t);assert.equal(h.timers().active,false);await h.tool({action:'remind',delayMinutes:2,title:'timer budget'});assert.equal(h.interval(),15000);h.time('2026-10-18T15:02:00Z');await h.tick();assert.equal(h.sent.length,1);assert.equal(h.timers().active,false);
  });
 
-test('AI digest host exposes temporary preview topics without enabling subscriptions or private context', async t => {
+test('AI digest host separates temporary preview from explicit persistent topics', async t => {
   const news = newsFixtures(), seen = [];
   const select = news.model.selectArticles, summarize = news.model.summarizeArticles;
   news.model.selectArticles = async input => { seen.push(input.topics); return select(input); };
   news.model.summarizeArticles = async input => { seen.push(input.topics); return summarize(input); };
-  const h = await openHost(t, { news });
+  const h = await openHost(t, { news, readSetup:async()=>({state:'bound',sessionId:'synthetic-owner',bindingKey:'a'.repeat(64)}) });
   const schema = h.ctx.tools.schemas(h.owner).find(tool => tool.name === 'ai_digest');
   assert.ok(schema.parameters.properties.topics, 'preview topics must be exposed in the native tool schema');
   assert.equal(schema.parameters.properties.topics.type, 'array');
   assert.equal(schema.parameters.properties.topics.items.type, 'string');
   const result = await newsTool(h, { action: 'preview', topics: ['DeepSeek 插件', 'Agent 产品'] }, 'synthetic-topic-preview');
   assert.deepEqual(seen, [['DeepSeek 插件', 'Agent 产品'], ['DeepSeek 插件', 'Agent 产品']]);
-  assert.match(result.text, /仅本次预览/);
-  const denied = await newsTool(h, { action: 'configure', time: '09:00', timeZone: 'UTC', topics: ['AI'], userRequested: true }, 'synthetic-invalid-topic-configure');
-  assert.equal(denied.status, 'blocked');
-  assert.match(denied.text, /关注点.*仅.*预览/);
+  assert.match(result.text, /本次预览通过当前对话回复/);
+  const saved = await newsTool(h, { action: 'set_topics', topics: ['AI'], userRequested: true }, 'synthetic-saved-topics');
+  assert.notEqual(saved.status, 'blocked', JSON.stringify(saved));
+  assert.deepEqual((await newsTool(h, { action: 'status' })).topics, ['AI']);
   assert.equal((await newsTool(h, { action: 'status' })).schedule, null);
   assert.equal(h.sent.length, 0);
   assert.equal(h.timers().active, false);
   const guidance = (await h.ctx.systemPrompt.assemble({ scope: h.owner, agent: h.owner })).sections.find(section => section.name === 'project-companion:guidance').text;
   assert.match(guidance, /topics/);
-  assert.match(guidance, /不保存.*兴趣|关注点.*不保存/);
+  assert.match(guidance, /set_topics.*持续兴趣/);
 });
 
 test('explicit project_update is sourced, repeat-quiet and passive in the real host tool pipeline',async t=>{const calls=[];const h=await openHost(t,{readSetup:async()=>({state:'bound',sessionId:'synthetic-owner',bindingKey:'a'.repeat(64)}),projectUpdates:{summarize:async input=>{calls.push(input);return{changes:[{kind:'quote',text:'SYNTHETIC host project source',sourceIds:[input.sources.find(s=>s.label==='README.md').sourceId]}],blockers:[],nextSteps:[]};}}});assert.ok(h.ctx.tools.schemas(h.owner).find(s=>s.name==='project_companion').parameters.properties.action.enum.includes('project_update'));await h.tool({action:'watch'});const before=h.timers();assert.equal((await h.tool({action:'project_update',project:'synthetic-project'})).status,'blocked');const first=await h.tool({action:'project_update',project:'synthetic-project',userRequested:true});assert.equal(first.status,'overview');assert.match(first.text,/首次概览/);assert.match(first.text,/README.md/);assert.equal(calls.length,1);const second=await h.nativeTool({action:'project_update',project:'synthetic-project',userRequested:true});assert.equal(second.value.quiet,true);assert.equal(second.value.text,'');assert.equal(calls.length,1);assert.equal(h.sent.length,0);assert.equal(h.accepted.length,0);assert.deepEqual(h.timers(),before);await h.tool({action:'pause'});assert.equal((await h.tool({action:'project_update',project:'synthetic-project',userRequested:true})).status,'blocked');assert.equal(calls.length,1);});
+
+test('standalone guarded WeChat owner can configure and send an existing-scope review without Family',async t=>{
+ const sends=[],key='e'.repeat(64),bridge={binding:id=>id==='synthetic-owner'?{bound:true,bindingKey:key}:null,routeStatus:()=> 'current',send:async input=>{assert.equal(input.expectedBinding,key);assert.equal(input.authorize(),true);sends.push(input);return{status:'accepted'};}};
+ const h=await openHost(t,{guardedBridge:bridge,readSetup:async()=>({state:'bound',sessionId:'synthetic-owner',bindingKey:'a'.repeat(64)}),personalReview:{collect:async()=>({evidence:[{id:'p1',source:'project',title:'合成进度',text:'存在合成风险',at:'2026-10-18T15:00:00.000Z'}],coverage:[{source:'project',status:'ok',count:1}]}),model:{summarize:async()=>({items:[{key:'risk',kind:'risk',title:'合成风险',summary:'存在风险',why:'需要核对',action:'核对',unknown:'',evidenceIds:['p1'],priority:'high',confidence:'source'}]})}}});
+ const root=h.owner.session.header.cwd;await h.tool({action:'watch'});
+ const invoke=async args=>(await h.ctx.tools.execute({name:'personal_review',callId:'call-'+args.action,arguments:args,agent:h.owner,signal:new AbortController().signal})).value;
+ const configured=await invoke({action:'configure',sources:[],projects:[root],schedule:{dailyTime:'10:00',timeZone:'America/Mexico_City'},userRequested:true});assert.notEqual(configured.status,'blocked',JSON.stringify(configured));
+ h.time('2026-10-18T16:00:00Z');await h.tick();assert.equal(sends.length,1);assert.equal(h.sent.length,0,'legacy first-peer fallback must never be called');
+});
+for(const change of ['collection','model','dispatch'])test(`standalone grant/binding change at ${change} never reaches transport`,async t=>{
+ let key='e'.repeat(64),transports=0;const bridge={binding:id=>id==='synthetic-owner'?{bound:true,bindingKey:key}:null,routeStatus:()=> 'current',send:async input=>{if(change==='dispatch')key='f'.repeat(64);if(input.authorize()&&input.expectedBinding===key)transports++;return{status:'blocked'};}};
+ const evidence={id:'p1',source:'project',title:'合成进度',text:'存在合成风险',at:'2026-10-18T15:00:00.000Z'},candidate={key:'risk',kind:'risk',title:'合成风险',summary:'存在风险',why:'需要核对',action:'核对',unknown:'',evidenceIds:['p1'],priority:'high',confidence:'source'};
+ const h=await openHost(t,{guardedBridge:bridge,readSetup:async()=>({state:'bound',sessionId:'synthetic-owner',bindingKey:'a'.repeat(64)}),personalReview:{collect:async()=>{if(change==='collection')key='f'.repeat(64);return{evidence:[evidence],coverage:[{source:'project',status:'ok',count:1}]};},model:{summarize:async()=>{if(change==='model')key='f'.repeat(64);return{items:[candidate]};}}}});
+ const root=h.owner.session.header.cwd;await h.tool({action:'watch'});const r=await h.ctx.tools.execute({name:'personal_review',callId:'configure',arguments:{action:'configure',sources:[],projects:[root],schedule:{dailyTime:'10:00',timeZone:'America/Mexico_City'},userRequested:true},agent:h.owner,signal:new AbortController().signal});assert.notEqual(r.value.status,'blocked');
+ h.time('2026-10-18T16:00:00Z');await h.tick();assert.equal(transports,0);assert.equal(h.sent.length,0);
+});
+for(const stage of ['collection','model','dispatch'])test(`standalone watched-scope revocation at ${stage} never reaches transport`,async t=>{
+ const key='e'.repeat(64);let transports=0,h;
+ const revoke=async()=>{await h.tool({action:'unwatch',project:h.owner.session.header.cwd});};
+ const bridge={binding:()=>({bound:true,bindingKey:key}),routeStatus:()=> 'current',send:async input=>{if(stage==='dispatch')await revoke();if(input.authorize())transports++;return{status:'blocked'};}};
+ const evidence={id:'p1',source:'project',title:'合成进度',text:'存在合成风险',at:'2026-10-18T15:00:00.000Z'},candidate={key:'risk',kind:'risk',title:'合成风险',summary:'存在风险',why:'需要核对',action:'核对',unknown:'',evidenceIds:['p1'],priority:'high',confidence:'source'};
+ h=await openHost(t,{guardedBridge:bridge,readSetup:async()=>({state:'bound',sessionId:'synthetic-owner',bindingKey:'a'.repeat(64)}),personalReview:{collect:async()=>{if(stage==='collection')await revoke();return{evidence:[evidence],coverage:[{source:'project',status:'ok',count:1}]};},model:{summarize:async()=>{if(stage==='model')await revoke();return{items:[candidate]};}}}});
+ const root=h.owner.session.header.cwd;await h.tool({action:'watch'});const r=await h.ctx.tools.execute({name:'personal_review',callId:'configure',arguments:{action:'configure',sources:[],projects:[root],schedule:{dailyTime:'10:00',timeZone:'America/Mexico_City'},userRequested:true},agent:h.owner,signal:new AbortController().signal});assert.notEqual(r.value.status,'blocked');
+ h.time('2026-10-18T16:00:00Z');await h.tick();assert.equal(transports,0);assert.equal(h.sent.length,0);
+});
+test('standalone official host and maintained bridge share guarded delivery without Family',{skip:!process.env.DOT_GUARDED_BRIDGE_ROOT},async t=>{
+ const {WeChatDSHBridge}=await import(`${process.env.DOT_GUARDED_BRIDGE_ROOT}/dist/bridge/bridge.js`),{defaultConfig}=await import(`${process.env.DOT_GUARDED_BRIDGE_ROOT}/dist/config.js`);
+ const dir=await mkdtemp(join(tmpdir(),'dot-real-bridge-')),prior=globalThis.fetch,network=[];
+ globalThis.fetch=async(url,options)=>{assert.match(String(url),/^https:\/\/synthetic\.invalid\//);network.push({url:String(url),options});return new Response(JSON.stringify({ret:0}),{status:200});};
+ const real=new WeChatDSHBridge({get:()=>undefined,on:()=>()=>{},emit:()=>{},bail:()=>undefined},{...defaultConfig(),storageDir:dir});
+ real.token={baseUrl:'https://synthetic.invalid',token:'synthetic-token',accountId:'synthetic-bot'};real.peerUserId='synthetic-peer';real.monitorRunning=true;real.state.ensureUser('synthetic-peer','/synthetic');real.state.update('synthetic-peer',{sessionId:'synthetic-owner'});
+ t.after(async()=>{await real.stop();globalThis.fetch=prior;await rm(dir,{recursive:true,force:true});});
+ const guarded={binding:id=>real.dotProactiveBinding(id),routeStatus:input=>real.dotProactiveRouteStatus(input),send:input=>real.dotProactiveSend(input)};
+ const h=await openHost(t,{guardedBridge:guarded,readSetup:async()=>({state:'bound',sessionId:'synthetic-owner',bindingKey:'a'.repeat(64)}),personalReview:{collect:async()=>({evidence:[{id:'p1',source:'project',title:'合成',text:'合成风险',at:'2026-10-18T15:00:00.000Z'}],coverage:[{source:'project',status:'ok',count:1}]}),model:{summarize:async()=>({items:[{key:'risk',kind:'risk',title:'合成风险',summary:'合成风险',why:'需要核对',action:'核对',unknown:'',evidenceIds:['p1'],priority:'high',confidence:'source'}]})}}});
+ const root=h.owner.session.header.cwd;await h.tool({action:'watch'});const r=await h.ctx.tools.execute({name:'personal_review',callId:'configure-real-bridge',arguments:{action:'configure',sources:[],projects:[root],schedule:{dailyTime:'10:00',timeZone:'America/Mexico_City'},userRequested:true},agent:h.owner,signal:new AbortController().signal});assert.notEqual(r.value.status,'blocked');
+ h.time('2026-10-18T16:00:00Z');await h.tick();assert.equal(network.length,1);await h.tick();assert.equal(network.length,1);assert.equal(h.sent.length,0);
+});
+test('maintained bridge plugin really provides the guarded capability to a sibling Dot host',{skip:!process.env.DOT_GUARDED_BRIDGE_ROOT},async t=>{
+ const {WeChatDSHBridge}=await import(`${process.env.DOT_GUARDED_BRIDGE_ROOT}/dist/bridge/bridge.js`),plugin=await import(`${process.env.DOT_GUARDED_BRIDGE_ROOT}/dist/index.js`);
+ const dir=await mkdtemp(join(tmpdir(),'dot-plugin-bridge-')),oldStart=WeChatDSHBridge.prototype.start,oldFetch=globalThis.fetch,network=[];
+ globalThis.fetch=async(url,options)=>{assert.match(String(url),/^https:\/\/synthetic\.invalid\//);network.push({url,options});return new Response(JSON.stringify({ret:0}),{status:200});};
+ WeChatDSHBridge.prototype.start=async function(){this.token={baseUrl:'https://synthetic.invalid',token:'synthetic-token',accountId:'synthetic-bot'};this.peerUserId='synthetic-peer';this.monitorRunning=true;this.state.ensureUser('synthetic-peer','/synthetic');this.state.update('synthetic-peer',{sessionId:'synthetic-owner'});};
+ t.after(async()=>{WeChatDSHBridge.prototype.start=oldStart;globalThis.fetch=oldFetch;await rm(dir,{recursive:true,force:true});});
+ const h=await openHost(t,{readSetup:async()=>({state:'bound',sessionId:'synthetic-owner',bindingKey:'a'.repeat(64)}),personalReview:{collect:async()=>({evidence:[{id:'p1',source:'project',title:'合成',text:'合成风险',at:'2026-10-18T15:00:00.000Z'}],coverage:[{source:'project',status:'ok',count:1}]}),model:{summarize:async()=>({items:[{key:'risk',kind:'risk',title:'合成风险',summary:'合成风险',why:'需要核对',action:'核对',unknown:'',evidenceIds:['p1'],priority:'high',confidence:'source'}]})}}});
+ h.disableWeChat();await h.ctx.plugin({name:'synthetic-maintained-wechat',apply:scope=>plugin.apply(scope,{storageDir:dir})});assert.ok(h.ctx.get('dotWechatGuarded',false));
+ const root=h.owner.session.header.cwd;await h.tool({action:'watch'});const r=await h.ctx.tools.execute({name:'personal_review',callId:'configure-real-plugin',arguments:{action:'configure',sources:[],projects:[root],schedule:{dailyTime:'10:00',timeZone:'America/Mexico_City'},userRequested:true},agent:h.owner,signal:new AbortController().signal});assert.notEqual(r.value.status,'blocked',JSON.stringify(r.value));
+ h.time('2026-10-18T16:00:00Z');await h.tick();assert.equal(network.length,1);assert.equal(h.sent.length,0);
+});
+
+test('personal review default host collector masks configured secrets and paused workbench stays passive',async t=>{
+ let binding='a'.repeat(64);const summaries=[];
+ const h=await openHost(t,{readSetup:async()=>({state:'bound',sessionId:'synthetic-owner',bindingKey:binding}),context:{readConfig:()=>({didaToken:'synthetic-review-private-secret'}),googlePublisher:null,fetch:async()=>assert.fail('project-only preview must not use network')},personalReview:{model:{summarize:async input=>{summaries.push(input);return{items:[]};}}}});
+ const root=h.owner.session.header.cwd;await h.tool({action:'watch'});await writeFile(join(root,'README.md'),'Project status.\nsynthetic-review-private-secret\npassword=not-for-model\n');
+ const invoke=async(args,id)=>{const r=await h.ctx.tools.execute({name:'personal_review',callId:id,arguments:args,agent:h.owner,signal:new AbortController().signal});assert.equal(r.isError,false,JSON.stringify(r));return r.value;};
+ const preview=await invoke({action:'preview',sources:[],projects:[root]},'review-preview');assert.equal(preview.status,'preview',JSON.stringify(preview));assert.equal(summaries.length,1);assert.doesNotMatch(JSON.stringify(summaries),/synthetic-review-private-secret|not-for-model/);assert.match(JSON.stringify(summaries),/已隐藏/);assert.equal(h.sent.length,0);assert.equal(h.timers().active,false);
+ const configured=await invoke({action:'configure',sources:[],projects:[root],schedule:{dailyTime:'09:00',timeZone:'UTC'},userRequested:true},'review-configure');assert.equal(configured.status,'blocked',JSON.stringify(configured));assert.match(configured.text,/可先预览.*共享家庭入口支持/);assert.equal(summaries.length,1);assert.equal(h.timers().active,false);
+  for(const action of ['run_now','resume']){const denied=await invoke({action,sources:[],projects:[root],userRequested:true},'review-native-'+action);assert.equal(denied.status,'blocked');assert.match(denied.text,/授权复核/);}assert.equal(summaries.length,1);assert.equal(h.sent.length,0);
+ const visible=await h.adapter.workbench.snapshot();assert.equal(visible.personalReview.available,true);assert.equal(visible.personalReview.review.status,'off');assert.equal(visible.personalReview.deliverySupported,false);assert.match(visible.personalReview.review.text,/授权复核/);assert.deepEqual(visible.personalReview.review.projects,['synthetic-project']);assert.equal(summaries.length,1);
+ await h.tool({action:'pause'});const paused=await h.adapter.workbench.snapshot();assert.equal(paused.personalReview.available,true);assert.equal(summaries.length,1);
+ binding='b'.repeat(64);const changed=await h.adapter.workbench.snapshot();assert.notEqual(changed.bindingRevision,visible.bindingRevision);assert.equal(changed.personalReview.available,false);assert.equal(changed.personalReview.review,undefined);assert.equal(summaries.length,1);
+});

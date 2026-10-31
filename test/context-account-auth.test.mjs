@@ -134,7 +134,7 @@ test('wrong callback issuer, duplicate state, expired flow and changed config ne
     assert.equal(f.saved.length, 0);
     const next = await f.auth.start();
     f.now(1_800_000_300_001);
-    assert.equal((await fetch(callback(next))).status, 400);
+    assert.equal((await fetch(callback(next))).status, 410);
     assert.equal(f.requests.length, 2);
   } finally { await f.auth.close(); }
 });
@@ -339,3 +339,35 @@ for (const source of ['flomo', 'dida']) {
     });
   }
 }
+
+test('expired callback gets an explanatory response, never exchanges a code, and new auth can proceed',async()=>{
+ const f=fixture('flomo',{flowTtlMs:50,expiredGraceMs:2000,clock:Date.now});try{
+  const first=await f.auth.start();await new Promise(resolve=>setTimeout(resolve,100));assert.equal(f.auth.status().authInProgress,false);
+  const expired=await fetch(callback(first));assert.equal(expired.status,410);assert.match(await expired.text(),/已过期.*重新连接/);assert.equal(f.requests.length,1);assert.equal(f.saved.length,0);
+  const second=await f.auth.start();assert.notEqual(new URL(second.url).searchParams.get('redirect_uri'),new URL(first.url).searchParams.get('redirect_uri'));assert.equal((await fetch(callback(second))).status,200);assert.equal(f.saved.length,1);
+ }finally{await f.auth.close();}
+});
+
+test('flomo expiry does not close a simultaneous dida callback',async()=>{
+ const a=fixture('flomo',{flowTtlMs:50,expiredGraceMs:2000,clock:Date.now}),b=fixture('dida',{flowTtlMs:2000,expiredGraceMs:2000,clock:Date.now});try{
+  const [flomo,dida]=await Promise.all([a.auth.start(),b.auth.start()]);await new Promise(resolve=>setTimeout(resolve,100));assert.equal((await fetch(callback(flomo))).status,410);assert.equal((await fetch(callback(dida))).status,200);assert.equal(a.saved.length,0);assert.equal(b.saved.length,1);
+ }finally{await Promise.all([a.auth.close(),b.auth.close()]);}
+});
+
+test('unexpected listener close clears active status and starts a fresh link on explicit retry',async()=>{
+ const {createServer}=await import('node:http');const servers=[];const f=fixture('flomo',{serverFactory:(...args)=>{const server=createServer(...args);servers.push(server);return server;}});try{
+  const first=await f.auth.start();await new Promise(resolve=>servers[0].close(resolve));assert.equal(f.auth.status().authInProgress,false);
+  const second=await f.auth.start();assert.notEqual(new URL(second.url).searchParams.get('redirect_uri'),new URL(first.url).searchParams.get('redirect_uri'));assert.equal((await fetch(callback(second))).status,200);assert.equal(f.saved.length,1);
+ }finally{await f.auth.close();}
+});
+
+test('closing auth stops the bounded expired listener and a fresh instance never reuses its link',async()=>{
+ const a=fixture('flomo',{flowTtlMs:50,expiredGraceMs:2000,clock:Date.now}),b=fixture('flomo');try{
+  const first=await a.auth.start();await new Promise(resolve=>setTimeout(resolve,100));assert.equal((await fetch(callback(first))).status,410);await a.auth.close();await assert.rejects(fetch(callback(first)));
+  assert.equal(b.auth.status().authInProgress,false);const second=await b.auth.start();assert.notEqual(new URL(first.url).searchParams.get('state'),new URL(second.url).searchParams.get('state'));assert.equal((await fetch(callback(second))).status,200);
+ }finally{await Promise.all([a.auth.close(),b.auth.close()]);}
+});
+
+test('starting a new flow after the clock expired keeps the old page explicitly expired',async()=>{
+ const f=fixture();try{const old=await f.auth.start();f.now(1_800_000_300_001);const fresh=await f.auth.start();const response=await fetch(callback(old));assert.equal(response.status,410);assert.equal(f.requests.length,2);assert.equal(f.saved.length,0);assert.equal((await fetch(callback(fresh))).status,200);}finally{await f.auth.close();}
+});

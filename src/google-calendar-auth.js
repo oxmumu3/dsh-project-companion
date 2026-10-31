@@ -1,3 +1,4 @@
+import {withAuthDiagnostic,oauthHttpDiagnostic} from './auth-diagnostics.js';
 import {createServer} from 'node:http';
 import {createHash,randomBytes,timingSafeEqual} from 'node:crypto';
 import {readContextConfig} from './context-config.js';
@@ -30,7 +31,7 @@ export function createGoogleCalendarAuth({publisher,readConfig,saveCredentials,f
  const track=p=>{flights.add(p);p.then(()=>flights.delete(p),()=>flights.delete(p));return p;};
  function bounded(promise,signal){
   if(signal.aborted)return Promise.reject(error());
-  return new Promise((resolve,reject)=>{const abort=()=>{cleanup();reject(error());};const cleanup=()=>signal.removeEventListener('abort',abort);signal.addEventListener('abort',abort,{once:true});Promise.resolve(promise).then(v=>{cleanup();signal.aborted?reject(error()):resolve(v);},()=>{cleanup();reject(error());});});
+  return new Promise((resolve,reject)=>{const abort=()=>{cleanup();reject(error());};const cleanup=()=>signal.removeEventListener('abort',abort);signal.addEventListener('abort',abort,{once:true});Promise.resolve(promise).then(v=>{cleanup();signal.aborted?reject(error()):resolve(v);},reason=>{cleanup();reject(reason?.authDiagnostic?withAuthDiagnostic(error(),reason.authDiagnostic):error());});});
  }
  async function guarded(guard,signal){
   open();if(typeof guard!=='function'||signal?.aborted)throw error();
@@ -42,21 +43,24 @@ export function createGoogleCalendarAuth({publisher,readConfig,saveCredentials,f
  async function tokenRequest(fields,{signal,guard,expectedKey,previousScopes}={}){
   open();const controller=new AbortController(),cancel=()=>controller.abort();
   if(signal?.aborted)cancel();else signal?.addEventListener('abort',cancel,{once:true});controllers.add(controller);const timer=setTimeout(cancel,TIMEOUT);
+  let stage='guard';
   try{
    await guarded(guard,controller.signal);if(configKey(read())!==expectedKey)throw error();
+   stage='network';
    // Fixed token endpoint; Desktop client configuration is public registration,
    // not a server-side secret. No credentials or response bodies enter errors.
    const response=await bounded(Promise.resolve().then(()=>{open();if(controller.signal.aborted||configKey(read())!==expectedKey)throw error();return fetchImpl(TOKEN,{method:'POST',redirect:'error',headers:{accept:'application/json','content-type':'application/x-www-form-urlencoded'},body:new URLSearchParams({...fields,client_id:client.clientId,...(client.clientSecret?{client_secret:client.clientSecret}:{})}).toString(),signal:controller.signal});}),controller.signal);
-   if(!response.ok||response.status>=300||response.redirected||Number(response.headers?.get?.('content-length'))>MAX_BODY)throw error();
-   let body;
+   if(!response.ok)throw withAuthDiagnostic(error(),await oauthHttpDiagnostic(response,controller.signal));
+   if(response.status>=300||response.redirected||Number(response.headers?.get?.('content-length'))>MAX_BODY)throw withAuthDiagnostic(error(),{stage:'parse'});
+   stage='parse';let body;
    if(response.body?.getReader){const reader=response.body.getReader(),chunks=[];let size=0;try{while(true){const chunk=await bounded(reader.read(),controller.signal);if(chunk.done)break;size+=chunk.value.byteLength;if(size>MAX_BODY)throw error();chunks.push(Buffer.from(chunk.value));}body=Buffer.concat(chunks).toString('utf8');}finally{void reader.cancel().catch(()=>{});reader.releaseLock();}}
    else{body=await bounded(response.text(),controller.signal);if(Buffer.byteLength(body)>MAX_BODY)throw error();}
    const v=JSON.parse(body);if(!plain(v)||!text(v.access_token,16384)||v.token_type?.toLowerCase()!=='bearer'||!Number.isFinite(Number(v.expires_in))||Number(v.expires_in)<=0||(v.refresh_token!==undefined&&!text(v.refresh_token)))throw error();
    const scopes=v.scope===undefined?previousScopes:typeof v.scope==='string'?v.scope.trim().split(/\s+/):null;
    if(!hasScopes(scopes))throw error('Google 日历只读权限未确认，请重新授权。');
-   await guarded(guard,controller.signal);if(configKey(read())!==expectedKey)throw error();
+   stage='guard';await guarded(guard,controller.signal);if(configKey(read())!==expectedKey)throw error();
    return{accessToken:v.access_token,refreshToken:v.refresh_token??'',grantedScopes:[...new Set(scopes)],expiresAt:now()+Math.min(Number(v.expires_in),3600)*1000};
-  }catch{throw error(closed||signal?.aborted?'Google 日历连接请求已取消。':undefined);}
+  }catch(failure){throw withAuthDiagnostic(error(closed||signal?.aborted?'Google 日历连接请求已取消。':undefined),failure?.authDiagnostic??{stage});}
   finally{clearTimeout(timer);controllers.delete(controller);signal?.removeEventListener('abort',cancel);}
  }
  function stop(flow){clearTimeout(flow.timer);if(pending===flow)pending=null;if(flow.stopped)return flow.stopped;flow.stopped=new Promise(resolve=>{flow.server.close(resolve);flow.server.closeIdleConnections?.();});servers.add(flow.stopped);flow.stopped.then(()=>servers.delete(flow.stopped));return flow.stopped;}
@@ -107,7 +111,7 @@ export function createGoogleCalendarAuth({publisher,readConfig,saveCredentials,f
   }catch{await drop(flow);throw error();}
  }
  async function getTokenInner({signal,authorizeMutation:guard}={}){
-  open();await guarded(guard,signal);const config=read(),key=configKey(config);let record;try{record=parseRecord(config[FIELD],client);}catch{throw error('Google 日历尚未连接，请先在连接页授权。');}
+  open();try{await guarded(guard,signal);}catch{throw withAuthDiagnostic(error(),{stage:'guard'});}const config=read(),key=configKey(config);let record;try{record=parseRecord(config[FIELD],client);}catch{throw error('Google 日历尚未连接，请先在连接页授权。');}
   if(!client)throw error();if(cache?.key!==key)cache=null;
   if(cache&&cache.expiresAt-30000>now())return cache.accessToken;
   const result=await tokenRequest({grant_type:'refresh_token',refresh_token:record.refreshToken},{signal,guard,expectedKey:key,previousScopes:record.grantedScopes});

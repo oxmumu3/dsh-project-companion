@@ -21,7 +21,7 @@ import tarfile
 import tempfile
 import zipfile
 
-RUNTIMES = ['0.2.0-rc.2', '0.2.1-rc.2']
+RUNTIMES = ['0.2.0-rc.2', '0.2.1-rc.2', '0.2.1-rc.3']
 REVIEWED_BRIDGES = {
     'dsh-wechat-0.11.0.tgz': {
         'name': 'dsh-wechat', 'version': '0.11.0', 'sourceKind': 'original_npm',
@@ -39,6 +39,7 @@ REVIEWED_BRIDGES = {
         'deltaSha256': 'bbb6a1ab70a5b11bce72308a705813538ec15c53f462b009c2128d04d0775dee',
         'sha256': 'b0f811e7f3d4746fe27d12460f7f188d4ad8d0b5f6be44f442636ce6db3538f7',
     },
+    'dsh-wechat-0.11.1-dot.3.tgz': {'name': 'dsh-wechat', 'version': '0.11.1-dot.3', 'sourceKind': 'dot_maintained_fork', 'sourceCommit': '1aa862728afcba1d811ce9ba442d6fb1bcd45ee0', 'deltaSha256': '794558129efb162a596c9ec9511ad24196327c3a0c1b882fbc48b751d7972a5d', 'sha256': '2205931694cf84eadea55c7445d7f5ff5b2ae4c76a8f658b495120c811a7c41c'},
 }
 PROHIBITED = {'.dsh', '.git', '.agent', 'node_modules', '__MACOSX', '.DS_Store', 'credentials', 'tokens', 'secrets'}
 MIT_PARTS = ['MIT License', 'Copyright', 'Permission is hereby granted', 'The above copyright notice and this permission notice', '"AS IS"', 'IN NO EVENT SHALL']
@@ -57,6 +58,14 @@ def reviewed_bridge(archive_name, archive_sha256):
 
 def json_bytes(value):
     return (json.dumps(value, ensure_ascii=False, indent=2) + '\n').encode()
+
+
+def install_doc_for_kit(text, public_home, version):
+    if public_home == 'https://github.com/oxmumu3/dsh-project-companion':
+        text = text.replace('](first-use.md)', f']({public_home}/blob/v{version}/docs/first-use.md)')
+    else:
+        text = text.replace('[首次使用](first-use.md)', '首次使用（正式仓库入口仍待核验）')
+    return text.replace('](../THIRD_PARTY_NOTICES.md)', '](THIRD_PARTY_NOTICES.md)')
 
 
 def safe_name(name):
@@ -103,7 +112,7 @@ def package_audit(path, expected_name, expected_version):
     mit(files['package/LICENSE'], f'{expected_name}/LICENSE')
     vendor_files = 0
     if expected_name == 'dsh-project-companion':
-        for required in ['src/project-updates.js', 'src/project-update-model.js', 'src/project-memory.js', 'src/welcome-guard.js', 'src/wechat-recovery.js', 'src/installation.js', 'src/onboarding.js', 'src/client.js', 'src/news-service.js', 'src/news-model.js', 'src/news-feeds.js', 'src/context-config.js', 'src/context-google-auth.js', 'src/google-publisher.js', 'src/google-calendar-auth.js', 'src/google-calendar-rest.js', 'src/google-suite-auth.js', 'src/google-suite-rest.js', 'src/context-provider.js', 'src/dida-rest.js', 'src/news-topics.js', 'src/context-account-auth.js', 'src/context-transport.js', 'src/context-contracts.js', 'src/context-service.js', 'src/context-route.js', 'docs/context-sources.md', 'assets/news-feeds.json', 'docs/news.md', 'THIRD_PARTY_NOTICES.md', 'bridge-maintenance/README.md', 'bridge-maintenance/PROVENANCE.json']:
+        for required in ['src/context-loop.js', 'docs/context-loop.md', 'src/project-updates.js', 'src/project-update-model.js', 'src/project-memory.js', 'src/welcome-guard.js', 'src/wechat-recovery.js', 'src/installation.js', 'src/onboarding.js', 'src/client.js', 'src/news-service.js', 'src/news-model.js', 'src/news-feeds.js', 'src/context-config.js', 'src/context-google-auth.js', 'src/google-publisher.js', 'src/google-calendar-auth.js', 'src/google-calendar-rest.js', 'src/google-suite-auth.js', 'src/google-suite-rest.js', 'src/context-provider.js', 'src/dida-rest.js', 'src/news-topics.js', 'src/context-account-auth.js', 'src/context-transport.js', 'src/context-contracts.js', 'src/context-service.js', 'src/context-route.js', 'docs/context-sources.md', 'assets/news-feeds.json', 'docs/news.md', 'THIRD_PARTY_NOTICES.md', 'bridge-maintenance/README.md', 'bridge-maintenance/PROVENANCE.json']:
             if f'package/{required}' not in files:
                 raise ValueError(f'Missing candidate component: {required}')
         for name in ['pan17-dsh-wechat', 'dsh-yolo', 'dsh-proactive']:
@@ -142,7 +151,7 @@ def runtime_fingerprints(files):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     source_root = Path(__file__).resolve().parent.parent
-    parser.add_argument('--bridge', type=Path, required=True, help='One exact reviewed original 0.11.0 or Dot maintenance 0.11.1-dot.1/0.11.1-dot.2 archive')
+    parser.add_argument('--bridge', type=Path, required=True, help='One exact reviewed original 0.11.0 or Dot maintenance 0.11.1-dot.1/0.11.1-dot.2/0.11.1-dot.3 archive')
     parser.add_argument('--output', type=Path, default=source_root / 'dist', help='Artifact directory; defaults to this source checkout/dist')
     parser.add_argument('--runtime-reference', type=Path, help='Optional previously tested companion tgz; require identical index/src/vendor/bundle runtime bytes')
     args = parser.parse_args()
@@ -181,11 +190,7 @@ def main():
             # Keep source-doc links unchanged and rebase only its copied links.
             install_doc = (repo / 'docs/install.md').read_text(encoding='utf-8')
             public_home = metadata.get('homepage', '')
-            if public_home == 'https://github.com/oxmumu3/dsh-project-companion':
-                install_doc = install_doc.replace('](first-use.md)', f']({public_home}/blob/main/docs/first-use.md)')
-            else:
-                install_doc = install_doc.replace('[首次使用](first-use.md)', '首次使用（正式仓库入口仍待核验）')
-            install_doc = install_doc.replace('](../THIRD_PARTY_NOTICES.md)', '](THIRD_PARTY_NOTICES.md)')
+            install_doc = install_doc_for_kit(install_doc, public_home, version)
             (stage / '安装说明.md').write_text(install_doc, encoding='utf-8')
             (stage / 'package.json').write_bytes(json_bytes({'private': True, 'type': 'module'}))
             (stage / 'Install.command').chmod(0o755)

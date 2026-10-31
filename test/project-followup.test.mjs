@@ -13,6 +13,9 @@ import {ProactiveScheduler} from '../vendor/proactive/lib/scheduler.js';
 async function api(){const m=await import('../src/project-followup.js').catch(()=>({}));assert.equal(typeof m.createProjectFollowup,'function','scoped real proactive adapter must exist');return m;}
 const binding={userHash:'a'.repeat(64),botHash:'b'.repeat(64)};
 const deferred=()=>{let resolve;const promise=new Promise(done=>resolve=done);return{promise,resolve};};
+// 0.2.0 supports both; 0.2.1 exposes the reserved transport through ptc only.
+// Ask the loaded SDK schema instead of inferring support from a matrix label.
+const codeTransportMode=(()=>{try{return ToolRuntime.Config({mode:'both'}).mode;}catch{return ToolRuntime.Config({mode:'ptc'}).mode;}})();
 async function harness(t,options={}){
   const {createProjectFollowup}=await api();
   const temp=await realpath(await mkdtemp(join(tmpdir(),'dot-followup-')));
@@ -23,7 +26,7 @@ async function harness(t,options={}){
   let transportRuns=0;
   if(['both','ptc'].includes(options.mode))ctx.provide('ptcRuntime',{language:'typescript',resolve:input=>input,release:async()=>{},run:async()=>{transportRuns++;return{logs:[],result:'synthetic transport executed'};}});
   const agents=new Map(),schedulers=[],messages=[],mounts=[],resumes=[],tools=[];
-  let now=new Date('2026-10-18T16:00:00Z'),currentBinding=binding,allow=true,allowedRun=true;
+  let now=new Date(options.startTime??'2026-10-18T16:00:00Z'),currentBinding=binding,allow=true,allowedRun=true;
   const makeAgent=id=>{
     const events=[];
     const session={id,header:{cwd:root,agentPreset:'default'},events,get seq(){return events.length;},requestHeader:()=>({config:{provider:'synthetic',model:'synthetic'}})};
@@ -43,10 +46,10 @@ async function harness(t,options={}){
   ctx.provide('agents',registry);ctx.provide('agentDefaultModel',{currentSelection:()=>({provider:'synthetic',model:'synthetic'})});
   ctx.provide('agentPresets',{mount:async(_scope,id)=>mounts.push(id)});
   for(const name of ['project_companion','send_wechat','bash'])ctx.tools.register(defineTool({name,description:'Synthetic capability only, no external effects',parameters:{action:{type:'string'},project:{type:'string'}},output:{schema:{type:'object',additionalProperties:true},render:()=>[]},execute:args=>{tools.push({name,args});return options.toolResult?.(name,args)??{ok:true};}}));
-  const optionsForAdapter={ctx,clock:()=>now,hostTimeZone:()=> 'America/Mexico_City',authorizeRoot:async r=>allow&&authorizedRoots.has(r),canRun:async()=>allowedRun,readBinding:async sessionId=>options.readBinding?options.readBinding(sessionId):currentBinding,readConnection:async()=>options.readConnection?options.readConnection():{state:'bound',sessionId:owner.id,bindingKey:'d'.repeat(64)},readNativeRoute:async sessionId=>options.readNativeRoute?options.readNativeRoute(sessionId):(currentBinding===null?{kind:'unbound'}:{kind:'bound',binding:currentBinding}),createScheduler:deps=>{const scheduler=new ProactiveScheduler(deps);schedulers.push(scheduler);return scheduler;}};
+  const optionsForAdapter={ctx,clock:()=>now,hostTimeZone:()=> 'America/Mexico_City',authorizeRoot:async r=>allow&&authorizedRoots.has(r),canRun:async()=>allowedRun,readBinding:async sessionId=>options.readBinding?options.readBinding(sessionId):currentBinding,readConnection:async()=>options.readConnection?options.readConnection():{state:'bound',sessionId:owner.id,bindingKey:'d'.repeat(64)},readNativeRoute:async sessionId=>options.readNativeRoute?options.readNativeRoute(sessionId):(currentBinding===null?{kind:'unbound'}:{kind:'bound',binding:currentBinding}),...(options.familyRoute?{familyRoute:options.familyRoute}:{}),createScheduler:deps=>{const scheduler=new ProactiveScheduler(deps);schedulers.push(scheduler);options.onSchedulerCreated?.();return scheduler;}};
   let adapter=createProjectFollowup(optionsForAdapter);
   const args={root,sessionId:owner.id,everyMinutes:30,projectLabel:'测试项目'};
-  const drain=async()=>{let chains;do{chains=schedulers.map(s=>s.driveChain);await Promise.all(chains);}while(schedulers.some((s,i)=>s.driveChain!==chains[i]));};
+  const drain=async()=>{for(const s of schedulers)await s.driveChain;};
   const tick=async()=>{for(const s of schedulers)s.requestDrive();await drain();};
   t.after(async()=>{await adapter.close();await owner.scopeDispose();await ctx.fiber.dispose();await rm(temp,{recursive:true,force:true});});
   return{root,temp,ctx,agents,owner,schedulers,messages,mounts,resumes,tools,args,drain,tick,get adapter(){return adapter;},transportRuns:()=>transportRuns,authorize:r=>authorizedRoots.add(r),advance:minutes=>{now=new Date(now.getTime()+minutes*60000);},advanceSeconds:seconds=>{now=new Date(now.getTime()+seconds*1000);},setBinding:b=>{currentBinding=b;},deny:()=>{allow=false;},pause:()=>{allowedRun=false;},unpause:()=>{allowedRun=true;},reopen:async()=>{await adapter.close();adapter=createProjectFollowup(optionsForAdapter);return adapter;}};
@@ -57,6 +60,12 @@ test('no plan or timer is created at construction or a first read-only status',a
   const s=await h.adapter.status(h.args);assert.equal(s.enabled,false);assert.equal(h.schedulers.length,0);
   await assert.rejects(access(join(h.root,'.dsh')));
 });
+
+test('a daily follow-up keeps the explicit clock time and timezone through restart',async t=>{const h=await harness(t),args={...h.args,everyMinutes:1440,dailyTime:'09:30',timeZone:'Asia/Shanghai'};const first=await h.adapter.configure(args);assert.equal(first.dailyTime,'09:30');assert.equal(first.timeZone,'Asia/Shanghai');assert.equal(first.nextDueAt,'2026-10-19T01:30:00.000Z');const data=JSON.parse(await readFile(join(h.root,'.dsh/dot-followup/alarms.json'),'utf8'));const alarm=data.alarms[0];assert.equal(alarm.type,'cron');assert.equal(alarm.trigger.expr,'30 9 * * *');assert.equal(alarm.timeZone,'Asia/Shanghai');assert.equal(alarm.respectQuietHours,false);await h.reopen();const recovered=await h.adapter.resume(h.args);assert.equal(recovered.dailyTime,'09:30');assert.equal(recovered.alarmId,first.alarmId);assert.equal((await h.adapter.configure(args)).alarmId,first.alarmId);assert.equal((await h.adapter.cancel(h.args)).enabled,false);});
+test('daily ownership validation rejects missing zones, mixed cadence and modified cron',async t=>{const h=await harness(t);for(const bad of [{dailyTime:'25:00',timeZone:'UTC',everyMinutes:1440},{dailyTime:'09:00',timeZone:'not/a-zone',everyMinutes:1440},{dailyTime:'09:00',everyMinutes:1440},{dailyTime:'09:00',timeZone:'UTC',everyMinutes:30}])await assert.rejects(h.adapter.configure({...h.args,...bad}));await h.adapter.configure({...h.args,dailyTime:'09:00',timeZone:'UTC',everyMinutes:1440});await h.reopen();const path=join(h.root,'.dsh/dot-followup/alarms.json'),data=JSON.parse(await readFile(path,'utf8'));data.alarms[0].trigger.expr='0 10 * * *';await writeFile(path,JSON.stringify(data));await assert.rejects(h.adapter.status(h.args));});
+test('daily follows the requested local clock across daylight-saving transition',async t=>{const h=await harness(t,{startTime:'2026-10-31T12:00:00Z'}),args={...h.args,everyMinutes:1440,dailyTime:'09:00',timeZone:'America/New_York'};assert.equal((await h.adapter.configure(args)).nextDueAt,'2026-10-31T13:00:00.000Z');await h.drain();h.advance(60);await h.tick();assert.equal((await h.adapter.status(args)).nextDueAt,'2026-11-01T14:00:00.000Z');});
+test('a trusted cancellation invalidates an in-flight context read before async persistence',async t=>{const entered=deferred(),release=deferred();let invalidated=0;const h=await harness(t,{onWake:async()=>{entered.resolve();await release.promise;}});const m=await api();await h.adapter.close();const local=m.createProjectFollowup({ctx:h.ctx,clock:()=>new Date('2026-10-18T16:00:00Z'),hostTimeZone:'UTC',authorizeRoot:async r=>r===h.root,readBinding:async()=>binding,invalidateLoop:()=>invalidated++});t.after(()=>local.close());await local.configure({...h.args,loopId:'loop-trusted'});const cancellation=local.cancel({...h.args,authorizeMutation:async()=>{await release.promise;return true;},authorizeMutationSync:()=>true});assert.equal(invalidated,1,'trusted cancellation stops the current context generation synchronously');release.resolve();assert.equal((await cancellation).enabled,false);});
+test('a freshly authenticated revocation does not need a still-readable route',async t=>{const h=await harness(t);await h.adapter.configure(h.args);await h.drain();h.setBinding({...binding,userHash:'c'.repeat(64)});const stopped=await h.adapter.cancel({...h.args,authorizeMutation:async()=>true,authorizeMutationSync:()=>true});assert.equal(stopped.enabled,false);assert.equal(stopped.running,false);h.setBinding(binding);assert.equal((await h.adapter.resume(h.args)).enabled,false);});
 
 test('passive inspection confirms absence without creating files or activating a source',async t=>{
   const h=await harness(t);assert.equal(typeof h.adapter.inspect,'function');
@@ -263,7 +272,7 @@ test('cancelling an active wake still permits its reclaim tool to end silently',
 });
 
 test('autonomous wake denies the reserved code transport before any PTC execution',async t=>{
-  const mode=process.env.DSH_TEST_SDK_VERSION==='0.2.0-rc.2'?'both':'ptc';
+  const mode=codeTransportMode;
   let result;const h=await harness(t,{mode,onWake:async({agent,ctx})=>{
     result=await ctx.tools.execute({callId:'autonomous-code-transport',name:'run_code',arguments:{code:'return "must not execute";',description:'Synthetic code transport deny regression'},agent,signal:new AbortController().signal});
   }});
@@ -323,6 +332,12 @@ test('closing a cancelled active wake retains its guards until that old driver s
   try{await new Promise(resolve=>setTimeout(resolve,20));early=settled;}finally{release();await running;await closing;}
   assert.equal(early,false,'close must retain read-only guards until the retired driver is actually settled');
 });
+test('close drains the unawaited scheduler boot persistence before returning',async t=>{
+ const {ProactiveStore}=await import('../vendor/proactive/lib/store.js');const original=ProactiveStore.prototype.persist;
+ let hold=false,release,entered;const arrived=new Promise(resolve=>{entered=resolve;});const waiting=new Promise(resolve=>{release=resolve;});
+ ProactiveStore.prototype.persist=function(...args){if(hold){hold=false;entered();return waiting.then(()=>original.apply(this,args));}return original.apply(this,args);};
+ try{const h=await harness(t,{onSchedulerCreated:()=>{hold=true;}});await h.adapter.configure(h.args);await arrived;let settled=false;const closing=h.adapter.close().then(()=>{settled=true;});await new Promise(resolve=>setTimeout(resolve,20));const early=settled;release();await closing;assert.equal(early,false,'close must wait for boot persistence even though upstream does not await it');}finally{release?.();ProactiveStore.prototype.persist=original;}
+});
 
 test('copying a plan directory into another watched project cannot transfer its authorization',async t=>{
   const h=await harness(t);await h.adapter.configure(h.args);await h.drain();const second=join(h.temp,'other-watched');await mkdir(second);h.authorize(second);
@@ -344,7 +359,10 @@ test('explicit native once uses the real upstream once scheduler and completes w
   const first=await h.adapter.checkOnce(args);assert.equal(first.status,'queued');assert.equal(first.delivery,'native');assert.equal(first.enabled,true);assert.equal(h.messages.length,0);
   await h.drain();h.advanceSeconds(30);await h.tick();assert.equal(h.messages.length,0);h.advanceSeconds(30);await h.tick();
   const done=await h.adapter.onceStatus(args);assert.equal(done.status,'completed');assert.equal(done.enabled,false);assert.equal(done.runCount,1);assert.equal(done.lastReviewedAt,'2026-10-18T16:01:00.000Z');assert.equal(h.messages.length,1);
-  const stored=JSON.parse(await readFile(join(onceDirectory(h),'alarms.json'),'utf8'));assert.equal(stored.alarms.length,1);assert.equal(stored.alarms[0].type,'once');assert.equal(stored.alarms[0].status,'completed');assert.equal(stored.alarms[0].respectQuietHours,false);
+  // Upstream advances its in-memory alarm first and persists asynchronously.
+  // Wait for the actual file instead of assuming driveChain awaited that write.
+  let stored;for(let i=0;i<100;i++){stored=JSON.parse(await readFile(join(onceDirectory(h),'alarms.json'),'utf8'));if(stored.alarms[0]?.status==='completed')break;await new Promise(resolve=>setTimeout(resolve,10));}
+  assert.equal(stored.alarms.length,1);assert.equal(stored.alarms[0].type,'once');assert.equal(stored.alarms[0].status,'completed');assert.equal(stored.alarms[0].respectQuietHours,false);
   const runs=(await readFile(join(onceDirectory(h),'runs.jsonl'),'utf8')).trim().split('\n').map(JSON.parse);assert.equal(runs.length,1);assert.equal(runs[0].decision,'reply');
   h.advance(60);await h.tick();assert.equal(h.messages.length,1);assert.equal(h.resumes.length,0);
 });
@@ -423,7 +441,7 @@ test('one-off requested checks run inside quiet hours while existing recurring a
 
 test('a native once enforces read-only tools and checks its route again before source reads',async t=>{
   let changedResult;const outcomes=[];
-  const mode=process.env.DSH_TEST_SDK_VERSION==='0.2.0-rc.2'?'both':'ptc';
+  const mode=codeTransportMode;
   const h=await harness(t,{mode,onWake:async({agent,ctx})=>{
     for(const [name,args] of [['send_wechat',{}],['bash',{}],['project_companion',{action:'coordinate',project:h.root}],['project_companion',{action:'remember',project:h.root}],['run_code',{code:'return \"denied\";',description:'deny one-off code'}]]){
       outcomes.push(await ctx.tools.execute({callId:'once-deny-'+outcomes.length,name,arguments:args,agent,signal:new AbortController().signal}));
@@ -505,4 +523,33 @@ test('close during pending wake routing cannot masquerade as a completed one-off
   while(!release)await new Promise(resolve=>setTimeout(resolve,1));
   const closing=h.adapter.close();waiting=false;release();await scheduler.driveChain;await closing;await h.reopen();
   const status=await h.adapter.onceStatus(onceArgs(h));assert.notEqual(status.status,'completed');assert.equal(status.enabled,false);assert.equal(status.lastReviewedAt,null);assert.equal(h.messages.length,0);assert.equal(h.resumes.length,0);
+});
+
+
+test('passive Family inspection retains only the exact original route and never starts cold plans',async t=>{
+ let current=true;const scope={familySessionId:'session-original',bindingRevision:binding.userHash};
+ const familyRoute={getScope:()=>scope,isCurrent:()=>current,recheck:async()=>current};
+ const h=await harness(t,{familyRoute,readConnection:()=>({state:'bound',sessionId:'session-original',bindingKey:'d'.repeat(64),readOnly:true})});
+ await h.adapter.configure({...h.args,delivery:'family'});await h.adapter.checkOnce({...h.args,delivery:'family',delaySeconds:60});await h.drain();await h.reopen();
+ const count=h.schedulers.length,args={...h.args,expectedBinding:{sessionId:h.owner.id,bindingKey:'d'.repeat(64)}};
+ const before=await readFile(join(h.root,'.dsh/dot-followup/scope.json'),'utf8');const value=await h.adapter.inspect(args);
+ assert.equal(value.followup.enabled,true);assert.equal(value.followup.running,false);assert.equal(value.once.delivery,'family');assert.equal(h.schedulers.length,count);assert.deepEqual(h.resumes,[]);assert.deepEqual(h.messages,[]);
+ current=false;await assert.rejects(h.adapter.inspect(args));assert.equal(await readFile(join(h.root,'.dsh/dot-followup/scope.json'),'utf8'),before);
+});
+
+test('an old project-only Family follow-up cannot borrow a renewed source delegation',async t=>{
+ const {createFamilyOwnerDelegation,familyDelegationBinding}=await import('../src/family-owner-delegation.js');
+ let saved,leases=[{source:'calendar',sessionId:'old-dot',bindingKey:'c'.repeat(64),credentialKey:'d'.repeat(64),grantId:'old-grant'}];
+ const call={sessionId:'session-original',callId:'real-owner-call'},revision='a'.repeat(64);
+ const delegation=createFamilyOwnerDelegation({store:{get:async()=>saved,put:async(_key,value)=>saved=structuredClone(value)},getBridge:()=>({resolveOwnerCall:async()=>({sessionId:call.sessionId,bindingRevision:revision,userText:'更新这个微信的 Dot 资料授权，使用我在电脑上启用的来源。',sourceTimingState:'fresh',sourceRequestId:'synthetic-inbound'}),isOwnerRevisionCurrent:()=>true,ownerRouteStatus:()=> 'current'}),readGrantedLeases:async()=>structuredClone(leases),readGrantedLeasesSync:()=>structuredClone(leases)});
+ await delegation.pair({execution:call,originSessionId:'old-dot',userAuthorized:true});
+ const currentBinding=()=>familyDelegationBinding(delegation.scopeFor(call.sessionId)),sent=[];
+ const familyRoute={getScope:id=>delegation.scopeFor(id),isCurrent:scope=>delegation.current(scope),recheck:scope=>delegation.recheck(scope),routeState:input=>delegation.routeState(input),readDelivery:async()=>({status:'absent'}),send:async item=>{sent.push(item);return{status:'accepted'};}};
+ const h=await harness(t,{familyRoute,readBinding:()=>currentBinding(),readConnection:()=>({state:'bound',sessionId:call.sessionId,bindingKey:'e'.repeat(64),readOnly:true})});
+ const args={...h.args,delivery:'family'};await h.adapter.configure(args);await h.drain();
+ const oldBinding=currentBinding();leases[0]={...leases[0],credentialKey:'f'.repeat(64),grantId:'new-grant'};
+ assert.equal((await delegation.renewIfRequested({execution:call})).status,'renewed');assert.notDeepEqual(currentBinding(),oldBinding);
+ h.advance(30);await h.tick();assert.deepEqual(h.messages,[],'old project-only plan must not wake its model');assert.deepEqual(sent,[],'old plan must not send with renewed authority');
+ await h.reopen();await h.adapter.resume(args);h.advance(30);await h.tick();assert.deepEqual(h.messages,[],'restart must not update a saved plan binding');assert.deepEqual(sent,[]);
+ await delegation.close();
 });

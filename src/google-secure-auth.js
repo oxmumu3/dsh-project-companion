@@ -1,3 +1,4 @@
+import {withAuthDiagnostic} from './auth-diagnostics.js';
 /** Secure storage belongs before token use, with the same live owner guard.
  * A new consent can replace an unavailable old grant; saving the new record
  * still goes through the vault. Starting consent never reads an old token.
@@ -16,8 +17,7 @@ export function secureGoogleAuth({controller,vault,source}={}){
    const settings=args.at(-1);
    if(!settings||typeof settings.authorizeMutation!=='function')throw new Error('请从已授权的来源重新发起查询。');
    const gates={source,authorizeMutation:settings.authorizeMutation,signal:settings.signal};
-   await vault.migrateLegacy(gates);
-   await vault.prepare(gates);
+   try{await vault.migrateLegacy(gates);await vault.prepare(gates);}catch(error){throw withAuthDiagnostic(new Error('Google 安全连接不可用。'),error?.authDiagnostic??{stage:'storage'});}
    return controller.getToken(...args);
   },
   close:()=>controller.close(),

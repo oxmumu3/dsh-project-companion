@@ -1,0 +1,26 @@
+{
+  "summary": {
+    "fails": 0,
+    "reflex": 0,
+    "warns": 1,
+    "waived": 0,
+    "rejected": 0,
+    "answered": 0,
+    "dismissed": 0,
+    "notes": 0,
+    "files": 1,
+    "render": "off",
+    "kept": "kept: script hooks 6/6; before 109 FAIL, 153 REFLEX, now 0 FAIL, 0 REFLEX"
+  },
+  "findings": [
+    {
+      "gate": "70",
+      "grade": "WARN",
+      "tier": "floor",
+      "file": "prototype.html",
+      "line": 631,
+      "evidence": "a script prints success (\"attention ${state.done?done:}\") with no request behind it",
+      "fix": "No success state until the form posts somewhere; an empty data-endpoint and a handoff note"
+    }
+  ]
+}

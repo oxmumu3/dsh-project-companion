@@ -1,3 +1,4 @@
+import {withAuthDiagnostic} from './auth-diagnostics.js';
 import { createHash } from 'node:crypto';
 
 // Fixed public origins. A conversation cannot supply an endpoint, redirect or header.
@@ -152,7 +153,7 @@ export function createContextTransport(options = {}) {
       return value;
     } catch (error) {
       if (signal.aborted) throw abortError(signal);
-      throw failure('CONTEXT_AUTH_REQUIRED');
+      const safe=failure('CONTEXT_AUTH_REQUIRED');throw error?.authDiagnostic?withAuthDiagnostic(safe,error.authDiagnostic):safe;
     }
   }
   const hash = value => createHash('sha256').update(value).digest('hex');

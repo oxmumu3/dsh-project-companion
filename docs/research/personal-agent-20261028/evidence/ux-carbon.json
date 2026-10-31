@@ -1,0 +1,10 @@
+{
+  "fetchedAt": "2026-10-28T13:30:55.103Z",
+  "title": "AI label | Carbon Design System",
+  "url": "https://www.carbondesignsystem.com/building-blocks/core/components/ai-label/guidelines",
+  "classification": "primary_design_guidance",
+  "observedExcerpt": "Don’t use the AI label as decoration",
+  "note": "AI 标识是稳定的解释入口，不是装饰，也不兼作触发 AI 操作的按钮。",
+  "observedTextSha256": "8f14fc10dc3ee90de1406568a9d4488f2449c2cf865e0d5c74d3cb3ccb89e966",
+  "observedTextCharacters": 12720
+}

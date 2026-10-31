@@ -1,0 +1,10 @@
+{
+  "upstream": "https://github.com/pan17/dsh-wechat",
+  "baseTag": "v0.11.0",
+  "baseCommit": "218537511681be7557589f5ae0eab84f80267dc8",
+  "originalNpmVersion": "0.11.0",
+  "originalNpmSha256": "993e1e1afce3c0dcd2610bf9e84ffbfd6d08768f5c4b4fa30eeec50dc2e97d3f",
+  "localVersion": "0.11.1-dot.3",
+  "originalLicensePreserved": true,
+  "maintenanceNote": "Adds a separately locked, durable and source-authorized in-process Dot proactive send capability; keeps ordinary bridge delivery behavior."
+}

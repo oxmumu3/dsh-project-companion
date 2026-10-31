@@ -25,7 +25,9 @@ try{
   if(r.message)console.log(r.message);
   if(r.officialUrl)console.log(`官方安装入口：${r.officialUrl}`);
   if(r.needsEnable?.length)console.log(`以下已有插件保持原先禁用状态，请在官方插件管理器中启用：${r.needsEnable.join('、')}`);
-  if(!['ready','installed'].includes(r.status))process.exitCode=2;
+  if(r.status==='needs_initialization')process.exitCode=3;
+  else if(r.status==='desktop_running')process.exitCode=4;
+  else if(!['ready','installed'].includes(r.status))process.exitCode=2;
 }catch(error){
   console.error(`安装停止：${error.code??'ERROR'} — ${error.message}`);
   if(error.completed?.length)console.error(`此前已完成：${error.completed.map(s=>`${s.name}@${s.version}`).join('、')}`);

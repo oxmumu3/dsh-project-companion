@@ -13,11 +13,36 @@ const task=(id='t1',projectId='p1')=>({id,projectId,title:'Example task',content
 
 test('Dida catalog is passive, bundled and excludes unsupported account search',async()=>{
  let calls=0;const t=create({getToken:async()=>{calls++;return'token';},fetch:async()=>{calls++;return response([]);},clock:()=>fixed});
- const c=await t.catalog('dida',gates);assert.equal(c.provenance,'bundled-contract');assert.deepEqual(c.tools.map(t=>t.name),['list_projects','get_project_with_undone_tasks','get_task_in_project']);assert.deepEqual(c.unsupportedOperations,['search']);assert.equal(calls,0);
+ const c=await t.catalog('dida',gates);assert.equal(c.provenance,'bundled-contract');assert.deepEqual(c.tools.map(t=>t.name),['list_projects','get_project_with_undone_tasks','get_project_tasks_bounded','get_named_project_with_undone_tasks','get_task_in_project']);assert.deepEqual(c.unsupportedOperations,['search']);assert.equal(calls,0);
  assert.throws(()=>validateContextCall(buildContextCall('dida',{operation:'search',query:'work'}),c),code('CONTEXT_UNSUPPORTED_OPERATION'));
  const legacy={tools:[{name:'search',inputSchema:{type:'object',properties:{query:{type:'string'}}}}]};assert.equal(validateContextCall({name:'search',args:{query:'work'}},legacy).name,'search');
  for(const unsupportedOperations of [['delete'],['search','search'],'search',['search',42]])assert.throws(()=>validateContextCall({name:'list_projects',args}, {...c,unsupportedOperations}),code('CONTEXT_SCHEMA_MISMATCH'));
  await t.close();
+});
+
+test('bounded known-project tasks use one fixed ID read and preserve structured deadlines',async()=>{
+ const calls=[];const t=create({getToken:async()=> 'x',fetch:async(url)=>{calls.push(new URL(url));return response({project:{id:'p1'},tasks:Array.from({length:5},(_,i)=>task(`t${i}`))});}});
+ const r=await t.call('dida','get_project_tasks_bounded',{project_id:'p1',limit:3},gates);
+ assert.equal(calls.length,1);assert.equal(calls[0].pathname,'/open/v1/project/p1/data');assert.equal(calls[0].search,'');
+ assert.equal(r.value.items.length,3);assert.equal(r.value.truncated,true);
+ assert.equal(r.value.items[0].dueDate,'2026-10-23T12:00:00.000Z');
+ assert.ok(r.value.items.every(row=>row.projectId==='p1'));
+ await t.close();
+});
+
+test('bounded ID task read rejects mismatched project or task ownership and invalid limits',async()=>{
+ for(const raw of [{project:{id:'wrong'},tasks:[task()]},{project:{id:'p1'},tasks:[task('t1','wrong')]}]){
+  const t=create({getToken:async()=> 'x',fetch:async()=>response(raw)});
+  await assert.rejects(t.call('dida','get_project_tasks_bounded',{project_id:'p1',limit:3},gates),code('CONTEXT_PROTOCOL_INVALID'));await t.close();
+ }
+ let reads=0;const t=create({getToken:async()=>{reads++;return 'x';},fetch:async()=>{reads++;return response({});}});
+ for(const input of [{project_id:'p1',limit:0},{project_id:'p1',limit:11},{project_id:'../p1',limit:3},{project_id:'p1',limit:3,project_name:'other'}])await assert.rejects(t.call('dida','get_project_tasks_bounded',input,gates),code('CONTEXT_ARGUMENTS_INVALID'));
+ assert.equal(reads,0);await t.close();
+});
+
+test('bounded task projection still rejects upstream bodies beyond one MiB',async()=>{
+ const t=create({getToken:async()=> 'x',fetch:async()=>new Response('{}',{headers:{'content-type':'application/json','content-length':'1048577'}})});
+ await assert.rejects(t.call('dida','get_project_tasks_bounded',{project_id:'p1',limit:3},gates),code('CONTEXT_RESPONSE_TOO_LARGE'));await t.close();
 });
 
 test('project list sends one fixed GET with user limit and projects only leave as minimal fields',async()=>{

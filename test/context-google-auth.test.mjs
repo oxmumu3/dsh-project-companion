@@ -35,7 +35,7 @@ function fixture(options = {}) {
 test('native Config keeps live credential fields separate from normal Dot appearance', () => {
   requireModules();
   const schema = configModule.Config;
-  assert.deepEqual(Object.keys(schema.dict).sort(), [...Object.keys(initial()),'dotAppearance'].sort());
+  assert.deepEqual(Object.keys(schema.dict).sort(), [...Object.keys(initial()),'dotAppearance','familyOwnerDelegation','familyOwnerReminderEnabled','desktopConversationSessionId','desktopConversationSelectionVersion'].sort());
   for (const key of Object.keys(initial())) {
     const value=schema.dict[key];
     assert.equal(value.meta.volatile, true);
@@ -44,6 +44,17 @@ test('native Config keeps live credential fields separate from normal Dot appear
   assert.equal(schema.dict.dotAppearance.meta.default,'native');
   assert.notEqual(schema.dict.dotAppearance.meta.role,'secret');
   assert.equal(schema.dict.dotAppearance.meta.volatile,true,'changing only appearance must not restart the running backend');
+  assert.equal(schema.dict.familyOwnerDelegation.meta.default,false,'cross-entry sharing must be opt-in');
+  assert.equal(schema.dict.familyOwnerReminderEnabled.meta.default,false,'Family reminder entry must be independently opt-in');
+  assert.equal(schema.dict.familyOwnerReminderEnabled.meta.volatile,true);
+  assert.equal(schema.dict.desktopConversationSessionId.meta.default,'');
+  assert.notEqual(schema.dict.desktopConversationSessionId.meta.role,'secret');
+  assert.equal(schema.dict.desktopConversationSessionId.meta.volatile,true,'remembering a desktop session must not restart OAuth callbacks');
+  assert.equal(schema.dict.desktopConversationSelectionVersion.meta.default,0,'legacy pointers are not evidence of an explicit desktop choice');
+  assert.equal(schema.dict.desktopConversationSelectionVersion.meta.volatile,true,'confirming a desktop choice must not restart OAuth or existing plans');
+  assert.notEqual(schema.dict.desktopConversationSelectionVersion.meta.role,'secret');
+  assert.deepEqual(configModule.readContextConfig({...initial(),desktopConversationSessionId:'native-local-session',desktopConversationSelectionVersion:1}),initial(),'desktop selection is not source authorization');
+  assert.deepEqual(configModule.readContextConfig({...initial(),desktopConversationSessionId:'native-local-session'}),initial(),'a history pointer is not a source credential');
   assert.deepEqual(configModule.readContextConfig({...initial(),dotAppearance:'dot'}),initial());
   const refs = Object.fromEntries(Object.entries(initial()).map(([key, value]) => [key, { get: () => value }]));
   assert.deepEqual(configModule.readContextConfig(refs), initial());

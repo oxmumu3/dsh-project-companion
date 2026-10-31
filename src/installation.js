@@ -1,5 +1,5 @@
 /** Local macOS distribution installer. No daemon, profile editing, login or WeChat access. */
-import {access, readFile, realpath, stat} from 'node:fs/promises';
+import {access, readFile, readdir, realpath, stat} from 'node:fs/promises';
 import {constants} from 'node:fs';
 import {basename, dirname, join, resolve} from 'node:path';
 import {homedir} from 'node:os';
@@ -8,9 +8,9 @@ import {gunzipSync} from 'node:zlib';
 import {spawn} from 'node:child_process';
 
 export const OFFICIAL_HARNESS_URL='https://github.com/deepseek-ai/deepseek-harness/releases';
-const RUNTIMES=['0.2.0-rc.2','0.2.1-rc.2'];
+const RUNTIMES=['0.2.0-rc.2','0.2.1-rc.2','0.2.1-rc.3'];
 const NAMES=['dsh-wechat','dsh-project-companion'];
-const BRIDGE_VERSIONS=new Set(['0.11.0','0.11.1-dot.1','0.11.1-dot.2']);
+const BRIDGE_VERSIONS=new Set(['0.11.0','0.11.1-dot.1','0.11.1-dot.2','0.11.1-dot.3']);
 const MAX_PACKAGE=20*1024*1024;
 const MAX_TAR=64*1024*1024;
 function failure(code,message,extra={}){return Object.assign(new Error(message),{code,...extra});}
@@ -117,6 +117,21 @@ async function installedPackage(profile,name){
   if(/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(direct)&&direct!==value.version)throw failure('INCONSISTENT_INSTALL',`${name} 的 direct dependency 精确版本与模块版本不一致；请通过官方插件管理器修复。`);
   return {...value,enabled};
 }
+async function desktopProfileInitialized(profile){
+  let text;
+  try{text=await readFile(join(profile,'package.json'),'utf8');}catch(error){
+    if(error.code!=='ENOENT')throw failure('INVALID_LOCAL_METADATA','无法读取官方桌面环境，请通过官方 App 检查修复。');
+    let entries;try{entries=await readdir(profile);}catch(error){if(error.code==='ENOENT')return false;throw failure('INVALID_LOCAL_METADATA','无法检查官方桌面环境，请通过官方 App 检查修复。');}
+    if(entries.length)throw failure('INCONSISTENT_PROFILE','桌面环境存在文件但缺少 package.json，可能是未完成的初始化或安装残留；请通过官方 App 检查修复，不会将其当作全新环境或手工重建。');
+    return false;
+  }
+  let manifest;try{manifest=JSON.parse(text);}catch{throw failure('INVALID_LOCAL_METADATA','官方桌面环境的 package.json 无法解析，请通过官方 App 检查修复。');}
+  const record=value=>value!==null&&typeof value==='object'&&!Array.isArray(value);
+  // Desktop's requireDesktopProfile checks package.json. initProfile creates
+  // these two containers even before any dependencies have been installed.
+  if(!record(manifest)||!record(manifest.dependencies)||!Array.isArray(manifest.dsh?.profile?.bundles)||manifest.dsh.profile.bundles.some(name=>typeof name!=='string'||!name.trim()))throw failure('INVALID_LOCAL_METADATA','官方桌面环境的依赖或插件登记无效，请通过官方 App 检查修复；不会自动初始化或覆盖。');
+  return true;
+}
 
 /** By default only validates and previews. install:true invokes the official Desktop CLI. */
 export async function runInstallation({bundleDir,appPath='/Applications/DeepSeek Harness.app',homeDir=homedir(),dshHome,platform=process.platform,runner=runProcess,install=false,env=process.env,ownPid=process.pid}){
@@ -131,12 +146,13 @@ export async function runInstallation({bundleDir,appPath='/Applications/DeepSeek
   const sdk=await runner(executable,['--expose-internals','--max-old-space-size=128','--input-type=module','--eval',probe],options);let versions;
   try{if(sdk.code!==0)throw Error();versions=JSON.parse(sdk.stdout.trim());}catch{throw failure('RUNTIME_PROBE_FAILED','无法读取官方 App 自带的 Harness/SDK 版本。');}
   if(!bundle.manifest.runtimeVersions.includes(versions.runtimeVersion)||versions.runtimeVersion!==versions.sdkVersion)throw failure('UNSUPPORTED_RUNTIME','当前 Harness/SDK 不在此候选安装包已验证的精确版本范围。');
+  if(!await desktopProfileInitialized(profile))return {status:'needs_initialization',mode:install?'install':'dry_run',runtimeVersion:versions.runtimeVersion,profile,message:'请先打开官方 DeepSeek Harness 一次，等待主界面出现，再保存工作并正常退出，然后回到同一安装窗口继续；本次未安装或创建桌面环境。'};
   const steps=[];
   for(const p of bundle.packages){
     const existing=await installedPackage(profile,p.name);let action='install';
     if(existing){
       if(existing.version===p.version)action='preserve';
-      else if(p.name==='dsh-wechat'){if((existing.version==='0.11.0'&&['0.11.1-dot.1','0.11.1-dot.2'].includes(p.version))||(existing.version==='0.11.1-dot.1'&&p.version==='0.11.1-dot.2'))action='upgrade';else throw failure('BRIDGE_VERSION_CONFLICT','现有微信桥接与已验证升级路径不同；不会降级或重置配对。');}
+      else if(p.name==='dsh-wechat'){if((existing.version==='0.11.0'&&['0.11.1-dot.1','0.11.1-dot.2','0.11.1-dot.3'].includes(p.version))||(existing.version==='0.11.1-dot.1'&&['0.11.1-dot.2','0.11.1-dot.3'].includes(p.version))||(existing.version==='0.11.1-dot.2'&&p.version==='0.11.1-dot.3'))action='upgrade';else throw failure('BRIDGE_VERSION_CONFLICT','现有微信桥接与已验证升级路径不同；不会降级或重置配对。');}
       else if(compareVersions(existing.version,p.version)>0)throw failure('COMPANION_DOWNGRADE','已装 companion 版本更高；拒绝降级。');
       else action='upgrade';
     }

@@ -30,10 +30,34 @@ const nodes=(tree,predicate)=>{const result=[];const visit=value=>{if(!value||ty
 const text=tree=>{let out='';const visit=value=>{if(typeof value==='string'||typeof value==='number'){out+=`${value} `;return;}for(const child of value?.children??[])visit(child);};visit(tree);return out;};
 const snapshot=(connection,extra={})=>({version:1,completed:false,connection,projects:[{id:'p1',label:'公开项目',watched:false}],...extra});
 
-test('client registers owned settings and onboarding surfaces; opening only reads sanitized state',async()=>{
+for(const status of ['stopped','no_text'])test('first brief '+status+' displays a terminal result and offers only explicit attempt-scoped retry',async()=>{
+ const c=await loadClient(),retryKey='retry_'+'a'.repeat(64);c.context.snapshot=snapshot({state:'bound',sessionId:'real-session'},{projects:[{id:'p1',label:'公开项目',watched:true}],welcome:{status:'accepted',outcome:{status},receipt:{status:'unconfirmed'},retryKey}});
+ c.render();await c.flush();const view=c.render();assert.match(text(view),status==='stopped'?/本次简报已停止/:/本次未生成简报/);assert.doesNotMatch(text(view),/任务已提交；生成和手机收件状态仍待核对/);
+ const retry=nodes(view,n=>n.type==='button'&&text(n).includes('重新生成'))[0];assert.ok(retry);assert.equal(retry.props.disabled,false);assert.equal(nodes(view,n=>n.type==='button'&&text(n).includes('我已在微信收到')).length,0);assert.equal(c.requests.filter(r=>r.options.method==='POST').length,0);
+ c.context.snapshot={...c.context.snapshot,welcome:{status:'accepted',outcome:{status:'running'},receipt:{status:'unconfirmed'}}};await retry.props.onClick();assert.deepEqual(JSON.parse(c.requests.at(-1).options.body),{action:'retry',retryKey});assert.match(text(c.render()),/正在整理/);c.dispose();
+});
+
+test('stopped legacy first brief offers opening its original conversation rather than retrying an unknown scope',async()=>{
+ const c=await loadClient();c.context.snapshot=snapshot({state:'bound',sessionId:'real-session'},{welcome:{status:'accepted',outcome:{status:'stopped'},receipt:{status:'unconfirmed'}}});c.render();await c.flush();const view=c.render();assert.match(text(view),/本次简报已停止/);assert.equal(nodes(view,n=>n.type==='button'&&text(n).includes('重新生成')).length,0);assert.match(text(view),/打开.*会话/);assert.equal(c.requests.filter(r=>r.options.method==='POST').length,0);c.dispose();
+});
+
+test('empty project state gives a precise existing-workspace path and a metadata-only refresh action',async()=>{
+ const c=await loadClient();c.context.snapshot=snapshot({state:'bound',sessionId:'real-session'},{projects:[]});c.render();await c.flush();const view=c.render();assert.match(text(view),/Harness 左侧.*工作区.*本地项目文件夹/);
+ const refresh=nodes(view,n=>n.type==='button'&&text(n).includes('已添加，刷新项目'))[0];assert.ok(refresh);c.context.snapshot=snapshot({state:'bound',sessionId:'real-session'});await refresh.props.onClick();assert.match(text(c.render()),/公开项目/);assert.equal(c.requests.every(r=>r.options.method==='GET'),true);assert.equal(c.opened.length,0);c.dispose();
+});
+
+test('a stale retry button cannot repeat an accepted or uncertain attempt',async()=>{
+ for(const result of ['accepted','network']){
+  const c=await loadClient(),retryKey='retry_'+'b'.repeat(64);c.context.snapshot=snapshot({state:'bound',sessionId:'real-session'},{projects:[{id:'p1',label:'公开项目',watched:true}],welcome:{status:'accepted',outcome:{status:'no_text'},receipt:{status:'unconfirmed'},retryKey}});c.render();await c.flush();const button=nodes(c.render(),n=>n.type==='button'&&text(n).includes('重新生成'))[0];
+  if(result==='accepted')c.context.snapshot={...c.context.snapshot,welcome:{status:'accepted',outcome:{status:'running'},receipt:{status:'unconfirmed'}}};else c.context.onFetch=()=>{throw new Error('synthetic uncertain response');};
+  await button.props.onClick();await button.props.onClick();assert.equal(c.requests.filter(r=>r.options.method==='POST').length,1,result);assert.equal(c.opened.length,0);if(result==='network')assert.match(text(c.render()),/结果暂不确定.*未自动重试/);c.dispose();
+ }
+});
+
+test('client keeps WeChat setup explicit and registers no first-run blocking onboarding',async()=>{
   const c=await loadClient();c.context.snapshot=snapshot({state:'waiting-qr',qrAvailable:true,qrRevision:'1234567890abcdef'});
   assert.equal(c.descriptor.id,'@oxmumu3/dsh-project-companion');
-  assert.equal(c.registrations.length,2);
+  assert.equal(c.registrations.length,1);assert.equal(c.registrations.some(row=>row.definition.name==='settings.onboarding'),false);
   c.render();await c.flush();const view=c.render();
   assert.equal(c.requests.length,1);assert.equal(c.requests[0].url,endpoint);assert.equal(c.requests[0].options.method??'GET','GET');
   assert.equal(nodes(view,n=>n.type==='img')[0].props.src,'/wechat/api/qr-image?v=1234567890abcdef');
@@ -81,14 +105,14 @@ test('explicit first brief submits once and requires phone receipt confirmation 
   assert.equal(closed,1);assert.deepEqual(JSON.parse(c.requests.at(-1).options.body),{action:'confirm_received'});assert.equal(completed,0);c.dispose();
 });
 
-test('unknown status does not show QR or enable project mutation; completed onboarding exits without navigation',async()=>{
+test('unknown status cannot mutate; completed explicit setup remains inspectable without navigation',async()=>{
   const c=await loadClient();c.context.snapshot=snapshot({state:'unknown'});c.render();await c.flush();const view=c.render();
   assert.equal(nodes(view,n=>n.type==='img').length,0);assert.match(text(view),/连接状态/);
   assert.equal(nodes(view,n=>n.type==='button'&&text(n).includes('保存关注并预览简报'))[0].props.disabled,true);
   c.dispose();
   const done=await loadClient();done.context.snapshot=snapshot({state:'bound',sessionId:'real-session'},{completed:true});let complete=0;
-  done.render('settings.onboarding',{complete:()=>complete++});await done.flush();done.render('settings.onboarding',{complete:()=>complete++});await done.flush();
-  assert.equal(complete,1);assert.equal(done.opened.length,0);assert.equal(done.requests.length,1);done.dispose();
+  done.render('settings.section',{close:()=>complete++});await done.flush();done.render('settings.section',{close:()=>complete++});await done.flush();
+  assert.equal(complete,0);assert.equal(done.opened.length,0);assert.equal(done.requests.length,1);done.dispose();
 });
 
 test('uncertain first-brief submission is never retried automatically or by repeated click',async()=>{
@@ -190,14 +214,14 @@ test('failed status refresh invalidates stale binding or QR and switches to slow
 });
 
 
-test('new onboarding keeps generated outcome open until an explicit receipt, with no auto navigation',async()=>{
-  const c=await loadClient();c.context.snapshot=snapshot({state:'bound',sessionId:'real-session'},{projects:[{id:'p1',label:'公开项目',watched:true}]});let complete=0;const props={complete:()=>complete++};
-  c.render('settings.onboarding',props);await c.flush();let view=c.render('settings.onboarding',props);
+test('explicit WeChat setup keeps generated outcome open until an explicit receipt, with no auto navigation',async()=>{
+  const c=await loadClient();c.context.snapshot=snapshot({state:'bound',sessionId:'real-session'},{projects:[{id:'p1',label:'公开项目',watched:true}]});let complete=0;const props={close:()=>complete++};
+  c.render('settings.section',props);await c.flush();let view=c.render('settings.section',props);
   c.context.snapshot={...c.context.snapshot,completed:true,welcome:{status:'accepted',outcome:{status:'running'},receipt:{status:'unconfirmed'}}};
-  await nodes(view,n=>n.type==='button'&&text(n).includes('生成首份简报并回到微信'))[0].props.onClick();view=c.render('settings.onboarding',props);await c.flush();
+  await nodes(view,n=>n.type==='button'&&text(n).includes('生成首份简报并回到微信'))[0].props.onClick();view=c.render('settings.section',props);await c.flush();
   assert.equal(complete,0);assert.match(text(view),/正在整理/);assert.equal(c.opened.length,0);
   c.context.snapshot={...c.context.snapshot,welcome:{status:'accepted',outcome:{status:'generated',reply:'本轮简报：等待核对'},receipt:{status:'unconfirmed'}}};
-  await nodes(view,n=>n.type==='button'&&text(n).includes('刷新简报状态'))[0].props.onClick();view=c.render('settings.onboarding',props);await c.flush();assert.equal(complete,0);assert.match(text(view),/等待核对/);
+  await nodes(view,n=>n.type==='button'&&text(n).includes('刷新简报状态'))[0].props.onClick();view=c.render('settings.section',props);await c.flush();assert.equal(complete,0);assert.match(text(view),/等待核对/);
   c.context.snapshot={...c.context.snapshot,welcome:{...c.context.snapshot.welcome,receipt:{status:'user_confirmed',receivedAt:'2026-10-19T18:00:00Z'}}};
-  await nodes(view,n=>n.type==='button'&&text(n).includes('我已在微信收到'))[0].props.onClick();c.render('settings.onboarding',props);await c.flush();assert.equal(complete,1);assert.equal(c.requests.filter(r=>r.options.method==='POST').length,2);assert.equal(c.opened.length,0);c.dispose();
+  await nodes(view,n=>n.type==='button'&&text(n).includes('我已在微信收到'))[0].props.onClick();c.render('settings.section',props);await c.flush();assert.equal(complete,1);assert.equal(c.requests.filter(r=>r.options.method==='POST').length,2);assert.equal(c.opened.length,0);c.dispose();
 });

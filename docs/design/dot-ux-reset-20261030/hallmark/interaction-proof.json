@@ -1,0 +1,103 @@
+{
+  "sourceSha256": "702de7eb0d2150e7f35be65c7dd3ed895ad5eb7de7e570f2cd5857a187527e94",
+  "time": "2026-10-30T18:04:35.898Z",
+  "browser": "Ego Lite",
+  "scope": "Synthetic clickable HTML prototype only; no real pairing, sources or plans",
+  "results": [
+    {
+      "name": "QR expiry keeps draft",
+      "pass": true
+    },
+    {
+      "name": "QR refresh in place keeps draft",
+      "pass": true
+    },
+    {
+      "name": "Demo pairing collapses QR and preserves draft",
+      "pass": true
+    },
+    {
+      "name": "One composer moves into floating conversation",
+      "pass": true
+    },
+    {
+      "name": "Escape closes float and restores focus",
+      "pass": true
+    },
+    {
+      "name": "Home restores same composer and draft",
+      "pass": true
+    },
+    {
+      "name": "Starter fills known sample",
+      "pass": true
+    },
+    {
+      "name": "Starter backup restores original draft",
+      "pass": true
+    },
+    {
+      "name": "Free input is retained without execution",
+      "pass": true
+    },
+    {
+      "name": "Sample Enter produces one result and clears draft",
+      "pass": true
+    },
+    {
+      "name": "First-use history contains this demo only",
+      "pass": true
+    },
+    {
+      "name": "Daily history retains earlier record",
+      "pass": true
+    },
+    {
+      "name": "Connection retry retains draft and recovered state",
+      "pass": true
+    },
+    {
+      "name": "Narrow float and send stay within viewport",
+      "pass": true,
+      "panel": {
+        "x": 8,
+        "y": 184,
+        "width": 351,
+        "height": 580,
+        "top": 184,
+        "right": 359,
+        "bottom": 764,
+        "left": 8
+      },
+      "send": {
+        "x": 244,
+        "y": 698,
+        "width": 89,
+        "height": 44,
+        "top": 698,
+        "right": 333,
+        "bottom": 742,
+        "left": 244
+      },
+      "opacity": "1",
+      "background": "rgb(255, 254, 250)"
+    },
+    {
+      "name": "No horizontal overflow 320",
+      "pass": true,
+      "width": 320
+    },
+    {
+      "name": "No horizontal overflow 768",
+      "pass": true,
+      "width": 768
+    },
+    {
+      "name": "Reduced motion fallback active",
+      "pass": true,
+      "matches": true,
+      "transition": "1e-05s",
+      "animation": "1e-05s"
+    }
+  ]
+}

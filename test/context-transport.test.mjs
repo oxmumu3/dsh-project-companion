@@ -363,3 +363,7 @@ test('a synchronous credential lease is checked again after asynchronous route a
   await assert.rejects(transport.catalog('gmail',{authorize:async()=>{await Promise.resolve();allowed=false;},authorizeSync:()=>allowed}),error=>error.code==='CONTEXT_CANCELLED');
   assert.equal(fetches,0);await transport.close();
 });
+test('flomo token failure preserves only fixed auth diagnostics across MCP transport',async()=>{
+ const {createContextTransport}=await load(),transport=createContextTransport({flomoAuth:{getToken:async()=>{throw Object.assign(Error('SYNTHETIC_PRIVATE'),{authDiagnostic:{stage:'token_endpoint_http',statusClass:'400',oauthError:'invalid_grant',error_description:'SYNTHETIC_PRIVATE'}});}},fetch:async()=>{throw Error('must not access source');}});
+ try{await assert.rejects(transport.catalog('flomo'),e=>{assert.equal(e.code,'CONTEXT_AUTH_REQUIRED');assert.deepEqual(e.authDiagnostic,{stage:'token_endpoint_http',statusClass:'400',oauthError:'invalid_grant'});assert.doesNotMatch(String(e)+JSON.stringify(e.authDiagnostic),/SYNTHETIC_PRIVATE/);return true;});}finally{await transport.close();}
+});

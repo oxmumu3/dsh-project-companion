@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { basename, dirname, isAbsolute, resolve } from 'node:path';
 import { readProjectFiles, readGithubRelease, validateRepository, PROJECT_FILES, FILE_BYTES } from './sources.js';
 import { formatWechatDigest, formatWechatReminder } from './presentation.js';
+import {createProjectCatalog,projectPublicId} from './project-catalog.js';
 
 const SIX_HOURS = 6 * 60 * 60 * 1000;
 const REMINDER_GRACE = 15 * 60 * 1000;
@@ -9,6 +10,9 @@ const TERMINAL = new Set(['queued', 'reported_sent', 'failed', 'uncertain', 'exp
 const snippet = (value, n = 300) => String(value ?? '').replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, '').replace(/\s+/g, ' ').slice(0, n);
 const errorText = error => snippet(error instanceof Error ? error.message : error, 250);
 const freshState = () => ({ id: 'profile', version: 1, projects: [], daily: null, paused: false, reminders: [], outbox: [] });
+const validExpectedBinding = value => value && typeof value === 'object' && !Array.isArray(value) &&
+  Object.keys(value).sort().join(',') === 'botHash,userHash' &&
+  /^[a-f0-9]{64}$/.test(value.userHash ?? '') && /^[a-f0-9]{64}$/.test(value.botHash ?? '');
 
 function requireOwner(owner) {
   if (!owner?.sessionId || typeof owner.cwd !== 'string' || !isAbsolute(owner.cwd)) throw new Error('A real current local session is required / 需要当前真实本地会话');
@@ -52,7 +56,7 @@ const friendlyName = value => String(value ?? '').normalize('NFKC').trim().repla
 function projectMatch(projects, reference, { optional = false } = {}) {
   if(typeof reference!=='string'||!reference.trim()||reference.length>4096)throw new Error('请告诉我你指的是哪个项目。');
   const query=reference.trim();
-  let matches=projects.filter(p=>p.id===query||p.root===query);
+  let matches=projects.filter(p=>p.id===query||p.root===query||projectPublicId(p.root)===query);
   if(!matches.length&&!isAbsolute(query)){
     const normalized=friendlyName(query);
     matches=projects.filter(p=>friendlyName(p.label)===normalized);
@@ -146,6 +150,7 @@ export function createService(options = {}) {
   // Cancellation intent must be visible while a serialized tick awaits I/O.
   // Configurations keep their request-time version so queued ordering survives.
   let dailyCancellationVersion=0,dailyConfigurationVersion=0;
+  const reminderCancellations = new Map();
   const dailyAllowed=()=>dailyConfigurationVersion===dailyCancellationVersion;
   let queue = Promise.resolve();
   const serial = work => { const run = queue.then(work); queue = run.catch(() => {}); return run; };
@@ -164,7 +169,7 @@ export function createService(options = {}) {
   const candidates = async owner => {
     const rows = await discover(owner);
     const unique = new Map();
-    for (const row of [...rows.slice(0, 100), { root: owner.cwd, label: basename(owner.cwd), sessionIds: [owner.sessionId] }]) {
+    for (const row of [...rows, { root: owner.cwd, label: basename(owner.cwd), sessionIds: [owner.sessionId] }]) {
       if (typeof row.root !== 'string' || !isAbsolute(row.root)) continue;
       const root = resolve(row.root);
       const prior = unique.get(root);
@@ -249,8 +254,8 @@ export function createService(options = {}) {
     }
     return output;
   }
-  function enqueue(kind, sessionId, text, expiresAt) {
-    const item = { id: randomUUID(), kind, sessionId, text, createdAt: clock().toISOString(), expiresAt: new Date(expiresAt).toISOString(), status: 'pending', detail: '' };
+  function enqueue(kind, sessionId, text, expiresAt, expectedBinding) {
+    const item = { id: randomUUID(), kind, sessionId, text, createdAt: clock().toISOString(), expiresAt: new Date(expiresAt).toISOString(), status: 'pending', detail: '', ...(expectedBinding ? {expectedBinding:structuredClone(expectedBinding)} : {}) };
     state.outbox.push(item);
     // Pending jobs are bounded by five projects / fifty reminders; discard only terminal history.
     while (state.outbox.length > 100) {
@@ -269,7 +274,13 @@ export function createService(options = {}) {
       item.status = 'dispatching'; await save();
       if (clock().getTime() >= Date.parse(item.expiresAt)) { item.status = 'expired'; item.detail = 'Sending window elapsed during persistence; not dispatched'; await save(); continue; }
       try {
-        const result = await send(structuredClone(item));
+        const authorize=()=>{
+          if(state.paused||item.status!=='dispatching'||clock().getTime()>=Date.parse(item.expiresAt))return false;
+          if(item.kind==='daily')return dailyAllowed();
+          const reminder=state.reminders.find(row=>row.outboxId===item.id);
+          return !!reminder && reminder.status==='enqueued' && !reminderCancellations.has(reminder.id);
+        };
+        const result = await send(structuredClone(item),{authorize});
         item.status = ['blocked', 'queued', 'reported_sent', 'failed', 'uncertain'].includes(result?.status) ? result.status : 'uncertain';
         item.detail = snippet(result?.detail ?? 'Unrecognized bridge result', 300);
       } catch (error) { item.status = 'uncertain'; item.detail = errorText(error); }
@@ -282,10 +293,20 @@ export function createService(options = {}) {
       try{cancellationOwner=requireOwner(caller);}catch(error){return Promise.reject(error);}
       dailyCancellationVersion++;
     }
+    let cancellingReminder;
+    if(input.action==='cancel_reminder'){
+      try{cancellationOwner=requireOwner(caller);}catch(error){return Promise.reject(error);}
+      if(typeof input.id==='string'&&state?.reminders.some(row=>row.id===input.id)){
+        cancellingReminder=input.id;
+        reminderCancellations.set(input.id,(reminderCancellations.get(input.id)??0)+1);
+      }
+    }
     const requestedDailyVersion=dailyCancellationVersion;
     return serial(async () => {
     await load();
     const owner = cancellationOwner??requireOwner(caller);
+    if(input.expectedBinding!==undefined&&(!['configure_daily','remind'].includes(input.action)||!validExpectedBinding(input.expectedBinding)))throw new Error('Invalid expected delivery binding');
+    if(input.expectedBinding!==undefined&&input.userRequested!==true)throw new Error('需要用户明确要求才可安排 Family 提醒或日报。');
     switch (input.action) {
       case 'watch': {
         const known = await candidates(owner);
@@ -308,21 +329,23 @@ export function createService(options = {}) {
       }
       case 'list': {
         const known=await candidates(owner);
-        const shown=known.slice(0,10).map(p=>({...p,root:snippet(p.root,256),sessionIds:p.sessionIds.slice(-2)}));
+        const catalog=options.catalog??createProjectCatalog({readRegistered:()=>known,readWatched:async()=>state.projects});
+        const page=await catalog.page({...(input.query!==undefined?{query:input.query}:{}),...(input.offset!==undefined?{offset:input.offset}:{}),...(input.limit!==undefined?{limit:input.limit}:{}),...(input.catalogRevision!==undefined?{expectedRevision:input.catalogRevision}:{})});
+        const shown=page.items;
         const projects=view().projects;
         const time=currentTime();
-        const text=[`现在: ${time.now}；电脑时区: ${time.hostTimeZone}`,'关注项目:',...projects.map(p=>`${p.id} ${p.label}; session ${p.sessionIds.join(', ')||'无'}`),`可选项目(${known.length}，最多列10个):`,...shown.map(p=>`${snippet(p.id,120)} ${p.label}; session ${p.sessionIds.join(', ')||'无'}`),'告诉我你想关注的项目名称即可；同名时我会先核对。'].join('\n');
-        return{...time,projects,candidates:shown,candidateCount:known.length,text:text.length<=3200?text:`${text.slice(0,3100)}\n[列表已截断；请告诉我目标项目名称]`};
+        const text=[`现在: ${time.now}；电脑时区: ${time.hostTimeZone}`,`持续关注项目（${projects.length}/5，单次查看其他已知项目不占名额）:`,...projects.map(p=>`${p.id} ${p.label}`),`已知项目 ${page.total} 个；本次匹配 ${page.matchedTotal} 个，本页 ${shown.length} 个:`,...shown.map(p=>`${p.label}${p.disambiguator?`（${p.disambiguator}）`:''}${p.watched?' · 正在关注':''}`),page.hasMore?'还有下一页，也可以直接告诉我项目名称。':'本次匹配已列完。','同名时我会先核对；列项目不会读取项目文件、派工或创建推送。'].join('\n');
+        return{...time,scope:options.catalog?page.scope:'live_compatibility',complete:!!options.catalog&&page.complete===true,projects,candidates:shown,candidateCount:page.total,catalogRevision:page.revision,matchedTotal:page.matchedTotal,offset:page.offset,limit:page.limit,hasMore:page.hasMore,nextOffset:page.nextOffset,text:text.length<=3200?text:`${text.slice(0,3100)}\n[文字已截断；结构化本页与分页信息仍完整]`};
       }
       case 'digest': return digest(input.project,owner,input.detail);
       case 'configure_daily': {
         const timeZoneDefaulted=input.timeZone===undefined;
         const value = schedule(input.time, timeZoneDefaulted?computerTimeZone():input.timeZone);
         const prior = state.daily;
-        state.daily = { ...value, sessionId: owner.sessionId, enabled: true, lastDate: prior?.lastDate ?? null };
+        state.daily = { ...value, sessionId: owner.sessionId, enabled: true, lastDate: prior?.lastDate ?? null, ...(input.expectedBinding ? {expectedBinding:structuredClone(input.expectedBinding)} : {}) };
         dailyConfigurationVersion=requestedDailyVersion;
         state.paused = false;
-        for (const item of state.outbox) if (item.kind === 'daily' && ['pending', 'blocked'].includes(item.status)) item.sessionId = owner.sessionId;
+        for (const item of state.outbox) if (item.kind === 'daily' && ['pending', 'blocked'].includes(item.status) && !item.expectedBinding && !input.expectedBinding) item.sessionId = owner.sessionId;
         await save(); return { ...view(), timeZoneDefaulted, text: `已设置每日 ${value.time} 汇报，${timeZoneDefaulted?'本次按电脑时区':'时区为'} ${value.timeZone}。电脑和宿主在线时检查；晚于6小时不补发。` };
       }
       case 'cancel_daily': {
@@ -356,7 +379,7 @@ export function createService(options = {}) {
         if (Date.parse(dueAt) <= now) throw new Error('Reminder must be in the future');
         if (typeof input.title !== 'string' || !input.title.trim() || input.title.length > 200) throw new Error('Reminder title must be 1-200 characters');
         if (state.reminders.filter(activeReminder).length >= 50) throw new Error('At most 50 active reminders');
-        const reminder = { id: `r_${randomUUID().slice(0, 8)}`, title: input.title.trim(), dueAt, sessionId: owner.sessionId, status: 'scheduled' };
+        const reminder = { id: `r_${randomUUID().slice(0, 8)}`, title: input.title.trim(), dueAt, sessionId: owner.sessionId, status: 'scheduled', ...(input.expectedBinding ? {expectedBinding:structuredClone(input.expectedBinding)} : {}) };
         state.reminders = [...state.reminders.filter(activeReminder).slice(-50), ...state.reminders.filter(r => !activeReminder(r)).slice(-49), reminder].slice(-100);
         state.paused = false; await save(); return { reminder: structuredClone(reminder), text: relative?`已记下，${input.delayMinutes}分钟后提醒你「${reminder.title}」。电脑和宿主需保持在线；你也可以随时告诉我取消。`:`已记下，将按电脑当前时区在${new Intl.DateTimeFormat('zh-CN',{timeZone:computerTimeZone(),dateStyle:'medium',timeStyle:'short'}).format(new Date(reminder.dueAt))}提醒你「${reminder.title}」。电脑和宿主需保持在线；你也可以随时告诉我取消。` };
       }
@@ -371,6 +394,8 @@ export function createService(options = {}) {
       case 'status': {const snapshot=view();return{...snapshot,text:statusText(snapshot)};}
       default: throw new Error('Unknown companion action');
     }
+    }).finally(()=>{
+      if(cancellingReminder){const n=reminderCancellations.get(cancellingReminder)??0;if(n<=1)reminderCancellations.delete(cancellingReminder);else reminderCancellations.set(cancellingReminder,n-1);}
     });
   };
   const record = event => serial(async () => {
@@ -396,7 +421,7 @@ export function createService(options = {}) {
         state.daily.lastDate = due.date;
         if (elapsed <= SIX_HOURS) {
           const output = await digest();
-          if(dailyAllowed())enqueue('daily', state.daily.sessionId, output.wechatText, due.at + SIX_HOURS);
+          if(dailyAllowed())enqueue('daily', state.daily.sessionId, output.wechatText, due.at + SIX_HOURS, state.daily.expectedBinding);
         }
         await save();
       }
@@ -405,16 +430,18 @@ export function createService(options = {}) {
       if (reminder.status !== 'scheduled' || Date.parse(reminder.dueAt) > now.getTime()) continue;
       const expiry = Date.parse(reminder.dueAt) + REMINDER_GRACE;
       if (now.getTime() > expiry) reminder.status = 'expired';
-      else { reminder.status = 'enqueued'; reminder.outboxId = enqueue('reminder', reminder.sessionId, formatWechatReminder({title:reminder.title,dueAt:reminder.dueAt,timeZone:computerTimeZone()}), expiry).id; }
+      else { reminder.status = 'enqueued'; reminder.outboxId = enqueue('reminder', reminder.sessionId, formatWechatReminder({title:reminder.title,dueAt:reminder.dueAt,timeZone:computerTimeZone()}), expiry, reminder.expectedBinding).id; }
       await save();
     }
     await flush();
   });
   const needsTimer = () => !!state && !state.paused && (state.daily?.enabled || state.reminders.some(r => r.status === 'scheduled') || state.outbox.some(r => ['pending', 'blocked'].includes(r.status)));
   const coordinationTarget = projectId => serial(async()=>{await load();return structuredClone(projectMatch(state.projects,projectId,{optional:true}));});
+  const registeredProjectTarget=reference=>serial(async()=>{await load();return options.catalog?.registeredProjectTarget(reference)??null;});
+  const authorizeRegisteredCoordinationSync=scope=>coordinationReady&&!state?.paused&&options.catalog?.authorizeRegisteredCoordinationSync(scope)===true;
   // Final inbox admission cannot yield: read only this service's initialized current state.
   const canCoordinate = scope => {
-    if(!coordinationReady||!Array.isArray(state?.projects)||typeof scope?.projectId!=='string'||!scope.projectId||typeof scope.projectRoot!=='string'||!isAbsolute(scope.projectRoot)||resolve(scope.projectRoot)!==scope.projectRoot||typeof scope.sessionId!=='string'||!scope.sessionId)return false;
+    if(!coordinationReady||state?.paused||!Array.isArray(state?.projects)||typeof scope?.projectId!=='string'||!scope.projectId||typeof scope.projectRoot!=='string'||!isAbsolute(scope.projectRoot)||resolve(scope.projectRoot)!==scope.projectRoot||typeof scope.sessionId!=='string'||!scope.sessionId)return false;
     const project=state.projects.find(candidate=>candidate?.id===scope.projectId&&candidate.root===scope.projectRoot);
     return !!project&&Array.isArray(project.sessionIds)&&project.sessionIds.includes(scope.sessionId);
   };
@@ -430,7 +457,11 @@ export function createService(options = {}) {
     return{project:{id:project.id,root:project.root,label:project.label},generatedAt:clock().toISOString(),historyScan:false,sources:files.filter(file=>PROJECT_FILES.includes(file.path)).slice(0,3).map(analysisSource)};
   });
   const canReadProjectUpdate=scope=>coordinationReady&&!state?.paused&&typeof scope?.projectRoot==='string'&&state.projects.some(p=>p.id===scope.projectId&&p.root===scope.projectRoot);
+  // Metadata membership only. Pausing prevents reads through canRun; it does
+  // not revoke the right to inspect this owner's existing paused plan.
+  const isWatchedProjectSync=scope=>coordinationReady&&typeof scope?.projectRoot==='string'&&state.projects.some(p=>p.id===scope.projectId&&p.root===scope.projectRoot);
   const watchedProjects = () => serial(async()=>{await load();return structuredClone(state.projects);});
   const isPaused = () => serial(async()=>{await load();return state.paused;});
-  return { ready, act, record, tick, needsTimer, coordinationTarget, canCoordinate, watchedProjects, isPaused, fixedProjectAnalysis, canReadProjectUpdate };
+  const isPausedSync = () => !coordinationReady||state?.paused!==false;
+  return { ready, act, record, tick, needsTimer, coordinationTarget, canCoordinate, coordinationPausedSync:isPausedSync, watchedProjects, isPaused, isPausedSync, fixedProjectAnalysis, canReadProjectUpdate, isWatchedProjectSync, registeredProjectTarget, authorizeRegisteredCoordinationSync };
 }

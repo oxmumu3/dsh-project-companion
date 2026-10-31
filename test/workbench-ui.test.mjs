@@ -29,7 +29,7 @@ async function harness({layout=true,sessions,appearance=false}={}){
   if(appearance){ctx.configForms={get:()=>({getSnapshot:()=>formState,subscribe:fn=>{formListeners.add(fn);return()=>formListeners.delete(fn);},mutate:async(ops,revision)=>{assert.equal(revision,formState.revision);assert.equal(ops[0].path[0],'dotAppearance');formState={...formState,revision:revision+1,value:{dotAppearance:ops[0].value}};formListeners.forEach(fn=>fn());return true;}})};ctx.theme={overrideTokens:()=>{const layer={active:true};themeLayers.push(layer);return()=>{layer.active=false;};}};}
   module.apply(ctx);
   const panel=()=>registrations.find(row=>row.spec.name==='main'&&row.spec.key==='project-companion-dot');
-  const render=()=>{cursor=0;assert.ok(panel(),'native Dot main panel must be registered');return panel().component(sessions?{useSessions:selector=>selector({byId:sessions})}:{});};
+  const render=(props={})=>{cursor=0;assert.ok(panel(),'native Dot main panel must be registered');return panel().component({...props,...(sessions?{useSessions:selector=>selector({byId:sessions})}:{})});};
   const flush=async()=>{const run=pending;pending=[];run.forEach(fn=>fn());await new Promise(resolve=>setImmediate(resolve));};
   const unmount=()=>{values.forEach(value=>value?.cleanup?.());values=[];pending=[];};
   return{module,source,ctx,context,registrations,requests,opened,panels,themeLayers,render,flush,unmount,dispose:()=>{unmount();cleanups.forEach(stop=>stop?.());}};
@@ -43,15 +43,117 @@ const posts=h=>actionPosts(h).filter(row=>row.body.action!=='memory_detail');
 const memoryReads=h=>actionPosts(h).filter(row=>row.body.action==='memory_detail');
 const memoryDetail=row=>Response.json({action:'memory_detail',projectId:'p1',record:row});
 const memoryRow=(id,kind,value,source='user')=>({id,kind,text:value,at:'2026-10-19T17:00:00Z',source:{kind:source,reference:'session:session-a'},verified:false});
+const catalogEndpoint='/api/project_companion/catalog',catalogRevision='c'.repeat(64);
+const catalogItems=Array.from({length:137},(_,i)=>({id:`project_${i.toString(16).padStart(24,'0')}`,label:`目录项目 ${i}`,watched:i<5,sessionCount:1,registered:true}));
+function catalogFixture(h){h.context.onFetch=(url,options)=>{if(url!==catalogEndpoint)return Response.json(h.context.snapshot);const body=JSON.parse(options.body);if(body.action==='preview')return Response.json({version:1,project:{id:body.projectId,label:catalogItems.find(p=>p.id===body.projectId).label},revision:catalogRevision,previewOnly:true,historyScan:false,sources:[{path:'README.md',status:'ok',text:'SYNTHETIC_SINGLE_PROJECT_PREVIEW',truncated:true}]});const rows=catalogItems.filter(p=>!body.query||p.label.includes(body.query)),offset=body.offset??0,limit=body.limit??20;return Response.json({version:1,scope:'registered',complete:true,revision:catalogRevision,total:137,matchedTotal:rows.length,offset,limit,items:rows.slice(offset,offset+limit),hasMore:offset+limit<rows.length,nextOffset:offset+limit<rows.length?offset+limit:null,watchedCount:2,watchLimit:5});};}
 function seedMemory(h,row){h.context.snapshot.projects[0].overview={available:true,goals:[],blockers:[],nextSteps:[],recent:[row]};}
 async function openMemory(h){button(h.render(),'公开项目 A').props.onClick();button(h.render(),'记住的事').props.onClick();await button(h.render(),'纠正或忘记').props.onClick();return h.render();}
+// These tests exercise a session the user previously selected, rather than the
+// old server projection silently selecting an arbitrary historical session.
+function selectedDesktop(h,id='dot-source'){
+ h.ctx.configForms={get:()=>({getSnapshot:()=>({status:'ready',writable:false,revision:1,value:{desktopConversationSessionId:id,desktopConversationSelectionVersion:1}})})};
+ h.ctx.sessions={...h.ctx.sessions,refresh:async()=>{},list:{getSnapshot:()=>({phase:'ready',ids:[id],byId:{[id]:{id,cwd:'/synthetic/selected-project'}}})}};
+}
+
+test('native reset home leads with real bounded attention and keeps old jobs inside closed history',async()=>{
+ const h=await harness();h.context.snapshot.personalReview={available:true,attentionItems:{available:true,truncated:true,coverage:'only-enabled-sources',items:[{id:'item1',title:'REAL_ATTENTION_TITLE',kind:'deadline',summary:'REAL_SUMMARY <script>escaped</script>',why:'REAL_WHY',action:'REAL_NEXT_STEP',status:'open',unknown:false,time:'2026-10-31T09:00:00Z',sources:[{source:'calendar',title:'REAL_SOURCE_TITLE',at:'2026-10-30T08:00:00Z',contentState:'metadata-only'}]}]},schedules:{available:true,items:[]},review:{status:'off'},news:{topics:[]}};
+ try{h.render();await h.flush();const view=h.render(),items=nodes(view,n=>n.props['data-dot-attention-item']);assert.equal(items.length,1);assert.match(text(items[0]),/REAL_ATTENTION_TITLE.*REAL_SUMMARY.*REAL_WHY.*REAL_NEXT_STEP.*REAL_SOURCE_TITLE/);assert.equal(nodes(view,n=>n.type==='script'||n.props.dangerouslySetInnerHTML).length,0);const histories=nodes(view,n=>n.type==='details'&&n.props['data-dot-history']);assert.equal(histories.length,1);assert.notEqual(histories[0].props.open,true);assert.equal(nodes(view,n=>n.props['data-dot-current-result']).length,0);assert.equal(nodes(histories[0],n=>n.props['data-dot-job']==='j1').length,1);assert.deepEqual(actionPosts(h),[]);}finally{h.dispose();}
+});
+
+test('native reset unknown scopes share one recoverable banner while attention remains unknown',async()=>{
+ const h=await harness();h.context.snapshot.availability={projects:false,plans:false,jobs:false};h.context.snapshot.personalReview={available:false,attentionItems:{available:false,items:[],note:'SOURCE_STATUS_UNCONFIRMED'},schedules:{available:false,items:[]}};
+ try{h.render();await h.flush();const view=h.render(),banner=nodes(view,n=>n.props['data-dot-recovery']);assert.equal(banner.length,1);assert.match(text(banner[0]),/关注项目.*交办记录.*已有安排.*当前事项/);assert.ok(button(banner[0],'重试状态'));assert.doesNotMatch(text(view),/当前记录里没有需要你处理|还没有开启项目跟进|暂无当前 Dot 会话/);assert.match(text(view),/SOURCE_STATUS_UNCONFIRMED/);assert.deepEqual(actionPosts(h),[]);}finally{h.dispose();}
+});
+
+function sharedOwnerProjection(h){
+ h.context.snapshot.connection={state:'bound',sessionId:'family-owner',readOnly:true};
+ h.context.snapshot.availability.plans=false;
+ h.context.snapshot.personalReview={available:true,attentionItems:{available:true,coverage:'only-enabled-sources',items:[]},schedules:{available:true,items:[{id:'review',title:'SHARED_OWNER_REVIEW',status:'stored',source:'personal-review',dailyTime:'09:00',timeZone:'America/Mexico_City'}]}};
+}
+
+test('shared Owner intentionally excluded legacy plans do not produce a recovery warning',async()=>{
+ const h=await harness();sharedOwnerProjection(h);
+ try{h.render();await h.flush();const view=h.render();assert.equal(nodes(view,n=>n.props['data-dot-recovery']).length,0);assert.match(text(nodes(view,n=>n.props['data-dot-schedule-rail'])[0]),/SHARED_OWNER_REVIEW.*09:00/);assert.match(text(view),/这里不混入独立 Dot 会话的旧计划/);assert.deepEqual(actionPosts(h),[]);}finally{h.dispose();}
+});
+
+for(const scope of ['schedules','projects','jobs','coverage','connection'])test(`shared Owner still reports actual ${scope} uncertainty`,async()=>{
+ const h=await harness();sharedOwnerProjection(h);
+ if(scope==='schedules')h.context.snapshot.personalReview.schedules.available=false;
+ if(scope==='projects'||scope==='jobs')h.context.snapshot.availability[scope]=false;
+ if(scope==='coverage')h.context.snapshot.personalReview.attentionItems.coverage='unconfirmed';
+ if(scope==='connection')h.context.snapshot.connection.state='failed';
+ const expected={schedules:'下一次安排',projects:'关注项目',jobs:'交办记录',coverage:'部分事项覆盖',connection:'微信连接'}[scope];
+ try{h.render();await h.flush();const view=h.render(),banner=nodes(view,n=>n.props['data-dot-recovery']);assert.equal(banner.length,1);assert.ok(text(banner[0]).includes(expected));assert.doesNotMatch(text(banner[0]),/已有安排尚未核对/);assert.match(text(nodes(view,n=>n.props['data-dot-schedule-rail'])[0]),/SHARED_OWNER_REVIEW/);assert.deepEqual(actionPosts(h),[]);}finally{h.dispose();}
+});
+
+test('independent Dot still reports unavailable legacy plans',async()=>{
+ const h=await harness();sharedOwnerProjection(h);h.context.snapshot.connection={state:'bound',sessionId:'dot-source'};
+ try{h.render();await h.flush();const banner=nodes(h.render(),n=>n.props['data-dot-recovery']);assert.equal(banner.length,1);assert.match(text(banner[0]),/已有安排尚未核对/);assert.deepEqual(actionPosts(h),[]);}finally{h.dispose();}
+});
+
+test('native reset schedule rail uses stored scope timezone and unverified runtime without claiming phone receipt',async()=>{
+ const h=await harness();h.context.snapshot.personalReview={available:true,attentionItems:{available:true,items:[]},schedules:{available:true,items:[{id:'review',kind:'daily',title:'REAL_DAILY_REVIEW',status:'stored',source:'personal-review',timeZone:'America/Mexico_City',dailyTime:'09:00',runtime:'unverified',phoneReceipt:'unverified'},{id:'news',kind:'daily',title:'REAL_NEWS',status:'paused',source:'news',timeZone:'Asia/Shanghai',dailyTime:'09:10',runtime:'unverified',phoneReceipt:'unverified'}]},review:{status:'enabled'},news:{topics:[]}};
+ try{h.render();await h.flush();const view=h.render(),rail=nodes(view,n=>n.props['data-dot-schedule-rail'])[0];assert.ok(rail);assert.match(text(rail),/REAL_DAILY_REVIEW.*09:00.*America\/Mexico_City/);assert.match(text(rail),/REAL_NEWS.*已暂停.*09:10.*Asia\/Shanghai/);assert.match(text(rail),/运行.*未核验.*手机.*未确认/);assert.deepEqual(actionPosts(h),[]);}finally{h.dispose();}
+});
+
+test('native reset missing setup passively shows existing real QR and desktop input without any pairing mutation',async()=>{
+ const h=await harness();h.context.snapshot.connection={state:'missing'};h.context.onFetch=url=>url===endpoint?Response.json(h.context.snapshot):Response.json({version:1,completed:false,connection:{state:'waiting-qr',qrAvailable:true,qrRevision:'a'.repeat(16)},projects:[]});
+ try{h.render();await h.flush();h.render();await h.flush();const view=h.render(),connect=nodes(view,n=>n.props['data-dot-inline-wechat'])[0];assert.ok(connect);assert.match(text(connect),/把 Dot 带到微信里/);assert.equal(nodes(connect,n=>n.type==='img'&&n.props.src==='/wechat/api/qr-image?v='+'a'.repeat(16)).length,1);assert.ok(button(connect,'先在电脑上试试'));assert.equal(nodes(view,n=>n.type==='textarea'&&n.props['aria-label']==='交代给 Dot 的事情').length,1);assert.ok(h.requests.every(r=>r.options.method==='GET'));assert.equal(h.opened.length,0);}finally{h.dispose();}
+});
+
+for(const state of ['waiting-qr','scanned','awaiting-message'])test(`native Host ${state} workbench projects the existing pairing state inline with passive reads only`,async()=>{
+ const h=await harness();h.context.snapshot.connection={state};h.context.onFetch=url=>url===endpoint?Response.json(h.context.snapshot):Response.json({version:1,completed:false,connection:{state,...(state==='waiting-qr'?{qrAvailable:true,qrRevision:'b'.repeat(16)}:{})},projects:[]});
+ try{h.render();await h.flush();h.render();await h.flush();const tree=h.render(),connect=nodes(tree,n=>n.props['data-dot-inline-wechat'])[0];assert.ok(connect);assert.equal(nodes(tree,n=>n.props['data-dot-recovery']).length,0);assert.equal(nodes(connect,n=>n.type==='img').length,state==='waiting-qr'?1:0);if(state==='waiting-qr')assert.equal(nodes(connect,n=>n.type==='img')[0].props.src,'/wechat/api/qr-image?v='+'b'.repeat(16));if(state==='scanned')assert.match(text(connect),/已扫码.*手机上确认/);if(state==='awaiting-message')assert.match(text(connect),/发送“你好”/);assert.equal(h.requests.filter(r=>r.url==='/api/project_companion/onboarding').length,1);assert.ok(h.requests.every(r=>r.options.method==='GET'));assert.equal(h.opened.length,0);assert.equal(nodes(tree,n=>n.type==='textarea'&&n.props['aria-label']==='交代给 Dot 的事情').length,1);}finally{h.dispose();}
+});
+
+for(const state of ['missing','waiting-qr','scanned','awaiting-message','failed'])test(`native Host Family readOnly ${state} never enters legacy inline pairing`,async()=>{
+ const h=await harness();h.context.snapshot.connection={state,readOnly:true};
+ try{h.render();await h.flush();h.render();await h.flush();const tree=h.render();assert.equal(nodes(tree,n=>n.props['data-dot-inline-wechat']).length,0);assert.equal(h.requests.filter(r=>r.url==='/api/project_companion/onboarding').length,0);assert.equal(nodes(tree,n=>n.type==='img').length,0);assert.deepEqual(actionPosts(h),[]);}finally{h.dispose();}
+});
+
+for(const connection of [{state:'bound',readOnly:true,sessionId:'family_owner_synthetic'},{state:'unknown',readOnly:true},{state:'unknown'},{state:'failed'}])test(`native reset ${connection.state} Family or unknown does not start QR or suggest legacy pairing`,async()=>{
+ const h=await harness();h.context.snapshot.connection=connection;
+ try{h.render();await h.flush();h.render();await h.flush();const view=h.render();assert.equal(nodes(view,n=>n.props['data-dot-inline-wechat']).length,0);assert.equal(h.requests.filter(r=>r.url==='/api/project_companion/onboarding').length,0);assert.equal(nodes(view,n=>n.type==='img').length,0);assert.deepEqual(actionPosts(h),[]);}finally{h.dispose();}
+});
+
+test('native reset renderer uses compact views slot inside the whole native conversation',async()=>{
+ const h=await harness();try{const child=h.registrations.find(r=>r.spec.name==='dot.desktop.conversation');let requested;child.component({renderFactorySlot:(...args)=>{requested=args;}});assert.equal(requested[0],'conversation.content');assert.equal(requested[1].variant,'embedded');assert.equal(typeof requested[2]?.slots?.views,'function');}finally{h.dispose();}
+});
+
+test('native reset raw old desktop projection never mounts an editor or creates a session on page load',async()=>{
+ const h=await harness();h.context.snapshot.desktopConversation={state:'ready',sessionId:'old-test-session',revision:'a'.repeat(64)};let created=0;h.ctx.sessions={create:async()=>{created++;return'new-session';},retain(){throw Error('must not retain raw projection');}};
+ try{const props={SessionProvider:function SessionProvider(){},renderSlot:()=>null};h.render(props);await h.flush();const tree=h.render(props);assert.equal(nodes(tree,n=>n.type?.name==='DesktopConversation').length,0);assert.equal(created,0);assert.equal(h.opened.length,0);assert.equal(nodes(tree,n=>n.type==='textarea').length,1);}finally{h.dispose();}
+});
+
+test('native reset preserves partial coverage, inferred deadlines and exact unread source boundaries',async()=>{
+ const h=await harness();h.context.snapshot.personalReview={available:true,attentionItems:{available:true,coverage:'unconfirmed',note:'CURRENT_GRANT_COVERAGE_PARTIAL',items:[{id:'deadline1',kind:'deadline',title:'BOUND_ITEM',summary:'已保存的事项',why:'需要现在确认',action:'先核对期限',unknown:'EXACT_UNKNOWN_FACT',confidence:'inferred',dueAt:'2026-11-01T09:00:00Z',dueAtBasis:'relative',sources:[{source:'drive',label:'云盘',contentState:'metadata_only',truncated:false}]}]},schedules:{available:false,note:'NEWS_SCHEDULE_UNKNOWN',items:[{id:'review',title:'KNOWN_REVIEW_SCHEDULE',source:'personal-review',status:'stored',dailyTime:'09:00',timeZone:'America/Mexico_City'}]},review:{status:'off'},news:{topics:[]}};
+ try{h.render();await h.flush();const view=h.render(),card=nodes(view,n=>n.props['data-dot-attention-item'])[0],rail=nodes(view,n=>n.props['data-dot-schedule-rail'])[0];assert.match(text(card),/估算期限/);assert.match(text(card),/EXACT_UNKNOWN_FACT/);assert.match(text(card),/仅来源信息/);assert.match(text(view),/CURRENT_GRANT_COVERAGE_PARTIAL/);assert.match(text(rail),/KNOWN_REVIEW_SCHEDULE/);assert.match(text(rail),/部分安排.*未确认/);assert.equal(nodes(view,n=>n.props['data-dot-recovery']).length,1);assert.ok(button(view,'查看连接'));assert.deepEqual(actionPosts(h),[]);}finally{h.dispose();}
+});
+
+test('personal review card explains daily and weekly value without enabling a plan on page load',async()=>{
+ const h=await harness();h.context.snapshot.personalReview={available:true,review:{status:'off',sources:[],projects:[],items:[],jobs:[]},news:{topics:['Agent 产品','插件生态'],topicSource:'explicit'}};
+ h.render();await h.flush();let view=h.render();assert.match(text(view),/每天少漏一件重要的事/);assert.match(text(view),/未开启/);assert.match(text(view),/Agent 产品/);assert.equal(posts(h).length,0);
+ button(view,'先看一份个人回顾').props.onClick();view=h.render();assert.match(text(view),/草稿/);assert.equal(posts(h).length,0);assert.equal(h.opened.length,0);h.dispose();
+});
+test('shared owner entry shows review schedule and unknown delivery honestly without mutation controls',async()=>{
+ const h=await harness();h.context.snapshot.connection.readOnly=true;h.context.snapshot.personalReview={available:true,review:{status:'enabled',schedule:{dailyTime:'09:00',weeklyDay:1,weeklyTime:'09:00',timeZone:'America/Mexico_City'},sources:['gmail','calendar'],projects:['/private/project'],items:[],jobs:[{status:'uncertain',detail:'发送结果不确定，不自动重发'}]},news:{topics:[],topicSource:'default'}};
+ h.render();await h.flush();const view=h.render();assert.match(text(view),/每天 09:00/);assert.match(text(view),/每周一/);assert.match(text(view),/发送结果不确定/);assert.doesNotMatch(text(view),/\/private\/project/);assert.equal(posts(h).length,0);h.dispose();
+});
+test('work-hour attention status is read-only and shows its next check and remaining budget',async()=>{
+ const h=await harness();h.context.snapshot.personalReview={available:true,review:{status:'enabled',schedule:{dailyTime:'09:00',timeZone:'America/Mexico_City'},attention:{enabled:true,nextRun:'2026-10-30T17:00:00.000Z',quiet:false,remaining:1},sources:['gmail'],projects:[],items:[],jobs:[]},news:{topics:[],topicSource:'default'}};
+ h.render();await h.flush();const view=h.render();assert.match(text(view),/工作时段主动关注已开启/);assert.match(text(view),/今天还可提醒 1 次/);assert.match(text(view),/下次检查/);assert.equal(posts(h).length,0);h.dispose();
+});
+test('existing review card displays current goals without a new setup form',async()=>{
+ const h=await harness();h.context.snapshot.personalReview={available:true,review:{status:'enabled',sources:[],projects:[],items:[],jobs:[],goals:[{title:'完善产品',status:'active',meetingTitle:'周会'}]},news:{topics:[]}};
+ h.render();await h.flush();const view=h.render();assert.match(text(view),/正在跟进的目标/);assert.match(text(view),/完善产品.*跟进中.*周会/);assert.equal(posts(h).length,0);h.dispose();
+});
 
 test('adds a matching native sidebar/main pair without replacing the existing interface',async()=>{
   const h=await harness();const main=h.registrations.find(row=>row.spec.name==='main');
   const entry=h.registrations.find(row=>row.spec.name==='sidebar.panellist');
   assert.ok(main,'native main panel');assert.ok(entry,'persistent sidebar entry');assert.equal(main.spec.key,entry.spec.id);
   assert.equal(entry.spec.label,'DSH Dot');assert.equal(h.registrations.some(row=>['root','sidebar','conversation.composer','conversation.chat.node'].includes(row.spec.name)),false);
-  assert.ok(h.registrations.some(row=>row.spec.name==='settings.section'));assert.ok(h.registrations.some(row=>row.spec.name==='settings.onboarding'));
+  assert.ok(h.registrations.some(row=>row.spec.name==='settings.section'));assert.equal(h.registrations.some(row=>row.spec.name==='settings.onboarding'),false);
   assert.equal(h.requests.length,0);assert.equal(h.panels.length,0);assert.equal(h.opened.length,0);
   const icon=entry.component({size:18,active:false});assert.equal(nodes(icon,node=>node.type==='button').length,0);
   h.dispose();assert.ok(h.registrations.every(row=>row.disposed));
@@ -72,8 +174,32 @@ test('opening the page makes one read-only GET and evidence requires the selecte
   assert.equal(h.opened.length,0);h.dispose();
 });
 
+test('Projects discovers137 registered projects with explicit search and paging, without reading contents',async()=>{
+ const h=await harness();catalogFixture(h);h.render();await h.flush();assert.equal(h.requests.length,1);
+ button(h.render(),'项目').props.onClick();h.render();await h.flush();let view=h.render();assert.match(text(view),/全部项目.*137/);assert.match(text(view),/目录项目 19/);assert.doesNotMatch(text(view),/目录项目 20|SYNTHETIC_SINGLE_PROJECT_PREVIEW/);
+ assert.deepEqual(actionPosts(h).map(p=>p.body.action),['list']);assert.equal(h.opened.length,0);
+ await button(view,'下一页').props.onClick();view=h.render();assert.match(text(view),/目录项目 20/);assert.equal(actionPosts(h).at(-1).body.expectedRevision,catalogRevision);
+ const search=nodes(view,n=>n.type==='input'&&n.props['aria-label']==='搜索全部项目')[0];search.props.onChange({target:{value:'目录项目 136'}});view=h.render();nodes(view,n=>n.type==='form'&&n.props['aria-label']==='搜索全部项目')[0].props.onSubmit({preventDefault(){}});await h.flush();view=h.render();assert.match(text(view),/目录项目 136/);assert.doesNotMatch(text(view),/目录项目 20/);assert.equal(actionPosts(h).at(-1).body.offset,0);assert.equal(actionPosts(h).every(p=>p.body.action==='list'),true);h.dispose();
+});
+
+test('unwatched project preview reads once only after selection and keeps composer draft',async()=>{
+ const h=await harness();catalogFixture(h);h.render();await h.flush();nodes(h.render(),n=>n.type==='textarea'&&n.props['aria-label']==='交代给 Dot 的事情')[0].props.onChange({target:{value:'SYNTHETIC_UNSENT_DRAFT'}});
+ button(h.render(),'项目').props.onClick();h.render();await h.flush();let view=h.render();const row=nodes(view,n=>n.props['data-catalog-project']===catalogItems[7].id)[0];assert.ok(row);assert.equal(actionPosts(h).filter(p=>p.body.action==='preview').length,0);await button(row,'单次查看').props.onClick();view=h.render();assert.match(text(view),/SYNTHETIC_SINGLE_PROJECT_PREVIEW/);assert.match(text(view),/已截断/);assert.match(text(view),/不会加入持续关注/);assert.deepEqual(actionPosts(h).filter(p=>p.body.action==='preview').map(p=>p.body),[{action:'preview',projectId:catalogItems[7].id,expectedRevision:catalogRevision}]);
+ button(view,'今天').props.onClick();assert.equal(nodes(h.render(),n=>n.type==='textarea'&&n.props['aria-label']==='交代给 Dot 的事情')[0].props.value,'SYNTHETIC_UNSENT_DRAFT');assert.equal(h.opened.length,0);h.dispose();
+});
+
+test('changed catalog resets paging without automatic retry; changed binding removes catalog contents',async()=>{
+ const h=await harness();catalogFixture(h);h.render();await h.flush();button(h.render(),'项目').props.onClick();h.render();await h.flush();h.context.onFetch=(url)=>url===catalogEndpoint?Response.json({code:'CATALOG_CHANGED',error:'项目目录已变化，请刷新后继续。'},{status:409}):Response.json(h.context.snapshot);
+ await button(h.render(),'下一页').props.onClick();let view=h.render();assert.match(text(view),/目录已变化/);assert.doesNotMatch(text(view),/目录项目 19/);const before=h.requests.length;h.render();await h.flush();assert.equal(h.requests.length,before);
+ catalogFixture(h);await button(view,'刷新项目目录').props.onClick();view=h.render();assert.match(text(view),/目录项目 19/);h.context.snapshot.connection={state:'bound',sessionId:'changed-owner'};await button(view,'刷新').props.onClick();view=h.render();assert.doesNotMatch(text(view),/目录项目 19|SYNTHETIC_SINGLE_PROJECT_PREVIEW/);assert.equal(h.opened.length,0);h.dispose();
+});
+
+test('source first-value examples stay inside implemented named-list and Gmail query scopes',async()=>{
+ const h=await harness();assert.equal(h.source.includes('Gmail 搜索「newer_than:3d」最多 3 条'),true);assert.equal(h.source.includes('先等我补充清单名'),true);assert.equal(h.source.includes('请只读查看滴答清单中今天到期的任务'),false);h.dispose();
+});
+
 test('project switching and navigation are explicit; multiple sessions are not picked automatically',async()=>{
-  const h=await harness();h.render();await h.flush();let view=h.render();
+  const h=await harness();selectedDesktop(h,'dot-source');h.render();await h.flush();let view=h.render();
   await button(view,'打开 Dot 会话').props.onClick();assert.deepEqual(h.opened,['dot-source']);
   button(view,'公开项目 A').props.onClick();view=h.render();
   await button(view,'打开项目会话').props.onClick();assert.deepEqual(h.opened,['dot-source','session-a']);
@@ -118,7 +244,7 @@ test('known native session titles aid explicit choice and missing cache stays un
 
 test('unbound empty snapshot remains usable and never invents a connection or dispatch',async()=>{
   const h=await harness();h.context.snapshot={...sample(),connection:{state:'awaiting-message'},projects:[],jobs:[],reminders:[],counts:{projects:0,activeReminders:0}};
-  h.render();await h.flush();let view=h.render();assert.match(text(view),/先连接，再选一个项目/);assert.ok(button(view,'项目'));assert.ok(button(view,'连接'));
+  h.render();await h.flush();let view=h.render();assert.equal(nodes(view,n=>n.type==='textarea'&&n.props['aria-label']==='交代给 Dot 的事情').length,1);assert.ok(button(view,'项目'));assert.ok(button(view,'连接'));
   assert.match(text(view),/微信尚未确认连接/);assert.equal(button(view,'打开 Dot 会话'),undefined);
   button(view,'项目').props.onClick();view=h.render();assert.match(text(view),/还没有关注项目/);
   assert.equal(h.opened.length,0);assert.equal(h.requests.length,1);assert.deepEqual(posts(h),[]);h.dispose();
@@ -138,7 +264,7 @@ test('late responses after unmount are aborted and cannot navigate or show anoth
 });
 
 test('navigation failures surface without retrying or submitting work',async()=>{
-  const h=await harness();h.render();await h.flush();h.context.navError=true;
+  const h=await harness();selectedDesktop(h,'dot-source');h.render();await h.flush();h.context.navError=true;
   await button(h.render(),'打开 Dot 会话').props.onClick();assert.match(text(h.render()),/会话.*未能打开|无法打开.*会话/);
   assert.deepEqual(h.opened,['dot-source']);assert.equal(h.requests.length,1);h.dispose();
 });
@@ -151,7 +277,7 @@ test('missing optional native layout service leaves existing settings usable',as
 test('unavailable lists and plans are shown as unknown rather than empty or disabled',async()=>{
   const h=await harness();h.context.snapshot={...sample(),availability:{projects:false,plans:false,jobs:false},projects:[],jobs:[],reminders:[],daily:null,paused:null,counts:{projects:0,activeReminders:0},limitations:['合成局部读取失败，未扩大范围。']};
   h.render();await h.flush();const view=h.render(),value=text(view);
-  assert.match(value,/关注列表暂不可用/);assert.match(value,/交办状态尚未确认/);assert.match(value,/提醒与日报状态尚未确认/);
+  assert.equal(nodes(view,n=>n.props['data-dot-recovery']).length,1);assert.match(value,/关注项目、交办记录、已有安排/);assert.ok(button(view,'重试状态'));
   assert.match(value,/合成局部读取失败/);assert.doesNotMatch(value,/还没有关注项目|暂无当前 Dot 会话的交办记录|暂无待触发|项目日报未开启/);
   h.dispose();
 });
@@ -161,9 +287,9 @@ test('more active reminders than the visible window are labelled rather than cal
   h.render();await h.flush();const view=h.render();assert.match(text(view),/仅显示.*条.*其余/);assert.match(text(view),/核对演示/);h.dispose();
 });
 
-test('first-use home puts WeChat connection in primary position without dispatching on mount',async()=>{
+test('first-use home offers desktop input before optional WeChat setup without dispatching on mount',async()=>{
  const h=await harness();h.context.snapshot={...sample(),connection:{state:'awaiting-message'},projects:[],jobs:[],reminders:[]};h.render();await h.flush();const view=h.render();
- assert.match(text(view),/把 Dot 接到微信里/);const connect=button(view,'连接微信');assert.ok(connect);assert.equal(connect.props.className,'pc_dot_primary');assert.ok(button(view,'先在电脑了解'));assert.equal(h.requests.length,1);assert.equal(h.opened.length,0);h.dispose();
+ assert.match(text(view),/先把一件事交给 Dot/);const entry=button(view,'开始对话');assert.ok(entry);assert.equal(entry.props.className,'pc_dot_primary');assert.equal(nodes(view,n=>n.type==='textarea').length,1);assert.equal(h.requests.length,1);assert.equal(h.opened.length,0);h.dispose();
 });
 
 test('home natural-language entry preserves input when native preparation is unavailable',async()=>{
@@ -175,7 +301,7 @@ test('project quick chat prepares its own native prompt without erasing a differ
   const h=await harness(),prepared=[];let releases=0;const binding={sessionId:'dot-source'};
   h.ctx.sessions={retain:id=>{assert.equal(id,'dot-source');return{binding,ready:Promise.resolve(binding),release:()=>releases++};}};
   h.ctx.conversation={input:{requestDraftInitialization:(target,options)=>{assert.equal(target,binding);prepared.push(options);return'applied';}}};binding.ctx={get:()=>h.ctx.conversation};
-  h.render();await h.flush();nodes(h.render(),n=>n.type==='textarea'&&n.props['aria-label']==='交代给 Dot 的事情')[0].props.onChange({target:{value:'另一个尚未发送的具体问题'}});
+  selectedDesktop(h,'dot-source');h.render();await h.flush();nodes(h.render(),n=>n.type==='textarea'&&n.props['aria-label']==='交代给 Dot 的事情')[0].props.onChange({target:{value:'另一个尚未发送的具体问题'}});
   button(h.render(),'公开项目 A').props.onClick();await button(h.render(),'和 Dot 聊这个项目').props.onClick();
   assert.equal(prepared.length,1);assert.match(prepared[0].prompt,/关于项目「公开项目 A」.*请结合这个项目的最新资料/s);assert.equal(prepared[0].clearPreviousDraft,false);
   assert.equal(nodes(h.render(),n=>n.type==='textarea'&&n.props['aria-label']==='交代给 Dot 的事情')[0].props.value,'另一个尚未发送的具体问题');
@@ -291,7 +417,7 @@ test('noneditable or redacted memory detail cannot become a saved redacted copy 
   const row=memoryRow('memory-redacted','context','正文中的 [已隐藏] 副本不能保存');
   for(const flags of [{editable:false},{redacted:true}]){
     const h=await harness();seedMemory(h,row);h.context.onFetch=(url,options)=>url===endpoint?Response.json(h.context.snapshot):Response.json({action:'memory_detail',projectId:'p1',record:row,...flags});
-    h.render();await h.flush();const view=await openMemory(h),detail=drawer(view);
+    selectedDesktop(h,'dot-source');h.render();await h.flush();const view=await openMemory(h),detail=drawer(view);
     assert.match(text(detail),/隐藏内容.*Dot 会话.*纠正或忘记.*未将隐藏后的副本作为编辑原文/);
     assert.equal(nodes(detail,n=>n.type==='textarea').length,0);assert.equal(button(view,'保存纠正'),undefined);assert.equal(button(view,'忘记这条'),undefined);assert.deepEqual(posts(h),[]);
     assert.deepEqual(memoryReads(h),[{url:endpoint+'/actions',body:{action:'memory_detail',projectId:'p1',id:row.id}}]);
@@ -363,8 +489,8 @@ test('recurring follow-up uses the explicitly reviewed cadence without enabling 
 });
 
 test('preparing a native draft locks local input so delayed readiness cannot erase newer edits',async()=>{
- const h=await harness();let release;h.ctx.sessions={retain:()=>({binding:{sessionId:'dot-source'},ready:new Promise(resolve=>release=resolve),release(){}})};h.ctx.conversation={input:{requestDraftInitialization:()=> 'preserved'}};const retainOriginal=h.ctx.sessions.retain;h.ctx.sessions.retain=(...args)=>{const ref=retainOriginal(...args);ref.binding.ctx={get:()=>h.ctx.conversation};return ref;};
- h.render();await h.flush();let view=h.render();nodes(view,n=>n.type==='textarea')[0].props.onChange({target:{value:'Original input'}});view=h.render();const pending=button(view,'开始对话').props.onClick();view=h.render();const input=nodes(view,n=>n.type==='textarea')[0];assert.equal(input.props.disabled,true);input.props.onChange({target:{value:'New concurrent edit'}});assert.equal(nodes(h.render(),n=>n.type==='textarea')[0].props.value,'Original input');release();await pending;assert.equal(nodes(h.render(),n=>n.type==='textarea')[0].props.value,'Original input');h.dispose();
+ const h=await harness();let release;const nativeReady=new Promise(resolve=>release=resolve);h.ctx.sessions={retain:()=>({binding:{sessionId:'dot-source'},ready:nativeReady,release(){}})};h.ctx.conversation={input:{requestDraftInitialization:()=> 'preserved'}};const retainOriginal=h.ctx.sessions.retain;h.ctx.sessions.retain=(...args)=>{const ref=retainOriginal(...args);ref.binding.ctx={get:()=>h.ctx.conversation};return ref;};
+ selectedDesktop(h,'dot-source');h.render();await h.flush();let view=h.render();nodes(view,n=>n.type==='textarea')[0].props.onChange({target:{value:'Original input'}});view=h.render();const pending=button(view,'开始对话').props.onClick();view=h.render();const input=nodes(view,n=>n.type==='textarea')[0];assert.equal(input.props.disabled,true);input.props.onChange({target:{value:'New concurrent edit'}});assert.equal(nodes(h.render(),n=>n.type==='textarea')[0].props.value,'Original input');release();await pending;assert.equal(nodes(h.render(),n=>n.type==='textarea')[0].props.value,'Original input');h.dispose();
 });
 
 test('connection controls precede appearance and project-free questions have an explicit scope',async()=>{
@@ -423,7 +549,7 @@ test('dirty memory close offers continue, keep and discard; only explicit save w
 test('switching pages uses the same dirty-memory policy and retained drafts reject changed source text',async()=>{
   const h=await harness(),row=memoryRow('conflict','context','原始背景');seedMemory(h,row);let current=row;h.context.onFetch=url=>url===endpoint?Response.json(h.context.snapshot):memoryDetail(current);
   try{h.render();await h.flush();let view=await openMemory(h);nodes(drawer(view),n=>n.type==='textarea')[0].props.onChange({target:{value:'旧版原文上的修改'}});button(h.render(),'项目').props.onClick();assert.match(text(drawer(h.render())),/这次修改还没保存/);
-    button(h.render(),'保留草稿并离开').props.onClick();view=h.render();assert.match(text(view),/每件事的背景/);assert.equal(drawer(view),undefined);
+    button(h.render(),'保留草稿并离开').props.onClick();view=h.render();assert.match(text(view),/所有项目都能按需查看/);assert.equal(drawer(view),undefined);
     current={...row,text:'另一个入口已纠正的当前原文'};button(view,'今天').props.onClick();view=await openMemory(h);assert.equal(nodes(drawer(view),n=>n.type==='textarea')[0].props.value,current.text);assert.match(text(view),/原文已变化.*旧草稿未套用/);assert.match(text(nodes(view,n=>n.props['data-dot-conflict-draft'])[0]),/旧版原文上的修改/);assert.equal(posts(h).length,0);button(view,'使用保留草稿继续修改').props.onClick();assert.equal(nodes(drawer(h.render()),n=>n.type==='textarea')[0].props.value,'旧版原文上的修改');assert.equal(posts(h).length,0);
   }finally{h.dispose();}
 });
@@ -457,14 +583,21 @@ test('passive result and upcoming projection show scope, truncation, cold-runner
   }finally{h.dispose();}
 });
 
+test('daily follow-up labels keep its wall-clock time and timezone instead of1440-minute interval',async()=>{
+ const h=await harness(),plan={enabled:true,running:true,dailyTime:'21:30',timeZone:'Asia/Shanghai',everyMinutes:1440,nextDueAt:'2026-10-28T13:30:00Z'};
+ h.context.snapshot.projects[0].followup={available:true,followup:plan,once:null};h.context.onFetch=(url,options)=>url===endpoint?Response.json(h.context.snapshot):Response.json({action:'followup_status',projectId:'p1',followup:plan,once:null});
+ h.render();await h.flush();let view=h.render();assert.match(text(view),/每天21:30（Asia\/Shanghai）/);assert.doesNotMatch(text(view),/每 1440 分钟/);
+ await button(view,'查看安排').props.onClick();view=h.render();assert.match(text(drawer(view)),/每天21:30（Asia\/Shanghai）/);assert.doesNotMatch(text(drawer(view)),/每 1440 分钟/);h.dispose();
+});
+
 test('native draft navigation unmount and remount retains unsent local text without browser persistence',async()=>{
   const h=await harness();try{h.render();await h.flush();nodes(h.render(),n=>n.type==='textarea'&&n.props['aria-label']==='交代给 Dot 的事情')[0].props.onChange({target:{value:'回来继续这个问题'}});h.unmount();h.render();await h.flush();assert.equal(nodes(h.render(),n=>n.type==='textarea'&&n.props['aria-label']==='交代给 Dot 的事情')[0].props.value,'回来继续这个问题');assert.doesNotMatch(h.source,/localStorage|sessionStorage/);
   }finally{h.dispose();}
 });
 
 test('native prefill rechecks the binding after delayed retain readiness and preserves stale local input',async()=>{
-  const h=await harness();h.context.snapshot.bindingRevision='before-rebind';let ready,prepared=0;const binding={sessionId:'dot-source',ctx:{get:()=>({input:{requestDraftInitialization:()=>{prepared++;return'applied';}}})}};h.ctx.sessions={retain:()=>({binding,ready:new Promise(resolve=>{ready=resolve;}),release(){}})};
-  try{h.render();await h.flush();nodes(h.render(),n=>n.type==='textarea')[0].props.onChange({target:{value:'只属于旧绑定的问题'}});const pending=button(h.render(),'开始对话').props.onClick();h.context.snapshot={...h.context.snapshot,bindingRevision:'after-rebind'};ready();await pending;const view=h.render();assert.equal(prepared,0);assert.equal(h.opened.length,0);assert.match(text(view),/绑定或项目范围已变化/);assert.equal(nodes(view,n=>n.type==='textarea')[0].props.value,'只属于旧绑定的问题');assert.equal(h.requests.length,2);
+  const h=await harness();h.context.snapshot.bindingRevision='before-rebind';let ready,prepared=0;const nativeReady=new Promise(resolve=>{ready=resolve;});const binding={sessionId:'dot-source',ctx:{get:()=>({input:{requestDraftInitialization:()=>{prepared++;return'applied';}}})}};h.ctx.sessions={retain:()=>({binding,ready:nativeReady,release(){}})};
+  try{selectedDesktop(h,'dot-source');h.render();await h.flush();nodes(h.render(),n=>n.type==='textarea')[0].props.onChange({target:{value:'只属于旧绑定的问题'}});const pending=button(h.render(),'开始对话').props.onClick();h.context.snapshot={...h.context.snapshot,bindingRevision:'after-rebind'};ready();await pending;const view=h.render();assert.equal(prepared,0);assert.equal(h.opened.length,0);assert.match(text(view),/绑定或项目范围已变化/);assert.equal(nodes(view,n=>n.type==='textarea')[0].props.value,'只属于旧绑定的问题');assert.equal(h.requests.length,2);
   }finally{h.dispose();}
 });
 
@@ -482,7 +615,7 @@ test('continuing two same-title results carries the chosen stable task ID into d
 
 test('opening native conversation also resolves unsaved memory through the same keep/discard policy',async()=>{
   const h=await harness(),row=memoryRow('native-exit','context','原始背景');seedMemory(h,row);h.context.onFetch=url=>url===endpoint?Response.json(h.context.snapshot):memoryDetail(row);
-  try{h.render();await h.flush();let view=await openMemory(h);nodes(drawer(view),n=>n.type==='textarea')[0].props.onChange({target:{value:'离开前的草稿'}});await button(h.render(),'打开 Dot 会话').props.onClick();assert.deepEqual(h.opened,[]);assert.match(text(drawer(h.render())),/这次修改还没保存/);button(h.render(),'保留草稿并离开').props.onClick();assert.deepEqual(h.opened,['dot-source']);assert.equal(posts(h).length,0);
+  try{selectedDesktop(h,'dot-source');h.render();await h.flush();let view=await openMemory(h);nodes(drawer(view),n=>n.type==='textarea')[0].props.onChange({target:{value:'离开前的草稿'}});await button(h.render(),'打开 Dot 会话').props.onClick();assert.deepEqual(h.opened,[]);assert.match(text(drawer(h.render())),/这次修改还没保存/);button(h.render(),'保留草稿并离开').props.onClick();await h.flush();assert.deepEqual(h.opened,['dot-source']);assert.equal(posts(h).length,0);
   }finally{h.dispose();}
 });
 
@@ -494,20 +627,86 @@ test('a cancellation receipt that still reports enabled cannot claim the plan wa
 
 test('applied home draft clears before native open synchronously unmounts the workbench',async()=>{
   const h=await harness();let applied=0,opened=0;const binding={sessionId:'dot-source',ctx:{get:()=>({input:{requestDraftInitialization:()=>{applied++;return'applied';}}})}};h.ctx.sessions={retain:()=>({binding,ready:Promise.resolve(),release(){}})};h.ctx.uiWorkspace.openSession=()=>{opened++;h.unmount();};
-  try{h.render();await h.flush();nodes(h.render(),n=>n.type==='textarea')[0].props.onChange({target:{value:'成功交接后不应再次出现'}});await button(h.render(),'开始对话').props.onClick();assert.equal(applied,1);assert.equal(opened,1);h.render();await h.flush();assert.equal(nodes(h.render(),n=>n.type==='textarea')[0].props.value,'');
+  try{selectedDesktop(h,'dot-source');h.render();await h.flush();nodes(h.render(),n=>n.type==='textarea')[0].props.onChange({target:{value:'成功交接后不应再次出现'}});await button(h.render(),'开始对话').props.onClick();assert.equal(applied,1);assert.equal(opened,1);h.render();await h.flush();assert.equal(nodes(h.render(),n=>n.type==='textarea')[0].props.value,'');
   }finally{h.dispose();}
 });
 
 test('native handoff preserves local home draft for preserved, blocked and navigation failure outcomes',async()=>{
   for(const outcome of ['preserved','blocked','navigation-failed']){
     const h=await harness(),binding={sessionId:'dot-source',ctx:{get:()=>({input:{requestDraftInitialization:()=>outcome==='navigation-failed'?'applied':outcome}})}};h.ctx.sessions={retain:()=>({binding,ready:Promise.resolve(),release(){}})};if(outcome==='navigation-failed')h.ctx.uiWorkspace.openSession=()=>{throw new Error('navigation failed');};
-    try{h.render();await h.flush();nodes(h.render(),n=>n.type==='textarea')[0].props.onChange({target:{value:'尚未成功完成交接的输入'}});await button(h.render(),'开始对话').props.onClick();h.unmount();h.render();await h.flush();assert.equal(nodes(h.render(),n=>n.type==='textarea')[0].props.value,'尚未成功完成交接的输入',outcome);
+    try{selectedDesktop(h,'dot-source');h.render();await h.flush();nodes(h.render(),n=>n.type==='textarea')[0].props.onChange({target:{value:'尚未成功完成交接的输入'}});await button(h.render(),'开始对话').props.onClick();h.unmount();h.render();await h.flush();assert.equal(nodes(h.render(),n=>n.type==='textarea')[0].props.value,'尚未成功完成交接的输入',outcome);
     }finally{h.dispose();}
   }
 });
 
 test('applied project shortcut cannot clear a different home draft when native open unmounts',async()=>{
   const h=await harness(),binding={sessionId:'dot-source',ctx:{get:()=>({input:{requestDraftInitialization:()=>'applied'}})}};h.ctx.sessions={retain:()=>({binding,ready:Promise.resolve(),release(){}})};h.ctx.uiWorkspace.openSession=()=>h.unmount();
-  try{h.render();await h.flush();nodes(h.render(),n=>n.type==='textarea')[0].props.onChange({target:{value:'另一个首页问题仍然保留'}});button(h.render(),'公开项目 A').props.onClick();await button(h.render(),'和 Dot 聊这个项目').props.onClick();h.render();await h.flush();assert.equal(nodes(h.render(),n=>n.type==='textarea')[0].props.value,'另一个首页问题仍然保留');
+  try{selectedDesktop(h,'dot-source');h.render();await h.flush();nodes(h.render(),n=>n.type==='textarea')[0].props.onChange({target:{value:'另一个首页问题仍然保留'}});button(h.render(),'公开项目 A').props.onClick();await button(h.render(),'和 Dot 聊这个项目').props.onClick();h.render();await h.flush();assert.equal(nodes(h.render(),n=>n.type==='textarea')[0].props.value,'另一个首页问题仍然保留');
   }finally{h.dispose();}
+});
+
+
+test('secondary history keeps newer running or blocked jobs before older results without promoting old records',async()=>{
+ for(const status of ['running','blocked']){
+  const h=await harness();h.context.snapshot.jobs[0].result={available:true,text:'OLDER_RESULT_SENTINEL',truncated:false};h.context.snapshot.jobs.push({id:'new-job',projectLabel:'公开项目 A',task:'NEW_TASK_SENTINEL',status,createdAt:'2026-10-19T16:30:00.000Z'});
+  try{h.render();await h.flush();const view=h.render(),history=nodes(view,n=>n.props['data-dot-history'])[0],cards=nodes(history,n=>n.props['data-dot-job']);assert.notEqual(history.props.open,true);assert.equal(cards[0].props['data-dot-job'],'new-job');assert.match(text(cards[0]),/NEW_TASK_SENTINEL/);assert.doesNotMatch(text(cards[0]),/OLDER_RESULT_SENTINEL/);assert.equal(cards.filter(n=>n.props['data-dot-job']==='j1').length,1);assert.equal(nodes(view,n=>n.props['data-dot-current-result']).length,0);assert.deepEqual(actionPosts(h),[]);}finally{h.dispose();}
+ }
+});
+
+
+test('shared Family results remain read-only while desktop conversation input stays visible',async()=>{
+ const h=await harness();h.context.snapshot.connection.readOnly=true;h.context.snapshot.contextBindingRevision=null;h.context.snapshot.projects[0].followup={available:true,followup:null,once:null};seedMemory(h,memoryRow('m1','context','已有背景'));
+ try{h.render();await h.flush();let view=h.render();assert.match(text(view),/今天想推进哪件事/);assert.equal(nodes(view,n=>n.type==='textarea'&&n.props['aria-label']==='交代给 Dot 的事情').length,1);assert.equal(button(view,'和 Dot 接着聊'),undefined);assert.equal(button(view,'安排提醒'),undefined);button(view,'公开项目 A').props.onClick();view=h.render();assert.equal(button(view,'和 Dot 聊这个项目'),undefined);button(view,'记住的事').props.onClick();view=h.render();assert.equal(button(view,'纠正或忘记'),undefined);assert.equal(button(view,'告诉 Dot 要记住什么'),undefined);
+  button(view,'连接').props.onClick();view=h.render();const panel=nodes(view,n=>n.props?.bindingRevision===null&&typeof n.type==='function')[0];assert.ok(panel);assert.equal(panel.props.onFirstValue,undefined);assert.equal(panel.props.bound,false);assert.equal(h.opened.length,0);assert.deepEqual(actionPosts(h),[]);
+ }finally{h.dispose();}
+});
+
+test('offline shared Family mode preserves the return-to-WeChat path instead of offering legacy re-pairing',async()=>{
+ const h=await harness();h.context.snapshot.connection={state:'unknown',readOnly:true};
+ try{h.render();await h.flush();const view=h.render();assert.match(text(view),/今天想推进哪件事/);assert.equal(button(view,'连接微信'),undefined);assert.equal(button(view,'选择关注项目'),undefined);assert.equal(nodes(view,n=>n.type==='textarea'&&n.props['aria-label']==='交代给 Dot 的事情').length,1);assert.equal(h.opened.length,0);}finally{h.dispose();}
+});
+
+
+test('completed quiet checks stay visible without pretending a notification was sent or starting another plan',async()=>{
+ const h=await harness();h.context.snapshot.projects[0].followup={available:true,followup:null,once:{enabled:false,running:false,status:'completed',delivery:'wechat',lastReviewedAt:'2026-10-19T16:40:00Z',lastCheckOutcome:'quiet',runCount:1}};
+ try{h.render();await h.flush();const view=h.render();assert.match(text(view),/上次已核验检查/);assert.match(text(view),/本次可见范围无新变化.*静默/);assert.equal(actionPosts(h).length,0);assert.equal(h.opened.length,0);}finally{h.dispose();}
+});
+
+
+test('partial check history keeps failed-source uncertainty visible instead of claiming no change',async()=>{
+ const h=await harness();h.context.snapshot.projects[0].followup={available:true,followup:null,once:{enabled:false,running:false,status:'completed',delivery:'wechat',lastReviewedAt:'2026-10-19T16:40:00Z',lastCheckOutcome:'partial'}};
+ try{h.render();await h.flush();const view=h.render();assert.match(text(view),/部分来源仍无法确认/);assert.doesNotMatch(text(view),/本次可见范围无新变化，已静默/);assert.equal(actionPosts(h).length,0);}finally{h.dispose();}
+});
+test('shared Owner attention control submits only fixed intent and refreshes its visible result',async()=>{
+ const h=await harness();const revision='a'.repeat(64);h.context.snapshot.bindingRevision=revision;h.context.snapshot.connection.readOnly=true;
+ h.context.snapshot.personalReview={available:true,bindingRevision:revision,deliverySupported:true,review:{status:'enabled',schedule:{dailyTime:'09:00',timeZone:'UTC'},sources:['gmail'],projects:[],items:[],jobs:[],attention:{enabled:false,nextRun:null,quiet:false,remaining:0}},news:{topics:[],topicSource:'default'}};
+ h.context.onFetch=async(url,options)=>{if(url==='/api/project_companion/review/attention'){assert.deepEqual(JSON.parse(options.body),{enabled:true,expectedBindingRevision:revision});h.context.snapshot.personalReview.review.attention={enabled:true,nextRun:'2026-10-30T11:00:00.000Z',quiet:false,remaining:2};return Response.json({text:'已开启工作时段关注。'});}return Response.json(h.context.snapshot);};
+ h.render();await h.flush();let tree=h.render();await button(tree,'开启工作时段主动关注').props.onClick();await h.flush();tree=h.render();assert.match(text(tree),/已开启工作时段关注。/);assert.ok(button(tree,'关闭工作时段主动关注'));assert.equal(actionPosts(h).length,1);h.dispose();
+});
+
+
+test('shared result scope routes desktop drafts and history to the genuine native Dot session',async()=>{
+ const h=await harness(),nativeId='native-desktop-dot';h.context.snapshot.connection={state:'bound',sessionId:'family_owner_synthetic',readOnly:true};h.context.snapshot.desktopConversation={state:'ready',sessionId:nativeId,revision:'a'.repeat(64)};
+ const prepared=[],binding={sessionId:nativeId,ctx:{get:()=>({input:{requestDraftInitialization:(ref,options)=>{assert.equal(ref,binding);prepared.push(options);return'applied';}}})}};
+ h.ctx.sessions={retain:id=>{assert.equal(id,nativeId);return{binding,ready:Promise.resolve(),release(){}};}};
+ try{selectedDesktop(h,'native-desktop-dot');h.render();await h.flush();let view=h.render();const input=nodes(view,n=>n.type==='textarea'&&n.props['aria-label']==='交代给 Dot 的事情')[0];assert.ok(input);input.props.onChange({target:{value:'继续我的桌面任务'}});await button(h.render(),'开始对话').props.onClick();assert.equal(prepared.length,1);assert.equal(prepared[0].clearPreviousDraft,false);assert.deepEqual(h.opened,[nativeId]);assert.equal(actionPosts(h).length,0);await button(h.render(),'对话记录').props.onClick();assert.deepEqual(h.opened,[nativeId,nativeId]);}finally{h.dispose();}
+});
+
+
+test('current official host embeds its native conversation factory with a session-scoped child slot',async()=>{
+ const h=await harness();h.context.snapshot.desktopConversation={state:'ready',sessionId:'native-desktop-dot',revision:'a'.repeat(64)};h.ctx.sessions={retain(){throw Error('child effects not rendered by this structural harness');}};
+ const props={SessionProvider:function SessionProvider(){},renderSlot:()=>null};
+ try{selectedDesktop(h,'native-desktop-dot');h.render(props);await h.flush();const view=h.render(props),native=nodes(view,n=>n.type?.name==='DesktopConversation')[0];assert.ok(native);assert.equal(native.props.target.sessionId,'native-desktop-dot');assert.equal(native.props.SessionProvider,props.SessionProvider);assert.equal(nodes(view,n=>n.type==='textarea'&&n.props['aria-label']==='交代给 Dot 的事情').length,0);const panel=h.registrations.find(r=>r.spec.name==='main');assert.equal(panel.spec.children['dot.desktop.conversation'].scope,'session');const child=h.registrations.find(r=>r.spec.name==='dot.desktop.conversation');let requested;child.component({renderFactorySlot:(name,options)=>{requested={name,options};}});assert.equal(requested.name,'conversation.content');assert.equal(requested.options.variant,'embedded');assert.equal(requested.options.phase,'active');assert.equal(requested.options.hero,false);assert.equal(h.opened.length,0);assert.equal(actionPosts(h).length,0);}finally{h.dispose();}
+});
+
+test('unbound desktop creates one real native session only after explicit input and reuses it',async()=>{
+ const h=await harness();h.context.snapshot.connection={state:'missing'};h.context.snapshot.desktopConversation={state:'unavailable'};let created=0,release;const binding={sessionId:'new-native',ctx:{get:()=>({input:{requestDraftInitialization:()=>'applied'}})}};
+ h.ctx.sessions={create:async()=>{created++;return'new-native';},retain:id=>{assert.equal(id,'new-native');return{binding,ready:Promise.resolve(),release(){}};}};
+ try{h.render();await h.flush();assert.equal(created,0);let view=h.render();nodes(view,n=>n.type==='textarea'&&n.props['aria-label']==='交代给 Dot 的事情')[0].props.onChange({target:{value:'开始本地对话'}});await button(h.render(),'开始对话').props.onClick();assert.equal(created,1);view=h.render();nodes(view,n=>n.type==='textarea'&&n.props['aria-label']==='交代给 Dot 的事情')[0].props.onChange({target:{value:'接着上一句'}});await button(h.render(),'开始对话').props.onClick();assert.equal(created,1);assert.deepEqual(h.opened,['new-native','new-native']);assert.equal(actionPosts(h).length,0);}finally{h.dispose();}
+});
+
+test('native embedded draft handoff stays on the workbench and preserves the original draft policy',async()=>{
+ const h=await harness(),prepared=[];let releases=0;const binding={sessionId:'native-desktop',ctx:{get:()=>({input:{requestDraftInitialization:(_binding,options)=>{prepared.push(options);return'applied';}}})}};
+ h.ctx.sessions={retain:()=>({binding,ready:Promise.resolve(),release:()=>releases++})};
+ try{const result=await h.module.prepareDotDraft(h.ctx,binding.sessionId,'合成的新问题',undefined,async()=>{},undefined,true);assert.equal(result.status,'applied');assert.equal(prepared.length,1);assert.equal(prepared[0].clearPreviousDraft,false);assert.equal(h.opened.length,0);assert.equal(h.panels.length,0);assert.equal(releases,1);}finally{h.dispose();}
 });

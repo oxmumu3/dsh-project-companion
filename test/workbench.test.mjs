@@ -4,6 +4,7 @@ import {mkdtemp,mkdir,writeFile,symlink,rm,realpath} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {Context} from '@deepseek-ai/cordis';
+import {bindingRevision} from '../src/workbench-scope.js';
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt';
 import ToolRuntime from '@deepseek-ai/dsh-tools';
 import CommandRuntime from '@deepseek-ai/dsh-commands';
@@ -17,6 +18,17 @@ const binding={state:'bound',sessionId:'source-session',bindingKey:'a'.repeat(64
 const returnBinding={userHash:'c'.repeat(64),botHash:'d'.repeat(64)};
 const project={id:'p_one',root:'/synthetic/watched-project',label:'当前项目',sessionIds:['project-session'],github:'owner/repo',watchedAt:now,events:[{kind:'assistant',text:'助手记录，仍待核对',at:now,sessionId:'project-session',id:'event-1'}]};
 const deferred=()=>{let resolve;const promise=new Promise(done=>resolve=done);return{promise,resolve};};
+test('shared WeChat plans retain daily clock and zone and render a Family single check',async()=>{
+ const followup={inspect:async()=>({followup:{enabled:true,running:true,everyMinutes:1440,dailyTime:'21:30',timeZone:'Asia/Shanghai',nextDueAt:now},once:{enabled:true,running:false,status:'queued',delivery:'family',nextDueAt:now}})};
+ const f=await fixture({dependencies:{followup}}),value=await f.adapter.snapshot(),plans=value.projects[0].followup;
+ assert.equal(plans.available,true);assert.equal(plans.followup.dailyTime,'21:30');assert.equal(plans.followup.timeZone,'Asia/Shanghai');assert.equal(plans.once.delivery,'wechat');assert.equal(plans.once.status,'queued');
+});
+test('invalid mixed daily schedule never becomes an interval-looking visible plan',async()=>{
+ for(const schedule of [{dailyTime:'99:00',timeZone:'Asia/Shanghai',everyMinutes:1440},{dailyTime:'21:30',timeZone:'PRIVATE INVALID',everyMinutes:1440},{dailyTime:'21:30',timeZone:'Asia/Shanghai',everyMinutes:60}]){
+ const f=await fixture({dependencies:{followup:{inspect:async()=>({followup:{enabled:true,running:true,...schedule},once:null})}}});
+ const result=await f.adapter.snapshot();assert.equal(result.projects[0].followup.available,false);assert.doesNotMatch(JSON.stringify(result),/PRIVATE/);
+ }
+});
 const memoryRow=(kind,index=0,extra={})=>({id:`memory-${index}`,kind,text:`已有${kind}记录 ${index}`,at:now,source:{kind:'assistant',reference:'session:recorded-session#turn7'},verified:true,sessionId:'PRIVATE MEMORY SESSION',fingerprint:'PRIVATE FINGERPRINT',...extra});
 async function api(){const value=await import('../src/workbench.js').catch(()=>({}));assert.equal(typeof value.createWorkbench,'function','read-only workbench adapter must exist');assert.equal(typeof value.registerWorkbenchRoute,'function','authenticated workbench route must exist');return value;}
 async function fixture(options={}){
@@ -106,7 +118,7 @@ test('binding replacement while jobs are being read discards their content and m
 });
 
 test('latest completed reply is inspected once, redacted, bounded and keeps truncation evidence',async()=>{
-  const rows=[{id:'old',projectLabel:'项目',task:'旧交办',status:'completed',createdAt:now,finishedAt:now},{id:'latest',projectLabel:'项目',task:'新交办',status:'completed',createdAt:now,finishedAt:'2026-10-19T15:01:00Z'},{id:'interrupted',projectLabel:'项目',task:'中断',status:'interrupted',createdAt:now}];
+  const rows=[{id:'old',projectLabel:'项目',task:'旧交办',status:'completed',createdAt:'2026-10-19T14:00:00Z',finishedAt:now},{id:'latest',projectLabel:'项目',task:'新交办',status:'completed',createdAt:now,finishedAt:'2026-10-19T15:01:00Z'},{id:'interrupted',projectLabel:'项目',task:'中断',status:'interrupted',createdAt:'2026-10-19T14:30:00Z'}];
   const f=await fixture({jobs:async(_id,args)=>args.id?{jobs:[{...rows[1],reply:`${project.root} ${binding.bindingKey} api_key=private-token `+'字'.repeat(900),replyTruncated:false}]}:{jobs:rows}});
   const value=await f.adapter.snapshot();
   assert.equal(Object.hasOwn(value.jobs[0],'result'),false);assert.equal(Object.hasOwn(value.jobs[2],'result'),false);
@@ -250,4 +262,64 @@ test('official SDK install exposes passive watched projects with a cold source a
   assert.equal(value.projects[0].overview.available,true);assert.equal(value.projects[0].overview.goals[0].text,'已有项目记忆应优先可见');assert.equal(value.projects[0].overview.goals[0].verified,false);
   assert.deepEqual(await adapter.service.act(owner,{action:'status'}),before);
   await ctx.fiber.dispose();assert.equal(routes.has('/api/project_companion/workbench'),false);await assert.rejects(adapter.workbench.snapshot(),/关闭|停止/);assert.equal((await route.fetch(new Request('http://localhost/api/project_companion/workbench'))).status,503);
+});
+
+test('Family projection uses its own result scope while legacy source and reminder scope stay separate',async()=>{
+ const {createWorkbench}=await api();const legacy={state:'bound',sessionId:'legacy-owner',bindingKey:'a'.repeat(64)};
+ const family={state:'bound',sessionId:'family_owner_synthetic',bindingKey:'b'.repeat(64),readOnly:true};
+ const adapter=createWorkbench({service:{watchedProjects:async()=>[]},readConnection:async()=>family,readContextConnection:async()=>legacy,readState:async()=>({paused:true,daily:{time:'09:00',timeZone:'UTC',enabled:true},reminders:[{id:'legacy-reminder',title:'OTHER OWNER REMINDER',dueAt:now,status:'scheduled'}],outbox:[]}),readBinding:async()=>returnBinding,taskResults:{inspect:async id=>{assert.equal(id,family.sessionId);return{jobs:[]};}},clock:()=>new Date(now)});
+ const value=await adapter.snapshot();const {bindingRevision}=await import('../src/workbench-scope.js');
+ assert.equal(value.contextBindingRevision,bindingRevision(legacy));assert.notEqual(value.bindingRevision,value.contextBindingRevision);assert.equal(value.connection.readOnly,true);
+ assert.equal(value.availability.plans,false);assert.deepEqual(value.reminders,[]);assert.equal(value.daily,null);assert.equal(value.paused,true);assert.doesNotMatch(JSON.stringify(value),/OTHER OWNER/);adapter.close();
+});
+
+
+test('offline paired Family view never projects legacy reminders or daily plans',async()=>{
+ const f=await fixture({connection:{state:'unknown',readOnly:true},state:{paused:false,reminders:[{id:'r-legacy',title:'LEGACY_PLAN_SENTINEL',dueAt:now,status:'scheduled'}],daily:{time:'09:00',timeZone:'UTC',enabled:true},outbox:[]}});
+ const value=await f.adapter.snapshot();assert.equal(value.connection.readOnly,true);assert.equal(value.availability.plans,false);assert.deepEqual(value.reminders,[]);assert.equal(value.daily,null);assert.doesNotMatch(JSON.stringify(value),/LEGACY_PLAN_SENTINEL/);
+});
+
+
+test('Family mode remains read-only when its binding disappears midway through a snapshot',async()=>{
+ let f;f=await fixture({connection:{...binding,readOnly:true},readProject:async()=>{f.setConnection({state:'unknown',readOnly:true});return[];}});const result=await f.adapter.snapshot();assert.equal(result.connection.state,'unknown');assert.equal(result.connection.readOnly,true);assert.deepEqual(result.jobs,[]);assert.deepEqual(result.reminders,[]);
+});
+
+
+test('a new active job does not eagerly read an older completion into the current snapshot',async()=>{
+ const f=await fixture({jobs:async(_s,args)=>args?.id?{jobs:[{id:args.id,status:'completed',reply:'OLD_DETAIL',replyTruncated:false}]}:{jobs:[{id:'old',projectLabel:'公开项目',task:'旧任务',status:'completed',createdAt:'2026-10-18T15:00:00Z',finishedAt:'2026-10-18T15:01:00Z'},{id:'new',projectLabel:'公开项目',task:'新任务',status:'running',createdAt:now}]}});const result=await f.adapter.snapshot();assert.equal(f.calls.some(c=>Array.isArray(c)&&c[0]==='detail'),false);assert.doesNotMatch(JSON.stringify(result),/OLD_DETAIL/);
+});
+
+
+test('verified quiet check is projected as historical evidence, never inferred for legacy records',async()=>{
+ const f=await fixture({dependencies:{followup:{inspect:async()=>({followup:null,once:{enabled:false,running:false,status:'completed',delivery:'family',lastReviewedAt:now,lastCheckOutcome:'quiet',runCount:1}})}}});const r=await f.adapter.snapshot();assert.equal(r.projects[0].followup.once.lastCheckOutcome,'quiet');assert.equal(r.projects[0].followup.once.lastReviewedAt,now);
+ const bad=await fixture({dependencies:{followup:{inspect:async()=>({followup:null,once:{enabled:false,running:false,status:'completed',delivery:'family',lastCheckOutcome:'quiet'}})}}});assert.equal((await bad.adapter.snapshot()).projects[0].followup.available,false);
+});
+
+test('desktop conversation is independently projected from the genuine native Dot session, never the Family Owner carrier',async()=>{
+ const legacy={state:'bound',sessionId:'native-dot-owner',bindingKey:'d'.repeat(64)};
+ const f=await fixture({connection:{...binding,sessionId:'family_owner_synthetic',readOnly:true},dependencies:{readDesktopConnection:async()=>legacy}});
+ const value=await f.adapter.snapshot();
+ assert.deepEqual(value.desktopConversation,{state:'ready',sessionId:legacy.sessionId,revision:bindingRevision(legacy)});
+ assert.equal(value.connection.sessionId,'family_owner_synthetic');assert.equal(value.connection.readOnly,true);
+ assert.equal(JSON.stringify(value.desktopConversation).includes(legacy.bindingKey),false);
+});
+
+test('desktop conversation rejects Family carriers and changing native owner, without adopting another session',async()=>{
+ for(const mode of ['family','changed','offline']){
+  let reads=0;const a={state:'bound',sessionId:'native-dot-owner',bindingKey:'d'.repeat(64)};
+  const f=await fixture({dependencies:{readDesktopConnection:async()=>mode==='family'?{...a,sessionId:'family_owner_synthetic'}:mode==='offline'?{state:'unknown'}:++reads===1?a:{...a,sessionId:'another-native-owner'}}});
+  const value=await f.adapter.snapshot();assert.deepEqual(value.desktopConversation,{state:'unavailable'});
+ }
+});
+
+test('unknown Family result projection does not hide a separately verified native desktop conversation',async()=>{
+ const legacy={state:'bound',sessionId:'native-dot-owner',bindingKey:'d'.repeat(64)};
+ const f=await fixture({connection:{state:'unknown',readOnly:true},dependencies:{readDesktopConnection:async()=>legacy}});
+ const result=await f.adapter.snapshot();assert.equal(result.connection.state,'unknown');assert.equal(result.desktopConversation.state,'ready');assert.equal(result.desktopConversation.sessionId,legacy.sessionId);
+});
+
+test('desktop conversation endpoint reads only native route metadata and never project or source contents',async()=>{
+ const legacy={state:'bound',sessionId:'native-dot-owner',bindingKey:'d'.repeat(64)};
+ const f=await fixture({dependencies:{readDesktopConnection:async()=>legacy}});
+ assert.equal(typeof f.adapter.desktopConversation,'function');const result=await f.adapter.desktopConversation();assert.equal(result.sessionId,legacy.sessionId);assert.deepEqual(f.calls,[]);
 });

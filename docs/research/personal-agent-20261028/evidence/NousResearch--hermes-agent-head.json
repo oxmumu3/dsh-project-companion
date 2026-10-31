@@ -1,0 +1,13 @@
+{
+  "url": "https://api.github.com/repos/NousResearch/hermes-agent/commits/HEAD",
+  "status": 200,
+  "fetchedAt": "2026-10-28T13:27:12.093Z",
+  "data": {
+    "sha": "0431192d69d4afd2443a7da15bb9e129a424414c",
+    "commit": {
+      "committer": {
+        "date": "2026-10-28T11:36:43Z"
+      }
+    }
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "url": "https://api.github.com/repos/openclaw/openclaw/commits/HEAD",
+  "status": 200,
+  "fetchedAt": "2026-10-28T13:27:12.324Z",
+  "data": {
+    "sha": "a74f408db7fbabcdca1089cec8d50f16d6a4f418",
+    "commit": {
+      "committer": {
+        "date": "2026-10-28T13:23:46Z"
+      }
+    }
+  }
+}

@@ -14,10 +14,11 @@ const executionStatus = z.enum(['prepared','admitted','running','not_admitted','
 const deliveryStatus = z.enum(['pending','dispatching','blocked','queued','reported_sent','failed','uncertain','expired']);
 const knownReasons = new Set(['completed','blocked','aborted','error','max-tokens','interrupted','forked']);
 const deliverySchema = z.object({text:z.string().max(MOBILE_LIMIT),status:deliveryStatus,createdAt:timestamp,expiresAt:timestamp,detail:z.string().max(160)}).strict();
+const familyOriginSchema=z.object({sessionId:identity,bindingRevision:z.string().regex(/^[a-f0-9]{64}$/),sourceRequestId:z.string().min(1).max(512),workspaceId:z.string().min(1).max(240),root:z.string().min(1).max(4096),projectName:z.string().min(2).max(240),taskHash:z.string().regex(/^[a-f0-9]{64}$/)}).strict();
 const jobSchema = z.object({
   id:identity, originSessionId:identity, originToolCallId:identity, targetSessionId:identity, targetMessageId:identity,
   projectRoot:z.string().max(4096), projectLabel:z.string().max(80), task:z.string().min(1).max(8000),
-  returnBinding:bindingSchema.nullable(),createdAt:timestamp,expiresAt:timestamp,status:executionStatus,
+  familyOrigin:familyOriginSchema.optional(),returnBinding:bindingSchema.nullable(),createdAt:timestamp,expiresAt:timestamp,status:executionStatus,
   turn:z.number().int().nonnegative().nullable(),reply:z.string().max(MAX_REPLY),replyTruncated:z.boolean(),
   reason:z.enum([...knownReasons,'unknown']).nullable(),finishedAt:timestamp.nullable(),delivery:deliverySchema.nullable(),
 }).strict();
@@ -179,6 +180,7 @@ export function createTaskResults({store,clock = () => new Date(),send = async (
   const findJob = id => state.jobs.find(job => job.id === id);
   const snapshot = job => copy(job);
   const ready = () => serial(load);
+  const byRequest=(originSessionId,key)=>serial(async()=>{await load();identity.parse(originSessionId);identity.parse(key);const job=state.jobs.find(row=>row.originSessionId===originSessionId&&row.originToolCallId===key);return job?snapshot(job):null;});
   const prepare = value => serial(async () => {
     if (closing) throw new Error('Task results closed / 任务结果服务已关闭');
     await load();
@@ -191,6 +193,8 @@ export function createTaskResults({store,clock = () => new Date(),send = async (
     if (typeof value.projectLabel !== 'string' || !value.projectLabel.trim()) throw new Error('Project label required');
     if (typeof value.task !== 'string' || !value.task.trim() || value.task.length > 8000) throw new Error('A bounded explicit task is required');
     const returnBinding = bindingSchema.nullable().parse(value.returnBinding ?? null);
+    const familyOrigin=value.familyOrigin===undefined?undefined:familyOriginSchema.parse(value.familyOrigin);
+    if(familyOrigin&&(familyOrigin.sessionId!==value.originSessionId||familyOrigin.root!==value.projectRoot))throw new Error('Family task origin mismatch');
     await expire();
     if (state.jobs.filter(active).length >= 10) throw new Error('最多保留10项活动交办，请先等待结果。');
     // Keep dedupe keys for the entire six-hour lifetime. Only expired history
@@ -203,7 +207,7 @@ export function createTaskResults({store,clock = () => new Date(),send = async (
     const createdAt = now().toISOString();
     const job = {id:`task_${randomUUID()}`,originSessionId:value.originSessionId,originToolCallId:value.originToolCallId,
       targetSessionId:value.targetSessionId,targetMessageId:value.targetMessageId,projectRoot:value.projectRoot,
-      projectLabel:line(value.projectLabel,80),task:clean(value.task),returnBinding,createdAt,
+      projectLabel:line(value.projectLabel,80),task:clean(value.task),...(familyOrigin?{familyOrigin}:{}),returnBinding,createdAt,
       expiresAt:new Date(Date.parse(createdAt)+SIX_HOURS).toISOString(),status:'prepared',turn:null,
       reply:'',replyTruncated:false,reason:null,finishedAt:null,delivery:null};
     state.jobs.push(job); await save(); return {job:snapshot(job),duplicate:false};
@@ -288,7 +292,9 @@ export function createTaskResults({store,clock = () => new Date(),send = async (
       }
       let result;
       try {
-        result=await send({sessionId:job.originSessionId,text:delivery.text,expiresAt:delivery.expiresAt,expectedBinding:copy(job.returnBinding)});
+        const expectedBinding=copy(job.returnBinding);
+        const authorize=()=>!closing&&!storageFailed&&state.jobs.includes(job)&&job.delivery===delivery&&delivery.status==='dispatching'&&now().getTime()<Date.parse(delivery.expiresAt)&&job.returnBinding?.userHash===expectedBinding.userHash&&(job.returnBinding?.botHash??null)===(expectedBinding.botHash??null);
+        result=await send({sessionId:job.originSessionId,text:delivery.text,expiresAt:delivery.expiresAt,expectedBinding,...(job.familyOrigin?{familyOrigin:copy(job.familyOrigin)}:{}),requestId:'task-result-'+job.id,authorize});
       } catch { result={status:'uncertain'}; }
       delivery.status=['blocked','queued','reported_sent','failed','uncertain'].includes(result?.status)?result.status:'uncertain';
       delivery.detail=deliveryNames[delivery.status];
@@ -315,9 +321,10 @@ export function createTaskResults({store,clock = () => new Date(),send = async (
     // Terminal execution state and its only outbox item share this one write.
     await save(); clearInactiveClaims(); await flush();
   });
-  const status = (originSessionId,{id} = {}) => serial(async () => {
+  const status = (originSessionId,{id,expectedBinding} = {}) => serial(async () => {
     await load(); identity.parse(originSessionId);
-    const owned=state.jobs.filter(job=>job.originSessionId===originSessionId && (id === undefined || job.id===id));
+    const expected=expectedBinding===undefined?undefined:bindingSchema.parse(expectedBinding);
+    const owned=state.jobs.filter(job=>job.originSessionId===originSessionId && (id === undefined || job.id===id)&&(!expected||job.returnBinding?.userHash===expected.userHash&&(job.returnBinding?.botHash??null)===(expected.botHash??null)));
     const jobs=owned.slice(-10).map(job=>({id:job.id,projectLabel:job.projectLabel,task:line(job.task,160),status:job.status,
       createdAt:job.createdAt,expiresAt:job.expiresAt,finishedAt:job.finishedAt,turn:job.turn,
       delivery:job.delivery?{status:job.delivery.status,detail:deliveryNames[job.delivery.status]}:null,
@@ -366,5 +373,5 @@ export function createTaskResults({store,clock = () => new Date(),send = async (
     closePromise ??= serial(async()=>{await load();directClaims.clear();});
     return closePromise;
   };
-  return {ready,prepare,admitted,notAdmitted,claimed,discarded,observe,status,inspect,trustedLastTarget,tick,needsTimer,close};
+  return {ready,byRequest,prepare,admitted,notAdmitted,claimed,discarded,observe,status,inspect,trustedLastTarget,tick,needsTimer,close};
 }

@@ -81,6 +81,37 @@ test('empty results stay empty and short body clipping is declared',async()=>{
  const result=await call(long,'drive',{operation:'read',id:'f1'});assert.equal(result.value.fileContent.length,16000);assert.equal(result.value.truncated,true);await long.close();
 });
 
+test('Gmail list retains resultSizeEstimate in its partial response without exposing an account total',async()=>{
+ const requests=[];const t=fixture(async(url,options)=>{requests.push({u:new URL(url),options});return json({resultSizeEstimate:0});});
+ try{
+  const result=await call(t,'gmail',{operation:'search',query:'subject:DeepSeek',limit:1});
+  assert.deepEqual(result.value,{items:[],truncated:false});assert.equal(requests.length,1);
+  const {u,options}=requests[0];
+  assert.equal(u.origin,'https://gmail.googleapis.com');assert.equal(u.pathname,'/gmail/v1/users/me/messages');
+  assert.equal(u.searchParams.get('q'),'subject:DeepSeek');assert.equal(u.searchParams.get('maxResults'),'1');
+  assert.equal(u.searchParams.get('includeSpamTrash'),'false');
+  // Gmail documents this metadata field even when messages / nextPageToken are
+  // absent. Keep it in the mask; a bodyless 204 still cannot establish emptiness.
+  assert.equal(u.searchParams.get('fields'),'messages(id,threadId),nextPageToken,resultSizeEstimate');
+  assert.equal(options.method,'GET');assert.equal(options.redirect,'manual');
+  const projected=projectContextResult('gmail',result.value,{operation:'search'});
+  assert.deepEqual(projected.items,[]);assert.equal(Object.hasOwn(result.value,'resultSizeEstimate'),false);
+ }finally{await t.close();}
+});
+
+test('Gmail result estimates cannot enlarge metadata reads or become returned item counts',async()=>{
+ let requests=0;const t=fixture(async(url)=>{
+  requests++;return new URL(url).pathname.endsWith('/messages')
+   ?json({messages:[{id:'m1',threadId:'t1'}],resultSizeEstimate:4294967295})
+   :json({id:'m1',snippet:'Synthetic preview'});
+ });
+ try{
+  const result=await call(t,'gmail',{operation:'search',query:'subject:DeepSeek',limit:1});
+  assert.equal(requests,2);assert.equal(result.value.items.length,1);assert.equal(result.value.truncated,false);
+  assert.equal(Object.hasOwn(result.value,'resultSizeEstimate'),false);assert.equal(JSON.stringify(result).includes('4294967295'),false);
+ }finally{await t.close();}
+});
+
 test('close cancels blocked token/body reads and releases late bodies',async()=>{
  let http=0;const t=createGoogleSuiteRest({getToken:()=>new Promise(()=>{}),fetch:async()=>{http++;throw Error();}});const pending=call(t,'gmail',{operation:'read',id:'m1'});await t.close();await assert.rejects(pending,e=>['CONTEXT_ABORTED','CONTEXT_CLOSED'].includes(e.code));assert.equal(http,0);
  let started;const ready=new Promise(r=>started=r);let cancelled=false;const b=fixture(async()=>new Response(new ReadableStream({start(c){c.enqueue(new TextEncoder().encode('{'));started();},cancel(){cancelled=true;}}),{headers:{'content-type':'application/json'}}));const read=call(b,'gmail',{operation:'read',id:'m1'});await ready;await b.close();await assert.rejects(read,fail('CONTEXT_ABORTED'));assert.equal(cancelled,true);

@@ -1,0 +1,13 @@
+import {readFileSync,writeFileSync} from 'node:fs';
+import {createHash} from 'node:crypto';
+const read=n=>readFileSync(new URL(n,import.meta.url),'utf8');
+const src=read('source.html'), app=read('app.css');
+const lines=app.split('\n'), stamp=lines.splice(0,3).join('\n');
+const css=stamp+'\n'+read('tokens.css')+'\n'+read('base.css')+'\n'+lines.join('\n');
+let out=src.replace(/<style>[\s\S]*?<\/style>/,'<style>\n'+css+'\n</style>');
+out=out.replace('<title>', '<meta name="description" content="DSH Dot 交互方案。示例数据，不读取资料或发送消息。">\n<title>');
+out=out.replace('<span class="demo-label">交互方案 · 示例数据 · 不读取资料或发送消息</span>','<span class="demo-label">交互方案　示例数据　不读取资料或发送消息</span>');
+const oldJs=src.split('<script>')[1].split('</script>')[0],newJs=out.split('<script>')[1].split('</script>')[0];
+if(oldJs!==newJs)throw new Error('Script changed');
+writeFileSync(new URL('prototype.html',import.meta.url),out);
+console.log(JSON.stringify({sha256:createHash('sha256').update(out).digest('hex'),scriptSha256:createHash('sha256').update(newJs).digest('hex'),scriptUnchanged:true}));

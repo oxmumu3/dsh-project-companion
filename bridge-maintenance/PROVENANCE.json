@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "name": "dsh-wechat",
-  "version": "0.11.1-dot.2",
+  "version": "0.11.1-dot.3",
   "maintainer": "DSH Dot / 牛村木木山",
   "upstream": {
     "repository": "https://github.com/pan17/dsh-wechat",
@@ -10,16 +10,16 @@
     "originalNpmVersion": "0.11.0",
     "originalNpmArchiveSha256": "993e1e1afce3c0dcd2610bf9e84ffbfd6d08768f5c4b4fa30eeec50dc2e97d3f"
   },
-  "sourceCommit": "19c3f40c85bcdd49525a09d07007978e61521f83",
+  "sourceCommit": "1aa862728afcba1d811ce9ba442d6fb1bcd45ee0",
   "delta": {
-    "file": "dsh-wechat-0.11.1-dot.2.patch",
-    "sha256": "bbb6a1ab70a5b11bce72308a705813538ec15c53f462b009c2128d04d0775dee",
+    "file": "dsh-wechat-0.11.1-dot.3.patch",
+    "sha256": "794558129efb162a596c9ec9511ad24196327c3a0c1b882fbc48b751d7972a5d",
     "format": "git diff --binary upstream sourceCommit..sourceCommit"
   },
   "archive": {
-    "file": "dsh-wechat-0.11.1-dot.2.tgz",
-    "sha256": "b0f811e7f3d4746fe27d12460f7f188d4ad8d0b5f6be44f442636ce6db3538f7",
-    "bytes": 1318555
+    "file": "dsh-wechat-0.11.1-dot.3.tgz",
+    "sha256": "2205931694cf84eadea55c7445d7f5ff5b2ae4c76a8f658b495120c811a7c41c",
+    "bytes": 1324851
   },
   "license": {
     "type": "MIT",
@@ -31,7 +31,7 @@
     "node": "22.22.0",
     "npm": "10.9.4",
     "typescript": "5.9.3",
-    "packageLockSha256": "b020f4ad98b676a3a3f91c9ed29f7cd89adb4b903785333dba479487e79aef93"
+    "packageLockSha256": "09d136f49521252c48f937a0320fd6fdc22432860c9634496cfd85563e5bd212"
   },
   "changedFiles": [
     {
@@ -40,27 +40,35 @@
     },
     {
       "file": "README.md",
-      "sha256": "c8d58ea79f174729e0b28e8dd253fdd6041c00aad5167603e6d2e07b170f82e8"
+      "sha256": "da244ce872b9ca49b3e0bc0f833cf760947a38ce6d04c239387e392f4c5b458b"
     },
     {
       "file": "SOURCE.json",
-      "sha256": "f1431c123df65ae1b53f75474acb2cdd68cb1114a3b152c2dfe65769a443f02e"
+      "sha256": "445a8357fcc3fd676eaac0f71aa987775675e06610d1d7e05a759317cbcc2ef2"
     },
     {
       "file": "package-lock.json",
-      "sha256": "b020f4ad98b676a3a3f91c9ed29f7cd89adb4b903785333dba479487e79aef93"
+      "sha256": "09d136f49521252c48f937a0320fd6fdc22432860c9634496cfd85563e5bd212"
     },
     {
       "file": "package.json",
-      "sha256": "7d49fe0aae67061b88feb5145a69e2f61465b63cad95fca8e4bdabafe551666b"
+      "sha256": "742eb53849e0d7295cf02e898ae290442e6f918a4a14b6a2463dcfe901519b16"
     },
     {
       "file": "src/bridge/bridge.ts",
-      "sha256": "aacfd87a39e5a8834d38f1d021f33ad62d3124de69a98253346b037a12b25321"
+      "sha256": "66abbf35af539e1db75a0bb8e16581a84de805c7e50ac2b288abb8830e6640ea"
+    },
+    {
+      "file": "src/bridge/dot-guarded-outbox.ts",
+      "sha256": "007626c41529cda8498de9a0a73055f02cca28f50db2ec386d603aef3f6bb9b4"
     },
     {
       "file": "src/dsh/sessions.ts",
       "sha256": "09cb3400c6410f3725d64f57a1ad98c3700f685bf906087ce3b164b9c1d98284"
+    },
+    {
+      "file": "src/index.ts",
+      "sha256": "0f0e196ca973bdeceb4057a32a685d79814b350fec5360669b52b9b5e9569543"
     },
     {
       "file": "src/state.ts",
@@ -88,35 +96,21 @@
     },
     {
       "file": "tests/dot-delivery.test.ts",
-      "sha256": "73c9bb4cf0c08b07ddeb719f652b94027f6e9d1aa38036719aa2b66d19bfe9e4"
+      "sha256": "c45db826dd2952e9029aba3757ec60a06a7c55acb5d6bae13e783f8a07004216"
+    },
+    {
+      "file": "tests/dot-guarded-outbox.test.ts",
+      "sha256": "1d87328b8c41320300ffdb225609fff2add942384b70d5f670e3862b233a74cd"
     }
   ],
   "verification": {
     "bridgeTests": {
-      "files": 50,
-      "passed": 763,
+      "files": 51,
+      "passed": 770,
       "failed": 0
     },
-    "build": "npm run build: passed",
-    "scope": "Automated source/build and stubbed transport tests; no phone delivery claim",
-    "buildCacheExcluded": "dist/.tsbuildinfo excluded from npm package; runtime files retained",
-    "builtBridgeDotSeam": {
-      "passed": true,
-      "emptyQueueReceiptFromActualProcessMessage": true,
-      "emptyAcknowledgementCount": 1,
-      "pureRecoveryAgentEnqueues": 0,
-      "nonemptyFlushStatusNotDuplicated": true,
-      "realNetworkRequests": 0
-    },
-    "offlinePatchRebuild": {
-      "appliedToPinnedUpstream": true,
-      "changedFileHashesVerified": 14,
-      "buildPassed": true,
-      "archiveByteIdentical": true,
-      "sha256": "b0f811e7f3d4746fe27d12460f7f188d4ad8d0b5f6be44f442636ce6db3538f7",
-      "dependencyInstall": false,
-      "dependencySource": "Existing build dependencies from the locked fork checkout"
-    }
+    "build": "npm run build passed",
+    "scope": "Synthetic transport and independent cross-process review; no real phone receipt claim"
   },
   "boundaries": [
     "This is a local maintained fork, not an upstream release or endorsement.",

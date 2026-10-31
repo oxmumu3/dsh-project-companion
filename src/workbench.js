@@ -1,4 +1,5 @@
 import {createHash} from 'node:crypto';
+import {projectDailySchedule} from './followup-schedule.js';
 import {isAbsolute} from 'node:path';
 import {readProjectFiles,PROJECT_FILES,validateRepository} from './sources.js';
 import {bindingRevision} from './workbench-scope.js';
@@ -29,21 +30,33 @@ const limitations=[
 ];
 
 /** A passive projection of existing state. It owns no store, agent or scheduler. */
-export function createWorkbench({service,taskResults,memory,followup,readBinding,readState=async()=>null,readConnection=async()=>({state:'unknown'}),readProject=readProjectFiles,clock=()=>new Date(),hostTimeZone=()=>Intl.DateTimeFormat().resolvedOptions().timeZone,isClosed=()=>false}={}){
+export function createWorkbench({service,taskResults,memory,followup,readBinding,readState=async()=>null,readConnection=async()=>({state:'unknown'}),readContextConnection,readDesktopConnection,readProject=readProjectFiles,clock=()=>new Date(),hostTimeZone=()=>Intl.DateTimeFormat().resolvedOptions().timeZone,isClosed=()=>false}={}){
   let closed=false;
   const open=()=>{if(closed||isClosed())throw new Error('项目工作台已关闭。');};
-  const connection=async()=>{open();try{const value=await readConnection();open();if(!CONNECTION_STATES.has(value?.state)||(value.state==='bound'&&!bound(value)))return{state:'unknown'};return bound(value)?{state:'bound',sessionId:value.sessionId,bindingKey:value.bindingKey}:{state:value.state};}catch(error){open();return{state:'unknown'};}};
+  const connection=async()=>{open();try{const value=await readConnection();open();if(!CONNECTION_STATES.has(value?.state)||(value.state==='bound'&&!bound(value)))return{state:'unknown'};return bound(value)?{state:'bound',sessionId:value.sessionId,bindingKey:value.bindingKey,...(value.readOnly===true?{readOnly:true}:{})}:{state:value.state,...(value.readOnly===true?{readOnly:true}:{})};}catch(error){open();return{state:'unknown'};}};
+    const desktopConnection=async()=>{
+      if(typeof readDesktopConnection!=='function')return null;
+      try{const value=await readDesktopConnection();open();return bound(value)&&!value.sessionId.startsWith('family_')&&value.sessionId!=='family-no-legacy'?{state:'bound',sessionId:value.sessionId,bindingKey:value.bindingKey}:null;}catch{open();return null;}
+    };
+  const desktopConversation=async()=>{open();const before=await desktopConnection(),after=await desktopConnection();return same(before,after)?{state:'ready',sessionId:after.sessionId,revision:bindingRevision(after)}:{state:'unavailable'};};
   async function snapshot(){
     open();
     const issues=[...limitations];
+    const desktopInitial=await desktopConnection();
     const [projectResult,stateResult,initial]=await Promise.allSettled([service.watchedProjects(),readState(),connection()]);
     open();
     const availability={projects:projectResult.status==='fulfilled'&&Array.isArray(projectResult.value)&&projectResult.value.length<=5&&projectResult.value.every(validProject),plans:stateResult.status==='fulfilled'&&Boolean(validPlans(stateResult.value)),jobs:false};
     const watched=projectResult.status==='fulfilled'?list(projectResult.value,5).filter(p=>typeof p?.root==='string'&&isAbsolute(p.root)&&p.root.length<=4096):[];
     if(!availability.projects)issues.push('已关注项目暂不可用；未扩展读取范围。');
-    const state=availability.plans?stateResult.value:null;
-    if(!state)issues.push('计划及提醒状态暂不可用。');
+    const storedState=availability.plans?stateResult.value:null;
+    if(!storedState)issues.push('计划及提醒状态暂不可用。');
     const expected=initial.status==='fulfilled'?initial.value:{state:'unknown'};
+    // Legacy reminders and daily plans are not Family-owned result records.
+    // Keep them out of a Family projection rather than merging two sources.
+    const state=expected.readOnly===true?null:storedState;
+    if(expected.readOnly===true)availability.plans=false;
+    let contextRevision;
+    if(typeof readContextConnection==='function'){try{contextRevision=bindingRevision(await readContextConnection());}catch{contextRevision=null;}open();}
     const hidden=[...watched.map(p=>p.root),...(bound(expected)?[expected.bindingKey]:[])].sort((a,b)=>b.length-a.length);
     const clean=(value,max)=>{
       let text=typeof value==='string'?value.replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g,''):'';
@@ -73,10 +86,12 @@ export function createWorkbench({service,taskResults,memory,followup,readBinding
     };
     const planOf=(value,once=false)=>{
       if(value===null)return null;
-      if(!value||typeof value.enabled!=='boolean'||typeof value.running!=='boolean'||(once?!['queued','running','completed','failed','cancelled','blocked'].includes(value.status)||value.delivery!=='wechat':!Number.isSafeInteger(value.everyMinutes)||value.everyMinutes<30||value.everyMinutes>1440))throw new Error('Follow-up projection unavailable');
-      const result={enabled:value.enabled,running:value.running,delivery:'wechat',...(once?{status:value.status}:{everyMinutes:value.everyMinutes})};
+      if(!value||typeof value.enabled!=='boolean'||typeof value.running!=='boolean'||(once?!['queued','running','completed','failed','cancelled','blocked'].includes(value.status)||!['wechat','family'].includes(value.delivery):!Number.isSafeInteger(value.everyMinutes)||value.everyMinutes<30||value.everyMinutes>1440))throw new Error('Follow-up projection unavailable');
+      if(value.loopId!==undefined&&(typeof value.loopId!=='string'||!/^[a-zA-Z0-9_-]{1,100}$/.test(value.loopId)))throw new Error('Invalid follow-up loop ID');
+      const result={...(value.loopId!==undefined?{loopId:value.loopId}:{}),enabled:value.enabled,running:value.running,delivery:'wechat',...(once?{status:value.status}:{everyMinutes:value.everyMinutes,...projectDailySchedule(value)})};
       for(const key of ['nextDueAt','lastReviewedAt','lastRunAt'])if(value[key]!==undefined&&value[key]!==null){if(!at(value[key]))throw new Error('Invalid follow-up time');result[key]=at(value[key]);}
       if(value.runCount!==undefined){if(!Number.isSafeInteger(value.runCount)||value.runCount<0)throw new Error('Invalid follow-up count');result.runCount=value.runCount;}
+      if(value.lastCheckOutcome!==undefined){if(!['quiet','reviewed','partial'].includes(value.lastCheckOutcome)||!at(value.lastReviewedAt))throw new Error('Invalid last check outcome');result.lastCheckOutcome=value.lastCheckOutcome;}
       if(value.blocked)result.blocked='原跟进当前不可运行，请打开安排核对。';
       return result;
     };
@@ -124,8 +139,8 @@ export function createWorkbench({service,taskResults,memory,followup,readBinding
         jobs=list(result?.jobs,10).filter(job=>identity(job?.id)&&at(job.createdAt)).map(job=>({id:job.id,projectLabel:clean(job.projectLabel,80),task:clean(job.task,160),status:JOB_STATES.has(job.status)?job.status:'unknown',createdAt:at(job.createdAt),
           ...(at(job.finishedAt)?{finishedAt:at(job.finishedAt)}:{}),...(job.delivery?{delivery:{status:DELIVERY_STATES.has(job.delivery.status)?job.delivery.status:'uncertain',detail:clean(job.delivery.detail,160)}}:{})}));
         availability.jobs=true;
-        const latest=jobs.filter(job=>job.status==='completed').sort((a,b)=>Date.parse(b.finishedAt??b.createdAt)-Date.parse(a.finishedAt??a.createdAt))[0];
-        if(latest){
+        const latest=[...jobs].reverse().sort((a,b)=>Date.parse(b.createdAt)-Date.parse(a.createdAt))[0];
+        if(latest?.status==='completed'){
           latest.result={available:false,text:'',truncated:false};
           try{
             if(!same(expected,await connection()))throw new Error('Original binding changed');
@@ -140,9 +155,9 @@ export function createWorkbench({service,taskResults,memory,followup,readBinding
       }catch(error){open();availability.jobs=false;jobs=[];issues.push('当前绑定会话的交办状态暂不可用。');}
       current=await connection();
     }
-    if(bound(expected)&&!same(expected,current)){jobs=[];availability.jobs=false;for(const project of projects)project.followup=emptyFollowup();current={state:'unknown'};issues.push('读取时原绑定已变化，已丢弃交办和跟进内容；请刷新核对。');}
+    if(bound(expected)&&!same(expected,current)){jobs=[];availability.jobs=false;for(const project of projects)project.followup=emptyFollowup();current={state:'unknown',...(expected.readOnly===true||current.readOnly===true?{readOnly:true}:{})};issues.push('读取时原绑定已变化，已丢弃交办和跟进内容；请刷新核对。');}
     // An initially unbound snapshot never adopts a newly bound session midway.
-    if(!bound(expected))current={state:expected.state};
+    if(!bound(expected))current={state:expected.state,...(expected.readOnly===true?{readOnly:true}:{})};
     const outbox=list(state?.outbox,100);
     const reminders=list(state?.reminders,100).filter(row=>identity(row?.id)&&at(row.dueAt)&&REMINDER_STATES.has(row.status)).map(row=>{
       const deliveryStatus=row.outboxId?outbox.find(item=>item?.id===row.outboxId)?.status??'history_pruned':null;
@@ -151,11 +166,13 @@ export function createWorkbench({service,taskResults,memory,followup,readBinding
     const daily=state?.daily;
     let zone='unknown';try{const value=typeof hostTimeZone==='function'?hostTimeZone():hostTimeZone;if(typeof value==='string'&&value.length<=100){new Intl.DateTimeFormat('en',{timeZone:value});zone=value;}}catch{}
     open();
-    return{version:1,generatedAt:clock().toISOString(),hostTimeZone:zone,paused:typeof state?.paused==='boolean'?state.paused:null,availability,bindingRevision:bindingRevision(current),
-      connection:{state:current.state,...(bound(current)?{sessionId:current.sessionId}:{})},projects,jobs,reminders:reminders.slice(0,20),daily:daily?{time:daily.time,timeZone:daily.timeZone,enabled:daily.enabled===true}:null,
+    const desktopCurrent=await desktopConnection();
+    const desktopConversation=same(desktopInitial,desktopCurrent)?{state:'ready',sessionId:desktopCurrent.sessionId,revision:bindingRevision(desktopCurrent)}:{state:'unavailable'};
+    return{version:1,...(typeof readDesktopConnection==='function'?{desktopConversation}:{}),generatedAt:clock().toISOString(),hostTimeZone:zone,paused:typeof storedState?.paused==='boolean'?storedState.paused:null,availability,bindingRevision:bindingRevision(current),
+      ...(contextRevision!==undefined?{contextBindingRevision:contextRevision}:{}),connection:{state:current.state,...(bound(current)?{sessionId:current.sessionId}:{}),...(current.readOnly===true?{readOnly:true}:{})},projects,jobs,reminders:reminders.slice(0,20),daily:daily?{time:daily.time,timeZone:daily.timeZone,enabled:daily.enabled===true}:null,
       counts:{projects:projects.length,activeReminders:reminders.length},limitations:issues};
   }
-  return{snapshot,close(){closed=true;}};
+  return{snapshot,desktopConversation,close(){closed=true;}};
 }
 
 /** The official owner-authenticated connection layer is the only transport. */
@@ -176,4 +193,17 @@ export function registerWorkbenchRoute(ctx,adapter){
   const stop=()=>{if(closed)return;closed=true;unregister?.();};
   if(typeof ctx.effect==='function')ctx.effect(()=>stop);
   return stop;
+}
+
+
+/** Authenticated desktop route metadata only; no project/source reads or history. */
+export function registerDesktopConversationRoute(ctx,adapter){
+  const connection=ctx.get('connection');if(typeof connection?.fetch?.register!=='function')return null;
+  let closed=false;const json=(value,status=200)=>Response.json(value,{status,headers:{'Cache-Control':'no-store'}});
+  const unregister=connection.fetch.register({path:'/api/project_companion/desktop-conversation',methods:['GET'],requestBody:'buffered',async fetch(request){
+    if(closed)return json({error:'桌面对话入口已关闭。'},503);
+    if(request.method!=='GET'||new URL(request.url).search||request.body!=null)return json({error:'对话入口不接受参数。'},400);
+    try{const value=await adapter.desktopConversation();return closed?json({error:'桌面对话入口已关闭。'},503):json(value);}catch{return json({state:'unavailable'},503);}
+  }});
+  const stop=()=>{if(closed)return;closed=true;unregister?.();};if(typeof ctx.effect==='function')ctx.effect(()=>stop);return stop;
 }

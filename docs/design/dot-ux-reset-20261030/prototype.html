@@ -1,0 +1,686 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src data:; base-uri 'none'; form-action 'none'">
+<meta name="color-scheme" content="light">
+<meta name="description" content="DSH Dot 交互方案。示例数据，不读取资料或发送消息。">
+<title>DSH Dot · 把一件事接着做下去</title>
+<style>
+/* Hallmark · v2.0.0 · redesign: full · scope: app · shape: app screen · theme: brand · genre: modern-minimal · posture: Restrained · copy: verbatim · signature: inline phone pairing beside the native writing desk */
+/* Hallmark · pre-emit critique: P4 H4 E3 S4 R4 V3 · weakest: E, the inherited control scale is fragmented; rebuilt tokens and workstation regions before rendering */
+/* Hallmark · reworded "交互方案 · 示例数据 · 不读取资料或发送消息" to "交互方案　示例数据　不读取资料或发送消息" · 63 separates the prototype labels without middle-dot joins; disclaimer words unchanged */
+:root {
+  --color-paper: #f6f5f0;
+  --color-paper-2: #eeefea;
+  --color-paper-3: #e7ecef;
+  --color-surface: #fffefa;
+  --color-white: #fff;
+  --color-ink: #23313c;
+  --color-ink-2: #374957;
+  --color-muted: #5b6973;
+  --color-rule: #cbd2ce;
+  --color-edge: #7e8e98;
+  --color-accent: #345ec7;
+  --color-accent-ink: #fffefa;
+  --color-focus: #345ec7;
+  --color-accent-soft: #edf2fc;
+  --color-success: #456453;
+  --color-success-soft: #e8efe7;
+  --color-error: #8c4236;
+  --color-warning: #845d26;
+  --color-warning-soft: #f4ebdc;
+  --color-clear: transparent;
+  --color-shadow: #23313c18;
+  --color-backdrop: #23313c66;
+  --font-body: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;
+  --font-display: var(--font-body); --font-outlier: var(--font-body);
+  --text-xs: .75rem; --text-sm: .875rem; --text-md: 1rem; --text-lg: 1.125rem; --text-xl: 1.25rem; --text-2xl: 1.5rem; --text-3xl: 1.75rem;
+  --text-display: var(--text-2xl); --text-display-s: var(--text-xl); --text-section: var(--text-lg); --text-title: var(--text-md); --text-lead: var(--text-md);
+  --space-3xs: 2px;
+  --space-2xs: 4px;
+  --space-xs: 8px;
+  --space-sm: 12px;
+  --space-md: 16px;
+  --space-lg: 24px;
+  --space-xl: 40px;
+  --space-2xl: 64px;
+  --space-3xl: 96px;
+  --space-4xl: 144px;
+  --container: 1192px; --gutter: var(--space-lg); --gap-columns: var(--space-lg);
+  --radius-card: 8px; --radius-input: 6px; --radius-pill: 999px; --rule-hair: 1px;
+  --shadow-card: 0 8px 32px var(--color-shadow);
+  --control-height: 36px; --control-touch: 44px;
+  --ease-out: cubic-bezier(.16,1,.3,1); --ease-in: cubic-bezier(.7,0,.84,0); --ease-in-out: cubic-bezier(.65,0,.35,1);
+  --dur-micro: 120ms; --dur-short: 220ms; --dur-long: 420ms;
+  --z-base:1; --z-raised:10; --z-dropdown:100; --z-sticky:200; --z-sticky-nav:300; --z-modal:400; --z-toast:500; --z-tooltip:600;
+  --tracking-display: 0; --display-weight:600;
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+html, body { overflow-x: clip; }
+html { scrollbar-color: var(--color-muted) var(--color-paper); scroll-padding-top: var(--space-3xl); }
+body { margin: 0; background: var(--color-paper); color: var(--color-ink); font-family: var(--font-body); font-size: var(--text-md); line-height: 1.55; -webkit-font-smoothing: antialiased; caret-color: var(--color-accent); }
+::selection { background: color-mix(in oklab, var(--color-accent) 22%, var(--color-clear)); color: var(--color-ink); }
+:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
+a { color: inherit; text-decoration-thickness: 1px; text-underline-offset: 0.16em; }
+h1, h2, h3 { margin: 0; font-family: var(--font-display); font-weight: var(--display-weight, 700); font-synthesis: none; letter-spacing: var(--tracking-display); line-height: 1.05; overflow-wrap: break-word; min-width: 0; text-wrap: balance; }
+h1 { max-width: 20ch; font-size: var(--text-display); } h2 { max-width: 30ch; font-size: var(--text-section); } h3 { max-width: 40ch; font-size: var(--text-title); line-height: 1.2; }
+.lead { font-size: var(--text-lead); line-height: 1.45; max-width: 52ch; }
+p { margin: 0; text-wrap: pretty; }
+p:not([class]) { max-width: 65ch; }
+img, video { max-width: 100%; height: auto; display: block; }
+svg { display: block; }
+[hidden] { display: none !important; }
+button, input, select, textarea { font: inherit; }
+.container { width: 100%; max-width: var(--container); margin-inline: auto; padding-inline: var(--gutter); box-sizing: border-box; }
+.num, .figure, td.num { font-variant-numeric: tabular-nums; }
+.visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+@media (max-width: 60rem) { :root { --gutter: var(--space-lg); --section-gap-s: 80px; --section-gap: 96px; --section-gap-l: 120px; } }
+@media (max-width: 40rem) { :root { --gutter: var(--space-md); --section-gap-s: 56px; --section-gap: 72px; --section-gap-l: 96px; --gap-columns: var(--space-md); } }
+@media (prefers-reduced-motion: reduce) { *:not(.keep-motion), *:not(.keep-motion)::before, *:not(.keep-motion)::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; scroll-behavior: auto !important; } }
+
+button { color:inherit; background:var(--color-clear); border:0; min-height:var(--control-height); white-space:nowrap; cursor:pointer; }
+button:focus-visible,a:focus-visible,select:focus-visible,textarea:focus-visible,summary:focus-visible,[tabindex]:focus-visible { outline:2px solid var(--color-focus); outline-offset:2px; }
+button:disabled,button[aria-disabled="true"] { opacity:.55; cursor:not-allowed; }
+button[aria-busy="true"] { cursor:progress; }
+button:active:not(:disabled) { transform:translateY(1px); }
+input[aria-invalid="true"],textarea[aria-invalid="true"] { outline-color:var(--color-error); }
+button,input,select,textarea { font-family:var(--font-body); }
+@media(pointer:coarse) { button,select { min-height:var(--control-touch); } }
+
+
+* { box-sizing:border-box; }
+body { margin:0; background:var(--color-paper); color:var(--color-ink); font:15px/1.6 var(--font-body); -webkit-font-smoothing:antialiased; }
+button,input,textarea,select { font:inherit; color:inherit; }
+button { border:0; background:none; cursor:pointer; }
+button,a,select,textarea { touch-action:manipulation; }
+button:disabled { cursor:not-allowed; }
+
+button:focus-visible,a:focus-visible,select:focus-visible,summary:focus-visible { outline:3px solid var(--color-accent); outline-offset:3px; }
+h1,h2,h3,p { margin:0; }
+svg { width:20px; height:20px; flex:none; fill:none; stroke:currentColor; stroke-width:1.6; stroke-linecap:round; stroke-linejoin:round; }
+[hidden] { display:none!important; }
+a { color:var(--color-accent); }
+.small { font-size:var(--text-xs); }
+.muted { color:var(--color-muted); }
+.visually-hidden { position:absolute!important; width:1px; height:1px; overflow:hidden; clip:rect(0,0,0,0); white-space:nowrap; }
+.icon-button { display:inline-grid; place-items:center; width:36px; height:36px; border-radius:9px; }
+.icon-button:hover { background:var(--color-accent-soft); }
+
+/* A compact, honest prototype frame; the workspace carries the emphasis. */
+.demo-bar { min-height:36px; padding:var(--space-2xs) var(--space-lg); background:var(--color-success-soft); color:var(--color-success); border-bottom:1px solid var(--color-success-soft); font-size:var(--text-xs); display:flex; align-items:center; justify-content:space-between; gap:var(--space-md); }
+.demo-switch { display:flex; align-items:center; gap:var(--space-xs); white-space:nowrap; }
+.demo-switch select { font-size:var(--text-xs); background:var(--color-surface); border:1px solid var(--color-rule); border-radius:6px; padding:var(--space-3xs) var(--space-lg) var(--space-3xs) var(--space-xs); }
+.demo-switch button { font-size:var(--text-xs); padding:var(--space-3xs) var(--space-2xs); color:var(--color-success); }
+.demo-switch button:hover { text-decoration:underline; text-underline-offset:3px; }
+.brand { display:flex; align-items:center; gap:var(--space-sm); min-width:0; }
+.brand-mark { display:grid; place-items:center; color:var(--color-accent); width:43px; height:43px; border:1px solid var(--color-rule); border-radius:14px; background:var(--color-surface); }
+.brand-mark svg { width:27px; height:27px; }
+.brand h1 { font-size:var(--text-xl); font-weight:650; letter-spacing:0; line-height:1.3; }
+.brand p { font-size:var(--text-xs); color:var(--color-muted); margin-top:var(--space-2xs); }
+.header-actions { display:flex; align-items:center; gap:var(--space-md); }
+.status-link { font-size:var(--text-xs); display:flex; align-items:center; gap:var(--space-xs); color:var(--color-muted); padding:var(--space-2xs) 0;  font-variant-numeric:tabular-nums; }
+.history-button { display:flex; align-items:center; gap:var(--space-xs); padding:var(--space-xs) var(--space-xs); border:1px solid var(--color-rule); border-radius:8px; font-size:var(--text-xs); background:none; }
+.history-button:hover { background:var(--color-surface); border-color:var(--color-rule); }
+.history-button svg { width:16px; height:16px; }
+.nav button:hover { background:var(--color-paper-2); }
+.page-heading { display:flex; justify-content:space-between; align-items:end; gap:var(--space-md); margin-bottom:var(--space-md); }
+.page-heading h2 { font:400 var(--text-2xl)/1.35 var(--font-display); letter-spacing:0; color:var(--color-ink); }
+.page-heading p { font-size:var(--text-sm); color:var(--color-muted); margin-top:var(--space-xs); }
+.date { font-size:var(--text-xs); color:var(--color-muted); white-space:nowrap; font-variant-numeric:tabular-nums; }
+.section-label { font-size:var(--text-sm); font-weight:650; letter-spacing:0; }
+.section-top { display:flex; align-items:center; justify-content:space-between; gap:var(--space-sm); margin-bottom:var(--space-xs); }
+.text-button { color:var(--color-accent); font-size:var(--text-sm); padding:var(--space-3xs) 0; }
+.text-button:hover { text-decoration:underline; text-underline-offset:4px; }
+
+/* A single paired surface: explanation on paper, code in a distinct quiet zone. */
+.first-connect h2 { font:400 var(--text-2xl)/1.35 var(--font-display); color:var(--color-ink-2); }
+.first-connect p { font-size:var(--text-sm); color:var(--color-muted); line-height:1.75; margin-top:var(--space-xs); max-width:54ch; }
+.first-connect-actions { display:flex; align-items:center; gap:var(--space-md); flex-wrap:wrap; margin-top:var(--space-sm); }
+.first-connect-actions .text-button { font-size:var(--text-xs); display:inline-flex; align-items:center; gap:var(--space-xs); min-height:36px; padding:var(--space-2xs) 0; }
+.first-connect-actions .text-button svg { width:15px; height:15px; }
+.first-connect .connection-condition { font-size:var(--text-xs); line-height:1.6; color:var(--color-muted); margin-top:var(--space-xs); }
+.inline-code:focus-visible { outline:3px solid var(--color-accent); outline-offset:-3px; border-radius:0 10px 10px 0; }
+.inline-code-status { font-size:var(--text-xs)!important; color:var(--color-muted)!important; margin:0 0 var(--space-xs)!important; line-height:1.4!important; letter-spacing:0;  font-variant-numeric:tabular-nums; }
+.qr-placeholder { position:relative; width:128px; height:128px; margin:0 auto var(--space-2xs); background:var(--color-surface); border:1px solid var(--color-paper-3); border-radius:8px; padding:var(--space-xs); overflow:hidden; }
+.qr-placeholder svg { width:100%; height:100%; stroke:none; fill:var(--color-ink); display:block; }
+.qr-demo-label { font-size:var(--text-xs); font-weight:500; color:var(--color-muted); line-height:1.4; }
+.qr-demo-controls { display:flex; justify-content:center; gap:var(--space-sm); margin-top:var(--space-2xs); flex-wrap:wrap; }
+.qr-demo-controls button { font-size:var(--text-xs); color:var(--color-accent); padding:var(--space-3xs) 0; text-decoration:underline; text-underline-offset:3px; }
+.qr-expired-mask { position:absolute; inset:0; background:var(--color-backdrop); display:flex; flex-direction:column; align-items:center; justify-content:center; gap:var(--space-xs); font-size:var(--text-xs); color:var(--color-ink); }
+.qr-expired-mask .primary { font-size:var(--text-xs); min-height:36px; padding:var(--space-2xs) var(--space-xs); }
+.first-connect.connected { display:flex; align-items:flex-start; gap:var(--space-sm); padding:var(--space-sm) var(--space-md); background:var(--color-paper); border:1px solid var(--color-rule);  }
+.first-connect.connected svg { color:var(--color-success); margin-top:var(--space-3xs); }
+.first-connect.connected h2 { font:600 var(--text-sm)/1.5 var(--font-body); color:var(--color-success); }
+.first-connect.connected p { font-size:var(--text-xs); margin-top:var(--space-2xs); color:var(--color-muted); }
+
+/* The writing surface has the clearest boundary, without a decorative glow. */
+.composer label { display:block; font-size:var(--text-sm); font-weight:600; margin-bottom:var(--space-xs); color:var(--color-ink-2); }
+.composer textarea::placeholder { color:var(--color-muted); }
+.composer-actions { display:flex; align-items:center; justify-content:space-between; gap:var(--space-sm); padding-top:var(--space-xs); }
+.composer-hint { font-size:var(--text-xs); color:var(--color-muted); }
+.primary { background:var(--color-accent); color:var(--color-white); border:1px solid var(--color-accent); border-radius:7px; min-height:38px; padding:var(--space-xs) var(--space-sm); font-size:var(--text-sm); font-weight:550; display:inline-flex; align-items:center; justify-content:center; gap:var(--space-xs); }
+.primary:hover { background:var(--color-accent); border-color:var(--color-accent); color:var(--color-white); }
+.primary:active { background:var(--color-accent); }
+.primary svg { height:15px; width:15px; }
+.secondary { border:1px solid var(--color-rule); background:var(--color-surface); border-radius:7px; min-height:36px; padding:var(--space-xs) var(--space-sm); font-size:var(--text-sm); }
+.secondary:hover { border-color:var(--color-rule); background:var(--color-accent-soft); }
+.draft-recovery { display:flex; align-items:center; justify-content:space-between; gap:var(--space-xs); margin-top:var(--space-xs); padding:var(--space-xs) var(--space-xs); background:var(--color-accent-soft); border-radius:6px; font-size:var(--text-xs); color:var(--color-muted); }
+.draft-recovery button { font-size:var(--text-xs); color:var(--color-accent); text-decoration:underline; text-underline-offset:3px; }
+.send-notice { font-size:var(--text-xs); line-height:1.7; color:var(--color-warning); margin-top:var(--space-xs); }
+.starter-row { display:flex; gap:var(--space-xs); flex-wrap:wrap; margin-top:var(--space-xs); }
+.starter { min-height:33px; font-size:var(--text-xs); padding:var(--space-2xs) var(--space-xs); background:var(--color-surface); border:1px solid var(--color-rule); border-radius:7px; color:var(--color-muted); display:flex; align-items:center; gap:var(--space-2xs); }
+.starter svg { width:14px; height:14px; color:var(--color-edge); }
+.starter:hover { background:var(--color-accent-soft); border-color:var(--color-rule); color:var(--color-accent); }
+.main-footer { display:flex; justify-content:space-between; gap:var(--space-sm); margin-top:var(--space-sm); font-size:var(--text-xs); color:var(--color-muted); }
+.main-footer button { color:var(--color-muted); font-size:var(--text-xs); text-decoration:underline; text-underline-offset:3px; }
+.new-user-intro { padding:var(--space-md) 0 var(--space-xs); max-width:56ch; }
+.new-user-intro h3 { font-size:var(--text-md); margin-bottom:var(--space-xs); font-weight:600; }
+.new-user-intro p { font-size:var(--text-sm); color:var(--color-muted); line-height:1.8; }
+
+/* Results are editorial rows, not a grid of equally weighted cards. */
+.conversation-result { margin-top:var(--space-md); }
+.conversation-result:empty { margin-top:var(--space-md); }
+.current-result { margin:0 0 var(--space-md); padding:var(--space-md) var(--space-md); border-left:2px solid var(--color-accent); background:var(--color-accent-soft); border-radius:0 8px 8px 0; }
+.current-result .result-kicker { font-size:var(--text-xs); font-weight:550; color:var(--color-accent); margin-bottom:var(--space-2xs); }
+.current-result h3 { font-size:var(--text-md); font-weight:600; margin-bottom:var(--space-2xs); }
+.current-result p { font-size:var(--text-sm); color:var(--color-success); line-height:1.8; }
+.result-actions { display:flex; gap:var(--space-md); margin-top:var(--space-xs); }
+.result-actions button { font-size:var(--text-xs); color:var(--color-accent); padding:var(--space-3xs) 0; }
+.collapsed-attention { margin-bottom:var(--space-md); border-bottom:1px solid var(--color-rule); padding:var(--space-xs) 0 var(--space-sm); font-size:var(--text-sm); display:flex; justify-content:space-between; gap:var(--space-sm); }
+.collapsed-attention button { font-size:var(--text-xs); color:var(--color-accent); }
+.attention-list { border-top:1px solid var(--color-rule); margin-bottom:var(--space-lg); }
+.attention { position:relative; padding:var(--space-md) 0 var(--space-md) var(--space-xl); border-bottom:1px solid var(--color-rule); }
+.attention-icon { position:absolute; left:0; top:20px; color:var(--color-warning); }
+.attention-icon svg { width:18px; height:18px; }
+.attention.done .attention-icon { color:var(--color-success); }
+.attention-kicker { display:flex; align-items:center; gap:var(--space-xs); color:var(--color-muted); font-size:var(--text-xs); margin-bottom:var(--space-2xs); flex-wrap:wrap; }
+.attention-kicker strong { font-weight:600; color:var(--color-warning); background:var(--color-warning-soft); border-radius:4px; padding:var(--space-3xs) var(--space-2xs); }
+.attention h3 { font-size:var(--text-md); font-weight:620; line-height:1.45; }
+.attention p { font-size:var(--text-sm); line-height:1.75; color:var(--color-muted); margin-top:var(--space-2xs); max-width:65ch; }
+.attention .next-step { color:var(--color-ink-2); }
+.attention-footer { display:flex; align-items:center; justify-content:space-between; gap:var(--space-sm); margin-top:var(--space-xs); }
+.source-button { color:var(--color-muted); font-size:var(--text-xs); display:inline-flex; align-items:center; gap:var(--space-2xs); padding:var(--space-3xs) 0; text-decoration:underline; text-decoration-color:var(--color-rule); text-underline-offset:4px; }
+.source-button:hover { text-decoration-color:var(--color-accent); }
+.source-button svg { width:12px; height:12px; }
+.attention-action { display:flex; gap:var(--space-md); }
+.attention-action button { font-size:var(--text-xs); color:var(--color-accent); padding:var(--space-3xs) 0; }
+.attention-action button:hover { text-decoration:underline; text-underline-offset:4px; }
+.done h3 { color:var(--color-success); }
+.done .attention-kicker strong { color:var(--color-success); background:var(--color-success-soft); }
+
+/* The rail is a quiet timeline and source register, separated once. */
+.rail section { padding:0 0 var(--space-lg); margin-bottom:var(--space-lg); border-bottom:1px solid var(--color-rule); }
+.rail section:last-child { border-bottom:0; margin-bottom:0; }
+.rail h3 { font-size:var(--text-sm); font-weight:600; margin-bottom:var(--space-sm); }
+.rail .eyebrow-note { font-size:var(--text-xs); color:var(--color-muted); margin-top:calc(-1 * var(--space-xs)); margin-bottom:var(--space-md); }
+.schedule { display:grid; grid-template-columns:44px 1fr; column-gap:var(--space-xs); row-gap:var(--space-md); }
+.schedule time { font-size:var(--text-sm); font-weight:550; color:var(--color-muted); font-variant-numeric:tabular-nums; padding-top:var(--space-3xs); letter-spacing:0; }
+.schedule-item { position:relative; border-left:1px solid var(--color-rule); padding-left:var(--space-sm); }
+.schedule-item:before { content:""; position:absolute; left:-3px; top:7px; width:5px; height:5px; border-radius:50%; background:var(--color-edge); }
+.schedule-item strong { font-size:var(--text-sm); font-weight:550; display:block; }
+.schedule-item p { font-size:var(--text-xs); color:var(--color-muted); line-height:1.75; margin-top:var(--space-2xs); }
+.rail-bottom { display:flex; justify-content:space-between; gap:var(--space-sm); margin-top:var(--space-md); align-items:center; }
+.rail-bottom span { font-size:var(--text-xs); color:var(--color-muted); }
+.rail-bottom button { font-size:var(--text-xs); color:var(--color-accent); padding:var(--space-3xs) 0; }
+.source-overview { display:flex; align-items:center; gap:var(--space-xs); margin-bottom:var(--space-xs); font-size:var(--text-sm); }
+.source-names { font-size:var(--text-xs); line-height:1.95; color:var(--color-muted); margin-bottom:var(--space-xs); word-break:keep-all; overflow-wrap:normal; }
+.rail-link { display:inline-flex; align-items:center; gap:var(--space-xs); color:var(--color-accent); font-size:var(--text-xs); padding:var(--space-2xs) 0; }
+.rail-link svg { width:14px; height:14px; }
+.interest-tags { display:flex; gap:var(--space-2xs); flex-wrap:wrap; margin-top:var(--space-sm); }
+.interest-tags span { font-size:var(--text-xs); padding:var(--space-3xs) var(--space-2xs); background:var(--color-success-soft); border-radius:4px; color:var(--color-success); }
+.rail-empty { font-size:var(--text-sm); color:var(--color-muted); line-height:1.85; margin-bottom:var(--space-sm); }
+.first-use-rail { padding-top:var(--space-2xs); }
+.benefit { display:flex; gap:var(--space-xs); font-size:var(--text-sm); margin-bottom:var(--space-sm); }
+.benefit svg { color:var(--color-accent); margin-top:var(--space-3xs); width:18px; height:18px; }
+.benefit p { font-size:var(--text-xs); color:var(--color-muted); margin-top:var(--space-3xs); }
+
+/* Secondary pages share the same typography, rows and small actions. */
+.plain-page { max-width:850px; }
+.plain-page .page-heading { margin-bottom:var(--space-lg); }
+.project-list,.connect-group { border-top:1px solid var(--color-rule); }
+.project-row { padding:var(--space-md) 0; border-bottom:1px solid var(--color-rule); display:flex; gap:var(--space-md); justify-content:space-between; align-items:center; }
+.project-row h3 { font-size:var(--text-md); font-weight:600; margin-bottom:var(--space-2xs); }
+.project-row p { font-size:var(--text-sm); color:var(--color-muted); max-width:65ch; }
+.row-meta { margin-top:var(--space-xs); font-size:var(--text-xs)!important; }
+.page-tip { font-size:var(--text-sm); color:var(--color-muted); padding:var(--space-md) 0; }
+.connect-row { display:flex; align-items:center; gap:var(--space-sm); padding:var(--space-md) 0; border-bottom:1px solid var(--color-rule); }
+.connect-icon { width:34px; height:34px; background:var(--color-success-soft); color:var(--color-muted); display:grid; place-items:center; border-radius:10px; }
+.connect-row>div:nth-child(2) { flex:1; min-width:0; }
+.connect-row h3 { font-size:var(--text-md); font-weight:600; }
+.connect-row p { font-size:var(--text-xs); color:var(--color-muted); margin-top:var(--space-3xs); }
+.connect-row .connected { font-size:var(--text-xs); color:var(--color-success); white-space:nowrap; }
+.connect-row .secondary { white-space:nowrap; }
+.memory-row { padding:var(--space-md) 0; border-bottom:1px solid var(--color-rule); display:flex; gap:var(--space-md); align-items:flex-start; }
+.memory-row>div { flex:1; }
+.memory-row h3 { font-size:var(--text-md); margin-bottom:var(--space-xs); }
+.memory-row p { font-size:var(--text-sm); color:var(--color-muted); }
+.memory-row .text-button { white-space:nowrap; font-size:var(--text-xs); }
+.notice { display:flex; align-items:flex-start; gap:var(--space-sm); padding:var(--space-sm) var(--space-md); background:var(--color-warning-soft); border:1px solid var(--color-rule);  border-radius:8px; margin:0 0 var(--space-md); font-size:var(--text-sm); }
+.notice svg { color:var(--color-warning); width:18px; height:18px; margin-top:var(--space-3xs); }
+.notice div { flex:1; }
+.notice p { margin-top:var(--space-3xs); color:var(--color-warning); }
+.notice button { font-size:var(--text-sm); color:var(--color-warning); font-weight:600; white-space:nowrap; margin:var(--space-3xs) 0; padding:var(--space-2xs) 0; }
+.notice.success { background:var(--color-paper-2); border-color:var(--color-rule); border-left-color:var(--color-edge); }
+.notice.success svg,.notice.success button { color:var(--color-success); }
+.notice.success p { color:var(--color-muted); }
+
+/* The global entry and chat surface use the same edge and writing treatment. */
+.launcher:hover,.launcher[aria-expanded=true] { background:var(--color-accent-soft); border-color:var(--color-edge); }
+.launcher svg { color:var(--color-accent); width:21px; height:21px; }
+.floating-header { padding:var(--space-sm) var(--space-sm) var(--space-sm) var(--space-md); border-bottom:1px solid var(--color-paper-3); background:var(--color-accent-soft); display:flex; align-items:center; gap:var(--space-xs); }
+.floating-header>.brand-mark { width:29px; height:29px; border:0; border-radius:0; background:none; }
+.floating-header>.brand-mark svg { width:23px; height:23px; }
+.floating-header .floating-title { flex:1; }
+.floating-title h2 { font-size:var(--text-md); font-weight:650; }
+.floating-title p { font-size:var(--text-xs); color:var(--color-muted); margin-top:var(--space-3xs); }
+.floating-header .icon-button { width:30px; height:30px; }
+.floating-header .icon-button svg { width:16px; height:16px; }
+.floating-body { background:var(--color-surface); padding:var(--space-md); overflow:auto; flex:1; min-height:0; }
+.floating-welcome h3 { font:400 var(--text-2xl)/1.4 var(--font-display); margin:var(--space-3xs) 0 var(--space-xs); }
+.floating-welcome p { font-size:var(--text-sm); color:var(--color-muted); line-height:1.8; }
+.floating-welcome .starter-row { display:flex; flex-direction:column; align-items:start; margin-top:var(--space-md); }
+.float-message { font-size:var(--text-sm); line-height:1.8; white-space:pre-wrap; padding:var(--space-xs) 0; }
+.float-message.user { background:var(--color-accent-soft); border:1px solid var(--color-paper-3); border-radius:10px 10px 3px 10px; padding:var(--space-xs) var(--space-sm); margin:var(--space-2xs) 0 var(--space-xs) var(--space-xl); }
+.float-message.assistant { margin-right:var(--space-xs); }
+.message-label { font-size:var(--text-xs); color:var(--color-muted); display:block; margin-bottom:var(--space-2xs); }
+.floating-composer { background:var(--color-surface); padding:0 var(--space-sm) var(--space-sm); }
+.floating-composer .composer { padding:var(--space-sm) var(--space-sm) var(--space-xs); background:var(--color-surface); box-shadow:none; border-radius:10px; }
+.floating-composer .composer label { font-size:var(--text-xs); margin-bottom:var(--space-2xs); }
+.floating-composer .composer textarea { font-size:var(--text-sm); min-height:49px; max-height:100px; }
+.floating-composer .composer-hint { font-size:var(--text-xs); }
+.floating-composer .composer-actions { padding-top:var(--space-2xs); }
+.floating-composer .primary { font-size:var(--text-xs); min-height:34px; padding:var(--space-2xs) var(--space-xs); }
+.floating-composer .send-notice { font-size:var(--text-xs); }
+
+/* Details remain secondary, with readable source and history boundaries. */
+dialog { border:1px solid var(--color-rule); border-radius:12px; padding:0; background:var(--color-surface); color:var(--color-ink); box-shadow:none; width:min(560px,calc(100% - var(--space-lg))); max-height:calc(100dvh - 40px); }
+dialog::backdrop { background:var(--color-shadow); }
+.dialog-head { display:flex; align-items:center; gap:var(--space-md); padding:var(--space-md) var(--space-md); border-bottom:1px solid var(--color-rule); }
+.dialog-head h2 { font-size:var(--text-md); flex:1; font-weight:600; }
+.dialog-body { padding:var(--space-md); overflow:auto; max-height:calc(100dvh - 150px); }
+.dialog-body p { font-size:var(--text-sm); line-height:1.85; margin-bottom:var(--space-sm); }
+.dialog-body .source-meta { font-size:var(--text-xs); color:var(--color-muted); margin-bottom:var(--space-sm); }
+.dialog-body blockquote { margin:var(--space-sm) 0 var(--space-md); padding:var(--space-sm) var(--space-md); border-left:2px solid var(--color-edge); background:var(--color-accent-soft); font-size:var(--text-sm); line-height:1.8; }
+.dialog-footnote { font-size:var(--text-xs)!important; color:var(--color-muted); padding-top:var(--space-sm); border-top:1px solid var(--color-rule); }
+#history-dialog { margin:0 0 0 auto; border-radius:12px 0 0 12px; height:100dvh; max-height:100dvh; width:min(470px,calc(100% - var(--space-lg))); }
+#history-dialog .dialog-body { max-height:calc(100dvh - 73px); }
+.history-entry { padding:var(--space-sm) 0; border-bottom:1px solid var(--color-rule); }
+.history-entry summary { cursor:pointer; font-size:var(--text-sm); list-style:none; }
+.history-entry summary::-webkit-details-marker { display:none; }
+.history-entry summary:after { content:"＋"; float:right; color:var(--color-muted); margin-left:var(--space-sm); }
+.history-entry[open] summary:after { content:"−"; }
+.history-time { display:block; font-size:var(--text-xs); color:var(--color-muted); margin-top:var(--space-3xs); }
+.history-entry p { font-size:var(--text-sm); line-height:1.8; margin:var(--space-sm) 0 0; white-space:pre-wrap; }
+.history-note { font-size:var(--text-xs)!important; color:var(--color-muted); }
+.toast { position:fixed; bottom:27px; left:50%; transform:translateX(-50%); z-index:80; background:var(--color-ink); color:var(--color-white); border-radius:8px; padding:var(--space-xs) var(--space-md); font-size:var(--text-xs); box-shadow:0 4px 20px var(--color-shadow); max-width:calc(100% - var(--space-3xl)); pointer-events:none; }
+.connection-demo-steps { padding-left:var(--space-lg); font-size:var(--text-sm); color:var(--color-muted); line-height:1.9; margin:0 0 var(--space-md); }
+.connection-placeholder { display:flex; align-items:center; gap:var(--space-sm); border:1px dashed var(--color-rule); border-radius:9px; background:var(--color-accent-soft); padding:var(--space-md); margin-bottom:var(--space-md); font-size:var(--text-sm); color:var(--color-muted); }
+.connection-placeholder svg { width:29px; height:29px; }
+.connection-placeholder span { display:block; font-size:var(--text-xs); color:var(--color-muted); margin-top:var(--space-3xs); }
+.connection-demo-actions { display:flex; align-items:center; gap:var(--space-md); margin-bottom:var(--space-md); }
+
+@media(min-width:1500px) {
+  .shell { max-width:1260px; }
+  .layout { gap:var(--space-xl); grid-template-columns:minmax(0,1fr) 304px; }
+  .main { padding-top:var(--space-lg); }
+  .attention { padding-top:var(--space-md); padding-bottom:var(--space-md); }
+}
+@media(max-width:900px) {
+  .shell { padding:0 var(--space-lg) var(--space-2xl); }
+  .layout { grid-template-columns:minmax(0,1fr) 245px; gap:var(--space-lg); }
+  .rail { padding-left:var(--space-md); }
+  .page-heading h2 { font-size:var(--text-2xl); }
+  .attention-footer { align-items:flex-start; }
+  .attention-action { gap:var(--space-sm); }
+  .header-actions { gap:var(--space-sm); }
+  .status-link { max-width:160px;  font-variant-numeric:tabular-nums; }
+  .date { display:none; }
+  .first-connect-grid { grid-template-columns:minmax(0,1fr) 151px; }
+  .first-connect-copy { padding:var(--space-md); }
+  .inline-code { padding-left:var(--space-xs); padding-right:var(--space-xs); }
+}
+@media(max-width:720px) {
+  .demo-bar { padding:var(--space-2xs) var(--space-md); gap:var(--space-2xs); flex-wrap:wrap; }
+  .demo-switch { margin-left:auto; }
+  .demo-label { font-size:var(--text-xs); }
+  .shell { padding:0 var(--space-md) var(--space-3xl); }
+  .header { padding:var(--space-md) 0 var(--space-sm); gap:var(--space-sm); }
+  .brand { gap:var(--space-xs); }
+  .brand h1 { font-size:var(--text-lg); }
+  .brand p { font-size:var(--text-xs); margin-top:var(--space-3xs); }
+  .brand-mark { width:37px; height:37px; border-radius:12px; }
+  .header-actions { gap:0; }
+  .status-link { display:none;  font-variant-numeric:tabular-nums; }
+  .status-link.first-use { display:flex; font-size:var(--text-xs); max-width:none; white-space:nowrap; margin-right:var(--space-xs);  font-variant-numeric:tabular-nums; }
+  .history-button { padding:var(--space-xs); font-size:var(--text-xs); }
+  .history-button svg { width:16px; height:16px; }
+  .nav { gap:var(--space-xs); }
+  .nav button { font-size:var(--text-sm); padding:var(--space-xs) var(--space-sm) var(--space-sm); }
+  .main { padding-top:var(--space-md); }
+  .page-heading { margin-bottom:var(--space-md); }
+  .page-heading h2 { font-size:var(--text-2xl); }
+  .page-heading p { font-size:var(--text-xs); }
+  .layout { display:flex; flex-direction:column; gap:var(--space-lg); }
+  .primary-column,.rail { width:100%; }
+  .rail { padding:var(--space-md) 0 0; border-left:0; border-top:1px solid var(--color-rule); display:grid; grid-template-columns:1fr 1fr; gap:var(--space-lg); }
+  .rail section { margin:0; padding-bottom:var(--space-md); }
+  .rail section:last-child { border-bottom:1px solid var(--color-rule); }
+  .attention { padding-left:var(--space-lg); padding-top:var(--space-md); padding-bottom:var(--space-md); }
+  .attention h3 { font-size:var(--text-md); }
+  .attention p { font-size:var(--text-xs); }
+  .attention-footer { flex-wrap:wrap; gap:var(--space-xs); }
+  .attention-action { margin-left:auto; }
+  .attention-action button,.source-button { min-height:32px; display:inline-flex; align-items:center; }
+  .composer { padding:var(--space-sm); }
+  .composer textarea { font-size:var(--text-md); min-height:64px; }
+  .primary,.secondary { min-height:44px; }
+  .starter-row { gap:var(--space-xs); }
+  .starter { font-size:var(--text-xs); min-height:34px; padding:var(--space-2xs) var(--space-xs); }
+  .main-footer { flex-wrap:wrap; gap:var(--space-2xs); }
+  .project-row { align-items:flex-start; }
+  .project-row h3 { font-size:var(--text-md); }
+  .project-row p { font-size:var(--text-xs); }
+  .connect-row { gap:var(--space-xs); }
+  .connect-row p { font-size:var(--text-xs); }
+  .connect-row .connected { font-size:var(--text-xs); }
+  .dock { right:13px; bottom:16px; }
+  .launcher { min-height:44px; padding:var(--space-xs) var(--space-sm); }
+  .floating { width:100%; height:min(580px,calc(100dvh - 97px)); bottom:60px; }
+  .floating-header .icon-button { width:36px; height:36px; }
+  .floating-composer .primary { min-height:44px; }
+  .notice { padding:var(--space-sm); gap:var(--space-xs); font-size:var(--text-xs); }
+  .notice button { font-size:var(--text-xs); }
+  .new-user-intro { padding:var(--space-3xs) 0 var(--space-md); }
+  .new-user-intro p { font-size:var(--text-sm); }
+  .first-connect { margin-bottom:var(--space-sm); }
+  .first-connect-grid { grid-template-columns:minmax(0,1fr) 136px; }
+  .first-connect-copy { padding:var(--space-sm); }
+  .first-connect-grid h2 { font-size:var(--text-xl); line-height:1.3; }
+  .first-connect-grid p { font-size:var(--text-xs); line-height:1.7; }
+  .first-connect-grid .connection-condition { font-size:var(--text-xs); line-height:1.6; margin-top:var(--space-2xs); }
+  .first-connect-grid .first-connect-actions { margin-top:var(--space-2xs); }
+  .first-connect-grid .text-button { font-size:var(--text-xs); min-height:44px; }
+  .inline-code { padding:var(--space-sm) var(--space-xs); align-content:center; }
+  .qr-placeholder { width:112px; height:112px; padding:var(--space-xs); }
+  .qr-demo-controls { gap:var(--space-xs); }
+  .qr-demo-controls button { font-size:var(--text-xs); padding:var(--space-2xs) 0; }
+  .qr-expired-mask .primary { min-height:44px; }
+  .first-connect.connected { padding:var(--space-sm) var(--space-sm); }
+  .first-use-rail { padding-top:var(--space-md); }
+  .toast { left:14px; right:95px; max-width:none; transform:none; bottom:20px; }
+}
+@media(max-width:390px) {
+  .rail { display:block; }
+  .rail section { margin-bottom:var(--space-lg); }
+  .brand p { max-width:180px; }
+  .history-button { font-size:0; gap:0; }
+  .history-button svg { width:19px; height:19px; }
+  .composer-hint { max-width:135px; }
+  .attention-action { gap:var(--space-xs); }
+  .connect-icon { width:29px; height:29px; }
+  .demo-switch select { max-width:123px; }
+}
+@media(max-width:340px) {
+  .first-connect-grid { grid-template-columns:minmax(0,1fr) 116px; }
+  .first-connect-copy { padding:var(--space-sm); }
+  .first-connect-grid h2 { font-size:var(--text-lg); }
+  .qr-placeholder { width:98px; height:98px; padding:var(--space-xs); }
+  .inline-code { padding:var(--space-xs) var(--space-xs); }
+  .header-actions { flex-wrap:wrap; justify-content:flex-end; }
+  .status-link.first-use { margin-right:0; font-size:var(--text-xs);  font-variant-numeric:tabular-nums; }
+}
+@media(prefers-reduced-motion:no-preference) {
+  button { transition:color .14s,background .14s,border-color .14s; }
+  .floating { animation:appear .14s ease-out; }
+  @keyframes appear { from { transform:translateY(4px); } to { transform:translateY(0); } }
+}
+
+/* The app work surface: phone pairing and desktop work are peers, not a hero. */
+.shell { width:100%; max-width:var(--container); margin-inline:auto; padding:0 var(--gutter) var(--space-2xl); display:grid; grid-template-columns:minmax(0,1fr); }
+.header { display:flex; align-items:center; justify-content:space-between; gap:var(--space-lg); padding:var(--space-md) 0; }
+.nav { display:flex; gap:var(--space-lg); border-bottom:1px solid var(--color-rule); }
+.nav button { position:relative; padding:var(--space-xs) 0; min-height:40px; font-size:var(--text-sm); font-weight:400; color:var(--color-muted); border-radius:0; background:var(--color-clear); }
+.nav button[aria-selected=true] { color:var(--color-accent); background:none; }
+.nav button[aria-selected=true]:after { content:""; position:absolute; height:2px; bottom:-1px; left:0; right:0; background:var(--color-accent); }
+.main { padding-top:var(--space-lg); }
+.layout { display:grid; grid-template-columns:minmax(0,1fr) 264px; gap:var(--space-xl); align-items:start; }
+.primary-column { min-width:0; }
+.primary-column:has(.first-connect:not(.connected)) { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:var(--space-md); align-items:start; }
+.primary-column:has(.first-connect:not(.connected))>.first-connect { grid-column:1; grid-row:1 / span 2; }
+.primary-column:has(.first-connect:not(.connected))>#home-mount { grid-column:2; grid-row:1; }
+.primary-column:has(.first-connect:not(.connected))>.starter-row { grid-column:2; grid-row:2; margin:0; }
+.primary-column:has(.first-connect:not(.connected))>.conversation-result,
+.primary-column:has(.first-connect:not(.connected))>.new-user-intro,
+.primary-column:has(.first-connect:not(.connected))>.main-footer { grid-column:1 / -1; }
+.first-connect { background:var(--color-paper-2); border:0; border-radius:var(--radius-card); margin:0; min-width:0; }
+.first-connect-grid { display:grid; grid-template-columns:minmax(0,1fr); gap:var(--space-sm); }
+.first-connect-copy { padding:var(--space-md) var(--space-md) 0; }
+.first-connect h2 { font-size:var(--text-xl); font-weight:600; }
+.first-connect p { font-size:var(--text-sm); }
+.first-connect .connection-condition { font-size:var(--text-xs); }
+.first-connect-actions { margin-top:var(--space-xs); }
+.inline-code { border:0; padding:var(--space-sm) var(--space-md) var(--space-md); background:var(--color-clear); display:grid; grid-template-columns:128px minmax(0,1fr); gap:var(--space-xs) var(--space-sm); align-items:center; text-align:left; }
+.inline-code-status { grid-column:2; grid-row:1; align-self:end;  font-variant-numeric:tabular-nums; }
+.qr-placeholder { grid-column:1; grid-row:1 / span 3; border:0; border-radius:0; background:var(--color-surface); margin:0; padding:var(--space-sm); }
+.qr-demo-label { grid-column:2; grid-row:2; }
+.qr-demo-controls { grid-column:2; grid-row:3; display:flex; flex-direction:column; align-items:flex-start; justify-content:flex-start; gap:0; margin:0; }
+.qr-demo-controls button { font-size:var(--text-xs); min-height:32px; }
+.qr-placeholder svg path[fill],.qr-placeholder svg rect { fill:var(--color-surface); }
+.qr-placeholder svg text { fill:var(--color-accent); font-family:var(--font-body); }
+.first-connect.connected { border:0; border-radius:0; border-bottom:1px solid var(--color-rule); background:var(--color-paper); padding:0 0 var(--space-md); margin-bottom:var(--space-md); }
+.composer { background:var(--color-surface); border:1px solid var(--color-edge); border-radius:var(--radius-input); padding:var(--space-md); box-shadow:none; }
+.composer:focus-within { border-color:var(--color-focus); box-shadow:none; outline:2px solid var(--color-focus); outline-offset:2px; }
+.composer textarea { display:block; border:0; background:var(--color-clear); width:100%; min-height:96px; max-height:176px; padding:0; resize:vertical; font-size:var(--text-md); line-height:1.6; outline:0; }
+.composer textarea:focus-visible { outline:0; }
+.composer-hint { font-size:var(--text-xs); }
+.primary { min-height:36px; border-radius:var(--radius-input); white-space:nowrap; }
+.starter { min-height:36px; border:1px solid var(--color-rule); border-radius:var(--radius-input); padding:var(--space-xs) var(--space-sm); background:var(--color-clear); color:var(--color-accent); font-size:var(--text-sm); }
+.starter:hover { background:var(--color-clear); text-decoration:underline; }
+.current-result { border:0; border-top:1px solid var(--color-rule); border-bottom:1px solid var(--color-rule); border-radius:0; background:var(--color-paper-2); padding:var(--space-md); }
+.result-kicker { font-size:var(--text-xs); }
+.attention { display:grid; grid-template-columns:minmax(0,1fr); padding:var(--space-md) 0 var(--space-md) var(--space-lg); }
+.attention h3 { font-size:var(--text-lg); }
+.attention p { font-size:var(--text-sm); }
+.attention-kicker strong { background:var(--color-clear); padding:0; }
+.attention-footer { padding-top:var(--space-xs); }
+.attention-action button,.source-button { font-size:var(--text-xs); min-height:32px; }
+.rail { background:var(--color-paper-2); padding:var(--space-lg); border:0; border-radius:0; }
+.rail section { padding:0 0 var(--space-lg); margin-bottom:var(--space-lg); }
+.rail h3 { font-size:var(--text-sm); }
+.rail p,.rail-empty { font-size:var(--text-sm); }
+.rail .small,.rail .eyebrow-note,.rail-bottom span,.schedule-item p,.source-names { font-size:var(--text-xs); }
+.schedule-item { border:0; padding:0; }
+.schedule-item:before { display:none; }
+.schedule { grid-template-columns:48px minmax(0,1fr); gap:var(--space-md) var(--space-sm); }
+.schedule time { font-size:var(--text-sm); color:var(--color-ink); }
+.interest-tags span { background:var(--color-clear); padding:0; font-size:var(--text-xs); }
+.interest-tags { gap:var(--space-xs); }
+.status-dot { display:none; }
+.connect-icon { background:var(--color-clear); border-radius:0; }
+.plain-page { max-width:none; }
+.project-row,.memory-row,.connect-row { padding:var(--space-lg) 0; }
+.project-row p,.memory-row p,.connect-row p { font-size:var(--text-sm); }
+.page-heading h2 { font-size:var(--text-2xl); font-weight:600; }
+.new-user-intro { border-top:1px solid var(--color-rule); padding-top:var(--space-md); }
+.dock { position:fixed; right:var(--space-lg); bottom:var(--space-lg); width:408px; max-width:calc(100% - var(--space-xl)); z-index:var(--z-modal); pointer-events:none; display:flex; justify-content:flex-end; }
+.launcher { pointer-events:auto; display:flex; align-items:center; gap:var(--space-xs); color:var(--color-ink); background:var(--color-surface); border:1px solid var(--color-edge); border-radius:var(--radius-pill); min-height:44px; padding:var(--space-xs) var(--space-md); font-size:var(--text-sm); font-weight:600; }
+.floating { pointer-events:auto; position:absolute; right:0; bottom:64px; width:100%; height:min(580px,calc(100dvh - 120px)); display:flex; flex-direction:column; background:var(--color-surface); border:1px solid var(--color-edge); border-radius:var(--radius-card); box-shadow:none; overflow:hidden; opacity:1; isolation:isolate; }
+.floating .composer { background:var(--color-surface); border-color:var(--color-edge); }
+.floating-composer .composer textarea { min-height:64px; font-size:var(--text-md); }
+.floating-header { background:var(--color-paper-2); }
+.floating-welcome h3 { font-size:var(--text-xl); font-weight:600; }
+.floating-welcome p,.float-message { font-size:var(--text-sm); }
+.float-message.user { border:0; border-radius:var(--radius-input); }
+.notice { border:0; border-radius:0; border-bottom:1px solid var(--color-rule); padding:var(--space-md); }
+.dialog-body p { font-size:var(--text-md); }
+.floating,.floating * { animation:none; }
+.current-result .small[style] { margin-top:var(--space-xs)!important; }
+.first-use-rail .small[style] { margin-top:var(--space-sm)!important; }
+@media(max-width:1000px) {
+ .layout { grid-template-columns:minmax(0,1fr) 240px; gap:var(--space-lg); }
+ .primary-column:has(.first-connect:not(.connected)) { display:block; }
+ .first-connect { margin-bottom:var(--space-md); }
+ .first-connect-grid { grid-template-columns:minmax(0,1fr) 160px; gap:0; }
+ .first-connect-copy { padding:var(--space-md); }
+ .inline-code { display:flex; flex-direction:column; justify-content:center; gap:var(--space-xs); padding:var(--space-sm); text-align:center; }
+ .qr-demo-controls { flex-direction:row; gap:var(--space-xs); }
+ .qr-placeholder { width:112px; height:112px; }
+}
+@media(max-width:720px) {
+ .shell { padding:0 var(--space-md) var(--space-2xl); }
+ .header { gap:var(--space-xs); padding:var(--space-md) 0; }
+ .brand-mark { width:32px; height:32px; border:0; background:var(--color-clear); }
+ .brand h1 { font-size:var(--text-lg); }
+ .brand p { font-size:var(--text-xs); }
+ .header-actions { gap:var(--space-xs); }
+ .status-link.first-use { font-size:var(--text-xs); margin:0;  font-variant-numeric:tabular-nums; }
+ .history-button { font-size:0; min-width:44px; min-height:44px; padding:var(--space-xs); }
+ .nav { gap:var(--space-lg); }
+ .nav button { min-height:44px; }
+ .main { padding-top:var(--space-md); }
+ .layout { display:flex; flex-direction:column; gap:var(--space-lg); }
+ .rail { display:block; width:100%; padding:var(--space-lg); }
+ .first-connect-copy { padding:var(--space-sm); }
+ .first-connect-grid { grid-template-columns:minmax(0,1fr) 136px; }
+ .first-connect h2 { font-size:var(--text-xl); }
+ .first-connect p { font-size:var(--text-sm); }
+ .first-connect .connection-condition { font-size:var(--text-xs); }
+ .inline-code { padding:var(--space-xs); }
+ .inline-code-status,.qr-demo-label,.qr-demo-controls button { font-size:var(--text-xs)!important;  font-variant-numeric:tabular-nums; }
+ .qr-demo-controls { flex-direction:column; gap:0; }
+ .qr-demo-controls button { min-height:44px; }
+ .composer { padding:var(--space-sm); }
+ .composer textarea { min-height:64px; }
+ .composer-actions { gap:var(--space-xs); }
+ .composer-hint { max-width:148px; }
+ .primary,.secondary,.first-connect-actions .text-button,.launcher { min-height:44px; }
+ .starter-row { gap:var(--space-sm); }
+ .starter { font-size:var(--text-xs); min-height:44px; }
+ .source-button { min-height:44px; }
+ .dock { right:var(--space-md); bottom:var(--space-md); max-width:calc(100% - var(--space-lg)); }
+ .floating { height:min(580px,calc(100dvh - 112px)); width:100%; }
+ .floating-header .icon-button { min-height:44px; min-width:44px; }
+ .floating-composer .primary { min-height:44px; }
+ .notice { flex-wrap:wrap; }
+ .toast { right:var(--space-lg); left:var(--space-lg); max-width:none; padding:var(--space-sm); }
+}
+
+.status-link,.inline-code-status,.qr-demo-label { font-variant-numeric:tabular-nums; }
+
+/* Final touch and token audit: compact visuals retain a 44px tap target. */
+@media(max-width:720px) {
+ .demo-switch select,.demo-switch button,.status-link,.rail-link,
+ .main-footer button,.rail-bottom button,.attention-action button,
+ .result-actions button,.collapsed-attention button,.draft-recovery button,
+ .notice button,.icon-button { min-height:var(--control-touch); }
+ .icon-button { min-width:var(--control-touch); }
+}
+
+/* Accessible hint and one hover cue per control. */
+.primary:hover { filter:brightness(.92); }
+.status-link:hover,.rail-link:hover,.result-actions button:hover,
+.collapsed-attention button:hover,.rail-bottom button:hover { text-decoration:underline; text-underline-offset:3px; }
+@media(max-width:720px) { .nav button { min-width:var(--control-touch); } }
+
+/* The source byline keeps its facts, with each field on its own line. */
+.source-meta { white-space:pre-line; }
+
+</style>
+</head>
+<body>
+<div class="demo-bar"><span class="demo-label">交互方案　示例数据　不读取资料或发送消息</span><div class="demo-switch"><label for="demo-state">演示状态</label><select id="demo-state"><option value="daily">日常使用</option><option value="first">首次使用</option><option value="issue">连接问题</option></select><button id="reset-demo" type="button">重置演示</button></div></div>
+<div class="shell">
+  <header class="header"><div class="brand"><span class="brand-mark" data-icon="dot"></span><div><h1>DSH Dot</h1><p>你的一句交代，我接着跟进。</p></div></div><div class="header-actions"><button type="button" class="status-link" id="connection-status"></button><button type="button" class="history-button" id="open-history"><span data-icon="history"></span>对话记录</button></div></header>
+  <nav class="nav" role="tablist" aria-label="Dot 工作台"><button role="tab" id="tab-today" aria-controls="page" aria-selected="true" data-page="today">今天</button><button role="tab" id="tab-projects" aria-controls="page" aria-selected="false" data-page="projects" tabindex="-1">项目</button><button role="tab" id="tab-memory" aria-controls="page" aria-selected="false" data-page="memory" tabindex="-1">记忆</button><button role="tab" id="tab-connections" aria-controls="page" aria-selected="false" data-page="connections" tabindex="-1">连接</button></nav>
+  <main id="page" class="main" role="tabpanel" aria-labelledby="tab-today"></main>
+</div>
+<div id="composer-parking" hidden><form id="shared-composer" class="composer"><label for="dot-input">接着交代一件事</label><textarea id="dot-input" placeholder="说说你想推进什么，也可以接着补充背景…" rows="2" spellcheck="false"></textarea><div id="draft-recovery" class="draft-recovery" role="status" hidden><span id="draft-recovery-label">原草稿已保留</span><button type="button" id="restore-draft">恢复原草稿</button></div><div class="composer-actions"><span class="composer-hint">Enter 演示发送 · Shift + Enter 换行</span><button type="submit" class="primary">演示发送 <span data-icon="arrow"></span></button></div><p id="send-notice" class="send-notice" role="status" hidden></p></form></div>
+<div class="dock"><section class="floating" id="floating" aria-labelledby="floating-title" role="dialog" hidden><header class="floating-header"><span class="brand-mark" data-icon="dot"></span><div class="floating-title"><h2 id="floating-title">Dot</h2><p>同一件事，随时接着聊。</p></div><button type="button" class="icon-button" id="open-workbench" aria-label="回到完整工作台"><span data-icon="expand"></span></button><button type="button" class="icon-button" id="close-floating" aria-label="收起 Dot 对话"><span data-icon="close"></span></button></header><div class="floating-body" id="floating-body"></div><div class="floating-composer" id="floating-mount"></div></section><button type="button" class="launcher" id="launcher" aria-label="和 Dot 说件事" aria-expanded="false" aria-controls="floating"><span data-icon="dot"></span>Dot</button></div>
+<dialog id="history-dialog" aria-labelledby="history-title"><header class="dialog-head"><h2 id="history-title">对话记录</h2><button type="button" class="icon-button" data-close-dialog aria-label="关闭对话记录"><span data-icon="close"></span></button></header><div class="dialog-body" id="history-content"></div></dialog>
+<dialog id="detail-dialog" aria-labelledby="detail-title"><header class="dialog-head"><h2 id="detail-title"></h2><button type="button" class="icon-button" data-close-dialog aria-label="关闭详情"><span data-icon="close"></span></button></header><div class="dialog-body" id="detail-content"></div></dialog>
+<div id="toast" class="toast" role="status" hidden></div>
+<script>
+'use strict';
+const icons={dot:'<circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="3" fill="currentColor" stroke="none"/><path d="M17.8 3.3l2.5 1.7-1.8 2.4"/>',history:'<path d="M4 8a8 8 0 1 1-.2 7M4 3v5h5M12 7v5l3 2"/>',arrow:'<path d="M5 12h14M13 6l6 6-6 6"/>',close:'<path d="M6 6l12 12M18 6L6 18"/>',expand:'<path d="M14 4h6v6M20 4l-9 9M10 5H5v14h14v-5"/>',risk:'<path d="M12 3L2 20h20L12 3zM12 9v5M12 17h.01"/>',calendar:'<rect x="3" y="5" width="18" height="16" rx="2"/><path d="M7 3v4M17 3v4M3 10h18M7 14h3M7 17h6"/>',source:'<path d="M9 14l6-6M7 16H5a3 3 0 0 1-3-3V5a3 3 0 0 1 3-3h8a3 3 0 0 1 3 3v2M10 8h6v6"/>',check:'<path d="M5 12l4 4L19 6"/>',project:'<path d="M3 7h7l2-3h9v16H3zM7 11h10M7 15h7"/>',mail:'<rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 6l9 7 9-7"/>',note:'<path d="M5 3h14v14l-4 4H5zM9 8h6M9 12h6M15 21v-4h4"/>',chat:'<path d="M5 4h14a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H9l-5 3v-3a2 2 0 0 1-2-2V6a2 2 0 0 1 3-2z"/>',clock:'<circle cx="12" cy="12" r="9"/><path d="M12 6v6l4 2"/>'};
+const icon=name=>`<svg viewBox="0 0 24 24" aria-hidden="true">${icons[name]||icons.note}</svg>`;
+function fillIcons(root=document){root.querySelectorAll('[data-icon]').forEach(e=>e.innerHTML=icon(e.dataset.icon));}
+const escapeHTML=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const $=id=>document.getElementById(id);
+let state={page:'today',demo:'daily',draft:'',draftBackups:[],draftRestored:false,qrExpired:false,overlay:false,done:false,paused:false,recovered:false,connected:new Set(),messages:[],result:null,showAttention:true};
+const scripts={
+ risk:{title:'继续处理参数限制通知',text:'把这条参数限制通知整理成待核对清单。',resultTitle:'这条通知，先核对两件事',reply:'先在管理页面确认完整的受限参数和对应事件；再请集成负责人判断这些事件是否被现有投放使用。邮件尚未证明投放已经受影响，因此当前先做核对，不直接下结论或调整配置。',source:'示例邮件 A',next:'已整理为示例行动建议，未派发给任何人，也没有更改广告配置。'},
+ priorities:{title:'先处理哪件事',text:'帮我排一下这两件事的下一步。',resultTitle:'先核对风险，再处理有期限的邀请',reply:'先请集成负责人核对完整的受限参数和受影响事件，确认是否需要调整。开发者邀请明天 18:00 到期，今天先核对账号与权限，再决定接受。没有证据说明广告已受影响，也不知道邀请是否已被处理。',source:'示例邮件 A、B',next:'这是一份示例行动建议，尚未派发任务或接受邀请。'},
+ schedule:{title:'整理今天的安排',text:'根据示例日历，整理今天的安排。',resultTitle:'今天的安排，留出一个准备窗口',reply:'示例日历有两场会议：14:30 项目进展讨论，16:00 设计评审。可以在 14:00 前整理项目现状和一个待决定的问题。会议时间不是任务截止时间；是否需要额外准备，仍取决于会议要求。',source:'示例日历 C',next:'仅整理这两条示例安排，没有修改日历或建立提醒。'},
+ project:{title:'接着推进项目',text:'帮我接着推进「阅读助理」项目。',resultTitle:'下一步，验证一次真实使用',reply:'示例项目已完成资料检索原型，待验证的是用户能否找到来源并继续追问。建议选一篇公开文章，走完“提问—看来源—补问”这一条任务；先记录卡在哪里，再改界面。',source:'示例项目进度 D',next:'这是下一步建议，尚未交办、执行或改动文件。'}
+};
+const sources={
+ a:{title:'示例邮件 A · 参数限制通知',meta:'虚构邮件\n今天 09:05\n本原型内展示',text:'两个事件参数已被限制。请到管理页面查看完整参数及对应事件。继续违规可能影响后续功能。',boundary:'通知没有证明广告表现已受影响，也没有提供完整事件清单。'},
+ b:{title:'示例邮件 B · 开发者邀请',meta:'虚构邮件\n今天 08:40\n本原型内展示',text:'你的开发者团队邀请将在明天 18:00 到期。请登录后核对账号和所授角色，再决定是否接受。',boundary:'当前示例不知道你是否已经接受。它不会代你点邀请。'},
+ c:{title:'示例日历 C · 今天两场会议',meta:'虚构日历\n10 月 30 日\n本地时间',text:'14:30–15:00 项目进展讨论\n16:00–16:45 设计评审',boundary:'只展示这两条示例，不代表完整日历。会议开始时间不是交付期限。'},
+ d:{title:'示例项目进度 D · 阅读助理',meta:'虚构项目\n今天 08:30 更新',text:'资料检索原型已完成。真实使用路径尚待验收：提问、定位原文、继续追问。下一步选择公开文章进行一轮验证。',boundary:'进度文字是示例，不代表任何真实项目已交付。'}
+};
+const starterRow=()=>`<div class="starter-row" aria-label="可演示的交代"><button class="starter" type="button" data-starter="priorities">${icon('risk')}先处理哪件事</button><button class="starter" type="button" data-starter="schedule">${icon('calendar')}整理今天的安排</button><button class="starter" type="button" data-starter="project">${icon('project')}接着推进项目</button></div>`;
+function showToast(text){$('toast').textContent=text;$('toast').hidden=false;clearTimeout(showToast.timer);showToast.timer=setTimeout(()=>$('toast').hidden=true,3500);}
+function showDetail(title,html){$('detail-title').textContent=title;$('detail-content').innerHTML=html;$('detail-dialog').showModal();}
+function showSource(id){const s=sources[id];if(!s)return;showDetail(s.title,`<p class="source-meta">${s.meta}</p><blockquote>${escapeHTML(s.text).replaceAll('\n','<br>')}</blockquote><p>${s.boundary}</p><p class="dialog-footnote">演示来源，不会打开邮箱、日历或本机文件。</p>`);}
+function attentionHTML(){return `<div class="section-top"><h3 class="section-label">需要你关注</h3><span class="small muted">${state.demo==='issue'&&!state.recovered?'上次保存 09:10':'示例结果 · 今天 09:10'}</span></div><div class="attention-list">
+<article class="attention"><span class="attention-icon">${icon('risk')}</span><div class="attention-kicker"><strong>值得核对</strong><span>来源已说明，影响待确认</span></div><h3>广告事件参数被限制</h3><p>通知只列了部分参数，尚无证据证明投放已受影响。</p><p class="next-step">下一步：核对完整参数及受影响事件，再决定是否调整。</p><div class="attention-footer"><button type="button" class="source-button" data-source="a">${icon('source')}查看示例邮件</button><div class="attention-action"><button type="button" data-prepare="risk">帮我拆成下一步</button></div></div></article>
+<article class="attention ${state.done?'done':''}"><span class="attention-icon">${icon(state.done?'check':'clock')}</span><div class="attention-kicker"><strong>${state.done?'已处理（示例）':'明天 18:00 到期'}</strong><span>${state.done?'反馈已回到这件事':'按示例本地时间'}</span></div><h3>开发者团队邀请，需要你决定</h3><p>${state.done?'已从待处理事项中标记完成，原始记录仍在。':'先核对受邀账号和权限，再决定是否接受；当前不知道你是否已处理。'}</p><div class="attention-footer"><button type="button" class="source-button" data-source="b">${icon('source')}查看邀请原文</button><div class="attention-action"><button type="button" data-action="done">${state.done?'撤销示例标记':'标为已处理'}</button></div></div></article></div>`;}
+function railHTML(){if(state.demo==='first')return `<aside class="rail first-use-rail"><section><h3>需要资料时，再连接</h3><p class="rail-empty">想结合邮件、日程、笔记或待办一起判断时，再连接相应来源。</p><button type="button" class="rail-link" data-page="connections">看看可用的资料来源 ${icon('arrow')}</button><p class="small muted" style="margin-top:10px">连接来源不会自动开启定时回顾或推送。</p></section></aside>`;
+const issue=state.demo==='issue'&&!state.recovered;return `<aside class="rail"><section><h3>下一次安排</h3><p class="eyebrow-note">${issue?'最新状态待核对':'以下为已保存的示例安排'}</p>${issue?'<p class="rail-empty">暂时未能确认微信安排。不会据此判断计划已停止，也不会重新创建。</p>':state.paused?'<p class="rail-empty">示例安排已暂停。再次开启会恢复这些安排，不另建一份。</p>':`<div class="schedule"><time>09:00</time><div class="schedule-item"><strong>明天的个人回顾</strong><p>风险、临期事项与项目变化</p></div><time>09:10</time><div class="schedule-item"><strong>你的 AI 日报</strong><p>3 篇重点，最多 7 条简讯</p></div></div><div class="interest-tags"><span>Agent 产品</span><span>插件生态</span><span>增长实践</span></div>`}<div class="rail-bottom"><span>${issue?'原安排状态待确认，不会自动新建':'每周一 09:00 另有周回顾'}</span>${issue?'':`<button type="button" data-action="pause">${state.paused?'恢复示例':'暂停示例'}</button>`}</div></section><section><h3>用到哪些资料</h3><div class="source-overview"><span class="status-dot"></span><span>5 个示例来源已连接</span></div><p class="source-names">Gmail、日历、Drive、flomo、滴答清单</p><p class="small muted">只按当前请求或已保存的安排使用，不代表整个账号都已读过。</p><button type="button" class="rail-link" data-page="connections">查看资料范围 ${icon('arrow')}</button></section></aside>`;}
+function issueHTML(){if(state.demo!=='issue')return '';return state.recovered?`<div class="notice success" role="status">${icon('check')}<div><strong>示例连接状态已恢复</strong><p>原来的安排与草稿都保留，没有新建计划。</p></div></div>`:`<div class="notice" role="status">${icon('risk')}<div><strong>暂时未能确认微信安排，桌面对话可以继续</strong><p>下面保留上次的结果；新的变化尚未核对。</p></div><button type="button" data-action="retry">重试状态</button></div>`;}
+function resultHTML(){if(!state.result)return '';const s=scripts[state.result];return `<article class="current-result"><div class="result-kicker">刚刚这件事 · 示例回复</div><h3>${s.resultTitle}</h3><p>${s.reply}</p><p class="small muted" style="margin-top:8px">依据：${s.source}。${s.next}</p><div class="result-actions"><button type="button" data-action="focus">继续补充</button><button type="button" data-action="history">查看这次对话</button></div></article>`;}
+function qrDemoSVG(){return `<svg viewBox="0 0 100 100" aria-hidden="true"><path d="M2 2h27v27H2zM71 2h27v27H71zM2 71h27v27H2z"/><path fill="#fff" d="M7 7h17v17H7zM76 7h17v17H76zM7 76h17v17H7z"/><path d="M11 11h9v9h-9zM80 11h9v9h-9zM11 80h9v9h-9zM36 2h8v8h-8zM49 3h5v13h-5zM58 2h5v7h-5zM36 16h8v12h-8zM54 21h10v7H54zM3 38h9v8H3zM18 36h9v14h-9zM2 55h5v9H2zM12 57h13v7H12zM72 36h10v7H72zM88 36h9v13h-9zM76 51h7v12h-7zM91 58h7v7h-7zM36 73h7v9h-7zM48 76h7v14h-7zM36 89h7v9h-7zM61 72h7v6h-7zM62 85h7v13h-7zM76 73h13v8H76zM92 74h6v15h-6zM76 90h8v8H76zM89 94h9v4h-9z"/><rect x="29" y="31" width="42" height="37" rx="4" fill="#fff"/><text x="50" y="53" text-anchor="middle" font-size="13" font-family="sans-serif" fill="#4169e1">演示</text></svg>`;}
+function firstConnectHTML(){if(state.connected.has('wechat'))return `<section class="first-connect connected" aria-label="微信连接状态">${icon('check')}<div><h2>微信已连接 · 示例</h2><p>可以在微信继续交代、收结果。提醒和日报仍需你主动开启；电脑与 Harness 需保持在线。</p></div></section>`;return `<section class="first-connect" aria-labelledby="first-connect-title"><div class="first-connect-grid"><div class="first-connect-copy"><h2 id="first-connect-title">把 Dot 带到微信里</h2><p>在手机上交代任务、收结果，也能收到你已开启的提醒。</p><div class="first-connect-actions"><button type="button" class="text-button" data-action="focus">先在电脑上试试 ${icon('arrow')}</button></div><p class="connection-condition">电脑和 Harness 需保持在线。扫码不会自动开启推送。</p></div><div class="inline-code" id="first-wechat-code" tabindex="-1" aria-label="微信连接示意码，不用于连接"><p class="inline-code-status">${state.qrExpired?'二维码已过期 · 演示':'微信扫一扫 · 等待扫码'}</p><div class="qr-placeholder">${qrDemoSVG()}${state.qrExpired?'<div class="qr-expired-mask"><span>示意码已过期</span><button type="button" class="primary" data-action="qr-refresh">刷新二维码</button></div>':''}</div><div class="qr-demo-label">示意码 · 不用于连接</div><div class="qr-demo-controls">${state.qrExpired?'':'<button type="button" data-action="qr-complete">演示扫码完成</button><button type="button" data-action="qr-expire">演示过期</button>'}</div></div></div></section>`;}
+function showWechatCode(){navigate('today');const code=$('first-wechat-code');if(code){code.focus({preventScroll:true});code.scrollIntoView({block:'nearest',behavior:'instant'});}}
+
+function renderToday(){const first=state.demo==='first';return `${issueHTML()}${first?'':`<div class="page-heading"><div><h2>${first?'先把一件事交给 Dot。':state.demo==='issue'&&!state.recovered?'上次留下的事，可以接着聊。':state.done?'还有一件事，值得你留意。':'今天有两件事，值得你留意。'}</h2><p>${first?'说一句目标；用到资料时，再连接相应来源。':'先看清发生了什么，再决定下一步。'}</p></div><span class="date">10 月 30 日，星期五 · 示例</span></div>`}<div class="layout"><section class="primary-column" aria-label="当前事情与对话">${first?firstConnectHTML():''}<div id="home-mount"></div>${starterRow()}<div class="conversation-result">${resultHTML()}</div>${!first?(state.result&&!state.showAttention?`<div class="collapsed-attention"><span>${state.done?'1 件事项待确认':'2 件事项待确认'}</span><button type="button" data-action="show-attention">展开查看</button></div>`:attentionHTML()):!state.result?'<div class="new-user-intro"><h3>不用先把所有东西配好。</h3><p>先聊手上的任务、拆解下一步。想结合邮件、日程或项目再判断时，再连接需要的资料。</p></div>':''}<div class="main-footer"><span>选择示例可演示；自由输入只保留草稿。</span><button type="button" data-action="history">找到之前聊过的事</button></div></section>${railHTML()}</div>`;}
+function renderProjects(){return `<div class="plain-page"><div class="page-heading"><div><h2>把项目接着做下去。</h2><p>先找到当前这件事，背景和进展一起带上。</p></div></div><div class="project-list"><article class="project-row"><div><h3>阅读助理</h3><p>原型已完成，下一步验证“提问—看来源—补问”的完整路径。</p><p class="row-meta">示例项目 · 今天 08:30 更新</p></div><button type="button" class="secondary" data-starter="project">接着推进</button></article><article class="project-row"><div><h3>每周内容计划</h3><p>本周选题已列出，待选择一篇进入初稿。</p><p class="row-meta">示例项目 · 昨天 17:20 更新</p></div><button type="button" class="text-button" data-action="project-detail">查看进展</button></article></div><p class="page-tip">在任何页面，都可以点右下角 Dot 直接继续说。无需回到首页。</p></div>`;}
+function renderMemory(){return `<div class="plain-page"><div class="page-heading"><div><h2>记住对你有用的事。</h2><p>看得见来源，也能随时修正。</p></div></div><div class="project-list"><article class="memory-row"><div><h3>AI 日报的关注方向</h3><p>Agent 产品、插件生态、增长实践</p><p class="row-meta">来自虚构的演示对话 · 10 月 29 日</p></div><button type="button" class="text-button" data-action="memory-detail">查看与修改</button></article><article class="memory-row"><div><h3>阅读助理的下一步</h3><p>先走完一个真实使用任务，再决定要扩哪些功能。</p><p class="row-meta">来自示例项目进度 · 今天 08:30</p></div><button type="button" class="text-button" data-source="d">查看来源</button></article></div><p class="page-tip">本页均为示例记忆，不会写入你的长期记忆或外部笔记。</p></div>`;}
+const connectRows=[['google','mail','Google 三件套','用邮件、日历和云盘资料，准备当前这件事。'],['flomo','note','flomo','找回你记下的想法与线索。'],['dida','check','滴答清单','看待办与截止时间，处理反馈以任务记录为准。'],['wechat','chat','微信','离开电脑后，接着交代、收结果与提醒。']];
+function renderConnections(){return `<div class="plain-page"><div class="page-heading"><div><h2>按需连接，用在具体的事上。</h2><p>连接不会自动启动后台扫描或推送。</p></div></div><div class="connect-group">${(state.demo==='first'?[...connectRows.filter(r=>r[0]==='wechat'),...connectRows.filter(r=>r[0]!=='wechat')]:connectRows).map(([id,i,title,desc])=>{const connected=state.demo!=='first'||state.connected.has(id);return `<article class="connect-row"><span class="connect-icon">${icon(i)}</span><div><h3>${title}</h3><p>${desc}</p></div>${connected?`<button type="button" class="connected" data-connect="${id}">${state.demo==='issue'&&!state.recovered&&id==='wechat'?'状态待核对':'已连接 · 示例'}</button>`:`<button type="button" class="secondary" data-connect="${id}">${id==='wechat'?'连接微信':'了解连接'}</button>`}</article>`}).join('')}</div><p class="page-tip">本原型不会打开授权页面。正式产品应在你同意后连接账号，回到原来的任务继续。</p></div>`;}
+function showConnection(id){const row=connectRows.find(r=>r[0]===id);if(!row)return;const title=row[2],pending=state.demo==='first'&&!state.connected.has(id);if(id==='wechat'&&pending){showWechatCode();return;}showDetail(`${title} · 连接示例`,`<p>${id==='wechat'?'微信是另一个入口，可以接着交代同一件事、收结果。家人的权限仍独立。':'正式产品在这里进入该服务的授权页面。回来后沿用当前任务，只使用你同意的范围。'}</p><p>本页不会登录账号、展示可扫描的二维码或读取资料。</p>${pending?`<button type="button" class="primary" data-simulate-connect="${id}">演示连接完成</button>`:''}<p class="dialog-footnote">只演示动线。连接成功不等于已读取，更不等于已开启推送。</p>`);}
+function render(){
+  $('composer-parking').append($('shared-composer'));
+  $('page').innerHTML=state.page==='today'?renderToday():state.page==='projects'?renderProjects():state.page==='memory'?renderMemory():renderConnections();
+  document.querySelectorAll('.nav button').forEach(b=>{const active=b.dataset.page===state.page;b.setAttribute('aria-selected',String(active));b.tabIndex=active?0:-1;});$('page').setAttribute('aria-labelledby','tab-'+state.page);
+  $('connection-status').classList.toggle('first-use',state.demo==='first');$('connection-status').innerHTML=`<span class="status-dot ${state.demo==='first'&&!state.connected.has('wechat')?'off':state.demo==='issue'&&!state.recovered?'warn':''}"></span>${state.demo==='first'?(state.connected.has('wechat')?'微信已连接':'微信未连接'):state.demo==='issue'&&!state.recovered?'微信状态待核对':'微信可继续 · 示例'}`;
+  $('floating').hidden=!state.overlay;$('launcher').setAttribute('aria-expanded',String(state.overlay));$('launcher').setAttribute('aria-label',state.overlay?'收起 Dot 对话':'和 Dot 说件事');
+  $('floating-body').innerHTML=state.messages.length?state.messages.slice(-4).map(m=>`<div class="float-message ${m.role}"><span class="message-label">${m.role==='user'?'你':'Dot · 示例回复'}</span>${escapeHTML(m.text)}</div>`).join(''):`<div class="floating-welcome"><h3>在这里，直接接着说。</h3><p>不必回到首页；桌面和微信围绕同一件事继续。</p>${starterRow()}</div>`;
+  if(state.overlay&&state.page!=='today')$('floating-mount').append($('shared-composer'));else if(state.page==='today')$('home-mount').append($('shared-composer'));
+  $('dot-input').value=state.draft;$('draft-recovery').hidden=!state.draftBackups.length;$('draft-recovery-label').textContent=state.draftRestored?'切换前的草稿也已保留':'原草稿已保留';$('restore-draft').textContent=state.draftRestored?'切换暂存草稿':'恢复原草稿';fillIcons();
+}
+function focusInput(){const input=$('dot-input');input.focus({preventScroll:true});input.scrollIntoView({block:'center',behavior:matchMedia('(prefers-reduced-motion: reduce)').matches?'instant':'smooth'});}
+function navigate(page){if(!['today','projects','memory','connections'].includes(page))return;state.page=page;if(page==='today')state.overlay=false;render();}
+function openConversation(){if(state.page==='today'){state.overlay=false;render();focusInput();}else{state.overlay=true;render();focusInput();}}
+function closeFloating(){state.overlay=false;render();$('launcher').focus({preventScroll:true});}
+function chooseStarter(key){if(!scripts[key])return;const next=scripts[key].text;if(state.draft.trim()&&state.draft!==next)state.draftBackups.push(state.draft);state.draftRestored=false;state.draft=next;$('send-notice').hidden=true;openConversation();}
+function renderHistory(){let entries=state.demo==='first'?[]:[{title:'更早的只读检查（旧验收记录）',time:'10 月 18 日 · 示例历史',text:'当时的请求：只读项目说明的第一行。\n记录保留在这里，不占据今天的首屏，也不会自动重做旧任务。'}];for(let i=0;i<state.messages.length;i+=2){entries.unshift({title:state.messages[i].text,time:'本次原型操作 · 未发送至外部',text:state.messages.slice(i,i+2).map(m=>(m.role==='user'?'你：':'Dot（示例）：')+m.text).join('\n\n')});}$('history-content').innerHTML=`<p class="history-note">${entries.length?(state.demo==='first'?'这是本次演示的对话。点击查看，不会重新执行。':'旧内容仍在。点击一条查看，不会重新执行。'):'还没有对话记录。聊过的事会保留在这里。'}</p>${entries.map((e,i)=>`<details class="history-entry" ${i===0&&state.messages.length?'open':''}><summary>${escapeHTML(e.title)}<span class="history-time">${e.time}</span></summary><p>${escapeHTML(e.text)}</p></details>`).join('')}`;}
+function openHistory(){renderHistory();$('history-dialog').showModal();}
+function sendDemo(event){event?.preventDefault();const text=state.draft.trim();if(!text){$('send-notice').textContent='先写一句，或选择一个示例。';$('send-notice').hidden=false;focusInput();return;}const entry=Object.entries(scripts).find(([,s])=>s.text===text);if(!entry){$('send-notice').textContent='这段草稿已保留。本原型只演示三个示例，不会理解或执行自由输入。';$('send-notice').hidden=false;focusInput();return;}const[key]=entry;commitDemo(key,true);}
+function commitDemo(key,consumeDraft=false){const s=scripts[key];if(!s)return;state.messages.push({role:'user',text:s.text},{role:'assistant',text:s.reply+'\n\n'+s.next});state.result=key;state.showAttention=false;if(consumeDraft)state.draft='';$('send-notice').hidden=true;render();if(state.overlay)$('floating-body').scrollTop=$('floating-body').scrollHeight;else document.querySelector('.current-result')?.scrollIntoView({block:'nearest',behavior:'instant'});if(consumeDraft)focusInput();}
+$('dot-input').addEventListener('input',e=>{state.draft=e.target.value;$('send-notice').hidden=true;});$('dot-input').addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey&&!e.isComposing&&e.keyCode!==229){e.preventDefault();sendDemo();}});$('shared-composer').addEventListener('submit',sendDemo);
+$('restore-draft').addEventListener('click',()=>{if(!state.draftBackups.length)return;const previous=state.draftBackups.pop();if(state.draft.trim()&&state.draft!==previous)state.draftBackups.unshift(state.draft);state.draft=previous;state.draftRestored=true;$('send-notice').hidden=true;render();focusInput();});
+$('launcher').addEventListener('click',()=>{if(state.page==='today'){openConversation();return;}state.overlay?closeFloating():openConversation();});$('close-floating').addEventListener('click',closeFloating);$('open-workbench').addEventListener('click',()=>{navigate('today');focusInput();});$('open-history').addEventListener('click',openHistory);$('connection-status').addEventListener('click',()=>state.demo==='first'&&!state.connected.has('wechat')?showWechatCode():navigate('connections'));
+$('demo-state').addEventListener('change',e=>{state.demo=e.target.value;state.recovered=false;state.result=null;state.showAttention=true;navigate('today');});$('reset-demo').addEventListener('click',()=>{state={page:'today',demo:$('demo-state').value,draft:'',draftBackups:[],draftRestored:false,qrExpired:false,overlay:false,done:false,paused:false,recovered:false,connected:new Set(),messages:[],result:null,showAttention:true};$('send-notice').hidden=true;render();showToast('示例已重置；没有更改真实账号或安排。');});
+document.addEventListener('click',e=>{
+ const close=e.target.closest('[data-close-dialog]');if(close){close.closest('dialog').close();if(close.dataset.action==='try-desktop'){navigate('today');focusInput();}return;}
+ const source=e.target.closest('[data-source]');if(source){showSource(source.dataset.source);return;}
+ const prepare=e.target.closest('[data-prepare]');if(prepare){commitDemo(prepare.dataset.prepare,false);return;}
+ const starter=e.target.closest('[data-starter]');if(starter){chooseStarter(starter.dataset.starter);return;}
+ const page=e.target.closest('[data-page]');if(page){navigate(page.dataset.page);return;}
+ const connect=e.target.closest('[data-connect]');if(connect){showConnection(connect.dataset.connect);return;}
+ const simulated=e.target.closest('[data-simulate-connect]');if(simulated){state.connected.add(simulated.dataset.simulateConnect);$('detail-dialog').close();render();if(state.page==='today')$('dot-input').focus({preventScroll:true});else $('connection-status').focus({preventScroll:true});showToast('示例连接已更新，没有连接真实账号。');return;}
+ const action=e.target.closest('[data-action]')?.dataset.action;if(!action)return;
+ if(action==='qr-complete'){state.connected.add('wechat');state.qrExpired=false;render();$('dot-input').focus({preventScroll:true});showToast('示例连接完成，草稿保留；未开启提醒或订阅。');return;}if(action==='qr-expire'){state.qrExpired=true;render();document.querySelector('[data-action="qr-refresh"]')?.focus({preventScroll:true});return;}if(action==='qr-refresh'){state.qrExpired=false;render();$('first-wechat-code')?.focus({preventScroll:true});return;}
+ if(action==='history'){openHistory();return;}if(action==='focus'){openConversation();return;}if(action==='done'){state.done=!state.done;render();showToast('示例事项已更新，没有修改外部任务。');return;}if(action==='pause'){state.paused=!state.paused;render();showToast(state.paused?'示例安排已暂停。没有操作真实计划。':'示例安排已恢复。没有创建真实计划。');return;}if(action==='retry'){state.recovered=true;render();showToast('演示恢复完成；原草稿与安排保留。');return;}if(action==='show-attention'){state.showAttention=true;render();return;}if(action==='project-detail'){showDetail('每周内容计划 · 示例进度','<p>本周已有三个候选选题，尚未选择最终题目。下一步先明确读者最需要带走的理解，再展开初稿。</p><p class="dialog-footnote">虚构项目说明，未读取或修改任何本机项目。</p>');return;}if(action==='memory-detail'){showDetail('AI 日报关注方向 · 示例记忆','<p>演示中保存了三个方向：Agent 产品、插件生态、增长实践。</p><p>正式产品应允许在同一对话里补充或修正，并更新同一条记忆。</p><p class="dialog-footnote">本原型不把自由输入写成已保存的偏好。</p>');}
+});
+document.addEventListener('keydown',e=>{if(e.key==='Escape'&&!e.isComposing&&!document.querySelector('dialog[open]')&&state.overlay){e.preventDefault();closeFloating();}});
+document.querySelector('.nav').addEventListener('keydown',e=>{if(!['ArrowLeft','ArrowRight','Home','End'].includes(e.key))return;const tabs=[...document.querySelectorAll('.nav [role=tab]')],i=tabs.indexOf(document.activeElement);if(i<0)return;e.preventDefault();const next=e.key==='Home'?0:e.key==='End'?tabs.length-1:(i+(e.key==='ArrowRight'?1:-1)+tabs.length)%tabs.length;navigate(tabs[next].dataset.page);tabs[next].focus();});
+render();
+</script>
+</body>
+</html>

@@ -213,3 +213,9 @@ test('already aborted keychain calls never spawn a process',async()=>{
  let spawned=0;const keychain=mod.createMacOSGoogleKeychain({platform:'darwin',spawn:()=>{spawned++;}}),controller=new AbortController();controller.abort();
  await assert.rejects(keychain.read('v1-'+ 'a'.repeat(32)+'-googleSuite-'+ 'b'.repeat(48),{signal:controller.signal}));assert.equal(spawned,0);
 });
+test('legacy migration labels keychain, guard and native persistence failures without exposing secrets',async t=>{
+ for(const mode of ['storage','guard','persist']){
+  const h=fixture(t,{config:{[field]:record()},...(mode==='storage'?{keychain:{write:async()=>{throw Error('SYNTHETIC_PRIVATE_SECRET');}}}:{}),...(mode==='persist'?{rejectRawWrite:true}:{})});
+  await assert.rejects(h.vault.migrateLegacy({source,authorizeMutation:mode==='guard'?async()=>false:h.guard}),error=>{assert.equal(error.authDiagnostic?.stage,mode);assert.doesNotMatch(String(error)+JSON.stringify(error.authDiagnostic),/SYNTHETIC_PRIVATE_SECRET|synthetic-private-refresh/);return true;});
+ }
+});

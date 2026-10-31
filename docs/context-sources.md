@@ -1,6 +1,6 @@
 # 连接邮箱、日历、云盘、笔记和清单
 
-本页面向 `0.12.0-preview.4`，安装入口见[安装说明](install.md)。本版为普通 Google 三件套、单独日历的点击登录增加授权前用途说明，以及 macOS Keychain 密钥 + AES-256-GCM 本机凭据存储；旧普通明文授权仅在明确查询前受控迁移。滴答继续使用只读 Open API、保持 `tasks:read`；flomo 需要 MAX。此前日常 `0.12.0-preview.3` 已有滴答清单与 flomo 有限搜索证据，Google 有限读取来自更早阶段；这些历史记录不代表本版已在日常 App 升级。本版另于 2026-10-23 在隔离官方 Host 重启后，完成本人确认的另一 Google 账号三项有界读取；未覆盖任意账号或完整新用户开箱。源码、宿主与真实读取分别见[验证记录](https://github.com/oxmumu3/dsh-project-companion/blob/d389852e3aebfab061325d72b8286ba40de319ee/docs/verification.md)。
+本页面向 `0.12.0-preview.4`，安装入口见[安装说明](install.md)。本版为普通 Google 三件套、单独日历的点击登录增加授权前用途说明，以及 macOS Keychain 密钥 + AES-256-GCM 本机凭据存储；旧普通明文授权仅在明确查询前受控迁移。滴答继续使用只读 Open API、保持 `tasks:read`；flomo 需要 MAX。此前日常 `0.12.0-preview.3` 已有滴答清单与 flomo 有限搜索证据，Google 有限读取来自更早阶段；这些历史记录不代表本版已在日常 App 升级。本版另于 2026-10-23 在隔离官方 Host 重启后，完成本人确认的另一 Google 账号三项有界读取；未覆盖任意账号或完整新用户开箱。源码、宿主与真实读取分别见[验证记录](verification.md)。
 
 ## 普通使用
 
@@ -12,7 +12,7 @@
 
 2026-10-22 最近一次控制台回读为 **External / In production**，显示累计 1 位用户、生命周期 100 位用户 cap，并仍需验证；2026-10-23 实读后没有再次回读名单或累计数。非测试名单账号可以尝试本人授权，不再逐个登记；未验证提示、组织账号策略和 cap 仍可能限制访问。本人确认的另一账号已在本版隔离官方 Host 完成授权后的三项有界读取；账号区别来自本人确认，没有追加 email/sub scope 或独立身份请求，也未核实该账号是否列于 Cloud 测试名单。品牌与 scope 验证尚未确认通过，不能宣传所有读者安装后已经可用。Search Console 项目 URL-prefix 已验证，品牌校验等待所有权同步；Google 提示可能需 24 小时，scope 入口当前不可提交，尚未提交 scope 审核。此前本人账号在 Testing 阶段的验收范围保留为历史，不把它改写成新用户实测。
 
-桌面应用注册随源码分发的依据、用户 token 的边界和公众审核限制见[Google 桌面登录与公开分发说明](https://github.com/oxmumu3/dsh-project-companion/blob/d389852e3aebfab061325d72b8286ba40de319ee/docs/google-desktop-oauth.md)。
+桌面应用注册随源码分发的依据、用户 token 的边界和公众审核限制见[Google 桌面登录与公开分发说明](google-desktop-oauth.md)。
 
 ## 三件套权限与数据去向
 
@@ -20,7 +20,7 @@
 
 目前连接后仅按需读取，没有私人资料持续扫描或主动订阅。项目日报与AI资讯日报不等于私人邮箱/清单监控。
 
-此前 `0.12.0-preview.3` 的授权保存于自己的 Harness 原生 profile secret 配置；隐藏表单和文件权限不能当作加密证明。本版为普通 Google 三件套、单独日历的点击登录增加了 macOS Keychain 密钥 + profile AES-256-GCM 密文封装；访问令牌只在内存中缓存。密文绑定具体 Harness 配置位置、插件实例及授权种类。Keychain 不可用或密文不匹配时不会回退到明文。已有这两类明文授权只在用户明确查询、即将获取 Google 令牌前经过 guard 与原生 revision CAS 后迁移；重新点击登录可直接用新授权替换。状态查询、页面刷新不迁移或写配置。源码检查与本轮隔离 Host 有限实测不能代替日常安装、旧明文真实迁移、长期运行和完整新用户开箱，见[公众接入准备](https://github.com/oxmumu3/dsh-project-companion/blob/d389852e3aebfab061325d72b8286ba40de319ee/docs/google-public-onboarding.md)。
+此前 `0.12.0-preview.3` 的授权保存于自己的 Harness 原生 profile secret 配置；隐藏表单和文件权限不能当作加密证明。本版为普通 Google 三件套、单独日历的点击登录增加了 macOS Keychain 密钥 + profile AES-256-GCM 密文封装；访问令牌只在内存中缓存。密文绑定具体 Harness 配置位置、插件实例及授权种类。Keychain 不可用或密文不匹配时不会回退到明文。已有这两类明文授权只在用户明确查询、即将获取 Google 令牌前经过 guard 与原生 revision CAS 后迁移；重新点击登录可直接用新授权替换。状态查询、页面刷新不迁移或写配置。源码检查与本轮隔离 Host 有限实测不能代替日常安装、旧明文真实迁移、长期运行和完整新用户开箱，见[公众接入准备](google-public-onboarding.md)。
 
 安全存储补强不覆盖手填高级 `googleRefreshToken`、flomo/滴答凭据、Harness 会话或历史备份，也不会自动加密旧备份。没有 Dot 中央服务器集中代存 Google 令牌。明确读取的结果会进入 Harness 会话，可能发给所配置的模型并进入宿主日志；通过微信回复还会经过微信桥接和微信通道。不能承诺所有资料永不离开电脑。`personal_context` 不自动写入长期项目记忆；但若会话所属项目已被关注，用户/助手摘要可被收为项目近期记录。连接启用关系只保存会话与凭据指纹，最近读取时间为进程内状态。
 
@@ -42,7 +42,7 @@
 | flomo / 滴答 | 本人已完成两家官方登录。preview.3 原生 personal_context 实读：滴答 projects limit2 返回两项来源并有裁剪提示；flomo 搜索 DeepSeek limit2 返回两条、无裁剪提示。本轮仅一次会话、该工具，无微信发送或新计划；临时会话断开两来源后，原生页面恢复日常 Dot 启用。滴答仅验证清单元数据，任务正文未验；flomo 未读取 AI 画像。 |
 | 公众受众配置 | 2026-10-22 控制台回读 External / In production，累计 1 / 100 位用户且需要验证；Search Console 已确认项目 URL-prefix 所有权。未验证提示与 scope/品牌审核仍须处理；另一账号已完成上述有界读取，但名单及新的累计数未回读，不以受众标签或单账号结果代替所有新用户实测。 |
 
-早期日历独立宿主使用明确 fixture owner，真实微信桥接禁用，未发微信或创建计划。其私有授权没有迁入日常 App；日常 App 已另外完成本人三件套登录。本版已验非空日历的有界工具返回，但日常 App 和手机呈现未验；滴答任务正文、Drive 文档正文、长期令牌刷新、真实撤销/清除与手机展示仍分别待验；已验过一次日历冷启动刷新不等于长期可靠性通过。完整证据见[验证记录](https://github.com/oxmumu3/dsh-project-companion/blob/d389852e3aebfab061325d72b8286ba40de319ee/docs/verification.md)。
+早期日历独立宿主使用明确 fixture owner，真实微信桥接禁用，未发微信或创建计划。其私有授权没有迁入日常 App；日常 App 已另外完成本人三件套登录。本版已验非空日历的有界工具返回，但日常 App 和手机呈现未验；滴答任务正文、Drive 文档正文、长期令牌刷新、真实撤销/清除与手机展示仍分别待验；已验过一次日历冷启动刷新不等于长期可靠性通过。完整证据见[验证记录](verification.md)。
 
 ## 实现与官方协议
 

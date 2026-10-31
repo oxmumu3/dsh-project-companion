@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
+import {createGoogleTokenVault} from '../src/google-token-vault.js';
 const mod=await import('../src/google-suite-auth.js').catch(()=>null);
 const publisher={clientId:'calendar-fixture.apps.googleusercontent.com',clientSecret:'public-desktop-fixture',kind:'desktop'};
 const scopes=['https://www.googleapis.com/auth/gmail.readonly','https://www.googleapis.com/auth/calendar.events.readonly','https://www.googleapis.com/auth/drive.readonly'];
@@ -47,4 +48,35 @@ for(const stage of ['token exchange','credential CAS'])test(`authorization remai
  try{assert.equal(h.auth.status().authInProgress,true,'consumed callback is not yet a completed authorization');assert.equal(h.auth.status().refreshConfigured,false);}
  finally{release();await completion;}
  assert.equal(h.auth.status().authInProgress,false);assert.equal(h.auth.status().refreshConfigured,true);
+});
+
+
+test('failed reconnect reports this attempt without claiming old saved credentials are new success',async t=>{
+ let fail=false;const h=fixture(t,{fetch:async()=>fail?Response.json({error:'invalid_grant',error_description:'PRIVATE_PROVIDER_TEXT'},{status:400}):Response.json({access_token:'PRIVATE_ACCESS',refresh_token:'PRIVATE_REFRESH',expires_in:3600,token_type:'Bearer',scope})});
+ await connect(h);const original=h.config.googleSuiteOAuthCredentials;fail=true;
+ const next=await h.auth.start({authorizeMutation:h.guard}),response=await fetch(callback(next));
+ assert.equal(response.status,400);assert.match(await response.text(),/授权码.*重新/);
+ assert.equal(h.config.googleSuiteOAuthCredentials,original);assert.equal(h.auth.status().refreshConfigured,true);
+ assert.equal(h.auth.status().lastAttempt.status,'failed');assert.equal(h.auth.status().lastAttempt.reason,'code_rejected');
+ assert.doesNotMatch(JSON.stringify(h.auth.status()),/PRIVATE|state=|code=|clientId/);
+});
+test('matching decline and expiration have recoverable outcomes; invalid callbacks do not finish an attempt',async t=>{
+ const h=fixture(t),one=await h.auth.start({authorizeMutation:h.guard});
+ await fetch(callback(one,{state:'wrong'}));assert.equal(h.auth.status().lastAttempt,null);assert.equal(h.auth.status().authInProgress,true);
+ const denial=callback(one,{error:'access_denied'});denial.searchParams.delete('code');const result=await fetch(denial);
+ assert.match(await result.text(),/取消|未同意/);assert.equal(h.auth.status().lastAttempt.reason,'consent_not_granted');
+ const two=await h.auth.start({authorizeMutation:h.guard});assert.equal(h.auth.status().lastAttempt,null);
+ h.time(1800000300001);await fetch(callback(two));assert.equal(h.auth.status().lastAttempt.reason,'expired');
+ const three=await h.auth.start({authorizeMutation:h.guard});assert.equal(h.auth.status().lastAttempt,null);await fetch(callback(three));assert.equal(h.auth.status().lastAttempt.status,'saved');
+});
+
+
+test('post-commit storage receipt failure reports uncertainty without claiming the old credential survived',async t=>{
+ let config={googleSuiteOAuthCredentials:''},throwAfterWrite=false;const keys=new Map(),guard=async()=>true;
+ const vault=createGoogleTokenVault({scope:'synthetic-callback-uncertainty',rawReadConfig:()=>({...config}),rawWrite:async(source,value,conditions)=>{assert.equal(await conditions.authorizeMutation(),true);config={...config,[source+'OAuthCredentials']:value};if(throwAfterWrite)throw Error('PRIVATE_AFTER_COMMIT');},keychain:{supported:true,async write(account,key){keys.set(account,key);},async read(account){return keys.get(account);},async remove(account){keys.delete(account);}}});
+ const auth=mod.createGoogleSuiteAuth({publisher,readConfig:()=>vault.readConfig(),saveCredentials:(value,conditions)=>vault.saveCredentials('googleSuite',value,conditions),fetch:async()=>Response.json({access_token:'PRIVATE_ACCESS',refresh_token:'PRIVATE_REFRESH',expires_in:3600,token_type:'Bearer',scope})});
+ t.after(async()=>{await auth.close();await vault.close();});
+ const first=await auth.start({authorizeMutation:guard});assert.equal((await fetch(callback(first))).status,200);const before=config.googleSuiteOAuthCredentials;throwAfterWrite=true;
+ const second=await auth.start({authorizeMutation:guard}),response=await fetch(callback(second)),body=await response.text();assert.equal(response.status,400);assert.notEqual(config.googleSuiteOAuthCredentials,before);assert.equal(auth.status().lastAttempt.reason,'storage');assert.match(body,/保存结果.*未确认/);assert.doesNotMatch(body,/不会清除已有连接|原有.*保留|未保存新授权|PRIVATE/);
+ await vault.prepare({authorizeMutation:guard});assert.equal(auth.status().refreshConfigured,true);
 });
