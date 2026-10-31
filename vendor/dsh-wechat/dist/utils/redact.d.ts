@@ -1,0 +1,29 @@
+/**
+ * Secret masking for text that leaves the trust boundary.
+ *
+ * Scope — this function is for ERROR text, excerpts and telemetry only.
+ * It must NEVER be applied to an agent's normal reply body: the hex and
+ * base64 rules below are deliberately greedy (`32+` hex, `40+` base64)
+ * and would mangle every commit SHA, content hash, file digest, hex
+ * payload and long identifier in a legitimate answer. An agent that
+ * explains a git rebase would come back with `***` where the SHAs were.
+ *
+ * Everything here is a heuristic over shapes, not an entropy detector.
+ * It is intentionally cheap, pure and synchronous: it runs on the error
+ * path where an exception must not become a second failure.
+ */
+/**
+ * Mask secret-shaped substrings in one text.
+ *
+ * Idempotent by construction: every replacement yields `***`, and no
+ * rule can match a run of asterisks or start inside one, so a second
+ * pass over already-masked text is a no-op. That matters because error
+ * text is masked on the way into a notification and again when the
+ * notification is flushed from a hold.
+ *
+ * @param text - text about to leave for WeChat (an error, an excerpt, a
+ *   telemetry line) — never a normal agent reply.
+ * @returns the same text with every detected secret replaced by `***`.
+ */
+export declare function maskSecrets(text: string): string;
+//# sourceMappingURL=redact.d.ts.map

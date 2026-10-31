@@ -1,0 +1,97 @@
+--- a/NOTICE.md
++++ b/NOTICE.md
+@@ -11,0 +12,2 @@
++
++Embedded Dot adaptation 0.11.1-dot.3-embedded.1: QR login requests and polling accept a lifecycle abort signal. Disposing or replacing a login cancels it and prevents stale token writes. Transport, source permissions and ordinary delivery rules are unchanged. Exact base archive and local delta are recorded in bridge-maintenance/EMBEDDED.json of the containing Dot package.
+--- a/dist/bridge/bridge.js
++++ b/dist/bridge/bridge.js
+@@ -810,0 +811,2 @@
++        this.loginAbort?.abort();
++        this.loginAbort = undefined;
+@@ -884,0 +887,2 @@
++        this.loginAbort?.abort();
++        this.loginAbort = undefined;
+@@ -968,0 +973,5 @@
++        if (this.interactionStopped)
++            return;
++        this.loginAbort?.abort();
++        const loginAbort = new AbortController();
++        this.loginAbort = loginAbort;
+@@ -974,0 +984 @@
++                signal: loginAbort.signal,
+@@ -982,0 +993,2 @@
++            if (loginAbort.signal.aborted || this.loginAbort !== loginAbort)
++                return;
+@@ -989,0 +1002,2 @@
++            if (loginAbort.signal.aborted || this.loginAbort !== loginAbort)
++                return;
+@@ -4968 +4981,0 @@
+-//# sourceMappingURL=bridge.js.map
+\ No newline at end of file
+--- a/dist/weixin/api.d.ts
++++ b/dist/weixin/api.d.ts
+@@ -93,0 +94 @@
++    signal?: AbortSignal;
+@@ -100,0 +102 @@
++    signal?: AbortSignal;
+--- a/dist/weixin/api.js
++++ b/dist/weixin/api.js
+@@ -147 +147 @@
+-async function apiGet(baseUrl, path, token) {
++async function apiGet(baseUrl, path, token, signal) {
+@@ -149 +149 @@
+-    const res = await fetch(url, { headers: buildHeaders({ token }) });
++    const res = await fetch(url, { headers: buildHeaders({ token }), ...(signal ? { signal } : {}) });
+@@ -273 +273 @@
+-    return apiGet(params.baseUrl, `ilink/bot/get_bot_qrcode?bot_type=${params.botType ?? "3"}`);
++    return apiGet(params.baseUrl, `ilink/bot/get_bot_qrcode?bot_type=${params.botType ?? "3"}`, undefined, params.signal);
+@@ -276 +276 @@
+-    return apiGet(params.baseUrl, `ilink/bot/get_qrcode_status?qrcode=${encodeURIComponent(params.qrcode)}`);
++    return apiGet(params.baseUrl, `ilink/bot/get_qrcode_status?qrcode=${encodeURIComponent(params.qrcode)}`, undefined, params.signal);
+@@ -298 +297,0 @@
+-//# sourceMappingURL=api.js.map
+\ No newline at end of file
+--- a/dist/weixin/auth.d.ts
++++ b/dist/weixin/auth.d.ts
+@@ -14,0 +15 @@
++    signal?: AbortSignal;
+@@ -21 +22 @@
+-//# sourceMappingURL=auth.d.ts.map
+\ No newline at end of file
++//# sourceMappingURL=auth.d.ts.map
+--- a/dist/weixin/auth.js
++++ b/dist/weixin/auth.js
+@@ -6,0 +7 @@
++import { setTimeout as delay } from "node:timers/promises";
+@@ -32 +33,2 @@
+-    const { baseUrl, botType, storageDir, log, renderQrUrl } = params;
++    const { baseUrl, botType, storageDir, log, renderQrUrl, signal } = params;
++    signal?.throwIfAborted();
+@@ -34 +36,2 @@
+-    const qrResp = await getBotQrcode({ baseUrl, botType });
++    const qrResp = await getBotQrcode({ baseUrl, botType, signal });
++    signal?.throwIfAborted();
+@@ -47 +50,3 @@
+-        const statusResp = await getQrcodeStatus({ baseUrl, qrcode: currentQrcode });
++        signal?.throwIfAborted();
++        const statusResp = await getQrcodeStatus({ baseUrl, qrcode: currentQrcode, signal });
++        signal?.throwIfAborted();
+@@ -60 +65,2 @@
+-                const newQr = await getBotQrcode({ baseUrl, botType });
++                const newQr = await getBotQrcode({ baseUrl, botType, signal });
++                signal?.throwIfAborted();
+@@ -78,0 +85 @@
++                signal?.throwIfAborted();
+@@ -85 +92 @@
+-        await new Promise((r) => setTimeout(r, 1500));
++        await delay(1500, undefined, { signal });
+@@ -89 +95,0 @@
+-//# sourceMappingURL=auth.js.map
+\ No newline at end of file
+--- a/package.json
++++ b/package.json
+@@ -3,2 +3,2 @@
+-  "version": "0.11.1-dot.3",
+-  "description": "DSH Dot maintained WeChat bridge, based on pan17/dsh-wechat",
++  "version": "0.11.1-dot.3-embedded.1",
++  "description": "DSH Dot embedded WeChat component with cancellable QR lifecycle, based on pan17/dsh-wechat",

@@ -67,6 +67,7 @@ import {createGoalBoardHost,registerGoalBoardContext} from './src/goal-board-hos
 import {createGoalBoardController,registerGoalBoardRoute} from './src/goal-board-route.js';
 import {parseFamilyCatalogList} from './src/project-catalog-intent.js';
 import {observeWelcomeOutcome} from './src/onboarding-outcome.js';
+import {installBundledWechat} from './src/bundled-wechat.js';
 export {Config};
 
 export const name='project-companion';
@@ -1270,4 +1271,14 @@ export async function installCompanion(ctx,options={}){
   return{service,taskResults,memory,followup,onboarding,news,personalReview,context,contextLoop,projectUpdates,googleCalendarAuth,googleSuiteAuth,flomoAuth,didaAuth,workbench,workbenchActions,familyRoute,projectCatalog,projectCatalogController,workspaceAccess,goalBoard,goalBoardController,registeredProjectTarget:service.registeredProjectTarget,authorizeRegisteredCoordinationSync:service.authorizeRegisteredCoordinationSync};
 }
 
-export async function apply(ctx,config){await installCompanion(ctx,{context:{config}});}
+export async function apply(ctx,config){
+  const familyDelegation=()=>{const value=config?.familyOwnerDelegation;return (value&&typeof value.get==='function'?value.get():value)===true;};
+  // The official manager may start after Dot's other dependencies. Cordis
+  // gates this owned child instead of interpreting a not-yet-ready registry
+  // as a fresh profile or blocking the rest of the desktop assistant.
+  ctx.inject(['pluginManager'],async scope=>{await installBundledWechat(scope,{familyDelegation});});
+  ctx.on('loader/volatile-update',paths=>{
+    if(paths.some(path=>path[0]==='familyOwnerDelegation'))void ctx.get('dotWechatComponent',false)?.refresh();
+  });
+  await installCompanion(ctx,{context:{config}});
+}

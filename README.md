@@ -4,21 +4,19 @@
 
 作者：牛村木木山 · [正式仓库](https://github.com/oxmumu3/dsh-project-companion) · MIT。社区开源项目，非 DeepSeek 或 OpenAI 官方产品。
 
-**当前公开预览：`0.20.0-preview.2`。** 新工作台、逻辑项目看板、首次及后续工作区选择、个人回顾和兴趣 AI 日报已包含在本版。自动回顾仍属实验能力：flomo 近期读取及历史模型失败的自然运行验收尚未完成。Google 数据权限审核中，仍有未验证提示与已知累计 100 个账号上限。详见[本版验收与限制](docs/verification.md)。
+**当前工作树为单插件候选 `0.20.0-preview.3`，尚未公开发布。** 已公开的 `0.20.0-preview.2` 仍保留原两组件分发。 新工作台、逻辑项目看板、首次及后续工作区选择、个人回顾和兴趣 AI 日报已包含在本版。自动回顾仍属实验能力：flomo 近期读取及历史模型失败的自然运行验收尚未完成。Google 数据权限审核中，仍有未验证提示与已知累计 100 个账号上限。详见[本版验收与限制](docs/verification.md)。
 
-## 安装
+## 只安装一个标准插件
 
-[下载完整 macOS 安装包](https://github.com/oxmumu3/dsh-project-companion/releases/download/v0.20.0-preview.2/dsh-dot-0.20.0-preview.2-macos.zip) · [固定版本发布页](https://github.com/oxmumu3/dsh-project-companion/releases/tag/v0.20.0-preview.2) · [详细安装说明](docs/install.md)
+本候选将经过固定来源与 MIT 许可审计的微信组件内置到 Dot。新用户无需再装第二个微信插件，也无需下载 ZIP、解压或运行 macOS 安装脚本。
 
-先安装并打开一次官方 DeepSeek Harness，再保存工作、正常退出 Harness。把这一行粘贴到 macOS「终端」：
+1. 打开已初始化的官方 DeepSeek Harness，进入「插件 → 添加插件」。
+2. 添加收到的 `dsh-project-companion-0.20.0-preview.3.tgz` 文件实际路径，并启用。
+3. 打开左侧「DSH Dot」。首页连接微信，或先在电脑对话；再按需选择工作区和资料来源。
 
-```sh
-(dsh_dot_dir="$(mktemp -d)" && cd "$dsh_dot_dir" && curl -fLO "https://github.com/oxmumu3/dsh-project-companion/releases/download/v0.20.0-preview.2/dsh-dot-0.20.0-preview.2-macos.zip" && curl -fLO "https://github.com/oxmumu3/dsh-project-companion/releases/download/v0.20.0-preview.2/dsh-dot-0.20.0-preview.2-macos.zip.sha256" && shasum -a 256 -c "dsh-dot-0.20.0-preview.2-macos.zip.sha256" && ditto -x -k "dsh-dot-0.20.0-preview.2-macos.zip" . && open "dsh-dot-0.20.0-preview.2-macos/Install.command")
-```
+已有兼容微信组件时沿用现有组件，包括它的禁用状态；不会为安装 Dot 重置绑定或覆盖组件配置。已有家庭入口继续按已配置的 Owner 委托运行，家人权限独立。Dot 不安装、升级 Family，也不自动扩大任何账号或资料授权。
 
-命令会下载固定版本、核对 SHA256、解压并打开安装入口。安装后重开 Harness，从左侧进入「DSH Dot」。支持官方 DSH `0.2.0-rc.2`、`0.2.1-rc.2`、`0.2.1-rc.3`。没有 Harness 时，入口会引导安装官方应用；这是插件增强包，不是独立的一体化 App。Windows 整合安装未验证。
-
-完整包包含 Dot 和维护桥 `dsh-wechat@0.11.1-dot.3`，沿用兼容的原微信绑定。已有 Family 家庭入口和账号授权不会被安装器重置；本包不会安装、升级 Family 或自动建立 Owner 委托。需要共用家庭微信时另行配置，家人的权限独立。
+这是标准 Harness 插件候选，尚未上架官方插件市场。当前只在隔离官方宿主中验证；尚未升级维护者日常 App、发布本版或完成新用户手机收件验收。当前公开旧版可在[发布页](https://github.com/oxmumu3/dsh-project-companion/releases/tag/v0.20.0-preview.2)查看；旧版 ZIP 的辅助安装方式不适用于本单插件候选。
 
 ## 第一次打开，先做一件有用的事
 
