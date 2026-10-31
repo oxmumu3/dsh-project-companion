@@ -58,6 +58,13 @@ import {createWorkbench,registerWorkbenchRoute,registerDesktopConversationRoute}
 import {createWorkbenchActions,registerWorkbenchActionsRoute} from './src/workbench-actions.js';
 import {createProjectCatalog} from './src/project-catalog.js';
 import {createProjectCatalogController,registerProjectCatalogRoute} from './src/project-catalog-route.js';
+import {createWorkspaceAccess,workspaceAccessRowSchema} from './src/workspace-access.js';
+import {createWorkspaceAccessController,registerWorkspaceAccessRoute} from './src/workspace-access-route.js';
+import {createGoalBoard,goalBoardRowSchema} from './src/goal-board-service.js';
+import {createGoalBoardCollector} from './src/goal-board-collect.js';
+import {createGoalBoardModel} from './src/goal-board-model.js';
+import {createGoalBoardHost,registerGoalBoardContext} from './src/goal-board-host.js';
+import {createGoalBoardController,registerGoalBoardRoute} from './src/goal-board-route.js';
 import {parseFamilyCatalogList} from './src/project-catalog-intent.js';
 import {observeWelcomeOutcome} from './src/onboarding-outcome.js';
 export {Config};
@@ -92,6 +99,8 @@ const familyDelegationDomainSpec=defineDomain({name:'project_companion_family_de
 const newsDomainSpec=defineDomain({name:'project_companion_news',version:1,tables:{state:domainTable(newsRowSchema)}});
 const personalReviewDomainSpec=defineDomain({name:'project_companion_personal_review',version:1,tables:{state:domainTable(personalReviewRowSchema)}});
 const onboardingDomainSpec=defineDomain({name:'project_companion_onboarding',version:1,tables:{state:domainTable(onboardingRow)}});
+const workspaceAccessDomainSpec=defineDomain({name:'project_companion_workspace_access',version:1,tables:{state:domainTable(workspaceAccessRowSchema)}});
+const goalBoardDomainSpec=defineDomain({name:'project_companion_goals',version:1,tables:{state:domainTable(goalBoardRowSchema)}});
 
 function owner(ctx,agent){
   const cwd=effectiveCwd(ctx,agent);
@@ -135,6 +144,10 @@ export async function installCompanion(ctx,options={}){
   const projectUpdatesTable=projectUpdatesDomain.table('state');
   const contextLoopDomain=await ctx.storageDomain.open(contextLoopDomainSpec);
   const contextLoopTable=contextLoopDomain.table('state');
+  const workspaceAccessDomain=await ctx.storageDomain.open(workspaceAccessDomainSpec);
+  const workspaceAccessTable=workspaceAccessDomain.table('state');
+  const goalBoardDomain=await ctx.storageDomain.open(goalBoardDomainSpec);
+  const goalBoardTable=goalBoardDomain.table('state');
   let timer;
   let familyRecoveryPending=false,familyRecoveryRunning=false;
   let disposed=false;
@@ -201,6 +214,15 @@ export async function installCompanion(ctx,options={}){
     readRegistered:()=>{const registry=ctx.get('workspaceRegistry',false);if(typeof registry?.list!=='function')throw new Error('Registered catalog unavailable');return registry.list();},
     readWatched:async()=>(await table.get('profile'))?.projects??[],isClosed:()=>disposed,
   });
+  // Desktop Owner metadata is independent of WeChat. New grants are empty;
+  // opening the plugin never scans files, historical sessions or account data.
+  const workspaceAccess=createWorkspaceAccess({store:workspaceAccessTable,catalog:projectCatalog,isClosed:()=>disposed,...(options.clock?{clock:options.clock}:{})});
+  const goalBoardHost=createGoalBoardHost({ctx,access:workspaceAccess,isClosed:()=>disposed,signal:lifecycle.signal});
+  const goalBoardModel=createGoalBoardModel(ctx);
+  const goalBoard=createGoalBoard({store:goalBoardTable,access:workspaceAccess,collect:createGoalBoardCollector({access:workspaceAccess,listSessions:goalBoardHost.listSessions,readSession:goalBoardHost.readSession}),model:goalBoardModel,isClosed:()=>disposed,...(options.clock?{clock:options.clock}:{})});
+  const workspaceAccessController=createWorkspaceAccessController({access:workspaceAccess,isClosed:()=>disposed});
+  const goalBoardController=createGoalBoardController({board:goalBoard,host:goalBoardHost,isClosed:()=>disposed});
+  registerGoalBoardContext(ctx,{board:goalBoard,host:goalBoardHost,isClosed:()=>disposed});
   const service=createService({
     store:{get:key=>table.get(key),put:(key,value)=>table.put(key,storedRow.parse(value))},
     discover:()=>discover(ctx),
@@ -337,6 +359,8 @@ export async function installCompanion(ctx,options={}){
   ctx.effect(()=>async()=>{
     disposed=true;
     lifecycle.abort();
+    goalBoard.close();goalBoardModel.close();workspaceAccess.close();
+    await goalBoard.waitForIdle().catch(()=>{});
     workbench?.close();workbenchActions?.close();recoveryGuard.close();const familyClosing=familyDelegate.close();
     const newsClosing=news.close();newsModel.close?.();
     const personalReviewClosing=personalReview?.close();personalReviewModel?.close?.();
@@ -350,7 +374,7 @@ export async function installCompanion(ctx,options={}){
     // A failed news store must not prevent cleanup of unrelated services.
     await externalClosing;
     try{await taskResults.close();}
-    finally{try{await service.ready();}finally{await Promise.allSettled([taskDomain.close(),onboardingDomain.close(),newsDomain.close(),personalReviewDomain.close(),contextDomain.close(),familyDomain.close(),projectUpdatesDomain.close(),contextLoopDomain.close(),domain.close()]);}}
+    finally{try{await service.ready();}finally{await Promise.allSettled([taskDomain.close(),onboardingDomain.close(),newsDomain.close(),personalReviewDomain.close(),contextDomain.close(),familyDomain.close(),projectUpdatesDomain.close(),contextLoopDomain.close(),workspaceAccessDomain.close(),goalBoardDomain.close(),domain.close()]);}}
   });
   // Cordis emits disposal before waiting for an asynchronous apply to settle.
   // Abort startup at that boundary; normal effect cleanup alone runs too late.
@@ -638,6 +662,7 @@ export async function installCompanion(ctx,options={}){
   if(typeof ctx.inject==='function')ctx.inject(['connection'],scope=>{if(!disposed)registerPersonalReviewControl(scope,reviewControl);});
   const projectCatalogController=createProjectCatalogController({catalog:projectCatalog,readConnection:readWorkbenchConnection,isPaused:()=>service.isPaused(),isPausedSync:()=>disposed||service.isPausedSync(),isClosed:()=>disposed});
   if(typeof ctx.inject==='function')ctx.inject(['connection'],scope=>{if(!disposed)registerProjectCatalogRoute(scope,projectCatalogController);});
+  if(typeof ctx.inject==='function')ctx.inject(['connection'],scope=>{if(!disposed){registerWorkspaceAccessRoute(scope,workspaceAccessController);registerGoalBoardRoute(scope,goalBoardController);}});
   if(typeof ctx.inject==='function')ctx.inject(['connection'],scope=>{if(!disposed)registerWorkbenchActionsRoute(scope,workbenchActions);});
   if(typeof ctx.inject==='function')ctx.inject(['connection'],scope=>{if(!disposed){registerWorkbenchRoute(scope,workbench);registerDesktopConversationRoute(scope,workbench);}});
   if(typeof ctx.inject==='function')ctx.inject(['connection'],scope=>{if(!disposed)registerContextRoute(scope,contextRoute);});
@@ -1242,7 +1267,7 @@ export async function installCompanion(ctx,options={}){
   }
   await recoverFamilyPlans();
   if(typeof ctx.inject==='function')ctx.inject(['familyDotBridge'],()=>{if(!disposed)void recoverFamilyPlans();});
-  return{service,taskResults,memory,followup,onboarding,news,personalReview,context,contextLoop,projectUpdates,googleCalendarAuth,googleSuiteAuth,flomoAuth,didaAuth,workbench,workbenchActions,familyRoute,projectCatalog,projectCatalogController,registeredProjectTarget:service.registeredProjectTarget,authorizeRegisteredCoordinationSync:service.authorizeRegisteredCoordinationSync};
+  return{service,taskResults,memory,followup,onboarding,news,personalReview,context,contextLoop,projectUpdates,googleCalendarAuth,googleSuiteAuth,flomoAuth,didaAuth,workbench,workbenchActions,familyRoute,projectCatalog,projectCatalogController,workspaceAccess,goalBoard,goalBoardController,registeredProjectTarget:service.registeredProjectTarget,authorizeRegisteredCoordinationSync:service.authorizeRegisteredCoordinationSync};
 }
 
 export async function apply(ctx,config){await installCompanion(ctx,{context:{config}});}

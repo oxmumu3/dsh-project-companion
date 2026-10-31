@@ -58,6 +58,24 @@ function addLive(h,id,cwd,{status='idle',origin}={}){
   const agent={id:session.id,session,ctx:h.ctx,status,followup:message=>{h.accepted.push(message);agent.status='running';}};
   h.live.set(id,agent);return agent;
 }
+test('logical board domains start empty and desktop scope works before WeChat pairing',async t=>{
+ const routes=[];const h=await openHost(t,{connection:{fetch:{register:r=>{routes.push(r);return()=>{};}}},readSetup:async()=>({state:'unbound'})});
+ h.known.push({id:'logical-fixture',path:h.root,title:'测试工作区',sessionIds:[]});
+ const request=async(path,input)=>{const r=routes.find(x=>x.path===path);assert.ok(r,path);const response=await r.fetch(new Request('http://synthetic.invalid'+path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(input)}));assert.equal(response.status,200);return response.json();};
+ const first=await request('/api/project_companion/workspaces',{action:'list'});assert.equal(first.selectedCount,0);
+ const state=await request('/api/project_companion/goals',{action:'status'});assert.deepEqual(state.projects,[]);assert.equal(state.scan.phase,'idle');
+ await request('/api/project_companion/workspaces',{action:'save',expectedRevision:first.revision,expectedCatalogRevision:first.catalogRevision,workspaceIds:[first.items[0].id]});
+ assert.equal((await h.adapter.workspaceAccess.list()).selectedCount,1);assert.equal((await h.adapter.goalBoard.status()).scan.phase,'idle');assert.equal(h.sent.length,0);assert.equal(h.accepted.length,0);
+});
+test('logical project discussion contributes only its own canonical context to native prompt',async t=>{
+ const h=await openHost(t);const headers=new Map();
+ h.ctx.provide('sessionPersistence',{stat:async id=>headers.has(id)?{header:headers.get(id),sizeBytes:100}:undefined});
+ h.ctx.provide('sessionController',{create:async({sessionId})=>{const agent=addLive(h,sessionId,h.root);headers.set(sessionId,agent.session.header);return{sessionId};}});
+ let status=await h.adapter.goalBoard.status();status=await h.adapter.goalBoard.vision({projectId:null,title:'测试逻辑目标',goal:'保留用户目标',constraints:['不发消息'],expectedRevision:status.revision});
+ const target=await h.adapter.goalBoardController.action({action:'conversation',projectId:status.projects[0].id,expectedRevision:status.revision});
+ const agent=h.live.get(target.conversation.sessionId);const own=await h.ctx.systemPrompt.assemble({scope:agent,agent});assert.ok(own.contexts.find(x=>x.name==='project-companion:logical-goal')?.text.includes('保留用户目标'));
+ const other=await h.ctx.systemPrompt.assemble({scope:h.owner,agent:h.owner});assert.ok(!other.contexts.some(x=>x.name==='project-companion:logical-goal'));assert.equal(h.accepted.length,0);assert.equal(h.sent.length,0);
+});
 async function otherProject(h,label='另一个项目'){
   const root=join(h.root,label);await mkdir(root,{recursive:true});await writeFile(join(root,'README.md'),'SYNTHETIC target');return root;
 }
