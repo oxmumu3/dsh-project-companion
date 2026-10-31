@@ -43,10 +43,10 @@ test('unknown fields and throwing diagnostic getters fail to a fixed unavailable
 test('authorization failure after a provider failure still aborts collection rather than returning a diagnostic',async()=>{
  let valid=true,reads=0;const collect=collector(async()=>{reads++;valid=false;throw err();});await assert.rejects(collect(run({guard:async()=>valid})),/authorization revoked/);assert.equal(reads,1);
 });
-async function serviceFixture({mode='success',empty=false,allFailed=false,customCollect}={}){
+async function serviceFixture({mode='success',empty=false,allFailed=false,customCollect,outputRule}={}){
  let row,time=new Date('2026-10-30T08:00:00.000Z');const calls={query:0,model:0,send:0},modelInputs=[],sent=[];
  const collect=customCollect??collector(async(_caller,args)=>{calls.query++;if(args.source==='flomo'||allFailed)throw err();return{items:empty?[]:[{id:'synthetic-mail',title:'Synthetic work risk',text:'A service risk needs checking.',createdAt:'2026-10-30T08:55:00.000Z'}]};});
- const service=createPersonalReviewService({store:{get:async()=>structuredClone(row),put:async(_k,value)=>{row=structuredClone(value);}},clock:()=>time,readBinding:async()=>({bound:true,bindingKey:binding}),authorization:async()=>grant,collect,summarize:async input=>{calls.model++;modelInputs.push(input);if(mode==='model-failed')throw Object.assign(Error('PRIVATE_CANARY_MODEL'),{code:'MODEL_INVALID_OUTPUT'});const evidence=input.evidence.find(item=>item.source==='gmail');return{items:[{key:'synthetic-risk',kind:'risk',title:'合成服务风险',summary:'来源提示服务有变化。',why:'需要核对实际影响。',action:'查看原始通知。',unknown:'实际影响未知。',evidenceIds:[evidence.id],priority:'high',confidence:'source'}]};},send:async input=>{calls.send++;sent.push(input.text);return{status:'reported_sent'};}});
+ const service=createPersonalReviewService({store:{get:async()=>structuredClone(row),put:async(_k,value)=>{row=structuredClone(value);}},clock:()=>time,readBinding:async()=>({bound:true,bindingKey:binding}),authorization:async()=>grant,collect,summarize:async input=>{calls.model++;modelInputs.push(input);if(mode==='model-failed')throw Object.assign(Error('PRIVATE_CANARY_MODEL'),{code:'MODEL_INVALID_OUTPUT',outputRule});const evidence=input.evidence.find(item=>item.source==='gmail');return{items:[{key:'synthetic-risk',kind:'risk',title:'合成服务风险',summary:'来源提示服务有变化。',why:'需要核对实际影响。',action:'查看原始通知。',unknown:'实际影响未知。',evidenceIds:[evidence.id],priority:'high',confidence:'source'}]};},send:async input=>{calls.send++;sent.push(input.text);return{status:'reported_sent'};}});
  await service.ready();await service.act(caller,{action:'configure',requestId:'synthetic-schedule',userRequested:true,sources:['flomo','gmail'],projects:[],schedule:{dailyTime:'09:00',timeZone:'UTC'}});time=new Date(to);return{service,calls,modelInputs,sent,row:()=>structuredClone(row)};
 }
 test('successful mixed-source job durably keeps safe source failures while model and sent text omit diagnostic codes',async()=>{
@@ -67,4 +67,19 @@ test('diagnostic schema rejects malicious extra fields before model, without per
 });
 test('durable source diagnostic schema excludes foreign source and duplicate sources',async()=>{
  const f=await serviceFixture();try{await f.service.tick();const row=f.row();row.jobs.at(-1).sourceDiagnostics=[{...expected,source:'PRIVATE_CANARY'}];assert.equal(personalReviewRowSchema.safeParse(row).success,false);row.jobs.at(-1).sourceDiagnostics=[expected,expected];assert.equal(personalReviewRowSchema.safeParse(row).success,false);}finally{await f.service.close();}
+});
+
+test('closed projection predicate survives collection but never reaches model materials',async()=>{
+ const f=await serviceFixture({customCollect:collector(async(_caller,args)=>{if(args.source==='flomo')throw err({code:'CONTEXT_SCOPE_VIOLATION',readStage:'projection',scopeRule:'recent_time_missing'});return{items:[{id:'synthetic',title:'Synthetic',text:'A configuration changed.'}]};})});
+ try{await f.service.tick();const row=f.row(),job=row.jobs.at(-1);assert.deepEqual(job.sourceDiagnostics,[{source:'flomo',code:'CONTEXT_SCOPE_VIOLATION',readStage:'projection',operation:'recent',scopeRule:'recent_time_missing'}]);assert.equal(personalReviewRowSchema.safeParse(row).success,true);assert.doesNotMatch(JSON.stringify(f.modelInputs),/scopeRule|recent_time_missing|CONTEXT_SCOPE_VIOLATION|PRIVATE_CANARY/);}finally{await f.service.close();}
+});
+test('closed model validation predicate is durable but untrusted strings are discarded',async()=>{
+ for(const rule of ['json','evidence_unknown_or_duplicate','PRIVATE_CANARY_RULE']){
+  const f=await serviceFixture({mode:'model-failed',outputRule:rule});try{await f.service.tick();const row=f.row(),job=row.jobs.at(-1);assert.equal(job.status,'failed');assert.equal(job.diagnostic.code,'MODEL_INVALID_OUTPUT');assert.equal(job.diagnostic.outputRule,rule==='PRIVATE_CANARY_RULE'?undefined:rule);assert.equal(personalReviewRowSchema.safeParse(row).success,true);assert.equal(f.calls.send,0);assert.doesNotMatch(JSON.stringify(job),/PRIVATE_CANARY/);}finally{await f.service.close();}
+ }
+});
+test('unknown or wrong-stage projection rules are not copied from a provider error',async()=>{
+ for(const patch of [{scopeRule:'PRIVATE_CANARY_RULE'},{scopeRule:'item_limit',readStage:'call'},{scopeRule:'item_limit',code:'CONTEXT_HTTP_ERROR'}]){
+  const value=await collector(async()=>{throw err({code:'CONTEXT_SCOPE_VIOLATION',readStage:'projection',...patch});})(run());assert.equal(value.coverage[0].diagnostic.scopeRule,undefined);assert.doesNotMatch(JSON.stringify(value),/PRIVATE_CANARY/);
+ }
 });

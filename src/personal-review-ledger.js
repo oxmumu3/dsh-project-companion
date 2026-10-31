@@ -22,25 +22,26 @@ const locator = evidence => evidence.url ? `url:${evidence.url}` : `${evidence.s
 
 /** Model claims must point at supplied evidence; only structured or verbatim dates may become reminders. */
 export function validatePersonalReviewSummary(value, evidence) {
-  const result = z.object({ items: z.array(reviewCandidateSchema).max(12) }).strict().parse(value);
+  let result;try{result=z.object({ items: z.array(reviewCandidateSchema).max(12) }).strict().parse(value);}catch(error){error.reviewValidationRule='schema';throw error;}
+  const reject=(rule,message)=>{throw Object.assign(new Error(message),{reviewValidationRule:rule});};
   const known = new Map(evidence.map(e => [e.id, e]));
   for (const item of result.items) {
-    if (new Set(item.evidenceIds).size !== item.evidenceIds.length || item.evidenceIds.some(id => !known.has(id))) throw new Error('复盘引用包含未知或重复证据');
+    if (new Set(item.evidenceIds).size !== item.evidenceIds.length || item.evidenceIds.some(id => !known.has(id))) reject('evidence_unknown_or_duplicate','复盘引用包含未知或重复证据');
     const refs = item.evidenceIds.map(id => known.get(id));
     const claims = [item.title, item.summary, item.why, item.action].join('\n');
     // A time on a calendar is not evidence of a deadline, including when the
     // model leaves dueAt blank but describes it as one in its prose.
     const deadlineWords = /截止|期限|到期|逾期|\bdeadline\b|\boverdue\b/iu;
-    if ((item.kind === 'event' || refs.every(e => e.source === 'calendar')) && (item.kind === 'deadline' || deadlineWords.test(claims))) throw new Error('日历日程不能表述为任务期限');
+    if ((item.kind === 'event' || refs.every(e => e.source === 'calendar')) && (item.kind === 'deadline' || deadlineWords.test(claims))) reject('calendar_deadline_claim','日历日程不能表述为任务期限');
     // Metadata and an empty returned excerpt cannot establish that a whole
     // document is empty, stale, or that preparation is incomplete.
     const unsupportedFileClaim = /(?:文件|文档|表|内容|资料|数据)[^。！？\n]{0,18}(?:为空|是空的|未更新|没有更新|缺失)|准备(?:不足|不充分)/u;
     const driveRefs = refs.filter(e => e.source === 'drive');
-    if (driveRefs.length && driveRefs.every(e => !['read', 'truncated'].includes(e.contentState) || !e.text.trim()) && unsupportedFileClaim.test(claims) && !refs.some(e => e.source !== 'drive' && unsupportedFileClaim.test(e.text))) throw new Error('未读取的正文不能支持文件为空或准备不足的结论');
-    if (item.dueAt && !item.evidenceIds.some(id => { const e = known.get(id); return e.source!=='calendar'&&(e.dueAt === item.dueAt || e.text.includes(item.dueAt)); })) throw new Error('复盘期限没有来源依据');
-    if(item.kind==='event'&&(!item.eventStartAt||item.dueAt)||item.kind!=='event'&&(item.eventStartAt||item.eventEndAt))throw new Error('日程与任务期限类型不一致');
-    if(item.eventStartAt&&!item.evidenceIds.some(id=>{const e=known.get(id);return e.source==='calendar'&&e.eventStartAt===item.eventStartAt&&(!item.eventEndAt||e.eventEndAt===item.eventEndAt);} ))throw new Error('日程时间没有来源依据');
-    if(item.eventEndAt&&Date.parse(item.eventEndAt)<=Date.parse(item.eventStartAt))throw new Error('日程时间无效');
+    if (driveRefs.length && driveRefs.every(e => !['read', 'truncated'].includes(e.contentState) || !e.text.trim()) && unsupportedFileClaim.test(claims) && !refs.some(e => e.source !== 'drive' && unsupportedFileClaim.test(e.text))) reject('unsupported_file_claim','未读取的正文不能支持文件为空或准备不足的结论');
+    if (item.dueAt && !item.evidenceIds.some(id => { const e = known.get(id); return e.source!=='calendar'&&(e.dueAt === item.dueAt || e.text.includes(item.dueAt)); })) reject('deadline_without_source','复盘期限没有来源依据');
+    if(item.kind==='event'&&(!item.eventStartAt||item.dueAt)||item.kind!=='event'&&(item.eventStartAt||item.eventEndAt))reject('event_kind','日程与任务期限类型不一致');
+    if(item.eventStartAt&&!item.evidenceIds.some(id=>{const e=known.get(id);return e.source==='calendar'&&e.eventStartAt===item.eventStartAt&&(!item.eventEndAt||e.eventEndAt===item.eventEndAt);} ))reject('event_time_without_source','日程时间没有来源依据');
+    if(item.eventEndAt&&Date.parse(item.eventEndAt)<=Date.parse(item.eventStartAt))reject('event_time_order','日程时间无效');
     if (item.dueAt && item.evidenceIds.some(id => { const e = known.get(id); return e.dueAt === item.dueAt && e.dueAtBasis === 'relative'; })) item.confidence = 'inferred';
     if (new Set(item.evidenceIds.map(id => known.get(id).source)).size > 1) item.confidence = 'inferred';
   }

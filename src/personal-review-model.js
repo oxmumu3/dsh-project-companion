@@ -1,3 +1,4 @@
+import {safeReviewOutputRule} from './review-output-diagnostics.js';
 /** One bounded private-context host model call. No tools, session, transcript or raw diagnostics. */
 import { z } from 'zod';
 import { runNewsModel, NewsModelError, safeModelCallDiagnostic, boundedModelControls } from './news-model.js';
@@ -43,7 +44,7 @@ export function createPersonalReviewModel(ctx, { clock = () => new Date(), timeo
         if (data.length > 190000) fail('MODEL_INVALID_INPUT');
       } catch { fail('MODEL_INVALID_INPUT'); }
       if (!input.length) return { items: [] };
-      const controller = new AbortController(); active.add(controller); let timedOut=false, modelDiagnostic;
+      const controller = new AbortController(); active.add(controller); let timedOut=false, modelDiagnostic, outputRule;
       const checkedGuard=guard?async()=>{try{await guard();}catch{fail('MODEL_AUTHORIZATION_CHANGED');}}:undefined;
       const stop = () => controller.abort(); signal?.addEventListener('abort', stop, { once: true });
       const timer = setTimeout(()=>{timedOut=true;stop();}, timeoutMs);
@@ -54,10 +55,11 @@ export function createPersonalReviewModel(ctx, { clock = () => new Date(), timeo
         const result = await runNewsModel({ llm, selection, system: SYSTEM, data, signal: controller.signal, maxTokens: 6500, preparePolicy:boundedModelControls, diagnoseFinish:true, onDiagnostic:value=>{modelDiagnostic=safeModelCallDiagnostic(value);}, beforeStream: checkedGuard, beforeStreamSync: () => { if (authorizeSync && authorizeSync() !== true) fail('MODEL_AUTHORIZATION_CHANGED'); },
           onUsage(usage) { for (const [key, count] of Object.entries(usage)) totals.tokens[key] = (totals.tokens[key] ?? 0) + count; } });
         if (checkedGuard) await checkedGuard(); controller.signal.throwIfAborted();
-        let answer; try { answer = validatePersonalReviewSummary(JSON.parse(result.text), input); } catch { fail('MODEL_INVALID_OUTPUT'); }
+        let parsed;try{parsed=JSON.parse(result.text);}catch{outputRule='json';fail('MODEL_INVALID_OUTPUT');}
+        let answer;try{answer=validatePersonalReviewSummary(parsed,input);}catch(error){outputRule=safeReviewOutputRule(error?.reviewValidationRule);fail('MODEL_INVALID_OUTPUT');}
         totals.successful++; return answer;
       } catch (error) {
-        totals.failed++; const safe=new NewsModelError(timedOut?'MODEL_TIMEOUT':controller.signal.aborted?'MODEL_ABORTED':error instanceof NewsModelError?error.code:'MODEL_REQUEST_FAILED'); if(modelDiagnostic)safe.modelDiagnostic=modelDiagnostic;throw safe;
+        totals.failed++; const safe=new NewsModelError(timedOut?'MODEL_TIMEOUT':controller.signal.aborted?'MODEL_ABORTED':error instanceof NewsModelError?error.code:'MODEL_REQUEST_FAILED'); if(modelDiagnostic)safe.modelDiagnostic=modelDiagnostic;if(safe.code==='MODEL_INVALID_OUTPUT'&&outputRule)safe.outputRule=outputRule;throw safe;
       } finally { clearTimeout(timer); signal?.removeEventListener('abort', stop); active.delete(controller); controller.abort(); }
     },
     usage: () => structuredClone(totals),

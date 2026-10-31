@@ -71,3 +71,13 @@ test('safe finish diagnostics retain only allowlisted SDK failure metadata',asyn
   const f=await fixture({stream:async function*(){yield {type:'finish',reason};}});await assert.rejects(f.model.summarize({evidence,kind:'daily'}),error=>{assert.equal(error.code,'MODEL_INCOMPLETE');assert.equal(error.modelDiagnostic.finish,'other');assert.equal(error.modelDiagnostic.finishDetail,detail);assert.equal(error.modelDiagnostic.failureCode,code);assert.doesNotMatch(JSON.stringify(error.modelDiagnostic),/PRIVATE_/);return true;});f.model.close();
  }
 });
+
+test('invalid structured model answers preserve only the closed validation rule',async()=>{
+ for(const [rule,answer] of [['schema',{items:[{...output.items[0],priority:'PRIVATE_CANARY_INVALID'}]}],['evidence_unknown_or_duplicate',{items:[{...output.items[0],evidenceIds:['PRIVATE_CANARY_EVIDENCE_ID']}]}],['deadline_without_source',{items:[{...output.items[0],dueAt:'2026-10-31T00:00:00.000Z'}]}]]){
+  const f=await fixture({answer});try{await assert.rejects(f.model.summarize({evidence,kind:'daily'}),e=>{assert.equal(e.code,'MODEL_INVALID_OUTPUT');assert.equal(e.outputRule,rule);assert.doesNotMatch(JSON.stringify(e),/PRIVATE_CANARY|2026-10-31/);return true;});}finally{f.model.close();}
+ }
+});
+test('invalid JSON is distinct from an invalid structured answer without retaining output',async()=>{
+ const f=await fixture({stream:async function*(){yield{type:'text-delta',index:0,text:'PRIVATE_CANARY_INVALID_JSON'};yield{type:'finish',reason:{kind:'stop'}};}});
+ try{await assert.rejects(f.model.summarize({evidence,kind:'daily'}),e=>{assert.equal(e.code,'MODEL_INVALID_OUTPUT');assert.equal(e.outputRule,'json');assert.doesNotMatch(JSON.stringify(e),/PRIVATE_CANARY/);return true;});}finally{f.model.close();}
+});
