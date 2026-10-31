@@ -31,7 +31,7 @@ test('select all traverses every metadata page and only saves after explicit con
  const f=scopeFixture(),c=workspace({request:f.request});await c.open();
  assert.equal(typeof c.selectAll,'function');assert.equal(await c.selectAll(),true);
  assert.equal(c.getSnapshot().selectedIds.length,137);assert.ok(c.getSnapshot().selectedIds.includes('workspace-136'));
- const reads=f.calls.slice(1);assert.deepEqual(reads.map(x=>[x.action,x.offset,x.limit,x.expectedCatalogRevision]),[['list',0,100,'catalog-1'],['list',100,100,'catalog-1']]);
+ const reads=f.calls.slice(1);assert.deepEqual(reads.map(x=>[x.action,x.offset,x.limit,x.expectedCatalogRevision]),[['list',0,50,'catalog-1'],['list',50,50,'catalog-1'],['list',100,50,'catalog-1']]);
  assert.equal(f.calls.some(x=>x.action==='save'||x.action==='recognize'),false);
  await c.save();assert.equal(f.calls.at(-1).workspaceIds.length,137);c.close();
 });
@@ -53,11 +53,11 @@ test('a revision change during select all preserves the current selection and ma
  assert.equal(await c.selectAll(),false);assert.deepEqual(c.getSnapshot().selectedIds,['workspace-1']);assert.equal(c.getSnapshot().stale,true);assert.equal(await c.save(),false);c.close();
 });
 test('cancel during select all discards the local action without saving or reopening',async()=>{
- const f=scopeFixture(),gate=deferred(),c=workspace({request:async args=>{if(args.limit===100)await gate.promise;return f.request(args);}});await c.open();const pending=c.selectAll();c.cancel();gate.resolve();await pending;
+ const f=scopeFixture(),gate=deferred(),c=workspace({request:async args=>{if(args.limit===50)await gate.promise;return f.request(args);}});await c.open();const pending=c.selectAll();c.cancel();gate.resolve();await pending;
  assert.equal(c.getSnapshot().open,false);assert.equal(c.getSnapshot().page,null);assert.deepEqual(c.getSnapshot().selectedIds,[]);assert.equal(f.calls.some(x=>x.action==='save'),false);c.close();
 });
 test('a new search supersedes an outstanding select-all response',async()=>{
- const f=scopeFixture(),gate=deferred(),c=workspace({request:async args=>{if(args.limit===100)await gate.promise;return f.request(args);}});await c.open();const pending=c.selectAll();await c.load({query:'工作区 2'});gate.resolve();await pending;
+ const f=scopeFixture(),gate=deferred(),c=workspace({request:async args=>{if(args.limit===50)await gate.promise;return f.request(args);}});await c.open();const pending=c.selectAll();await c.load({query:'工作区 2'});gate.resolve();await pending;
  assert.equal(c.getSnapshot().query,'工作区 2');assert.deepEqual(c.getSnapshot().selectedIds,['workspace-1']);assert.equal(c.getSnapshot().selectingAll,false);c.close();
 });
 test('select all rejects duplicate workspace ids instead of claiming complete coverage',async()=>{
@@ -105,4 +105,14 @@ test('uncertain native release closes the entire registry before another project
 
 test('first dedicated conversation creation advances CAS revision before a project mutation',async()=>{
  const calls=[],row=project();let revision='b1';const status=()=>({version:1,revision,accessRevision:null,projects:[row],scan:{phase:'idle',coverage:[]},standaloneCount:0,uncertainCount:0});const c=goals({request:async body=>{calls.push(body);if(body.action==='status')return status();if(body.action==='detail')return{version:1,revision,accessRevision:null,project:row,evidence:[],conversation:null};if(body.action==='conversation'){revision='b2';return{version:1,projectId:row.id,conversation:{sessionId:'dot-goal-1',revision:'native:dot-goal-1'}};}if(body.action==='accept'){assert.equal(body.expectedRevision,'b2');return status();}}});await c.refresh();await c.open(row.id);assert.equal(c.getSnapshot().detail.revision,'b2');assert.equal(await c.mutate('accept'),true);assert.equal(calls.filter(r=>r.action==='conversation').length,1);c.close();
+});
+
+test('select all integrates with the real catalog 50-row ceiling without saving permissions',async()=>{
+ const {createProjectCatalog}=await import('../src/project-catalog.js');
+ const {createWorkspaceAccess}=await import('../src/workspace-access.js');
+ const rows=Array.from({length:137},(_,i)=>({id:'w'+i,path:'/synthetic/all'+i,title:'工作'+i,sessionIds:[]}));let writes=0;
+ const catalog=createProjectCatalog({readRegistered:()=>rows}),access=createWorkspaceAccess({catalog,store:{get:async()=>undefined,put:async()=>{writes++;}}});
+ const calls=[],c=workspace({request:async({action,...args})=>{calls.push({action,...args});return access[action](args);}});
+ await c.open();assert.equal(await c.selectAll(),true);assert.equal(c.getSnapshot().selectedIds.length,137);assert.equal(writes,0);
+ assert.ok(calls.every(x=>x.action==='list'&&x.limit<=50));c.cancel();assert.equal((await access.list()).selectedCount,0);c.close();
 });

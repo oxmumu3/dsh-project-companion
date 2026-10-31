@@ -4,23 +4,23 @@
 
 作者：牛村木木山 · [正式仓库](https://github.com/oxmumu3/dsh-project-companion) · MIT。社区开源项目，非 DeepSeek 或 OpenAI 官方产品。
 
-**当前公开预览：`0.20.0-preview.4`，只需安装一个标准插件包。** 新工作台、逻辑项目看板、首次及后续工作区选择、个人回顾和兴趣 AI 日报已包含在本版。自动回顾仍属实验能力：flomo 近期读取及历史模型失败的自然运行验收尚未完成。Google 数据权限审核中，仍有未验证提示与已知累计 100 个账号上限。详见[本版验收与限制](docs/verification.md)。
+**当前公开预览：`0.20.0-preview.5`，只需安装一个标准插件包。** 新工作台、逻辑项目看板、首次及后续工作区选择、个人回顾和兴趣 AI 日报已包含在本版。自动回顾仍属实验能力：flomo 近期读取及历史模型失败的自然运行验收尚未完成。Google 数据权限审核中，仍有未验证提示与已知累计 100 个账号上限。详见[本版验收与限制](docs/verification.md)。
 
 ## 只安装一个标准插件
 
 本版将经过固定来源与 MIT 许可审计的微信组件内置到 Dot。新用户无需再装第二个微信插件，也无需下载 ZIP、解压或运行 macOS 安装脚本。
 
 1. 打开已初始化的官方 DeepSeek Harness，进入「插件 → 添加插件」。
-2. 粘贴下面的插件地址，安装并点击「立即启用」。也可[下载插件包](https://github.com/oxmumu3/dsh-project-companion/releases/download/v0.20.0-preview.4/dsh-project-companion-0.20.0-preview.4.tgz)后填写本地文件路径。
+2. 粘贴下面的插件地址，安装并点击「立即启用」。也可[下载插件包](https://github.com/oxmumu3/dsh-project-companion/releases/download/v0.20.0-preview.5/dsh-project-companion-0.20.0-preview.5.tgz)后填写本地文件路径。
 3. 打开左侧「DSH Dot」。首页连接微信，或先在电脑对话；再按需选择工作区和资料来源。
 
 ```text
-https://github.com/oxmumu3/dsh-project-companion/releases/download/v0.20.0-preview.4/dsh-project-companion-0.20.0-preview.4.tgz
+https://github.com/oxmumu3/dsh-project-companion/releases/download/v0.20.0-preview.5/dsh-project-companion-0.20.0-preview.5.tgz
 ```
 
 已有兼容微信组件时沿用现有组件，包括它的禁用状态；不会为安装 Dot 重置绑定或覆盖组件配置。已有家庭入口继续按已配置的 Owner 委托运行，家人权限独立。Dot 不安装、升级 Family，也不自动扩大任何账号或资料授权。
 
-这是通过 GitHub Release 分发的标准 Harness 插件，npm latest 同步为本版，尚未上架官方插件市场。[发布与下载](https://github.com/oxmumu3/dsh-project-companion/releases/tag/v0.20.0-preview.4) · [安装说明](docs/install.md)。本版已完成官方隔离单包安装验证；维护者日常 App 仍为 `.2`，新用户手机收件与多日运行仍分别验收。
+这是通过 GitHub Release 分发的标准 Harness 插件，npm latest 同步为本版，尚未上架官方插件市场。[发布与下载](https://github.com/oxmumu3/dsh-project-companion/releases/tag/v0.20.0-preview.5) · [安装说明](docs/install.md)。本版已完成官方隔离单包安装验证；新用户手机收件与多日运行仍分别验收。
 
 ## 第一次打开，先做一件有用的事
 
@@ -78,4 +78,4 @@ https://github.com/oxmumu3/dsh-project-companion/releases/download/v0.20.0-previ
 
 ## 源码与发布线
 
-本页安装包与验收对应固定标签 [`v0.20.0-preview.4`](https://github.com/oxmumu3/dsh-project-companion/tree/v0.20.0-preview.4)。开发本版请检出该标签或 `release/0.20.0-preview.4`；仓库 `main` 为 scoped npm 发布线，运行功能与本版相同，仅包身份与客户端注册名适配 scoped 安装。
+本页安装包与验收对应固定标签 [`v0.20.0-preview.5`](https://github.com/oxmumu3/dsh-project-companion/tree/v0.20.0-preview.5)。开发本版请检出该标签或 `release/0.20.0-preview.5`；仓库 `main` 为 scoped npm 发布线，运行功能与本版相同，仅包身份与客户端注册名适配 scoped 安装。

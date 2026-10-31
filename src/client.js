@@ -458,11 +458,11 @@ function createWorkspaceScopeController({request}) {
         if(page.matchedTotal>1000)throw Object.assign(Error('limit'),{code:'WORKSPACE_SELECTION_LIMIT'});
         let offset=0;
         while(ids.size<page.matchedTotal){
-          const raw=await request({action:'list',query,offset,limit:100,expectedCatalogRevision:page.catalogRevision});
+          const raw=await request({action:'list',query,offset,limit:50,expectedCatalogRevision:page.catalogRevision});
           if(closed||token!==epoch)return false;
           const value=validate(raw);
           if(value.revision!==page.revision||value.catalogRevision!==page.catalogRevision)throw Object.assign(Error('stale'),{status:409});
-          if(value.offset!==offset||value.limit!==100||value.total!==page.total||value.matchedTotal!==page.matchedTotal)throw Error('catalog pagination mismatch');
+          if(value.offset!==offset||value.limit!==50||value.total!==page.total||value.matchedTotal!==page.matchedTotal)throw Error('catalog pagination mismatch');
           for(const row of value.items){if(ids.has(row.id))throw Error('duplicate workspace');ids.add(row.id);}
           if(value.hasMore!==(ids.size<page.matchedTotal))throw Error('incomplete catalog');
           if(!value.hasMore)break;
