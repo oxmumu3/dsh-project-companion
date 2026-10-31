@@ -1,3 +1,4 @@
+import {remainingModelOutputBudget,awaitModelGuard as awaitGuard} from './model-generation-controls.js';
 /** Sessionless project summaries through the host's existing model adapter. */
 import { runNewsModel, safeModelCallDiagnostic } from './news-model.js';
 
@@ -170,28 +171,12 @@ function parseSummary(result, sources, candidates) {
 // Unknown accounting cannot justify another full output allowance. Count any
 // separately reported reasoning conservatively, even if an adapter overlaps it.
 function repairTokenBudget(result) {
-  const output = result.usage?.outputTokens;
-  if (!Number.isSafeInteger(output) || output <= 0) return 0;
-  const used = output + (result.usage.reasoningTokens ?? 0);
-  return Number.isSafeInteger(used) && used < OUTPUT_TOKEN_BUDGET ? OUTPUT_TOKEN_BUDGET - used : 0;
+  return remainingModelOutputBudget(result,OUTPUT_TOKEN_BUDGET);
 }
 
 // Authorization checks share the model deadline, including an uncooperative
 // asynchronous guard. A late guard completion cannot start another request.
-function awaitGuard(guard, signal) {
-  signal.throwIfAborted();
-  return new Promise((resolve, reject) => {
-    const stop = () => { signal.removeEventListener('abort', stop); reject(signal.reason); };
-    signal.addEventListener('abort', stop, { once: true });
-    Promise.resolve().then(() => { signal.throwIfAborted(); return guard(); }).then(value => {
-      signal.removeEventListener('abort', stop);
-      if (signal.aborted) reject(signal.reason); else resolve(value);
-    }, error => {
-      signal.removeEventListener('abort', stop);
-      reject(signal.aborted ? signal.reason : error);
-    });
-  });
-}
+
 
 // Per-call effort follows only the chosen model's declared capabilities; this
 // does not mutate the user selection and unsupported models retain defaults.
