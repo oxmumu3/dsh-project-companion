@@ -73,3 +73,7 @@
 微信能力复用 [pan17/dsh-wechat](https://github.com/pan17/dsh-wechat)；项目记忆选取 `dsh-yolo` 的 SQLite 存储库，调度与唤醒选取 `dsh-proactive` 的库，并保留固定来源、完整 MIT 许可和版权。不需要额外启用这些整包。完整来源、修改与许可证见[第三方声明](THIRD_PARTY_NOTICES.md)及[桥接维护说明](bridge-maintenance/README.md)。
 
 问题反馈：[GitHub Issues](https://github.com/oxmumu3/dsh-project-companion/issues)。请勿提交令牌、授权回调网址、私人邮件或家人资料；提供版本、操作步骤和已脱敏提示即可。
+
+## 源码与发布线
+
+本页安装包与验收对应固定标签 [`v0.20.0-preview.2`](https://github.com/oxmumu3/dsh-project-companion/tree/v0.20.0-preview.2)。开发本版请检出该标签或 `release/0.20.0-preview.2`；仓库 `main` 保留独立 npm 发布线，本次未发布或升级 npm 包。
