@@ -1,5 +1,10 @@
 # 微信桥接维护版来源与复建
 
+## 0.20.0-preview.3 内嵌分发
+
+当前 Dot 只需一个标准插件包，内置以以下固定 `.3` 为基线的 `0.11.1-dot.3-embedded.1`。额外维护仅涉及二维码请求取消、晚到确认不得保存 token，以及对应类型声明。完整许可保留；逐文件与原归档哈希见 [EMBEDDED.json](EMBEDDED.json)，可重建差异见 [embedded-login-lifecycle.patch](embedded-login-lifecycle.patch)，在解开的基线包中执行 `git apply --unidiff-zero /path/to/embedded-login-lifecycle.patch`。124文件复建一致。下文是历史独立维护包的来源与复建，不是当前读者的第二次安装步骤。
+
+
 DSH Dot 的统一安装候选包使用 `dsh-wechat@0.11.1-dot.3` 本地维护版。pan17/dsh-wechat 原作者版权和 MIT 许可保持完整；维护责任归 DSH Dot。此版本未发布到上游或 npm，不代表原作者背书。
 
 - 上游仓库：https://github.com/pan17/dsh-wechat

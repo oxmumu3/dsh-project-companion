@@ -1,6 +1,6 @@
 # 第一次使用 DSH Dot
 
-本页对应 `0.20.0-preview.2` macOS 公开预览。先按[安装说明](install.md)安装，重开 Harness，打开左侧「DSH Dot」。
+本页对应 `0.20.0-preview.3` 公开预览。先按[安装说明](install.md)安装，重开 Harness，打开左侧「DSH Dot」。
 
 ## 先把 Dot 带到微信
 
