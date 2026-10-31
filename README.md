@@ -8,15 +8,23 @@
 
 ## 安装
 
-[下载完整 macOS 安装包](https://github.com/oxmumu3/dsh-project-companion/releases/download/v0.20.0-preview.2/dsh-dot-0.20.0-preview.2-macos.zip) · [固定版本发布页](https://github.com/oxmumu3/dsh-project-companion/releases/tag/v0.20.0-preview.2) · [详细安装说明](docs/install.md)
+**DSH Dot 是安装在 DeepSeek Harness 里的标准插件。** 本版通过 GitHub Release 分发标准 `.tgz` 插件包，尚未上架官方插件市场。
 
-先安装并打开一次官方 DeepSeek Harness，再保存工作、正常退出 Harness。把这一行粘贴到 macOS「终端」：
+已有 Harness：在官方插件管理器中添加本版配套[微信组件](https://github.com/oxmumu3/dsh-project-companion/releases/download/v0.20.0-preview.2/dsh-wechat-0.11.1-dot.3.tgz)，再添加 [DSH Dot 插件](https://github.com/oxmumu3/dsh-project-companion/releases/download/v0.20.0-preview.2/dsh-project-companion-0.20.0-preview.2.tgz)，启用后打开左侧「DSH Dot」。插件管理器可使用下载地址或本地 `.tgz` 文件路径。首次使用 Harness，先完成官方应用初始化与模型配置。
+
+[详细安装说明](docs/install.md) · [固定版本发布页](https://github.com/oxmumu3/dsh-project-companion/releases/tag/v0.20.0-preview.2)
+
+### 可选：macOS 配套安装辅助包
+
+[下载 macOS 安装辅助包](https://github.com/oxmumu3/dsh-project-companion/releases/download/v0.20.0-preview.2/dsh-dot-0.20.0-preview.2-macos.zip)。ZIP 把上述两个标准插件包、校验文件和安装脚本放在一起，帮助检查版本并调用官方插件安装命令；不包含 Harness 应用。已有微信绑定、需要升级版本时，可用它检查兼容性。
+
+先打开一次官方 Harness，保存工作并正常退出。把这一行粘贴到 macOS「终端」：
 
 ```sh
 (dsh_dot_dir="$(mktemp -d)" && cd "$dsh_dot_dir" && curl -fLO "https://github.com/oxmumu3/dsh-project-companion/releases/download/v0.20.0-preview.2/dsh-dot-0.20.0-preview.2-macos.zip" && curl -fLO "https://github.com/oxmumu3/dsh-project-companion/releases/download/v0.20.0-preview.2/dsh-dot-0.20.0-preview.2-macos.zip.sha256" && shasum -a 256 -c "dsh-dot-0.20.0-preview.2-macos.zip.sha256" && ditto -x -k "dsh-dot-0.20.0-preview.2-macos.zip" . && open "dsh-dot-0.20.0-preview.2-macos/Install.command")
 ```
 
-命令会下载固定版本、核对 SHA256、解压并打开安装入口。安装后重开 Harness，从左侧进入「DSH Dot」。支持官方 DSH `0.2.0-rc.2`、`0.2.1-rc.2`、`0.2.1-rc.3`。没有 Harness 时，入口会引导安装官方应用；这是插件增强包，不是独立的一体化 App。Windows 整合安装未验证。
+命令会下载固定版本、核对 SHA256、解压并打开安装辅助入口。安装后重开 Harness，从左侧进入「DSH Dot」。支持官方 DSH `0.2.0-rc.2`、`0.2.1-rc.2`、`0.2.1-rc.3`。Windows 安装流程未验证；macOS 辅助脚本的支持范围不代表其他平台已通过验收。
 
 完整包包含 Dot 和维护桥 `dsh-wechat@0.11.1-dot.3`，沿用兼容的原微信绑定。已有 Family 家庭入口和账号授权不会被安装器重置；本包不会安装、升级 Family 或自动建立 Owner 委托。需要共用家庭微信时另行配置，家人的权限独立。
 

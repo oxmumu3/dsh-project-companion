@@ -2,7 +2,17 @@
 
 牛村木木山制作的 DeepSeek Harness 社区插件，非 DeepSeek 或 OpenAI 官方产品。本公开预览包含 Dot 和配套 `dsh-wechat@0.11.1-dot.3`，不包含 Harness 应用或 Family 家庭助手。
 
-## 一行安装
+## 在 Harness 中添加标准插件
+
+1. 安装官方 Harness，打开一次完成初始化与模型配置。
+2. 在官方插件管理器中添加[配套微信组件 `.tgz`](https://github.com/oxmumu3/dsh-project-companion/releases/download/v0.20.0-preview.2/dsh-wechat-0.11.1-dot.3.tgz)，再添加 [DSH Dot `.tgz`](https://github.com/oxmumu3/dsh-project-companion/releases/download/v0.20.0-preview.2/dsh-project-companion-0.20.0-preview.2.tgz)。可填 Release 下载地址，也可下载后填写本地文件路径；按管理器提示启用。
+3. 打开左侧「DSH Dot」，从首页连接微信，或先在电脑对话。
+
+这是通过 Release 分发的标准插件，尚未上架官方插件市场，本次也未升级 npm 包。无需把 `.tgz` 解压到应用目录。已有微信组件时先核对版本，避免降级或重置配对；下方 macOS 辅助包会执行这些检查。
+
+## 可选：macOS 一行安装辅助
+
+ZIP 只是把同一版本的两个标准插件包、许可证、校验与辅助脚本放在一起，最终仍调用官方 `dsh plugin --profile desktop add` 安装；它不是另一个 Mac App，也不包含 Harness。
 
 首次安装官方 Harness 后，先打开一次完成桌面环境初始化和自己的模型配置，保存工作并正常退出。打开 macOS「终端」，粘贴：
 
@@ -12,7 +22,7 @@
 
 命令下载固定版本 ZIP 和 SHA256 校验文件，校验通过才解压并打开 `Install.command`。安装结束后重开 Harness，从左侧打开「DSH Dot」。
 
-也可[直接下载完整包](https://github.com/oxmumu3/dsh-project-companion/releases/download/v0.20.0-preview.2/dsh-dot-0.20.0-preview.2-macos.zip)，解压整个目录后双击 `Install.command`。不要只移动入口文件。[ZIP 校验文件](https://github.com/oxmumu3/dsh-project-companion/releases/download/v0.20.0-preview.2/dsh-dot-0.20.0-preview.2-macos.zip.sha256) · [全部发布资产](https://github.com/oxmumu3/dsh-project-companion/releases/tag/v0.20.0-preview.2)。
+也可[直接下载辅助包](https://github.com/oxmumu3/dsh-project-companion/releases/download/v0.20.0-preview.2/dsh-dot-0.20.0-preview.2-macos.zip)，解压整个目录后双击 `Install.command`。不要只移动入口文件。[ZIP 校验文件](https://github.com/oxmumu3/dsh-project-companion/releases/download/v0.20.0-preview.2/dsh-dot-0.20.0-preview.2-macos.zip.sha256) · [全部发布资产](https://github.com/oxmumu3/dsh-project-companion/releases/tag/v0.20.0-preview.2)。
 
 ## 条件与升级
 
@@ -52,8 +62,8 @@ Google 品牌已验证，Gmail、日历、Drive 数据权限已提交审核但�
 
 自动回顾仍为实验能力：flomo近期查询曾出现范围投影失败，历史自然模型输出失败尚未全部归因；本版修复了一种无依据精确时间导致的失败，不能据合成验证宣称自然任务已完全修好。新版自然执行、独立新用户扫码到收件、多日与休眠恢复仍分别验收。通道报告发送不等于手机收到。详见[验证记录](https://github.com/oxmumu3/dsh-project-companion/blob/v0.20.0-preview.2/docs/verification.md)。
 
-## 手动与维护者安装
+## 辅助包与维护者命令
 
-高级用户可通过官方插件页添加同一 Release 的 [Dot tgz](https://github.com/oxmumu3/dsh-project-companion/releases/download/v0.20.0-preview.2/dsh-project-companion-0.20.0-preview.2.tgz) 和 [维护桥 .3](https://github.com/oxmumu3/dsh-project-companion/releases/download/v0.20.0-preview.2/dsh-wechat-0.11.1-dot.3.tgz)。推荐完整包处理版本与依赖；无需额外启用 YOLO 或 proactive 整包。
+官方插件管理器安装和 macOS 辅助脚本使用同一 Release 的标准插件包。辅助包额外处理版本与依赖检查；无需额外启用 YOLO 或 proactive 整包。
 
 完整目录包含 `Install.command`、`bundle-manifest.json`、两个固定tgz、脚本和完整许可证。可运行 `node scripts/install.mjs --bundle-dir . --dry-run`；显式安装使用 `--install`。桥接固定来源见[第三方声明](../THIRD_PARTY_NOTICES.md)与[桥接说明](https://github.com/oxmumu3/dsh-project-companion/blob/v0.20.0-preview.2/bridge-maintenance/README.md)。
