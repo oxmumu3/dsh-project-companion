@@ -65,11 +65,11 @@ Google 品牌已验证，Gmail、日历、Drive 数据权限已提交审核但�
 
 ## 共用已有家庭微信
 
-本包不安装、升级 Family 或自动配置 Owner 委托。已配置兼容共用入口的维护者组合为 Family `0.2.0-preview.33-diary.6-dot.3-travel.1-review.3`。维护者已把同源原包名运行版升级到本版，原绑定、五源账号范围、家人权限和安排均保留；公开npm身份另外通过隔离新装与同名更新验证。这两种证明分别成立，不能替代新读者手机收件或长期稳定性。未配置的读者先使用普通独立Dot；家人成员不会获得Owner私人来源或项目权限。详情见[闭环说明](https://github.com/oxmumu3/dsh-project-companion/blob/v0.21.0-preview.5/docs/context-loop.md)。
+本包不安装、升级 Family 或自动配置 Owner 委托。历史公开0.21.0-preview.1已配置共用入口的维护者组合为Family `0.2.0-preview.33-diary.6-dot.3-travel.1-review.3`。此前0.21.0-preview.1日常升级保留了原绑定、五源账号范围、家人权限和安排；本次0.21.0-preview.5仅完成隔离官方Host兼容验证，未覆盖安装维护者当前日常修复版，也不代表Family已完成RC.4/RC.5适配或新读者手机收件。未配置的读者先使用普通独立Dot；家人成员不会获得Owner私人来源或项目权限。详情见[闭环说明](https://github.com/oxmumu3/dsh-project-companion/blob/v0.21.0-preview.5/docs/context-loop.md)。
 
 ## 本版验证与已知问题
 
-本轮运行源码三套SDK各2254项通过，零失败/跳过；双阶段独立审读、精确官方隔离Host与原生输入/草稿附件切换已验，维护者日常已安全升级并保留原绑定、授权与安排。公开npm身份精确安装与兼容检查另留证明；不能把它当新用户手机收件或长期运行通过。
+本次兼容候选五套SDK各2257项完整回归、最终兼容合同增量通过，RC.4/RC.5精确单包经官方CLI安装启用和Host载入，无版本豁免。旧包被拒后安装新包的场景不是旧版已安装状态迁移证明。此前0.21.0-preview.1的原生输入、草稿附件与日常升级证据仍为历史证据；本次未覆盖安装日常修复版，也不代表新用户手机收件或长期运行通过。
 
 自动回顾仍为实验能力：10月31日09:00回顾、09:10资讯通道报告已发出；11:00关注为来源覆盖未知，不判断无变化。历史flomo范围投影与模型失败未全部归因。新用户独立扫码到收件、多日与休眠恢复、真实macOS输入法仍分别验收。通道报告发送不等于手机收到。详见[验证记录](https://github.com/oxmumu3/dsh-project-companion/blob/v0.21.0-preview.5/docs/verification.md)。
 
