@@ -53,11 +53,11 @@ async function main() {
   const runtime = { ...env, DOT_GUARDED_BRIDGE_ROOT: join(stage, 'vendor/dsh-wechat'), NODE_OPTIONS: '--max-old-space-size=128 --import=' + pathToFileURL(join(stage, 'scripts/ci-network.mjs')).href };
   const network = await verifySandbox({ cwd: stage, env: runtime });
   await writeFile(join(output, 'network-selftest.json'), JSON.stringify(network, null, 2) + '\n');
-  const tests = ["test/host.test.mjs", "test/native-draft.test.mjs", "test/workbench-ui.test.mjs", "test/onboarding-ui.test.mjs", "test/context-client.test.mjs", "test/news-model.test.mjs", "test/compatibility-contract.test.mjs"];
+  const tests = ["test/host.test.mjs", "test/native-draft.test.mjs", "test/workbench-ui.test.mjs", "test/onboarding-ui.test.mjs", "test/context-client.test.mjs", "test/news-model.test.mjs", "test/compatibility-contract.test.mjs", "test/ci-sandbox.test.mjs"];
   const suite = await run(process.execPath, ['--max-old-space-size=128', '--test', '--test-concurrency=1', ...tests], stage, runtime, 'suite.tap', 240000);
   const counts = Object.fromEntries([...suite.stdout.matchAll(/^# (tests|pass|fail|skipped|cancelled) (\d+)$/gm)].map(([,key,value]) => [key, Number(value)]));
   await writeFile(join(output, 'suite-counts.json'), JSON.stringify(counts, null, 2) + '\n');
-  if (!Number.isSafeInteger(counts.tests) || counts.tests < 294 || counts.pass !== counts.tests || counts.fail !== 0 || counts.skipped !== 0 || counts.cancelled !== 0) throw Error('SDK contracts incomplete, skipped or failed: ' + JSON.stringify(counts));
+  if (!Number.isSafeInteger(counts.tests) || counts.tests < 298 || counts.pass !== counts.tests || counts.fail !== 0 || counts.skipped !== 0 || counts.cancelled !== 0) throw Error('SDK contracts incomplete, skipped or failed: ' + JSON.stringify(counts));
   const summary = { sdk: plan.sdk, passed: true, counts, network, exactSdkDependencies: true, testFiles: tests.length, hooks: false, compatibilityOverride: false, syntheticHome: true, productionProfileUsed: false, realModelCalls: 0, realMessagesSent: 0, runtimeNonLoopbackAllowed: false, maxOldSpaceMb: 128, suiteTimeoutMs: 240000, dependencyAcquisition: 'public npm registry, without hooks', output };
   await writeFile(join(output, 'summary.json'), JSON.stringify(summary, null, 2) + '\n'); console.log(JSON.stringify(summary));
 }
