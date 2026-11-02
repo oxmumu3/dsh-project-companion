@@ -22,8 +22,13 @@ defaults:
   run:
     shell: bash
 jobs:
+  sdk-compatibility:
+    uses: ./.github/workflows/sdk-compatibility.yml
+    permissions:
+      contents: read
   validate:
     name: Validate source and pack
+    needs: sdk-compatibility
     if: ${{ github.event_name == 'workflow_dispatch' && github.repository == 'oxmumu3/dsh-project-companion' && github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -54,6 +59,8 @@ jobs:
         run: npm ci --ignore-scripts --no-audit --no-fund
       - name: Check source and build the actual package
         run: node --max-old-space-size=128 --test --test-concurrency=1 test/native-draft.test.mjs test/workbench-ui.test.mjs test/onboarding-ui.test.mjs test/context-client.test.mjs
+      - name: Recheck official latest immediately before packing
+        run: node scripts/compatibility.mjs --latest
       - name: Pack and validate the exact release artifact
         id: pack
         env:

@@ -63,8 +63,8 @@ test('native rendered prepare and terminal hook preserve exact item/job referenc
  const result=await h.tool({action:'coordinate',project:root,session:target.id,task:'个人回顾「核对项目说明」只读整理核对清单，不修改文件。',reviewItemId:prepared.value.itemId,userRequested:true});assert.equal(result.status,'accepted',JSON.stringify(result));
  const queued=h.accepted[0];h.ctx.emit('agent/inbox/claimed',{agent:target,message:queued,turn:7});await h.adapter.taskResults.ready();
  target.session.append('assistant/message',{turn:7,step:0,message:{id:'synthetic-result',role:'assistant',content:[{type:'text',text:'Synthetic read-only checklist.'}]}},{surfaceOp:'append'});await h.adapter.taskResults.ready();
- target.session.append('turn/end',{turn:7,reason:{kind:'completed'}});await new Promise(resolve=>setTimeout(resolve,40));
- const board=await h.adapter.workbench.snapshot();assert.equal(board.personalReview.attentionItems.items[0].execution.status,'ready_for_review');assert.equal(board.personalReview.attentionItems.items[0].status,'open');
+ target.session.append('turn/end',{turn:7,reason:{kind:'completed'}});
+ let board;const deadline=Date.now()+2000;do{board=await h.adapter.workbench.snapshot();if(board.personalReview.attentionItems.items[0]?.execution?.status==='ready_for_review')break;await new Promise(resolve=>setTimeout(resolve,5));}while(Date.now()<deadline);assert.equal(board.personalReview.attentionItems.items[0].execution.status,'ready_for_review');assert.equal(board.personalReview.attentionItems.items[0].status,'open');
  const again=await invoke({action:'prepare',itemId:prepared.value.itemId,userRequested:true},'prepare-result');assert.ok(JSON.stringify(again.content).includes(result.jobId));
  const detail=await h.tool({action:'task_status',id:result.jobId});assert.match(detail.text,/Synthetic read-only checklist/);
 });
