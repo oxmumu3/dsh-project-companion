@@ -1,3 +1,4 @@
+import { assertInboundAuthority, awaitInbound } from "../utils/inbound-authority.js";
 /**
  * DSH session mapper: binds a WeChat user to a live DSH agent.
  *
@@ -54,6 +55,7 @@ export class AgentStore {
         return run;
     }
     async ensureNow(user, options) {
+        assertInboundAuthority();
         const agents = this.agents();
         if (!agents)
             return { agent: undefined };
@@ -63,14 +65,15 @@ export class AgentStore {
             if (live)
                 return { agent: live };
             try {
-                const handle = await agents.resume({
+                const handle = await awaitInbound(agents.resume({
                     resumeSessionId: user.sessionId,
                     setup: agentSetup,
-                });
-                await this.attachToWorkspace(user.cwd, user.sessionId);
+                }));
+                await awaitInbound(this.attachToWorkspace(user.cwd, user.sessionId));
                 return { agent: handle.agent };
             }
             catch (err) {
+                assertInboundAuthority();
                 console.error(`[dsh-wechat] resume session ${user.sessionId} failed: ${String(err)}`);
                 if (!options?.replaceOnResumeFailure)
                     return { agent: undefined };
@@ -87,20 +90,21 @@ export class AgentStore {
             const rosterDefault = this.ctx.get("agentPresets")?.defaultId;
             const presetForSession = rosterDefault;
             const sessionId = mintSessionId();
-            const handle = await agents.create({
+            const handle = await awaitInbound(agents.create({
                 sessionId,
                 meta: {
                     cwd: user.cwd,
                     ...(presetForSession ? { agentPreset: presetForSession } : {}),
                 },
                 setup: agentSetup,
-            });
+            }));
             // Persist the binding so a later restart resumes this session.
             user.sessionId = sessionId;
-            await this.attachToWorkspace(user.cwd, sessionId);
+            await awaitInbound(this.attachToWorkspace(user.cwd, sessionId));
             return { agent: handle.agent, replacedSessionId };
         }
         catch (err) {
+            assertInboundAuthority();
             console.error(`[dsh-wechat] create session failed: ${String(err)}`);
             return { agent: undefined, replacedSessionId };
         }
@@ -114,16 +118,18 @@ export class AgentStore {
      * `attachSession` (or the startup bootstrap) populates.
      */
     async attachToWorkspace(cwd, sessionId) {
+        assertInboundAuthority();
         const registry = this.ctx.get("workspaceRegistry");
         if (!registry)
             return;
         try {
-            let workspace = await registry.resolveByPath(cwd);
+            let workspace = await awaitInbound(registry.resolveByPath(cwd));
             if (!workspace)
-                workspace = await registry.create(cwd);
-            await workspace.attachSession(sessionId);
+                workspace = await awaitInbound(registry.create(cwd));
+            await awaitInbound(workspace.attachSession(sessionId));
         }
         catch (err) {
+            assertInboundAuthority();
             // Non-fatal: the session still works, it just shows ungrouped.
             console.error(`[dsh-wechat] attach session ${sessionId} to workspace failed: ${String(err)}`);
         }
@@ -140,6 +146,7 @@ export class AgentStore {
      * The caller resolves the mode from agent.status + the shared setting.
      */
     followup(agent, content, mode = "queue", onCreated) {
+        assertInboundAuthority();
         const message = createUserMessage({
             content,
             // kind 'user' — identical to messages sent from the GUI chat box, so
@@ -155,6 +162,7 @@ export class AgentStore {
         // void retain the historical forwarding behavior.
         if (onCreated?.(message.id, message) === false)
             return message.id;
+        assertInboundAuthority();
         if (mode === "steer") {
             agent.steer(message);
         }

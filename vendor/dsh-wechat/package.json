@@ -1,6 +1,6 @@
 {
   "name": "dsh-wechat",
-  "version": "0.11.1-dot.3-embedded.1",
+  "version": "0.11.1-dot.3-embedded.2",
   "description": "DSH Dot embedded WeChat component with cancellable QR lifecycle, based on pan17/dsh-wechat",
   "type": "module",
   "files": [

@@ -3,15 +3,18 @@
  * Ported from wechat-opencode (MIT) — https://github.com/pan17/wechat-opencode
  */
 import crypto from "node:crypto";
+import { assertAuthorized } from "./authorize.js";
 import { sendMessage, getUploadUrl } from "./api.js";
 import { encryptAesEcb, uploadToCdn } from "./media.js";
 import { MessageType, MessageState, MessageItemType, UploadMediaType, } from "./types.js";
 export async function sendTextMessage(to, text, opts) {
+    assertAuthorized(opts.authorize);
     const clientId = `wechat-acp-${crypto.randomUUID()}`;
     await sendMessage({
         baseUrl: opts.baseUrl,
         token: opts.token,
         retries: opts.retries ?? 2,
+        authorize: opts.authorize,
         body: {
             msg: {
                 from_user_id: "",
@@ -38,6 +41,7 @@ export async function sendTextMessage(to, text, opts) {
  */
 export async function sendMediaMessage(to, mediaType, // IMAGE=1, VIDEO=2, FILE=3, VOICE=4
 buffer, opts) {
+    assertAuthorized(opts.authorize);
     const clientId = crypto.randomBytes(16).toString("hex"); // 32-char hex, like openclaw-weixin
     const rawSize = buffer.length;
     const rawMd5 = crypto.createHash("md5").update(buffer).digest("hex");
@@ -48,6 +52,7 @@ buffer, opts) {
     // filesize should be the encrypted file size (with PKCS7 padding)
     const encryptedSize = Math.ceil((rawSize + 1) / 16) * 16;
     const uploadResp = await getUploadUrl({
+        authorize: opts.authorize,
         baseUrl: opts.baseUrl,
         token: opts.token,
         body: {
@@ -68,6 +73,7 @@ buffer, opts) {
     const uploadUrl = uploadResp.upload_full_url
         ?? `${opts.cdnBaseUrl}/upload?encrypted_query_param=${encodeURIComponent(uploadResp.upload_param)}&filekey=${encodeURIComponent(clientId)}`;
     const encryptQueryParam = await uploadToCdn({
+        authorize: opts.authorize,
         buffer,
         uploadParam: uploadResp.upload_param,
         aesKey,
@@ -90,6 +96,7 @@ buffer, opts) {
         const thumbAesKeyHex = thumbAesKey.toString("hex");
         const encryptedThumb = encryptAesEcb(opts.thumbBuffer, thumbAesKey);
         const thumbEncryptQueryParam = await uploadToCdn({
+            authorize: opts.authorize,
             buffer: encryptedThumb,
             uploadParam: uploadResp.thumb_upload_param,
             aesKey: thumbAesKey,
@@ -148,6 +155,7 @@ buffer, opts) {
     }
     // Step 8: Send the message
     await sendMessage({
+        authorize: opts.authorize,
         baseUrl: opts.baseUrl,
         token: opts.token,
         retries: opts.retries ?? 2,

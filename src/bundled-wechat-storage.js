@@ -21,11 +21,14 @@ export async function prepareOwnedWechatStorage(ctx){
   if(created)await writeFile(marker,JSON.stringify(owner)+'\n',{flag:'wx',mode:0o600});
   const prior=await json(marker,8192);
   if(prior?.version!==1||prior.plugin!==owner.plugin||prior.profileDir!==profileDir)throw fail('existing_storage');
-  // Corrupt/missing auth must never make upstream reset an existing binding.
+  // Corrupt auth remains blocked. A missing token (including an interrupted
+  // re-scan) can reach the embedded bridge's non-destructive QR recovery.
   const state=await json(join(dir,'state.json'),8*1024*1024);
   if(state!==null&&(!state||typeof state!=='object'||!state.users||typeof state.users!=='object'||Array.isArray(state.users)))throw fail('storage_unavailable');
   const token=await json(join(dir,'auth','token.json'),64*1024);
-  if(token!==null&&(!token||typeof token!=='object'||!['token','baseUrl','accountId','userId'].every(key=>typeof token[key]==='string'&&token[key].length>0)))throw fail('bound_token_unavailable');
-  if(state&&Object.keys(state.users).length>0&&token===null)throw fail('bound_token_unavailable');
+  // Older valid credentials may lack scanner identity. Let the fail-closed
+  // pairing resolver expose local recovery; a persisted first sender is not
+  // promoted to authority. Malformed credentials remain blocked here.
+  if(token!==null&&(!token||typeof token!=='object'||!['token','baseUrl','accountId'].every(key=>typeof token[key]==='string'&&token[key].length>0)||(token.userId!==undefined&&(typeof token.userId!=='string'||!token.userId))))throw fail('bound_token_unavailable');
   return dir;
 }

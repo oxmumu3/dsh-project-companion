@@ -1,3 +1,4 @@
+import { assertInboundAuthority, awaitInbound } from "../utils/inbound-authority.js";
 /**
  * DSH read/write operations behind the WeChat workspace/session/agent/model
  * commands. All service access goes through `ctx.get(...)` with undefined
@@ -52,6 +53,7 @@ export class DshOps {
      * wording (see {@link PinOutcome}).
      */
     async pinSession(sessionId) {
+        assertInboundAuthority();
         return this.writePin("pinSession", sessionId);
     }
     /**
@@ -59,6 +61,7 @@ export class DshOps {
      * no existence check here — an id that is not pinned simply resolves.
      */
     async unpinSession(sessionId) {
+        assertInboundAuthority();
         return this.writePin("unpinSession", sessionId);
     }
     /**
@@ -68,6 +71,7 @@ export class DshOps {
      * runtime `@deepseek-ai/*` import).
      */
     async writePin(method, sessionId) {
+        assertInboundAuthority();
         if (!sessionId)
             return "unknown";
         const registry = this.get("workspaceRegistry");
@@ -77,10 +81,11 @@ export class DshOps {
         if (typeof write !== "function")
             return "unavailable";
         try {
-            await write.call(registry, sessionId);
+            await awaitInbound(write.call(registry, sessionId));
             return "ok";
         }
         catch (err) {
+            assertInboundAuthority();
             const name = err instanceof Error ? err.name : "";
             if (name === "WorkspaceArchivedSessionPinError")
                 return "archived";
@@ -98,10 +103,12 @@ export class DshOps {
         }
     }
     async createWorkspace(path) {
+        assertInboundAuthority();
         try {
-            return await this.get("workspaceRegistry")?.create(path);
+            return await awaitInbound(this.get("workspaceRegistry")?.create(path));
         }
         catch (err) {
+            assertInboundAuthority();
             return undefined;
         }
     }
@@ -555,14 +562,16 @@ export class DshOps {
         return this.get("agentDefaultModel")?.currentSelection();
     }
     async saveDefaultModel(selection) {
+        assertInboundAuthority();
         const service = this.get("agentDefaultModel");
         if (!service)
             return false;
         try {
-            await service.saveSelection(selection);
+            await awaitInbound(service.saveSelection(selection));
             return true;
         }
         catch {
+            assertInboundAuthority();
             return false;
         }
     }
@@ -601,6 +610,7 @@ export class DshOps {
      * before we write; the legacy pair stays as the older-host path.
      */
     async saveDefaultPreset(presetId) {
+        assertInboundAuthority();
         const settings = this.get("settings");
         if (!settings)
             return false;
@@ -609,31 +619,34 @@ export class DshOps {
             const registry = descriptors?.find((row) => row.ns === "agent-preset-registry")
                 ?? descriptors?.find((row) => row.ns.endsWith(":agent-preset-registry"));
             if (registry) {
-                await settings.update(registry.ns, { selectedDefault: presetId });
+                await awaitInbound(settings.update(registry.ns, { selectedDefault: presetId }));
             }
             else {
                 const legacy = descriptors?.find((row) => row.ns === "agent-presets");
                 // A describe-capable host must advertise the entry before we write.
                 if (descriptors && !legacy)
                     return false;
-                await settings.update((legacy?.ns ?? "agent-presets"), { default: presetId });
+                await awaitInbound(settings.update((legacy?.ns ?? "agent-presets"), { default: presetId }));
             }
             return true;
         }
         catch (err) {
+            assertInboundAuthority();
             console.error(`[dsh-wechat] save default preset failed: ${String(err)}`);
             return false;
         }
     }
     async recomposeAgent(agentCtx, id) {
+        assertInboundAuthority();
         const presets = this.get("agentPresets");
         if (!presets || !agentCtx)
             return false;
         try {
-            await presets.recompose(agentCtx, id);
+            await awaitInbound(presets.recompose(agentCtx, id));
             return true;
         }
         catch {
+            assertInboundAuthority();
             return false;
         }
     }
@@ -678,14 +691,16 @@ export class DshOps {
      * refused.
      */
     async saveDefaultPermission(presetName) {
+        assertInboundAuthority();
         const settings = this.get("settings");
         if (!settings)
             return false;
         try {
-            await settings.update("permission", { defaultPreset: presetName });
+            await awaitInbound(settings.update("permission", { defaultPreset: presetName }));
             return true;
         }
         catch (err) {
+            assertInboundAuthority();
             console.error(`[dsh-wechat] save default permission failed: ${String(err)}`);
             return false;
         }
@@ -718,14 +733,16 @@ export class DshOps {
      * false when no settings provider is mounted or the write is refused.
      */
     async saveBusyEnter(next) {
+        assertInboundAuthority();
         const settings = this.get("settings");
         if (!settings)
             return false;
         try {
-            await settings.update(BUSY_ENTER_NAMESPACE, { busyEnter: next });
+            await awaitInbound(settings.update(BUSY_ENTER_NAMESPACE, { busyEnter: next }));
             return true;
         }
         catch (err) {
+            assertInboundAuthority();
             console.error(`[dsh-wechat] save busyEnter failed: ${String(err)}`);
             return false;
         }

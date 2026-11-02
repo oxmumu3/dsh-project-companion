@@ -76,7 +76,7 @@ test('existing binding is retained and QR or reconnect actions are never offered
 test('successful scan with no source session asks for first WeChat message without claiming connected',async()=>{
   const c=await loadClient();c.context.snapshot=snapshot({state:'awaiting-message'});
   c.render();await c.flush();const view=c.render();
-  assert.match(text(view),/你好/);assert.match(text(view),/首条/);assert.equal(c.opened.length,0);
+  assert.match(text(view),/你好/);assert.match(text(view),/首条/);assert.match(text(view),/已确认扫码账号/);assert.equal(c.opened.length,0);
   const finish=nodes(view,n=>n.type==='button'&&/生成首份简报并回到微信|查看已提交的首份简报/.test(text(n)))[0];assert.equal(finish.props.disabled,true);
   c.dispose();
 });

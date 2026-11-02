@@ -74,6 +74,8 @@ export async function login(params) {
                 break;
             }
             case "confirmed": {
+                if (typeof statusResp.ilink_user_id !== "string" || !statusResp.ilink_user_id || statusResp.ilink_user_id.length > 4096 || /\s/.test(statusResp.ilink_user_id))
+                    throw new Error("无法确认扫码账号，请重新扫码；未保存本次登录凭据。");
                 log("Login successful!");
                 const tokenData = {
                     token: statusResp.bot_token,

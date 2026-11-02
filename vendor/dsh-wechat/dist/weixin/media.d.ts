@@ -15,6 +15,7 @@ export declare function decryptAesEcb(ciphertext: Buffer, key: Buffer): Buffer;
 export declare function parseAesKey(media: CDNMedia): Buffer | null;
 export declare function downloadAndDecrypt(encryptQueryParam: string, aesKey: Buffer, cdnBaseUrl: string, filekey?: string): Promise<Buffer>;
 export declare function uploadToCdn(params: {
+    authorize?: () => boolean;
     buffer: Buffer;
     uploadParam: string;
     aesKey: Buffer;

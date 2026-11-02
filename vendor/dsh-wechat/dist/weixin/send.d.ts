@@ -3,6 +3,7 @@
  * Ported from wechat-opencode (MIT) — https://github.com/pan17/wechat-opencode
  */
 export interface WeixinSendOpts {
+    authorize?: () => boolean;
     baseUrl: string;
     token?: string;
     contextToken?: string;

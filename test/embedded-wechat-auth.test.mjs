@@ -55,3 +55,9 @@ test('a stopped component rejects a late relogin handler without issuing another
  const bridge=new WeChatDSHBridge({get:()=>undefined},{...defaultConfig(),storageDir:dir});
  await bridge.stop();await bridge.startLoginFlow();assert.equal(calls,0);
 });
+
+test('new QR confirmation without scanner identity is rejected before saving credentials',async t=>{
+ const dir=await fixture(t);globalThis.fetch=async u=>json(new URL(u).pathname.endsWith('get_bot_qrcode')?{qrcode:'synthetic',qrcode_img_content:'https://synthetic.invalid/qr'}:{...confirmed,ilink_user_id:undefined});
+ await assert.rejects(login({baseUrl:'https://synthetic.invalid',storageDir:dir,log:()=>{},renderQrUrl:()=>{}}),/扫码账号/);
+ await assert.rejects(readFile(join(dir,'auth','token.json')),e=>e.code==='ENOENT');
+});

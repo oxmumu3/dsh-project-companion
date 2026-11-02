@@ -4,6 +4,7 @@
  * wechat-opencode (MIT) — https://github.com/pan17/wechat-opencode
  */
 import crypto from "node:crypto";
+import { assertAuthorized } from "./authorize.js";
 import { isRetryableNetworkError, isDefinitelyUnsentNetworkError } from "../utils/network.js";
 const CHANNEL_VERSION = "1.0.2";
 export { isRetryableNetworkError };
@@ -164,6 +165,7 @@ async function apiPost(baseUrl, endpoint, body, token, timeoutMs = 15_000, optio
     const maxAttempts = retries + 1;
     let lastError;
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
+        assertAuthorized(options?.authorize);
         let responseStarted = false;
         const controller = new AbortController();
         const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -254,11 +256,11 @@ export async function getUpdates(params) {
     return apiPost(params.baseUrl, "ilink/bot/getupdates", { get_updates_buf: params.get_updates_buf }, params.token, params.timeoutMs ?? 38_000, { retries: 0, abortSignal: params.abortSignal });
 }
 export async function sendMessage(params) {
-    const resp = await apiPost(params.baseUrl, "ilink/bot/sendmessage", params.body, params.token, undefined, { retries: params.retries ?? 2 });
+    const resp = await apiPost(params.baseUrl, "ilink/bot/sendmessage", params.body, params.token, undefined, { retries: params.retries ?? 2, authorize: params.authorize });
     assertSendMessageAccepted(resp);
 }
 export async function getUploadUrl(params) {
-    return apiPost(params.baseUrl, "ilink/bot/getuploadurl", params.body, params.token);
+    return apiPost(params.baseUrl, "ilink/bot/getuploadurl", params.body, params.token, undefined, { authorize: params.authorize });
 }
 export async function getConfig(params) {
     return apiPost(params.baseUrl, "ilink/bot/getconfig", {

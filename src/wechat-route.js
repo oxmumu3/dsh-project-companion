@@ -36,6 +36,10 @@ export async function readWechatRoute(ctx,sessionId,{fetch=globalThis.fetch}={})
       const response=await fetch(new URL('/wechat/api/status',url),{method:'GET',redirect:'error',signal:controller.signal});
       const status=await readStatus(response);
       if(!status||!Array.isArray(status.users)||![0,1].includes(status.userCount)||status.users.length!==status.userCount)return unknown();
+      // No saved WeChat user is a valid desktop-only route. Missing pairing
+      // identity must not force native users into the WeChat onboarding flow.
+      if(status.userCount===0&&(status.pairing===undefined||['ready','identity-unavailable'].includes(status.pairing?.state)))return{kind:'unbound'};
+      if(status.pairing!==undefined&&status.pairing?.state!=='ready')return unknown();
       if(status.botId!==undefined&&status.botId!==null&&!identity(status.botId))return unknown();
       if(status.userCount===0)return{kind:'unbound'};
       const user=status.users[0];
@@ -67,6 +71,12 @@ export async function readWechatSetup(ctx,{fetch=globalThis.fetch}={}){
       if(response.status===404)return{state:'missing'};
       const status=await readStatus(response);
       if(!status||!Array.isArray(status.users)||![0,1].includes(status.userCount)||status.users.length!==status.userCount)return unknown();
+      // Re-scanning preserves the old mapping. Show recovery before considering
+      // a saved user connected; QR/scanned states convey no owner authority.
+      if(status.phase==='waiting-qr')return{state:'waiting-qr',qrAvailable:identity(status.qrUrl),...(identity(status.qrUrl)?{qrRevision:hash(status.qrUrl).slice(0,16)}:{})};
+      if(status.phase==='scaned'||status.phase==='scanned')return{state:'scanned'};
+      if(status.phase==='failed')return{state:'failed'};
+      if(status.pairing!==undefined&&status.pairing?.state!=='ready'&&status.phase==='logged-in')return{state:'failed'};
       if(status.userCount===1){
         const user=status.users[0];
         if(!identity(user?.userId)||!identity(user.sessionId)||status.phase!=='logged-in'||status.monitorRunning===false)return status.phase==='failed'?{state:'failed'}:unknown();
@@ -74,9 +84,6 @@ export async function readWechatSetup(ctx,{fetch=globalThis.fetch}={}){
         return{state:'bound',sessionId:user.sessionId,bindingKey:hash(JSON.stringify([user.userId,status.botId??null]))};
       }
       if(status.phase==='logged-in')return{state:'awaiting-message'};
-      if(status.phase==='scaned'||status.phase==='scanned')return{state:'scanned'};
-      if(status.phase==='failed')return{state:'failed'};
-      if(status.phase==='waiting-qr')return{state:'waiting-qr',qrAvailable:identity(status.qrUrl),...(identity(status.qrUrl)?{qrRevision:hash(status.qrUrl).slice(0,16)}:{})};
       return unknown();
     })(),deadline]);
   }catch{return unknown();}

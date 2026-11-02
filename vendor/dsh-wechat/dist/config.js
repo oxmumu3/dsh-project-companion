@@ -36,6 +36,7 @@ export function defaultConfig() {
         surfacePromptEnabled: false,
         surfacePrompt: DEFAULT_SURFACE_PROMPT,
         sendWechatRateLimitPerMinute: 10,
+        // Empty means confirmed QR scanner only; it never authorizes first sender.
         allowedUsers: [],
     };
 }

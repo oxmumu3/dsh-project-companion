@@ -69,12 +69,14 @@ export declare function getUpdates(params: {
     abortSignal?: AbortSignal;
 }): Promise<GetUpdatesResp>;
 export declare function sendMessage(params: {
+    authorize?: () => boolean;
     baseUrl: string;
     token?: string;
     body: SendMessageReq;
     retries?: number;
 }): Promise<void>;
 export declare function getUploadUrl(params: {
+    authorize?: () => boolean;
     baseUrl: string;
     token?: string;
     body: GetUploadUrlReq;

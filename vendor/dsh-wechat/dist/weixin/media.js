@@ -4,6 +4,7 @@
  * wechat-opencode (MIT) — https://github.com/pan17/wechat-opencode
  */
 import crypto from "node:crypto";
+import { assertAuthorized } from "./authorize.js";
 export function encryptAesEcb(plaintext, key) {
     const cipher = crypto.createCipheriv("aes-128-ecb", key, null);
     return Buffer.concat([cipher.update(plaintext), cipher.final()]);
@@ -47,11 +48,13 @@ export async function downloadAndDecrypt(encryptQueryParam, aesKey, cdnBaseUrl, 
 /** Maximum retry attempts for CDN upload. */
 const UPLOAD_MAX_RETRIES = 3;
 export async function uploadToCdn(params) {
+    assertAuthorized(params.authorize);
     const encrypted = encryptAesEcb(params.buffer, params.aesKey);
     const url = params.uploadUrl ?? `${params.cdnBaseUrl}/upload?encrypted_query_param=${encodeURIComponent(params.uploadParam)}&filekey=${encodeURIComponent(params.filekey)}`;
     let downloadParam;
     let lastError;
     for (let attempt = 1; attempt <= UPLOAD_MAX_RETRIES; attempt++) {
+        assertAuthorized(params.authorize);
         try {
             const res = await fetch(url, {
                 method: "POST",

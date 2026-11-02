@@ -144,9 +144,10 @@ test('built bridge original inbound produces the actual empty/nonempty receipts 
   const guard = createWechatRecoveryGuard({ ctx });
   ctx.on('wechat/inbound-admit', payload => { observed.push(structuredClone(payload.receipt)); }, { prepend: true });
   const bridge = new WeChatDSHBridge(ctx, { ...defaultConfig(), storageDir: directory });
-  bridge.token = { baseUrl: 'https://synthetic.invalid', token: 'synthetic-token' };
+  bridge.token = { baseUrl: 'https://synthetic.invalid', token: 'synthetic-token', accountId: 'synthetic-bot', userId: 'synthetic-peer' };
   bridge.state.ensureUser('synthetic-peer', '/synthetic');
   bridge.state.update('synthetic-peer', { sessionId: agent.id });
+  bridge.lockPeerFromState();
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async (input, options) => {
     const url = new URL(String(input));

@@ -50,10 +50,10 @@ async function main() {
   }
   await cp(source, stage, { recursive: true, filter: filename => !['.git', 'node_modules', 'ci-results'].includes(relative(source, filename).split(/[\\/]/)[0]) });
   await symlink(join(carrier, 'node_modules'), join(stage, 'node_modules'), 'junction');
-  const runtime = { ...env, DOT_GUARDED_BRIDGE_ROOT: join(stage, 'vendor/dsh-wechat'), NODE_OPTIONS: '--max-old-space-size=128 --import=' + pathToFileURL(join(stage, 'scripts/ci-network.mjs')).href };
+  const runtime = { ...env, DOT_GUARDED_BRIDGE_ROOT: join(stage, 'vendor/dsh-wechat'), DSH_WECHAT_BRIDGE_ROOT: join(stage, 'vendor/dsh-wechat'), NODE_OPTIONS: '--max-old-space-size=128 --import=' + pathToFileURL(join(stage, 'scripts/ci-network.mjs')).href };
   const network = await verifySandbox({ cwd: stage, env: runtime });
   await writeFile(join(output, 'network-selftest.json'), JSON.stringify(network, null, 2) + '\n');
-  const tests = ["test/host.test.mjs", "test/native-draft.test.mjs", "test/workbench-ui.test.mjs", "test/onboarding-ui.test.mjs", "test/context-client.test.mjs", "test/news-model.test.mjs", "test/compatibility-contract.test.mjs", "test/ci-sandbox.test.mjs"];
+  const tests = ["test/host.test.mjs", "test/native-draft.test.mjs", "test/workbench-ui.test.mjs", "test/onboarding-ui.test.mjs", "test/context-client.test.mjs", "test/news-model.test.mjs", "test/compatibility-contract.test.mjs", "test/ci-sandbox.test.mjs", "test/embedded-wechat-pairing.test.mjs", "test/embedded-wechat-auth.test.mjs", "test/bundled-wechat.test.mjs", "test/bundled-wechat-storage.test.mjs", "test/wechat-route.test.mjs", "test/wechat-recovery.test.mjs"];
   const suite = await run(process.execPath, ['--max-old-space-size=128', '--test', '--test-concurrency=1', ...tests], stage, runtime, 'suite.tap', 240000);
   const counts = Object.fromEntries([...suite.stdout.matchAll(/^# (tests|pass|fail|skipped|cancelled) (\d+)$/gm)].map(([,key,value]) => [key, Number(value)]));
   await writeFile(join(output, 'suite-counts.json'), JSON.stringify(counts, null, 2) + '\n');

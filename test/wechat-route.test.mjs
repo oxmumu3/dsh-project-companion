@@ -57,3 +57,27 @@ test('setup route distinguishes QR, first-message and bound states without expos
   assert.equal((await read({phase:'waiting-qr',userCount:2})).state,'unknown');
   assert.equal((await m.readWechatSetup(host,{fetch:async()=>new Response('',{status:404})})).state,'missing');
 });
+
+test('a blocked embedded pairing never projects as an authorized route even with a saved user',async()=>{
+ const m=await api(),host=ctx('http://localhost:1234');
+ for(const state of ['identity-unavailable','binding-conflict','allowlist-conflict']){
+  const fetch=async()=>Response.json(status({phase:'failed',pairing:{state}}));
+  assert.equal(await m.readWechatBinding(host,'source-session',{fetch}),null);
+  assert.deepEqual(await m.readWechatSetup(host,{fetch}),{state:'failed'});
+ }
+ const fetch=async()=>Response.json(status({phase:'logged-in',pairing:{state:'ready',authority:'qr'}}));
+ assert.ok(await m.readWechatBinding(host,'source-session',{fetch}));
+});
+
+test('an unpaired embedded component does not force desktop-only users to scan WeChat',async()=>{
+ const m=await api(),host=ctx('http://localhost:1234');
+ for(const phase of ['idle','waiting-qr','failed'])assert.deepEqual(await m.readWechatRoute(host,'native-only',{fetch:async()=>Response.json(status({phase,userCount:0,users:[],pairing:{state:'identity-unavailable'}}))}),{kind:'unbound'});
+ for(const state of ['binding-conflict','allowlist-conflict'])assert.deepEqual(await m.readWechatRoute(host,'native-only',{fetch:async()=>Response.json(status({phase:'failed',userCount:0,users:[],pairing:{state}}))}),{kind:'unknown'});
+});
+
+test('re-scanning can display QR while retaining an old binding without claiming it is connected',async()=>{
+ const m=await api(),host=ctx('http://localhost:1234');
+ const fetch=async()=>Response.json(status({phase:'waiting-qr',pairing:{state:'identity-unavailable'},qrUrl:'https://synthetic.invalid/qr'}));
+ const setup=await m.readWechatSetup(host,{fetch});assert.equal(setup.state,'waiting-qr');assert.equal(setup.qrAvailable,true);
+ assert.equal(await m.readWechatBinding(host,'source-session',{fetch}),null);
+});

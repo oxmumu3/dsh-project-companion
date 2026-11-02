@@ -17,6 +17,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { createHash } from "node:crypto";
 import { GuardedOutbox } from "./dot-guarded-outbox.js";
+import { resolvePeerPairing, PAIRING_MESSAGES } from "./peer-pairing.js";
+import { assertInboundAuthority, withInboundAuthority, awaitInbound } from "../utils/inbound-authority.js";
 import { login, loadToken } from "../weixin/auth.js";
 import { startMonitor, clearSyncBuf } from "../weixin/monitor.js";
 import { sendTextMessage, sendMediaMessage, splitText } from "../weixin/send.js";
@@ -350,13 +352,7 @@ export class WeChatDSHBridge {
             return;
         const firstPeer = this.state.all()[0]?.userId;
         if (firstPeer && firstPeer !== saved.peerUserId) {
-            this.log(`discard outbound snapshot for old peer ${saved.peerUserId}; current peer is ${firstPeer}`);
-            try {
-                this.state.clearOutbound();
-            }
-            catch (err) {
-                this.log(`failed to clear mismatched outbound snapshot: ${String(err)}`);
-            }
+            this.log("outbound identity conflict; preserving stored snapshot without delivery");
             return;
         }
         this.wechatMsgCount = saved.messageCount;
@@ -457,6 +453,11 @@ export class WeChatDSHBridge {
      * on the (very common) "user typed `/foo bar`" path.
      */
     async tryNativeCommand(user, userId, text) {
+        assertInboundAuthority();
+        const generation = this.outboundGeneration, token = this.token;
+        const current = () => generation === this.outboundGeneration && token === this.token && this.isAuthorizedPeer(userId);
+        if (!current())
+            return true;
         if (!this.commandsCtx || !text)
             return false;
         const name = parseCommandName(text);
@@ -473,7 +474,9 @@ export class WeChatDSHBridge {
             return false;
         // Do not replace a corrupt binding here — a failed resume falls
         // through to `forwardToAgent`, which mints and tells the user.
-        const { agent } = await this.agents.ensure(user);
+        const { agent } = await awaitInbound(this.agents.ensure(user));
+        if (!current())
+            return true;
         if (!agent) {
             // Cannot resolve a session to scope `find` against — preserve the
             // existing fall-through behavior (next layer is `forwardToAgent`).
@@ -492,12 +495,13 @@ export class WeChatDSHBridge {
             // behavior) made the host's `signal` argument undefined and threw
             // `Cannot read properties of undefined (reading 'aborted')` on every
             // native command. See NativeCommandsSurface for the contract.
-            result = await this.commandsCtx.execute(agent, text, [], abort.signal);
+            result = await awaitInbound(this.commandsCtx.execute(agent, text, [], abort.signal));
         }
         catch (err) {
+            assertInboundAuthority();
             console.warn(`[dsh-wechat] native command ${name} threw: ${String(err)}`);
             const detail = err instanceof Error ? err.message : String(err);
-            await this.sendReply(userId, `⚠️ 命令执行异常：${maskSecrets(detail)}`);
+            await awaitInbound(this.sendReply(userId, `⚠️ 命令执行异常：${maskSecrets(detail)}`));
             return true;
         }
         if (result === undefined)
@@ -510,10 +514,10 @@ export class WeChatDSHBridge {
         // handler's own error message verbatim when it is.
         if (result.result.kind === "success") {
             const text2 = result.result.text ?? `✅ ${name}`;
-            await this.sendReply(userId, text2);
+            await awaitInbound(this.sendReply(userId, text2));
         }
         else {
-            await this.sendReply(userId, `⚠️ 命令出错：${result.result.text}`);
+            await awaitInbound(this.sendReply(userId, `⚠️ 命令出错：${result.result.text}`));
         }
         return true;
     }
@@ -556,12 +560,16 @@ export class WeChatDSHBridge {
     }
     /** Full status snapshot for the settings page / QR page. */
     getStatus() {
+        const pairing = this.peerPairing();
         const editable = {};
         for (const key of EDITABLE_KEYS) {
             editable[key] = this.config[key];
         }
         return {
             ...this.loginState,
+            ...(this.loginState.phase === "logged-in" && pairing.state !== "ready"
+                ? { phase: "failed", error: PAIRING_MESSAGES[pairing.state] } : {}),
+            pairing: { state: pairing.state, ...(pairing.state === "ready" ? { authority: pairing.authority } : {}) },
             monitorRunning: this.monitorRunning,
             userCount: this.state.all().length,
             outbound: {
@@ -708,13 +716,13 @@ export class WeChatDSHBridge {
      */
     async sendTypingStatus(userId, status) {
         const token = this.token;
-        if (!token || this.tokenInvalid)
+        if (!token || this.tokenInvalid || !this.isAuthorizedPeer(userId))
             return;
         const ticket = await this.getTypingTicket(userId, this.wireContextToken ?? undefined);
         if (!ticket)
             return;
         const still = this.token;
-        if (!still || this.tokenInvalid)
+        if (!still || this.tokenInvalid || still !== token || !this.isAuthorizedPeer(userId))
             return;
         try {
             await apiSendTyping({
@@ -791,15 +799,21 @@ export class WeChatDSHBridge {
         }
         else {
             // No bot token: the next QR login may be a different WeChat account.
-            this.resetPeerBinding("start-without-token");
+            this.resetPeerBinding("start-without-token", true);
             void this.startLoginFlow();
         }
     }
-    /** First persisted user is the single peer (legacy multi-user files keep only the first). */
+    /** QR authority (or one explicit legacy allowlist ID) pins the peer. */
     lockPeerFromState() {
-        const first = this.state.all()[0];
-        if (first)
-            this.peerUserId = first.userId;
+        const pairing = this.peerPairing();
+        this.peerUserId = pairing.state === "ready" ? pairing.userId : null;
+    }
+    peerPairing() {
+        return resolvePeerPairing(this.token, this.config.allowedUsers, this.state.all(), this.state.outbound());
+    }
+    isAuthorizedPeer(userId) {
+        const pairing = this.peerPairing();
+        return pairing.state === "ready" && pairing.userId === userId && this.peerUserId === userId;
     }
     /**
      * Plugin dispose: stop the iLink monitor AND abandon pending WeChat
@@ -863,7 +877,7 @@ export class WeChatDSHBridge {
             await this.startMonitor();
             return { ok: true, message: `已重连 (Bot: ${this.token.accountId})` };
         }
-        this.resetPeerBinding("reconnect-without-token");
+        this.resetPeerBinding("reconnect-without-token", true);
         void this.startLoginFlow();
         return { ok: true, message: "未找到登录令牌，已开始扫码登录" };
     }
@@ -877,8 +891,9 @@ export class WeChatDSHBridge {
         this.tokenInvalid = false;
         this.tokenGiveUp = false;
         this.loginState = { phase: "idle" };
-        this.discardQueuedOutbound("relogin");
-        this.resetPeerBinding("relogin");
+        // QR recovery preserves the old mapping/queue. No flush occurs here;
+        // a different scanner remains blocked by the original saved identity.
+        this.resetPeerBinding("relogin", true);
         void this.startLoginFlow();
         return { ok: true, message: "已开始重新扫码登录" };
     }
@@ -902,12 +917,16 @@ export class WeChatDSHBridge {
      * first inbound from a different account is dropped as
      * `ignore inbound … (single-user peer is <old>)`.
      */
-    resetPeerBinding(reason) {
-        try {
-            this.dotOutbox?.rotate();
-        }
-        catch {
-            this.retireDotOutbox();
+    resetPeerBinding(reason, preserveState = false) {
+        this.outboundGeneration++;
+        this.clearOutboundRetry();
+        if (!preserveState) {
+            try {
+                this.dotOutbox?.rotate();
+            }
+            catch {
+                this.retireDotOutbox();
+            }
         }
         const previous = this.peerUserId ?? this.state.all()[0]?.userId;
         this.peerUserId = null;
@@ -919,6 +938,10 @@ export class WeChatDSHBridge {
         this.pushedCardRpcIds.clear();
         this.notifiedCrossSessionTurns.clear();
         this.discardPendingFinal();
+        if (preserveState) {
+            try { clearSyncBuf(this.config.storageDir); } catch { /* old cursor is not authority */ }
+            return;
+        }
         try {
             this.state.clearUsers();
         }
@@ -932,7 +955,7 @@ export class WeChatDSHBridge {
             this.log(`failed to clear sync buf on ${reason}: ${String(err)}`);
         }
         if (previous) {
-            this.log(`reset single-user peer ${previous} on ${reason}; next inbound WeChat user becomes the peer`);
+            this.log(`reset single-user peer on ${reason}; awaiting confirmed QR identity`);
         }
     }
     /**
@@ -995,6 +1018,7 @@ export class WeChatDSHBridge {
             this.token = token;
             this.tokenInvalid = false;
             this.tokenGiveUp = false;
+            this.lockPeerFromState();
             this.loginState = { phase: "logged-in", botId: token.accountId };
             await this.startMonitor();
         }
@@ -1057,6 +1081,11 @@ export class WeChatDSHBridge {
         const changed = Object.keys(patch).filter((k) => patch[k] !== undefined);
         for (const key of changed) {
             this.config[key] = patch[key];
+        }
+        if (patch.allowedUsers !== undefined) {
+            this.outboundGeneration++;
+            this.lockPeerFromState();
+            this.clearOutboundRetry();
         }
         const connectionChanged = (patch.baseUrl !== undefined && patch.baseUrl !== before.baseUrl) ||
             (patch.cdnBaseUrl !== undefined && patch.cdnBaseUrl !== before.cdnBaseUrl) ||
@@ -1138,15 +1167,9 @@ export class WeChatDSHBridge {
     async handleMessage(msg) {
         if (this.interactionStopped || msg.message_type !== MessageType.USER || msg.group_id || !msg.from_user_id)
             return;
-        // Inbound allowlist, BEFORE dedupe, budget reset, session creation and any
-        // command handling: a rejected sender must not consume a dedupe slot, a
-        // session, or an agent turn. An empty list is the historical behaviour
-        // (first inbound user becomes the peer), so this is opt-in only.
-        const allowed = this.config.allowedUsers;
-        if (allowed.length > 0 && !allowed.some((id) => id === msg.from_user_id)) {
-            // Logged, never answered: replying would confirm the bot is live to an
-            // unknown sender and spend a gateway message doing it.
-            this.log(`ignore inbound from ${msg.from_user_id}: not in allowedUsers`);
+        // Authorization precedes dedupe, budgets, state, commands and agents.
+        // Empty allowlist means the confirmed QR scanner only, never first sender.
+        if (!this.isAuthorizedPeer(msg.from_user_id)) {
             return;
         }
         if (this.peerUserId && this.peerUserId !== msg.from_user_id)
@@ -1178,6 +1201,21 @@ export class WeChatDSHBridge {
         }
     }
     async processMessage(msg) {
+        const generation = this.outboundGeneration, token = this.token;
+        const current = () => !this.interactionStopped && generation === this.outboundGeneration && token === this.token && this.isAuthorizedPeer(msg.from_user_id);
+        if (!current())
+            return;
+        try {
+            return await withInboundAuthority(current, () => this.processAuthorizedMessage(msg));
+        }
+        catch (error) {
+            if (error?.code !== "PEER_AUTHORIZATION_CHANGED")
+                throw error;
+        }
+    }
+    async processAuthorizedMessage(msg) {
+        assertInboundAuthority();
+        const generation = this.outboundGeneration, token = this.token;
         if (msg.message_type !== MessageType.USER)
             return;
         if (msg.group_id)
@@ -1185,12 +1223,10 @@ export class WeChatDSHBridge {
         const userId = msg.from_user_id;
         if (!userId)
             return;
-        if (this.peerUserId && this.peerUserId !== userId) {
-            this.log(`ignore inbound from ${userId} (single-user peer is ${this.peerUserId})`);
+        if (this.interactionStopped || !this.isAuthorizedPeer(userId)) {
             return;
         }
-        if (!this.peerUserId)
-            this.peerUserId = userId;
+        const admitted = () => !this.interactionStopped && generation === this.outboundGeneration && token === this.token && this.isAuthorizedPeer(userId);
         if (typeof msg.context_token === "string" && msg.context_token) {
             this.wireContextToken = msg.context_token;
         }
@@ -1228,27 +1264,27 @@ export class WeChatDSHBridge {
         const pn = text ? parsePnCardReply(text) : null;
         const isClose = text !== null && text !== "" && this.isCardCloseCommand(text);
         if (!bypassCard && isClose) {
-            await this.rejectCurrentSessionCards(userId);
+            await awaitInbound(this.rejectCurrentSessionCards(userId));
             return;
         }
         if (!bypassCard && pn !== null && text) {
-            await this.handlePnReplies(userId, text);
+            await awaitInbound(this.handlePnReplies(userId, text));
             return;
         }
         if (!bypassCard && approvals.length > 0 && (pn !== null || current.approvals.length > 0)) {
             if (text === null || text === "") {
-                await this.sendReply(userId, `⚠️ 当前有权限卡待处理。回复 1（允许一次）/ 2（拒绝）；其它会话用 P1=1；关闭用 /rq（当前会话）或 P1=/rq。`);
+                await awaitInbound(this.sendReply(userId, `⚠️ 当前有权限卡待处理。回复 1（允许一次）/ 2（拒绝）；其它会话用 P1=1；关闭用 /rq（当前会话）或 P1=/rq。`));
                 return;
             }
-            await this.handleApprovalReply(userId, text);
+            await awaitInbound(this.handleApprovalReply(userId, text));
             return;
         }
         if (!bypassCard && questions.length > 0 && current.questions.length > 0) {
             if (text === null || text === "") {
-                await this.sendReply(userId, `⚠️ 当前有提问卡待处理。当前会话直接回复；其它会话用 P1=…；关闭用 /rq（当前会话）或 P1=/rq。`);
+                await awaitInbound(this.sendReply(userId, `⚠️ 当前有提问卡待处理。当前会话直接回复；其它会话用 P1=…；关闭用 /rq（当前会话）或 P1=/rq。`));
                 return;
             }
-            await this.handleQuestionReply(userId, text);
+            await awaitInbound(this.handleQuestionReply(userId, text));
             return;
         }
         // Auto-flush cached outbound on any user message — except an explicit
@@ -1257,12 +1293,14 @@ export class WeChatDSHBridge {
         const isNext = parseNextCommand(text);
         let flushReceipt = { attempted: false, sent: 0, remaining: this.outboundCache.length, dropped: 0 };
         if (!isNext && this.outboundCache.length > 0) {
-            flushReceipt = await this.flushPending(userId);
+            flushReceipt = await awaitInbound(this.flushPending(userId));
         }
+        if (!admitted())
+            return;
         this.log(`Message from ${userId}: ${this.previewMessage(msg)}`);
         if (text) {
             if (isNext) {
-                await this.flushPending(userId);
+                await awaitInbound(this.flushPending(userId));
                 return;
             }
             // DSH native command dispatch (plan / goal / compact / ...).
@@ -1274,134 +1312,141 @@ export class WeChatDSHBridge {
             // over unchanged. This is the only entry point that talks to the
             // native registry — keep it isolated so a future host change
             // cannot leak through the slash parser.
-            if (await this.tryNativeCommand(user, userId, text))
+            if (await awaitInbound(this.tryNativeCommand(user, userId, text)))
+                return;
+            if (!admitted())
                 return;
             if (parseHelpCommand(text)) {
                 // Augment /help with whatever the host's `ctx.commands` has
                 // registered so users see the full command surface — not just
                 // the local whitelist. Native descriptors that overlap with
                 // local entries are de-duplicated inside `formatHelp`.
-                await this.sendReply(userId, formatHelp(await this.listNativeCommandsForHelp(user)));
+                await awaitInbound(this.sendReply(userId, formatHelp(await awaitInbound(this.listNativeCommandsForHelp(user)))));
                 return;
             }
             const silent = parseSilentCommand(text);
             if (silent) {
-                await this.handleSilentCommand(userId, silent.mode);
+                await awaitInbound(this.handleSilentCommand(userId, silent.mode));
                 return;
             }
             const finalCmd = parseFinalCommand(text);
             if (finalCmd) {
-                await this.handleFinalCommand(userId, finalCmd);
+                await awaitInbound(this.handleFinalCommand(userId, finalCmd));
                 return;
             }
             if (parseFlushCommand(text)) {
-                const flushed = await this.flushAllPendingFinal("command");
-                await this.sendReply(userId, flushed > 0
+                const flushed = await awaitInbound(this.flushAllPendingFinal("command"));
+                await awaitInbound(this.sendReply(userId, flushed > 0
                     ? `📤 已立即取回 ${flushed} 条暂存的最终结论。`
-                    : "📭 当前没有暂存的结论（结论模式未开启，或已交付）。");
+                    : "📭 当前没有暂存的结论（结论模式未开启，或已交付）。"));
                 return;
             }
             const surface = parseSurfaceCommand(text);
             if (surface) {
-                await this.handleSurfaceCommand(userId, surface);
+                await awaitInbound(this.handleSurfaceCommand(userId, surface));
                 return;
             }
             const notifyCmd = parseNotifyCommand(text);
             if (notifyCmd) {
-                await this.handleNotifyCommand(userId, notifyCmd);
+                await awaitInbound(this.handleNotifyCommand(userId, notifyCmd));
                 return;
             }
             const status = parseStatusCommand(text);
             if (status) {
-                await this.sendReply(userId, await this.formatStatus(user), { parkOnError: false });
+                await awaitInbound(this.sendReply(userId, await awaitInbound(this.formatStatus(user)), { parkOnError: false }));
                 return;
             }
             const stop = parseStopCommand(text);
             if (stop) {
-                await this.handleStopCommand(userId, user);
+                await awaitInbound(this.handleStopCommand(userId, user));
                 return;
             }
             const rq = parseRejectQuestionCommand(text);
             if (rq) {
-                await this.rejectCurrentSessionCards(userId);
+                await awaitInbound(this.rejectCurrentSessionCards(userId));
                 return;
             }
             const wsCmd = parseWorkspaceCommand(text);
             if (wsCmd) {
-                await this.handleWorkspaceCommand(userId, wsCmd);
+                await awaitInbound(this.handleWorkspaceCommand(userId, wsCmd));
                 return;
             }
             const sCmd = parseSessionCommand(text);
             if (sCmd) {
-                await this.handleSessionCommand(userId, sCmd);
+                await awaitInbound(this.handleSessionCommand(userId, sCmd));
                 return;
             }
             const pCmd = parsePresetCommand(text);
             if (pCmd) {
-                await this.handlePresetCommand(userId, pCmd);
+                await awaitInbound(this.handlePresetCommand(userId, pCmd));
                 return;
             }
             const mCmd = parseModelCommand(text);
             if (mCmd) {
-                await this.handleModelCommand(userId, mCmd);
+                await awaitInbound(this.handleModelCommand(userId, mCmd));
                 return;
             }
             const permCmd = parsePermCommand(text);
             if (permCmd) {
-                await this.handlePermCommand(userId, permCmd);
+                await awaitInbound(this.handlePermCommand(userId, permCmd));
                 return;
             }
             const reasoningCmd = parseReasoningCommand(text);
             if (reasoningCmd) {
-                await this.handleReasoningCommand(userId, reasoningCmd);
+                await awaitInbound(this.handleReasoningCommand(userId, reasoningCmd));
                 return;
             }
             const enterCmd = parseEnterCommand(text);
             if (enterCmd) {
-                await this.handleEnterCommand(userId, enterCmd);
+                await awaitInbound(this.handleEnterCommand(userId, enterCmd));
                 return;
             }
             const historyCmd = parseHistoryCommand(text);
             if (historyCmd) {
-                await this.handleHistoryCommand(userId, historyCmd, user);
+                await awaitInbound(this.handleHistoryCommand(userId, historyCmd, user));
                 return;
             }
             // Invalid /history attempt (e.g. /history abc) — show usage instead of forwarding.
             if (isHistoryCommandAttempt(text)) {
-                await this.sendReply(userId, `⚠️ 用法: /history [all] [数量]（1-${HISTORY_MAX}，默认 5）例如 /history 10 或 /history all`);
+                await awaitInbound(this.sendReply(userId, `⚠️ 用法: /history [all] [数量]（1-${HISTORY_MAX}，默认 5）例如 /history 10 或 /history all`));
                 return;
             }
             // Unrecognized slash command — hint, then forward to the agent.
             const slashHint = detectUnknownSlashCommand(text);
             if (slashHint) {
-                await this.sendReply(userId, `⚠️ 未知命令 ${slashHint}，已作为文本转发给 agent。发送 /help 查看可用命令。`);
+                await awaitInbound(this.sendReply(userId, `⚠️ 未知命令 ${slashHint}，已作为文本转发给 agent。发送 /help 查看可用命令。`));
             }
         }
-        await this.forwardToAgent(user, msg, flushReceipt);
+        await awaitInbound(this.forwardToAgent(user, msg, flushReceipt));
     }
     persistSessionBinding(user) {
         this.state.update(user.userId, { sessionId: user.sessionId });
         this.trackWatchedSession(user.userId, user.sessionId);
     }
     async forwardToAgent(user, msg, receipt) {
+        assertInboundAuthority();
+        const generation = this.outboundGeneration, token = this.token;
+        const current = () => !this.interactionStopped && generation === this.outboundGeneration && token === this.token && this.isAuthorizedPeer(user.userId);
+        if (!current())
+            return;
         const previousSessionId = user.sessionId;
-        const { agent, replacedSessionId } = await this.agents.ensure(user, { replaceOnResumeFailure: true });
-        if (this.interactionStopped)
+        const { agent, replacedSessionId } = await awaitInbound(this.agents.ensure(user, { replaceOnResumeFailure: true }));
+        if (!current())
             return;
         this.persistSessionBinding(user);
         if (!agent) {
             const hint = previousSessionId
                 ? `（绑定会话 ${previousSessionId} 无法恢复）`
                 : "";
-            await this.sendReply(user.userId, `⚠️ 无法创建/恢复 DSH 会话${hint}，请检查 DSH 日志。`);
+            await awaitInbound(this.sendReply(user.userId, `⚠️ 无法创建/恢复 DSH 会话${hint}，请检查 DSH 日志。`));
             return;
         }
         if (replacedSessionId) {
-            await this.sendReply(user.userId, `⚠️ 原会话 ${replacedSessionId} 已损坏，无法恢复；已新建会话 ${user.sessionId}。`);
+            await awaitInbound(this.sendReply(user.userId, `⚠️ 原会话 ${replacedSessionId} 已损坏，无法恢复；已新建会话 ${user.sessionId}。`));
         }
         const tempDir = path.join(this.config.storageDir, "tempfile");
-        const blocks = await weixinMessageToPrompt(msg, this.config.cdnBaseUrl, (m) => this.log(m), tempDir);
-        if (this.interactionStopped)
+        const blocks = await awaitInbound(weixinMessageToPrompt(msg, this.config.cdnBaseUrl, (m) => this.log(m), tempDir));
+        if (!current())
             return;
         this.markSessionSource(user.sessionId, "wechat");
         // Busy-time delivery follows the DSH `ui-conversation.busyEnter` setting
@@ -1431,7 +1476,7 @@ export class WeChatDSHBridge {
             // Keep admission synchronous. Await the ordinary serialized reply with
             // the original source rechecked at dispatch, so unload/rebind cannot
             // leave a detached acknowledgement targeting a later conversation.
-            await this.sendReply(user.userId, "当前没有待补发的消息；未重新执行任务或新增提醒。", {
+            await awaitInbound(this.sendReply(user.userId, "当前没有待补发的消息；未重新执行任务或新增提醒。", {
                 parkOnError: false, plainText: true,
                 guard: () => {
                     try {
@@ -1440,10 +1485,11 @@ export class WeChatDSHBridge {
                             && this.ctx.get("agents")?.get(agent.id) === agent && this.outboundCache.length === 0;
                     }
                     catch {
+                        assertInboundAuthority();
                         return false;
                     }
                 },
-            });
+            }));
         }
     }
     // ─── Outbound: DSH → WeChat ───
@@ -2633,12 +2679,13 @@ export class WeChatDSHBridge {
     }
     /** Route every `P{n}=` in the line onto the globally numbered card. */
     async handlePnReplies(userId, text) {
+        assertInboundAuthority();
         const parts = parseAllPnCardReplies(text);
         const all = this.answerableCards(userId);
         if (parts.length === 0)
             return;
         if (all.length === 0) {
-            await this.sendReply(userId, "✅ 当前没有待处理卡片。");
+            await awaitInbound(this.sendReply(userId, "✅ 当前没有待处理卡片。"));
             return;
         }
         // Receipts must name the number the user typed. The card is removed from
@@ -2647,27 +2694,28 @@ export class WeChatDSHBridge {
         const indices = new Map(all.map((entry, i) => [entry.card.rpcId, i + 1]));
         for (const part of parts) {
             if (part.index < 1 || part.index > all.length) {
-                await this.sendReply(userId, `⚠️ 卡片编号超出范围（1-${all.length}）。`);
+                await awaitInbound(this.sendReply(userId, `⚠️ 卡片编号超出范围（1-${all.length}）。`));
                 continue;
             }
             const target = all[part.index - 1];
             if (this.isCardCloseCommand(part.rest)) {
                 if (target.kind === "question")
-                    await this.rejectOneQuestion(userId, target.card, part.index);
+                    await awaitInbound(this.rejectOneQuestion(userId, target.card, part.index));
                 else
-                    await this.rejectOneApproval(userId, target.card, part.index);
+                    await awaitInbound(this.rejectOneApproval(userId, target.card, part.index));
                 continue;
             }
             if (target.kind === "question") {
-                await this.answerOneQuestion(userId, target.card, part.rest, indices);
+                await awaitInbound(this.answerOneQuestion(userId, target.card, part.rest, indices));
             }
             else {
                 const { decisions, warnings } = parseApprovalReply(part.rest, [target.card]);
-                await this.applyApprovalDecisions(userId, [target.card], decisions, warnings, indices);
+                await awaitInbound(this.applyApprovalDecisions(userId, [target.card], decisions, warnings, indices));
             }
         }
     }
     async handleApprovalReply(userId, text) {
+        assertInboundAuthority();
         const list = this.answerableApprovals(userId);
         if (list.length === 0) {
             return;
@@ -2680,7 +2728,7 @@ export class WeChatDSHBridge {
         const pn = parsePnCardReply(text);
         if (pn) {
             if (pn.index < 1 || pn.index > list.length) {
-                await this.sendReply(userId, `⚠️ 卡片编号超出范围（1-${list.length}）。`);
+                await awaitInbound(this.sendReply(userId, `⚠️ 卡片编号超出范围（1-${list.length}）。`));
                 return;
             }
         }
@@ -2688,17 +2736,18 @@ export class WeChatDSHBridge {
             const currentId = this.state.getUser(userId)?.sessionId;
             const local = currentId ? list.filter((c) => c.sessionId === currentId) : [];
             if (local.length === 0) {
-                await this.sendReply(userId, `⚠️ 其它会话的权限卡请用 P1=1 / P2=2 指定编号；关闭用 P1=/rq。直接打字会发给当前会话。`);
+                await awaitInbound(this.sendReply(userId, `⚠️ 其它会话的权限卡请用 P1=1 / P2=2 指定编号；关闭用 P1=/rq。直接打字会发给当前会话。`));
                 return;
             }
             const { decisions, warnings } = parseApprovalReply(text, local);
-            await this.applyApprovalDecisions(userId, local, decisions, warnings, indices);
+            await awaitInbound(this.applyApprovalDecisions(userId, local, decisions, warnings, indices));
             return;
         }
         const { decisions, warnings } = parseApprovalReply(text, list);
-        await this.applyApprovalDecisions(userId, list, decisions, warnings, indices);
+        await awaitInbound(this.applyApprovalDecisions(userId, list, decisions, warnings, indices));
     }
     async applyApprovalDecisions(userId, list, decisions, warnings, indices) {
+        assertInboundAuthority();
         const snapshot = [...list];
         for (const decision of decisions) {
             const entry = snapshot.find((c) => c.rpcId === decision.rpcId);
@@ -2706,7 +2755,7 @@ export class WeChatDSHBridge {
                 continue;
             this.removeApprovalCard(userId, decision.rpcId);
             const outcome = decision.reply === "once" ? "allowed-once" : "rejected";
-            const receipt = await this.respondApproval(entry, outcome);
+            const receipt = await awaitInbound(this.respondApproval(entry, outcome));
             if (!receipt.accepted) {
                 void this.sendReply(userId, `ℹ️ 该权限请求已在其他端处理（${receipt.reason ?? "not-pending"}）。`).catch(() => { });
                 continue;
@@ -2724,10 +2773,11 @@ export class WeChatDSHBridge {
             void this.sendReply(userId, `⚠️ ${warning}`).catch(() => { });
         }
         if (decisions.length === 0) {
-            await this.sendReply(userId, "⚠️ 无法识别的权限回复。回复 1（允许一次）/ 2（拒绝）；其它会话用 P1=1；关闭用 /rq 或 P1=/rq。");
+            await awaitInbound(this.sendReply(userId, "⚠️ 无法识别的权限回复。回复 1（允许一次）/ 2（拒绝）；其它会话用 P1=1；关闭用 /rq 或 P1=/rq。"));
         }
     }
     async respondApproval(entry, outcome) {
+        assertInboundAuthority();
         if (entry.settled)
             return { accepted: false, reason: "not-pending" };
         entry.settled = true;
@@ -2755,18 +2805,20 @@ export class WeChatDSHBridge {
             this.pendingApprovals.delete(userId);
     }
     async rejectOneApproval(userId, entry, index) {
+        assertInboundAuthority();
         this.removeApprovalCard(userId, entry.rpcId);
-        const receipt = await this.respondApproval(entry, "rejected");
+        const receipt = await awaitInbound(this.respondApproval(entry, "rejected"));
         if (index <= 0)
             return;
         if (!receipt.accepted) {
-            await this.sendReply(userId, `ℹ️ 权限请求 ${entry.toolName} 已在其他端处理。`);
+            await awaitInbound(this.sendReply(userId, `ℹ️ 权限请求 ${entry.toolName} 已在其他端处理。`));
             return;
         }
-        await this.sendReply(userId, `✅ 已关闭权限卡 P${index}（${entry.toolName}）。`);
+        await awaitInbound(this.sendReply(userId, `✅ 已关闭权限卡 P${index}（${entry.toolName}）。`));
     }
     // ─── Question replies ───
     async handleQuestionReply(userId, text) {
+        assertInboundAuthority();
         const list = this.answerableQuestions(userId);
         if (list.length === 0) {
             return;
@@ -2780,7 +2832,7 @@ export class WeChatDSHBridge {
         let answerText;
         if (pn) {
             if (pn.index < 1 || pn.index > list.length) {
-                await this.sendReply(userId, `⚠️ 卡片编号超出范围（1-${list.length}）。`);
+                await awaitInbound(this.sendReply(userId, `⚠️ 卡片编号超出范围（1-${list.length}）。`));
                 return;
             }
             entry = list[pn.index - 1];
@@ -2790,25 +2842,26 @@ export class WeChatDSHBridge {
             const currentId = this.state.getUser(userId)?.sessionId;
             const local = currentId ? list.filter((c) => c.sessionId === currentId) : [];
             if (local.length === 0) {
-                await this.sendReply(userId, `⚠️ 其它会话的提问卡请用 P1=… 指定编号；关闭用 P1=/rq。直接打字会发给当前会话。`);
+                await awaitInbound(this.sendReply(userId, `⚠️ 其它会话的提问卡请用 P1=… 指定编号；关闭用 P1=/rq。直接打字会发给当前会话。`));
                 return;
             }
             if (local.length > 1) {
-                await this.sendReply(userId, `⚠️ 有 ${local.length} 张提问卡待处理。请用 P1=… 指定卡片；关闭用 /rq（当前会话）或 P1=/rq。`);
+                await awaitInbound(this.sendReply(userId, `⚠️ 有 ${local.length} 张提问卡待处理。请用 P1=… 指定卡片；关闭用 /rq（当前会话）或 P1=/rq。`));
                 return;
             }
             entry = local[0];
             answerText = text;
         }
-        await this.answerOneQuestion(userId, entry, answerText, indices);
+        await awaitInbound(this.answerOneQuestion(userId, entry, answerText, indices));
     }
     async answerOneQuestion(userId, entry, answerText, indices) {
+        assertInboundAuthority();
         const parsed = parseQuestionReply(answerText, entry.items);
         this.removeQuestionCard(userId, entry.rpcId);
         for (const warning of parsed.warnings) {
             void this.sendReply(userId, `⚠️ ${warning}`).catch(() => { });
         }
-        const receipt = await this.respondQuestion(entry, buildAnswer(parsed, entry.items));
+        const receipt = await awaitInbound(this.respondQuestion(entry, buildAnswer(parsed, entry.items)));
         if (!receipt.accepted) {
             void this.sendReply(userId, `ℹ️ 该提问已在其他端回答（${receipt.reason ?? "not-pending"}）。`).catch(() => { });
             return;
@@ -2831,21 +2884,22 @@ export class WeChatDSHBridge {
     }
     /** `/rq` — close pending cards of the current session only. */
     async rejectCurrentSessionCards(userId) {
+        assertInboundAuthority();
         const { approvals, questions } = this.pendingCardsForCurrentSession(userId);
         if (approvals.length === 0 && questions.length === 0) {
-            await this.sendReply(userId, "✅ 当前会话没有待处理卡片。");
+            await awaitInbound(this.sendReply(userId, "✅ 当前会话没有待处理卡片。"));
             return;
         }
         let closed = 0;
         for (const entry of [...questions]) {
-            await this.rejectOneQuestion(userId, entry, 0);
+            await awaitInbound(this.rejectOneQuestion(userId, entry, 0));
             closed++;
         }
         for (const entry of [...approvals]) {
-            await this.rejectOneApproval(userId, entry, 0);
+            await awaitInbound(this.rejectOneApproval(userId, entry, 0));
             closed++;
         }
-        await this.sendReply(userId, `✅ 已关闭当前会话 ${closed} 张卡片。`);
+        await awaitInbound(this.sendReply(userId, `✅ 已关闭当前会话 ${closed} 张卡片。`));
     }
     /** `P{n}=/rq` — close that globally numbered card. */
     async rejectCardByPn(userId, index) {
@@ -2861,6 +2915,7 @@ export class WeChatDSHBridge {
             await this.rejectOneApproval(userId, target.card, index);
     }
     async rejectOneQuestion(userId, entry, index) {
+        assertInboundAuthority();
         this.removeQuestionCard(userId, entry.rpcId);
         if (!entry.settled) {
             entry.settled = true;
@@ -2882,12 +2937,13 @@ export class WeChatDSHBridge {
                     entry.cancelWechat(err);
                 }
                 catch {
+                    assertInboundAuthority();
                     // best effort
                 }
             }
         }
         if (index > 0)
-            await this.sendReply(userId, `✅ 已关闭提问卡 P${index}。`);
+            await awaitInbound(this.sendReply(userId, `✅ 已关闭提问卡 P${index}。`));
     }
     /**
      * Plan-mode `exit_plan_mode` review: dismissing the card is "Keep planning",
@@ -2929,31 +2985,32 @@ export class WeChatDSHBridge {
     }
     // ─── Slash command handlers ───
     async handleNotifyCommand(userId, cmd) {
+        assertInboundAuthority();
         if (cmd.kind === "status") {
             const on = this.shouldNotifyCrossSession(userId) ? "on" : "off";
             const task = this.notifyTaskEventsEnabled() ? "on" : "off";
-            await this.sendReply(userId, `🔔 跨会话决策推送: ${on}（任意会话的权限/提问卡整卡推送，微信直接回复）\n跨会话任务完成提醒: ${task}\n切换决策推送: /notify on|off\n切换任务提醒: /notify tasks on|off`);
+            await awaitInbound(this.sendReply(userId, `🔔 跨会话决策推送: ${on}（任意会话的权限/提问卡整卡推送，微信直接回复）\n跨会话任务完成提醒: ${task}\n切换决策推送: /notify on|off\n切换任务提醒: /notify tasks on|off`));
             return;
         }
         if (cmd.kind === "on") {
             this.persistEditable({ crossSessionNotify: true });
-            await this.sendReply(userId, "✅ 跨会话决策推送已开启。后台权限/提问卡会整卡推到微信，直接回复即可。");
-            await this.flushUnseenCardsForUser(userId);
+            await awaitInbound(this.sendReply(userId, "✅ 跨会话决策推送已开启。后台权限/提问卡会整卡推到微信，直接回复即可。"));
+            await awaitInbound(this.flushUnseenCardsForUser(userId));
             return;
         }
         if (cmd.kind === "off") {
             this.persistEditable({ crossSessionNotify: false });
-            await this.sendReply(userId, "🔕 跨会话决策推送已关闭。仅当前会话的卡可在微信回复。");
+            await awaitInbound(this.sendReply(userId, "🔕 跨会话决策推送已关闭。仅当前会话的卡可在微信回复。"));
             return;
         }
         if (cmd.kind === "tasks-on") {
             this.persistEditable({ notifyTaskEvents: true });
-            await this.sendReply(userId, "✅ 跨会话任务完成提醒已开启。");
+            await awaitInbound(this.sendReply(userId, "✅ 跨会话任务完成提醒已开启。"));
             return;
         }
         if (cmd.kind === "tasks-off") {
             this.persistEditable({ notifyTaskEvents: false });
-            await this.sendReply(userId, "🔕 跨会话任务完成提醒已关闭。");
+            await awaitInbound(this.sendReply(userId, "🔕 跨会话任务完成提醒已关闭。"));
             return;
         }
     }
@@ -2983,31 +3040,33 @@ export class WeChatDSHBridge {
         }
     }
     async handleSurfaceCommand(userId, cmd) {
+        assertInboundAuthority();
         if (cmd.mode === "on") {
             this.persistEditable({ surfacePromptEnabled: true });
-            await this.sendReply(userId, "✅ 微信渠道提示词已开启。下一轮微信消息会注入设置页中的提示词。");
+            await awaitInbound(this.sendReply(userId, "✅ 微信渠道提示词已开启。下一轮微信消息会注入设置页中的提示词。"));
             return;
         }
         if (cmd.mode === "off") {
             this.persistEditable({ surfacePromptEnabled: false });
-            await this.sendReply(userId, "🔕 微信渠道提示词已关闭。");
+            await awaitInbound(this.sendReply(userId, "🔕 微信渠道提示词已关闭。"));
             return;
         }
         const on = this.config.surfacePromptEnabled ? "on" : "off";
-        await this.sendReply(userId, `微信渠道提示词: ${on}（/surface on|off 切换；正文在设置页编辑）`);
+        await awaitInbound(this.sendReply(userId, `微信渠道提示词: ${on}（/surface on|off 切换；正文在设置页编辑）`));
     }
     async handleSilentCommand(userId, mode) {
+        assertInboundAuthority();
         const user = this.ensureBoundUser(userId);
         if (mode === "on") {
             this.setSilent(true, user.userId);
-            await this.sendReply(userId, "🔇 静默模式已开启：每轮只发送最终回复。");
+            await awaitInbound(this.sendReply(userId, "🔇 静默模式已开启：每轮只发送最终回复。"));
         }
         else if (mode === "off") {
             this.setSilent(false, user.userId);
-            await this.sendReply(userId, "🔊 静默模式已关闭：思考与工具合并为执行过程，正文独立发送。");
+            await awaitInbound(this.sendReply(userId, "🔊 静默模式已关闭：思考与工具合并为执行过程，正文独立发送。"));
         }
         else {
-            await this.sendReply(userId, `静默模式: ${this.isSilent() ? "on" : "off"}（/silent on|off 切换）`);
+            await awaitInbound(this.sendReply(userId, `静默模式: ${this.isSilent() ? "on" : "off"}（/silent on|off 切换）`));
         }
     }
     /** Global silent switch, mirrored onto the current peer so runtime reads stay consistent. */
@@ -3033,24 +3092,25 @@ export class WeChatDSHBridge {
      * logout / re-bind discard.)
      */
     async handleFinalCommand(userId, cmd) {
+        assertInboundAuthority();
         if (cmd.mode === "on") {
             this.persistEditable({ finalOnly: true });
-            await this.sendReply(userId, "📌 结论模式已开启：跨轮次的中间过程不再推送，整条任务停下后只发一条最终结论。\n"
-                + "权限卡、提问卡、报错仍会立即推送；想看当前进度随时发 /flush。");
+            await awaitInbound(this.sendReply(userId, "📌 结论模式已开启：跨轮次的中间过程不再推送，整条任务停下后只发一条最终结论。\n"
+                + "权限卡、提问卡、报错仍会立即推送；想看当前进度随时发 /flush。"));
             return;
         }
         if (cmd.mode === "off") {
             this.persistEditable({ finalOnly: false });
-            const flushed = await this.flushAllPendingFinal("command-off");
-            await this.sendReply(userId, flushed > 0
+            const flushed = await awaitInbound(this.flushAllPendingFinal("command-off"));
+            await awaitInbound(this.sendReply(userId, flushed > 0
                 ? `📤 结论模式已关闭；已取回 ${flushed} 条暂存的最终结论。之后每轮正常推送。`
-                : "📤 结论模式已关闭：之后每轮正常推送。");
+                : "📤 结论模式已关闭：之后每轮正常推送。"));
             return;
         }
         const held = this.pendingFinal.size;
-        await this.sendReply(userId, `结论模式: ${this.finalOnlyEnabled() ? "on" : "off"}`
+        await awaitInbound(this.sendReply(userId, `结论模式: ${this.finalOnlyEnabled() ? "on" : "off"}`
             + (this.finalOnlyEnabled() && held > 0 ? `（暂存 ${held} 条，发 /flush 立即取回）` : "")
-            + "\n切换: /final on|off（设置页「结论模式」同步，写入 config.json 后重新扫码仍保留）");
+            + "\n切换: /final on|off（设置页「结论模式」同步，写入 config.json 后重新扫码仍保留）"));
     }
     // ─── Busy-Enter delivery behavior (/enter) ───
     /**
@@ -3062,14 +3122,15 @@ export class WeChatDSHBridge {
      * splices into the running turn.
      */
     async handleEnterCommand(userId, cmd) {
+        assertInboundAuthority();
         const describe = (mode) => mode === "steer"
             ? "steer（插话：运行中发消息立即插入当前轮次）"
             : "queue（排队：运行中发消息等当前轮结束后新开一轮）";
         if (cmd.kind === "status") {
-            await this.sendReply(userId, `⏳ 繁忙时投递: ${describe(this.ops.busyEnter())}\n切换: /enter queue|steer（与 DSH 设置「繁忙时 Enter 键行为」同步，双端共用）`);
+            await awaitInbound(this.sendReply(userId, `⏳ 繁忙时投递: ${describe(this.ops.busyEnter())}\n切换: /enter queue|steer（与 DSH 设置「繁忙时 Enter 键行为」同步，双端共用）`));
             return;
         }
-        const saved = await this.ops.saveBusyEnter(cmd.target);
+        const saved = await awaitInbound(this.ops.saveBusyEnter(cmd.target));
         const lines = [`✅ 繁忙时投递已切换: ${describe(cmd.target)}`];
         if (saved) {
             lines.push("（已写入 DSH 设置，GUI 设置页同步可见）");
@@ -3077,25 +3138,27 @@ export class WeChatDSHBridge {
         else {
             lines.push("⚠️ 无法写入 DSH 设置（仅本次进程内生效）");
         }
-        await this.sendReply(userId, lines.join("\n"));
+        await awaitInbound(this.sendReply(userId, lines.join("\n")));
     }
     async handleStopCommand(userId, user) {
+        assertInboundAuthority();
         const agent = this.agents.get(user);
         if (!agent) {
-            await this.sendReply(userId, "⚠️ 当前没有活动的会话。");
+            await awaitInbound(this.sendReply(userId, "⚠️ 当前没有活动的会话。"));
             return;
         }
         agent.cancel({ kind: "user" });
-        await this.sendReply(userId, "🛑 已发送停止指令。");
+        await awaitInbound(this.sendReply(userId, "🛑 已发送停止指令。"));
     }
     // ─── Workspace / Session / Agent / Model commands ───
     async handleWorkspaceCommand(userId, cmd) {
+        assertInboundAuthority();
         const user = this.ensureBoundUser(userId);
         switch (cmd.kind) {
             case "list": {
                 const workspaces = this.ops.listWorkspaces();
                 if (workspaces.length === 0) {
-                    await this.sendReply(userId, "📂 暂无工作区。可用 /workspace add <路径> 添加。");
+                    await awaitInbound(this.sendReply(userId, "📂 暂无工作区。可用 /workspace add <路径> 添加。"));
                     return;
                 }
                 const archived = new Set(this.ops.archivedSessionIds());
@@ -3103,14 +3166,14 @@ export class WeChatDSHBridge {
                 // The "current" marker compares canonical paths (same canon the host
                 // uses for workspace membership) so a cwd spelled with a trailing
                 // separator or a `.` segment still matches its workspace.
-                const userCwd = await canonicalPath(user.cwd);
+                const userCwd = await awaitInbound(canonicalPath(user.cwd));
                 const canonicalWsPaths = new Map();
                 const lines = [`📂 工作区列表（按添加顺序，共 ${workspaces.length} 个）`];
                 for (let i = 0; i < shown.length; i++) {
                     const ws = shown[i];
                     let wsPath = canonicalWsPaths.get(ws.path);
                     if (wsPath === undefined) {
-                        wsPath = await canonicalPath(ws.path);
+                        wsPath = await awaitInbound(canonicalPath(ws.path));
                         canonicalWsPaths.set(ws.path, wsPath);
                     }
                     const current = wsPath === userCwd ? " ◀ 当前" : "";
@@ -3121,21 +3184,21 @@ export class WeChatDSHBridge {
                 if (shown.length < workspaces.length) {
                     lines.push(`显示 ${shown.length}/${workspaces.length}，看更多: /workspace list all（或 /workspace list <数量>）`);
                 }
-                await this.sendReply(userId, lines.join("\n"));
+                await awaitInbound(this.sendReply(userId, lines.join("\n")));
                 return;
             }
             case "status": {
-                await this.sendReply(userId, `📂 当前工作区: ${user.cwd}（会话 ${user.sessionId || "未绑定"}）`);
+                await awaitInbound(this.sendReply(userId, `📂 当前工作区: ${user.cwd}（会话 ${user.sessionId || "未绑定"}）`));
                 return;
             }
             case "add": {
-                const ws = await this.ops.createWorkspace(cmd.path);
+                const ws = await awaitInbound(this.ops.createWorkspace(cmd.path));
                 if (!ws) {
-                    await this.sendReply(userId, `⚠️ 无法创建工作区: ${cmd.path}（目录不存在或不是目录）`);
+                    await awaitInbound(this.sendReply(userId, `⚠️ 无法创建工作区: ${cmd.path}（目录不存在或不是目录）`));
                     return;
                 }
-                const restored = await this.switchUserWorkspace(user, ws.path);
-                await this.sendReply(userId, await this.formatWorkspaceSwitchReply("已添加并切换到工作区", ws.title, ws.path, restored));
+                const restored = await awaitInbound(this.switchUserWorkspace(user, ws.path));
+                await awaitInbound(this.sendReply(userId, await awaitInbound(this.formatWorkspaceSwitchReply("已添加并切换到工作区", ws.title, ws.path, restored))));
                 return;
             }
             case "switch": {
@@ -3144,25 +3207,25 @@ export class WeChatDSHBridge {
                     const workspaces = this.ops.listWorkspaces();
                     const index = parseInt(cmd.target, 10);
                     if (index < 1 || index > workspaces.length) {
-                        await this.sendReply(userId, `⚠️ 编号超出范围（1-${workspaces.length}）。`);
+                        await awaitInbound(this.sendReply(userId, `⚠️ 编号超出范围（1-${workspaces.length}）。`));
                         return;
                     }
                     ws = workspaces[index - 1];
                 }
                 else {
-                    ws = await this.ops.resolveWorkspaceByPath(cmd.target);
+                    ws = await awaitInbound(this.ops.resolveWorkspaceByPath(cmd.target));
                     if (!ws) {
-                        const created = await this.ops.createWorkspace(cmd.target);
+                        const created = await awaitInbound(this.ops.createWorkspace(cmd.target));
                         if (created)
                             ws = created;
                     }
                 }
                 if (!ws) {
-                    await this.sendReply(userId, `⚠️ 找不到工作区: ${cmd.target}`);
+                    await awaitInbound(this.sendReply(userId, `⚠️ 找不到工作区: ${cmd.target}`));
                     return;
                 }
-                const restored = await this.switchUserWorkspace(user, ws.path);
-                await this.sendReply(userId, await this.formatWorkspaceSwitchReply("已切换到工作区", ws.title, ws.path, restored));
+                const restored = await awaitInbound(this.switchUserWorkspace(user, ws.path));
+                await awaitInbound(this.sendReply(userId, await awaitInbound(this.formatWorkspaceSwitchReply("已切换到工作区", ws.title, ws.path, restored))));
                 return;
             }
         }
@@ -3303,13 +3366,14 @@ export class WeChatDSHBridge {
         return rows.length === snapshot.sessionIds.length ? rows : undefined;
     }
     async handleSessionCommand(userId, cmd) {
+        assertInboundAuthority();
         const user = this.ensureBoundUser(userId);
         switch (cmd.kind) {
             case "list": {
                 // Both display and switching use this same scoped, recency-ordered
                 // source. `/s list current` advertises the explicit scoped switch
                 // form so its row numbers cannot be interpreted against all sessions.
-                const allRecent = await this.listRecentSessions(user, cmd.scope);
+                const allRecent = await awaitInbound(this.listRecentSessions(user, cmd.scope));
                 // The snapshot keeps EVERY row, not just the displayed window: a
                 // following `/s switch <n>` is validated against the full list, so
                 // `/s list` then `/s switch 25` still reaches row 25 the user asked
@@ -3323,9 +3387,9 @@ export class WeChatDSHBridge {
                 const listVerb = cmd.scope === "current" ? "/s list current" : "/s list";
                 const pinnedIds = new Set(this.ops.pinnedSessionIds());
                 if (recent.length === 0) {
-                    await this.sendReply(userId, cmd.scope === "current"
+                    await awaitInbound(this.sendReply(userId, cmd.scope === "current"
                         ? `💬 当前工作目录（${user.cwd}）下暂无会话。发送消息即可创建第一个会话。`
-                        : "💬 暂无会话。发送消息即可创建第一个会话。");
+                        : "💬 暂无会话。发送消息即可创建第一个会话。"));
                     return;
                 }
                 const lines = [cmd.scope === "current"
@@ -3335,10 +3399,10 @@ export class WeChatDSHBridge {
                             : "💬 最近会话（按最近活动排序，/session switch <编号> 切换）"];
                 // One log fold per displayed row (title + live preset). A second
                 // `/s list` is a stat: session-log.cjs caches by (path, size, mtime).
-                const [facts, presets] = await Promise.all([
+                const [facts, presets] = await awaitInbound(Promise.all([
                     Promise.all(recent.map((r) => this.ops.readSessionListFacts(r.header.id, r.header.cwd, r.header))),
                     this.ops.listPresets(),
-                ]);
+                ]));
                 for (let i = 0; i < recent.length; i++) {
                     const record = recent[i];
                     const row = facts[i];
@@ -3362,7 +3426,7 @@ export class WeChatDSHBridge {
                     lines.push(`显示 ${recent.length}/${allRecent.length}，看更多: ${listVerb} all（或 ${listVerb} <数量>）`);
                 }
                 lines.push("", "置顶/取消: /s pin <编号>、/s unpin <编号>（省略编号作用于当前会话）");
-                await this.sendReply(userId, lines.join("\n"));
+                await awaitInbound(this.sendReply(userId, lines.join("\n")));
                 return;
             }
             case "switch": {
@@ -3371,17 +3435,17 @@ export class WeChatDSHBridge {
                 // followed by `/s switch <n>` keeps working), then fall back to the
                 // historical all-session list when no snapshot exists.
                 const recent = cmd.scope !== undefined
-                    ? await this.listRecentSessions(user, cmd.scope)
-                    : (await this.sessionsFromLastList(user)) ?? await this.listRecentSessions(user);
+                    ? await awaitInbound(this.listRecentSessions(user, cmd.scope))
+                    : (await awaitInbound(this.sessionsFromLastList(user))) ?? await awaitInbound(this.listRecentSessions(user));
                 if (recent.length === 0) {
-                    await this.sendReply(userId, cmd.scope === "current"
+                    await awaitInbound(this.sendReply(userId, cmd.scope === "current"
                         ? `⚠️ 当前工作目录（${user.cwd}）下暂无会话。`
-                        : "⚠️ 暂无可切换的会话。");
+                        : "⚠️ 暂无可切换的会话。"));
                     return;
                 }
                 const index = cmd.index;
                 if (index < 1 || index > recent.length) {
-                    await this.sendReply(userId, `⚠️ 编号超出范围（1-${recent.length}）。`);
+                    await awaitInbound(this.sendReply(userId, `⚠️ 编号超出范围（1-${recent.length}）。`));
                     return;
                 }
                 const record = recent[index - 1];
@@ -3397,19 +3461,19 @@ export class WeChatDSHBridge {
                 // Do not replace-on-failure here: the user asked for this exact
                 // session. A corrupt target stays bound so `/s new` can mint a
                 // replacement instead of silently swapping ids on switch.
-                const { agent } = await this.agents.ensure(user);
-                const label = await this.formatSessionLabel(record.header.id, record.header.cwd);
-                await this.sendReply(userId, agent
+                const { agent } = await awaitInbound(this.agents.ensure(user));
+                const label = await awaitInbound(this.formatSessionLabel(record.header.id, record.header.cwd));
+                await awaitInbound(this.sendReply(userId, agent
                     ? `✅ 已切换到会话 ${label} — ${record.header.cwd ?? "?"}，Agent ${agent.status}。`
-                    : `⚠️ 已切换到会话 ${label} — ${record.header.cwd ?? "?"}，但该会话无法恢复（日志可能已损坏）。发送 /s new 新建，或换一条会话。`);
+                    : `⚠️ 已切换到会话 ${label} — ${record.header.cwd ?? "?"}，但该会话无法恢复（日志可能已损坏）。发送 /s new 新建，或换一条会话。`));
                 // Flush any pending cards for the session just switched into
                 // (notified earlier, or silently when nothing was pending).
-                await this.flushPendingCardsForSession(user.userId, user.sessionId);
+                await awaitInbound(this.flushPendingCardsForSession(user.userId, user.sessionId));
                 return;
             }
             case "pin":
             case "unpin": {
-                await this.handlePinCommand(userId, user, cmd.kind, cmd.index);
+                await awaitInbound(this.handlePinCommand(userId, user, cmd.kind, cmd.index));
                 return;
             }
             case "new": {
@@ -3420,45 +3484,45 @@ export class WeChatDSHBridge {
                 // NOT blank — staying on it would lock the user out of every later
                 // message (resume fails, binding never changes).
                 if (user.sessionId) {
-                    const current = await this.ops.inspectSessionActivity(user.sessionId, user.cwd);
+                    const current = await awaitInbound(this.ops.inspectSessionActivity(user.sessionId, user.cwd));
                     if (current.ok && current.lastUserMessageTime === undefined) {
                         const agent = this.agents.get(user);
-                        await this.sendReply(userId, `✅ 已在空白会话（${user.sessionId.slice(0, 12)}）${agent ? `，Agent ${agent.status}` : ""}。`);
+                        await awaitInbound(this.sendReply(userId, `✅ 已在空白会话（${user.sessionId.slice(0, 12)}）${agent ? `，Agent ${agent.status}` : ""}。`));
                         return;
                     }
                     if (!current.ok) {
                         const brokenId = user.sessionId;
-                        await this.createFreshSession(user, userId, {
+                        await awaitInbound(this.createFreshSession(user, userId, {
                             success: `⚠️ 原会话 ${brokenId} 已损坏，无法恢复；已新建会话`,
-                        });
+                        }));
                         return;
                     }
                 }
-                const blank = await this.findBlankSession(user.cwd, user.sessionId);
+                const blank = await awaitInbound(this.findBlankSession(user.cwd, user.sessionId));
                 if (blank) {
                     this.clearSessionOutput(user.sessionId);
                     user.sessionId = blank;
                     this.state.update(user.userId, { sessionId: user.sessionId });
                     this.trackWatchedSession(user.userId, blank);
-                    const { agent } = await this.agents.ensure(user, { replaceOnResumeFailure: true });
+                    const { agent } = await awaitInbound(this.agents.ensure(user, { replaceOnResumeFailure: true }));
                     this.persistSessionBinding(user);
                     if (agent && user.sessionId === blank) {
-                        await this.sendReply(userId, `✅ 已复用空白会话 ${blank.slice(0, 12)}（${user.cwd}），Agent ${agent.status}。`);
+                        await awaitInbound(this.sendReply(userId, `✅ 已复用空白会话 ${blank.slice(0, 12)}（${user.cwd}），Agent ${agent.status}。`));
                         return;
                     }
                     // Reuse target itself failed to load; ensure() already minted a
                     // replacement when replaceOnResumeFailure is on.
-                    await this.sendReply(userId, agent
+                    await awaitInbound(this.sendReply(userId, agent
                         ? `⚠️ 空白会话 ${blank} 无法恢复；已新建会话 ${user.sessionId}（${user.cwd}）。`
-                        : `⚠️ 空白会话 ${blank} 无法恢复，且新建会话失败。请检查 DSH 日志。`);
+                        : `⚠️ 空白会话 ${blank} 无法恢复，且新建会话失败。请检查 DSH 日志。`));
                     return;
                 }
-                await this.createFreshSession(user, userId);
+                await awaitInbound(this.createFreshSession(user, userId));
                 return;
             }
             case "status": {
                 const agent = this.agents.get(user);
-                await this.sendReply(userId, `💬 会话: ${user.sessionId || "未绑定"}\n工作区: ${user.cwd}\nAgent: ${agent ? agent.status : "未加载"}`);
+                await awaitInbound(this.sendReply(userId, `💬 会话: ${user.sessionId || "未绑定"}\n工作区: ${user.cwd}\nAgent: ${agent ? agent.status : "未加载"}`));
                 return;
             }
         }
@@ -3479,18 +3543,19 @@ export class WeChatDSHBridge {
      * with the state the user asked about, not as a failure.
      */
     async handlePinCommand(userId, user, kind, index) {
+        assertInboundAuthority();
         let targetId;
         if (index === undefined) {
             if (!user.sessionId) {
-                await this.sendReply(userId, `⚠️ 当前没有绑定会话。先发消息，或 /s list 后用 /s ${kind} <编号>。`);
+                await awaitInbound(this.sendReply(userId, `⚠️ 当前没有绑定会话。先发消息，或 /s list 后用 /s ${kind} <编号>。`));
                 return;
             }
             targetId = user.sessionId;
         }
         else {
-            const recent = (await this.sessionsFromLastList(user)) ?? await this.listRecentSessions(user);
+            const recent = (await awaitInbound(this.sessionsFromLastList(user))) ?? await awaitInbound(this.listRecentSessions(user));
             if (index < 1 || index > recent.length) {
-                await this.sendReply(userId, `⚠️ 编号超出范围（1-${recent.length}）。`);
+                await awaitInbound(this.sendReply(userId, `⚠️ 编号超出范围（1-${recent.length}）。`));
                 return;
             }
             targetId = recent[index - 1].header.id;
@@ -3499,39 +3564,39 @@ export class WeChatDSHBridge {
         // look exactly like "nothing is pinned", so report the missing service up
         // front rather than answering from an absent set.
         if (!this.ops.supportsPin()) {
-            await this.sendReply(userId, this.pinFailureText(kind, "unavailable", targetId));
+            await awaitInbound(this.sendReply(userId, this.pinFailureText(kind, "unavailable", targetId)));
             return;
         }
         const pinned = this.ops.pinnedSessionIds();
         const alreadyPinned = pinned.includes(targetId);
         if (kind === "pin" && alreadyPinned) {
-            await this.sendReply(userId, `ℹ️ 该会话已置顶: ${await this.formatSessionLabel(targetId)}`);
+            await awaitInbound(this.sendReply(userId, `ℹ️ 该会话已置顶: ${await awaitInbound(this.formatSessionLabel(targetId))}`));
             return;
         }
         if (kind === "unpin" && !alreadyPinned) {
-            await this.sendReply(userId, `ℹ️ 该会话未置顶: ${await this.formatSessionLabel(targetId)}`);
+            await awaitInbound(this.sendReply(userId, `ℹ️ 该会话未置顶: ${await awaitInbound(this.formatSessionLabel(targetId))}`));
             return;
         }
         // Archived sessions are hidden from `/s list`, so only the bound-session
         // path can reach this. Pinning and archiving are mutually exclusive in the
         // host; report it as the archive problem it is rather than a pin failure.
         if (kind === "pin" && this.ops.archivedSessionIds().includes(targetId)) {
-            await this.sendReply(userId, `⚠️ 该会话已归档，无法置顶: ${targetId}`);
+            await awaitInbound(this.sendReply(userId, `⚠️ 该会话已归档，无法置顶: ${targetId}`));
             return;
         }
         const outcome = kind === "pin"
-            ? await this.ops.pinSession(targetId)
-            : await this.ops.unpinSession(targetId);
+            ? await awaitInbound(this.ops.pinSession(targetId))
+            : await awaitInbound(this.ops.unpinSession(targetId));
         if (outcome !== "ok") {
-            await this.sendReply(userId, this.pinFailureText(kind, outcome, targetId));
+            await awaitInbound(this.sendReply(userId, this.pinFailureText(kind, outcome, targetId)));
             return;
         }
         // The pin changed the row order, so refresh the snapshot a following
         // `/s switch <n>` / `/s pin <n>` resolves against — the numbers must keep
         // matching what the next `/s list` renders.
-        await this.refreshSessionListSnapshot(user);
-        const label = await this.formatSessionLabel(targetId);
-        await this.sendReply(userId, kind === "pin" ? `📌 已置顶会话 ${label}` : `✅ 已取消置顶会话 ${label}`);
+        await awaitInbound(this.refreshSessionListSnapshot(user));
+        const label = await awaitInbound(this.formatSessionLabel(targetId));
+        await awaitInbound(this.sendReply(userId, kind === "pin" ? `📌 已置顶会话 ${label}` : `✅ 已取消置顶会话 ${label}`));
     }
     /** User-facing text for a non-`ok` pin outcome. */
     pinFailureText(kind, outcome, sessionId) {
@@ -3625,12 +3690,13 @@ export class WeChatDSHBridge {
         return undefined;
     }
     async handlePresetCommand(userId, cmd) {
+        assertInboundAuthority();
         const user = this.ensureBoundUser(userId);
         switch (cmd.kind) {
             case "list": {
-                const presets = (await this.ops.listPresets()).filter((p) => !p.broken);
+                const presets = (await awaitInbound(this.ops.listPresets())).filter((p) => !p.broken);
                 if (presets.length === 0) {
-                    await this.sendReply(userId, "🤖 暂无可用 Preset。");
+                    await awaitInbound(this.sendReply(userId, "🤖 暂无可用 Preset。"));
                     return;
                 }
                 const current = this.ops.defaultPresetId();
@@ -3641,32 +3707,32 @@ export class WeChatDSHBridge {
                     if (preset.description)
                         lines.push(`   ${preset.description}`);
                 });
-                await this.sendReply(userId, lines.join("\n"));
+                await awaitInbound(this.sendReply(userId, lines.join("\n")));
                 return;
             }
             case "switch": {
-                const presets = (await this.ops.listPresets()).filter((p) => !p.broken);
+                const presets = (await awaitInbound(this.ops.listPresets())).filter((p) => !p.broken);
                 let preset;
                 if (/^\d+$/.test(cmd.target)) {
                     const index = parseInt(cmd.target, 10);
                     preset = presets[index - 1];
                     if (!preset) {
-                        await this.sendReply(userId, `⚠️ 编号超出范围（1-${presets.length}）。`);
+                        await awaitInbound(this.sendReply(userId, `⚠️ 编号超出范围（1-${presets.length}）。`));
                         return;
                     }
                 }
                 else {
                     preset = presets.find((p) => p.id === cmd.target || p.name === cmd.target);
                     if (!preset) {
-                        await this.sendReply(userId, `⚠️ 未知 Preset: ${cmd.target}。用 /preset list 查看。`);
+                        await awaitInbound(this.sendReply(userId, `⚠️ 未知 Preset: ${cmd.target}。用 /preset list 查看。`));
                         return;
                     }
                 }
                 // Write the DSH settings document — the same default the GUI settings
                 // page edits, so both sides see the same selection.
-                const saved = await this.ops.saveDefaultPreset(preset.id);
+                const saved = await awaitInbound(this.ops.saveDefaultPreset(preset.id));
                 if (!saved) {
-                    await this.sendReply(userId, `⚠️ 默认 Preset 切换失败: ${preset.name ?? preset.id}（无法写入 DSH 设置，默认 Preset 未更改）。`);
+                    await awaitInbound(this.sendReply(userId, `⚠️ 默认 Preset 切换失败: ${preset.name ?? preset.id}（无法写入 DSH 设置，默认 Preset 未更改）。`));
                     return;
                 }
                 // Apply to the live session only while it has produced nothing.
@@ -3674,13 +3740,13 @@ export class WeChatDSHBridge {
                 const empty = agent ? sessionEvents(agent.session).length === 0 : true;
                 let applied = "";
                 if (agent && empty) {
-                    const ok = await this.ops.recomposeAgent(agent.ctx, preset.id);
+                    const ok = await awaitInbound(this.ops.recomposeAgent(agent.ctx, preset.id));
                     applied = ok ? "（已应用到当前会话）" : "（当前会话应用失败）";
                 }
                 else if (agent) {
                     applied = "（当前会话已有内容，Preset 将应用于下一个新会话）";
                 }
-                await this.sendReply(userId, `✅ 默认 Preset 已切换: ${preset.name ?? preset.id}${applied}。`);
+                await awaitInbound(this.sendReply(userId, `✅ 默认 Preset 已切换: ${preset.name ?? preset.id}${applied}。`));
                 return;
             }
             case "status": {
@@ -3690,16 +3756,16 @@ export class WeChatDSHBridge {
                 // `/s list` remain the session-live views. Agent status belongs
                 // on `/status`, not here.
                 const defaultId = this.ops.defaultPresetId();
-                const defaultLabel = (await this.resolvePresetLabel(defaultId)) ?? "（未设置）";
+                const defaultLabel = (await awaitInbound(this.resolvePresetLabel(defaultId))) ?? "（未设置）";
                 const lines = [`🤖 默认 Preset: ${defaultLabel}`];
                 const liveId = user.sessionId
-                    ? await this.ops.resolveSessionPreset(user.sessionId, user.cwd)
+                    ? await awaitInbound(this.ops.resolveSessionPreset(user.sessionId, user.cwd))
                     : undefined;
                 if (liveId && liveId !== defaultId) {
-                    const liveLabel = (await this.resolvePresetLabel(liveId)) ?? liveId;
+                    const liveLabel = (await awaitInbound(this.resolvePresetLabel(liveId))) ?? liveId;
                     lines.push(`当前会话: ${liveLabel}`);
                 }
-                await this.sendReply(userId, lines.join("\n"));
+                await awaitInbound(this.sendReply(userId, lines.join("\n")));
                 return;
             }
         }
@@ -3714,18 +3780,19 @@ export class WeChatDSHBridge {
      * `agent/request` override.
      */
     async handleReasoningCommand(userId, cmd) {
+        assertInboundAuthority();
         const user = this.ensureBoundUser(userId);
         const agent = this.agents.get(user);
         const active = this.resolveEffectiveModel(user, agent);
         if (cmd.kind === "list" || cmd.kind === "switch" || cmd.kind === "clear") {
             if (!agent || !active?.provider || !active.model) {
-                await this.sendReply(userId, "⚠️ 当前没有可用会话。先发一条消息或 /session new 创建会话。");
+                await awaitInbound(this.sendReply(userId, "⚠️ 当前没有可用会话。先发一条消息或 /session new 创建会话。"));
                 return;
             }
         }
         // The current model's supported effort levels (adapter capability).
         const reasoning = active?.provider && active.model
-            ? await this.ops.resolveModelReasoning(active.provider, active.model)
+            ? await awaitInbound(this.ops.resolveModelReasoning(active.provider, active.model))
             : undefined;
         const effortName = (id) => {
             const level = reasoning?.efforts.find((e) => e.id === id);
@@ -3734,7 +3801,7 @@ export class WeChatDSHBridge {
         switch (cmd.kind) {
             case "list": {
                 if (!reasoning || reasoning.efforts.length === 0) {
-                    await this.sendReply(userId, `🧠 当前模型（${active.provider}/${active.model}）不支持推理等级。`);
+                    await awaitInbound(this.sendReply(userId, `🧠 当前模型（${active.provider}/${active.model}）不支持推理等级。`));
                     return;
                 }
                 const current = active.reasoningEffort;
@@ -3751,7 +3818,7 @@ export class WeChatDSHBridge {
                 if (reasoning.defaultEffort) {
                     lines.push(`默认: ${effortName(reasoning.defaultEffort)}`);
                 }
-                await this.sendReply(userId, lines.join("\n"));
+                await awaitInbound(this.sendReply(userId, lines.join("\n")));
                 return;
             }
             case "status": {
@@ -3776,17 +3843,17 @@ export class WeChatDSHBridge {
                 else if (active?.provider && active.model) {
                     lines.push("• 当前模型不支持推理等级");
                 }
-                await this.sendReply(userId, lines.join("\n"));
+                await awaitInbound(this.sendReply(userId, lines.join("\n")));
                 return;
             }
             case "switch": {
                 if (!reasoning || reasoning.efforts.length === 0) {
-                    await this.sendReply(userId, `🧠 当前模型（${active.provider}/${active.model}）不支持推理等级。`);
+                    await awaitInbound(this.sendReply(userId, `🧠 当前模型（${active.provider}/${active.model}）不支持推理等级。`));
                     return;
                 }
                 const matched = reasoning.efforts.find((e) => e.id === cmd.target || e.name === cmd.target);
                 if (!matched) {
-                    await this.sendReply(userId, `⚠️ 未知推理等级: ${cmd.target}。可用: ${reasoning.efforts.map((e) => `${e.name}（${e.id}）`).join(", ")}`);
+                    await awaitInbound(this.sendReply(userId, `⚠️ 未知推理等级: ${cmd.target}。可用: ${reasoning.efforts.map((e) => `${e.name}（${e.id}）`).join(", ")}`));
                     return;
                 }
                 // Apply to the live agent (via agent/request) and as the new default.
@@ -3794,13 +3861,13 @@ export class WeChatDSHBridge {
                 if (agent) {
                     this.modelOverrides.set(agent.id, selection);
                 }
-                const saved = await this.ops.saveDefaultModel(selection);
+                const saved = await awaitInbound(this.ops.saveDefaultModel(selection));
                 const lines = [`✅ 推理等级已切换: ${matched.name}（${matched.id}）`];
                 if (agent)
                     lines.push("（已应用到当前会话，下一步生效）");
                 if (!saved)
                     lines.push("⚠️ 无法更新默认（仅当前会话生效）");
-                await this.sendReply(userId, lines.join("\n"));
+                await awaitInbound(this.sendReply(userId, lines.join("\n")));
                 return;
             }
             case "clear": {
@@ -3813,11 +3880,11 @@ export class WeChatDSHBridge {
                         this.modelOverrides.set(agent.id, rest);
                     }
                 }
-                const saved = await this.ops.saveDefaultModel({ provider: active.provider, model: active.model });
+                const saved = await awaitInbound(this.ops.saveDefaultModel({ provider: active.provider, model: active.model }));
                 const lines = ["✅ 推理等级已恢复为模型默认"];
                 if (!saved)
                     lines.push("⚠️ 无法更新默认（仅当前会话生效）");
-                await this.sendReply(userId, lines.join("\n"));
+                await awaitInbound(this.sendReply(userId, lines.join("\n")));
                 return;
             }
         }
@@ -3832,24 +3899,26 @@ export class WeChatDSHBridge {
      * oldest→newest, so it reads closer to a live WeChat message than a dump.
      */
     async handleHistoryCommand(userId, cmd, user) {
+        assertInboundAuthority();
         if (!user.sessionId) {
-            await this.sendReply(userId, "💬 暂无会话，发送消息后可查看历史（/history [1-20]）");
+            await awaitInbound(this.sendReply(userId, "💬 暂无会话，发送消息后可查看历史（/history [1-20]）"));
             return;
         }
         const count = Math.max(1, Math.min(cmd.count, HISTORY_MAX));
         let entries;
         try {
-            entries = await this.ops.getSessionHistory(user.sessionId, count, {
+            entries = await awaitInbound(this.ops.getSessionHistory(user.sessionId, count, {
                 includeSystem: cmd.includeSystem,
-            });
+            }));
         }
         catch (err) {
+            assertInboundAuthority();
             console.warn(`[dsh-wechat] getSessionHistory failed: ${String(err)}`);
-            await this.sendReply(userId, `⚠️ 读取历史失败：${maskSecrets(String(err))}`);
+            await awaitInbound(this.sendReply(userId, `⚠️ 读取历史失败：${maskSecrets(String(err))}`));
             return;
         }
         if (entries.length === 0) {
-            await this.sendReply(userId, "📜 暂无历史消息。");
+            await awaitInbound(this.sendReply(userId, "📜 暂无历史消息。"));
         }
         else {
             const HISTORY_TEXT_LIMIT = 800;
@@ -3878,9 +3947,9 @@ export class WeChatDSHBridge {
                 lines.push(`${roleLabel} · ${when}\n${body.trimEnd()}`);
             });
             lines.push(`提示: /history all 含系统消息；/history [1-${HISTORY_MAX}] 换条数（默认 5）`);
-            await this.sendReply(userId, lines.join("\n\n"));
+            await awaitInbound(this.sendReply(userId, lines.join("\n\n")));
         }
-        await this.resendPendingCardsForHistory(userId);
+        await awaitInbound(this.resendPendingCardsForHistory(userId));
     }
     /** After `/history`, re-send every still-answerable card in full. */
     async resendPendingCardsForHistory(userId) {
@@ -3899,37 +3968,38 @@ export class WeChatDSHBridge {
         }
     }
     async handleModelCommand(userId, cmd) {
+        assertInboundAuthority();
         const user = this.ensureBoundUser(userId);
         switch (cmd.kind) {
             case "list": {
                 const providers = this.ops.listProviders();
                 if (providers.length === 0) {
-                    await this.sendReply(userId, "🧠 没有可用的模型提供商。");
+                    await awaitInbound(this.sendReply(userId, "🧠 没有可用的模型提供商。"));
                     return;
                 }
                 if (cmd.provider) {
                     const provider = providers.find((p) => p.id === cmd.provider || p.name === cmd.provider);
                     if (!provider) {
-                        await this.sendReply(userId, `⚠️ 未知提供商: ${cmd.provider}。可用: ${providers.map((p) => p.id).join(", ")}`);
+                        await awaitInbound(this.sendReply(userId, `⚠️ 未知提供商: ${cmd.provider}。可用: ${providers.map((p) => p.id).join(", ")}`));
                         return;
                     }
-                    const models = await this.ops.listModels(provider.id);
+                    const models = await awaitInbound(this.ops.listModels(provider.id));
                     const lines = [`🧠 ${provider.id} 的模型（/model switch ${provider.id}/<模型id> 切换）`];
                     models.forEach((model, i) => {
                         lines.push(`${i + 1}. ${model.id}${model.description ? `（${model.description}）` : ""}`);
                     });
-                    await this.sendReply(userId, lines.join("\n"));
+                    await awaitInbound(this.sendReply(userId, lines.join("\n")));
                     return;
                 }
                 const lines = ["🧠 模型提供商（/model list <提供商id> 查看模型）"];
                 providers.forEach((p, i) => lines.push(`${i + 1}. ${p.id}`));
-                await this.sendReply(userId, lines.join("\n"));
+                await awaitInbound(this.sendReply(userId, lines.join("\n")));
                 return;
             }
             case "switch": {
                 const target = cmd.target.trim();
                 if (!target) {
-                    await this.sendReply(userId, "⚠️ 用法: /model switch <提供商>/<模型id>。模型 id 可含 /，例如 /model switch openrouter/inclusionai/foo:free");
+                    await awaitInbound(this.sendReply(userId, "⚠️ 用法: /model switch <提供商>/<模型id>。模型 id 可含 /，例如 /model switch openrouter/inclusionai/foo:free"));
                     return;
                 }
                 const providers = this.ops.listProviders();
@@ -3937,22 +4007,22 @@ export class WeChatDSHBridge {
                 if (!split) {
                     const hint = providers.map((p) => p.id).join(", ") || "(无)";
                     if (!target.includes("/")) {
-                        await this.sendReply(userId, `⚠️ 用法: /model switch <提供商>/<模型id>。可用提供商: ${hint}`);
+                        await awaitInbound(this.sendReply(userId, `⚠️ 用法: /model switch <提供商>/<模型id>。可用提供商: ${hint}`));
                     }
                     else {
-                        await this.sendReply(userId, `⚠️ 未知提供商: ${target.slice(0, target.indexOf("/"))}。可用: ${hint}`);
+                        await awaitInbound(this.sendReply(userId, `⚠️ 未知提供商: ${target.slice(0, target.indexOf("/"))}。可用: ${hint}`));
                     }
                     return;
                 }
                 const matchedProvider = providers.find((p) => p.id === split.provider);
                 if (!matchedProvider) {
-                    await this.sendReply(userId, `⚠️ 未知提供商: ${split.provider}。可用: ${providers.map((p) => p.id).join(", ")}`);
+                    await awaitInbound(this.sendReply(userId, `⚠️ 未知提供商: ${split.provider}。可用: ${providers.map((p) => p.id).join(", ")}`));
                     return;
                 }
-                const models = await this.ops.listModels(matchedProvider.id);
+                const models = await awaitInbound(this.ops.listModels(matchedProvider.id));
                 const matchedModel = models.find((m) => m.id === split.model || m.name === split.model);
                 if (!matchedModel) {
-                    await this.sendReply(userId, `⚠️ 未知模型: ${split.model}。用 /model list ${matchedProvider.id} 查看可用模型。`);
+                    await awaitInbound(this.sendReply(userId, `⚠️ 未知模型: ${split.model}。用 /model list ${matchedProvider.id} 查看可用模型。`));
                     return;
                 }
                 // Apply to the live agent (via agent/request) and as the new default.
@@ -3973,7 +4043,7 @@ export class WeChatDSHBridge {
                 let preservedEffort;
                 let preservedLabel;
                 if (existingEffort !== undefined) {
-                    const newReasoning = await this.ops.resolveModelReasoning(matchedProvider.id, matchedModel.id);
+                    const newReasoning = await awaitInbound(this.ops.resolveModelReasoning(matchedProvider.id, matchedModel.id));
                     const supported = newReasoning?.efforts.find((e) => e.id === existingEffort);
                     if (supported) {
                         preservedEffort = existingEffort;
@@ -3986,7 +4056,7 @@ export class WeChatDSHBridge {
                 if (agent) {
                     this.modelOverrides.set(agent.id, selection);
                 }
-                const saved = await this.ops.saveDefaultModel(selection);
+                const saved = await awaitInbound(this.ops.saveDefaultModel(selection));
                 const lines = [`✅ 已切换到模型: ${matchedProvider.id}/${matchedModel.id}`];
                 if (agent)
                     lines.push("（已应用到当前会话，下一步生效）");
@@ -3995,7 +4065,7 @@ export class WeChatDSHBridge {
                 }
                 if (!saved)
                     lines.push("⚠️ 无法更新默认模型（仅当前会话生效）");
-                await this.sendReply(userId, lines.join("\n"));
+                await awaitInbound(this.sendReply(userId, lines.join("\n")));
                 return;
             }
             case "status": {
@@ -4009,7 +4079,7 @@ export class WeChatDSHBridge {
                 if (defaultModel) {
                     lines.push(`• 默认: ${defaultModel.provider}/${defaultModel.model}`);
                 }
-                await this.sendReply(userId, lines.join("\n"));
+                await awaitInbound(this.sendReply(userId, lines.join("\n")));
                 return;
             }
         }
@@ -4021,10 +4091,11 @@ export class WeChatDSHBridge {
      * (the default for new sessions, shared with the GUI settings page).
      */
     async handlePermCommand(userId, cmd) {
+        assertInboundAuthority();
         const user = this.ensureBoundUser(userId);
         const service = this.ops.permissionPresets();
         if (!service) {
-            await this.sendReply(userId, "⚠️ 当前部署未启用权限预设（permissionPresets 服务不可用）。");
+            await awaitInbound(this.sendReply(userId, "⚠️ 当前部署未启用权限预设（permissionPresets 服务不可用）。"));
             return;
         }
         const agent = this.agents.get(user);
@@ -4042,7 +4113,7 @@ export class WeChatDSHBridge {
                     if (option.description)
                         lines.push(`   ${option.description}`);
                 });
-                await this.sendReply(userId, lines.join("\n"));
+                await awaitInbound(this.sendReply(userId, lines.join("\n")));
                 return;
             }
             case "status": {
@@ -4055,44 +4126,45 @@ export class WeChatDSHBridge {
                     lines.push("• 当前会话: （未绑定会话）");
                 }
                 lines.push(`• 新会话默认: ${this.describePermission(service, defaultName)}`);
-                await this.sendReply(userId, lines.join("\n"));
+                await awaitInbound(this.sendReply(userId, lines.join("\n")));
                 return;
             }
             case "switch": {
                 if (!agent) {
-                    await this.sendReply(userId, "⚠️ 当前没有会话。先发一条消息或 /session new 创建会话，再切换权限。");
+                    await awaitInbound(this.sendReply(userId, "⚠️ 当前没有会话。先发一条消息或 /session new 创建会话，再切换权限。"));
                     return;
                 }
                 const name = this.matchPermission(service, cmd.target);
                 if (!name) {
-                    await this.sendReply(userId, `⚠️ 未知权限预设: ${cmd.target}。可用: ${service.names.join(", ")}`);
+                    await awaitInbound(this.sendReply(userId, `⚠️ 未知权限预设: ${cmd.target}。可用: ${service.names.join(", ")}`));
                     return;
                 }
                 try {
                     service.set(agent.session, name);
                 }
                 catch (err) {
-                    await this.sendReply(userId, `⚠️ 切换权限失败: ${maskSecrets(String(err))}`);
+                    assertInboundAuthority();
+                    await awaitInbound(this.sendReply(userId, `⚠️ 切换权限失败: ${maskSecrets(String(err))}`));
                     return;
                 }
                 const lines = [`✅ 当前会话权限已切换: ${this.describePermission(service, name)}`];
                 if (name === "danger-full-access") {
                     lines.push("⚠️ 完整访问权限：不再有审批提示，请谨慎使用。");
                 }
-                await this.sendReply(userId, lines.join("\n"));
+                await awaitInbound(this.sendReply(userId, lines.join("\n")));
                 return;
             }
             case "default": {
                 if (!cmd.target) {
-                    await this.sendReply(userId, `🔐 新会话默认权限: ${this.describePermission(service, service.defaultPreset)}`);
+                    await awaitInbound(this.sendReply(userId, `🔐 新会话默认权限: ${this.describePermission(service, service.defaultPreset)}`));
                     return;
                 }
                 const name = this.matchPermission(service, cmd.target);
                 if (!name) {
-                    await this.sendReply(userId, `⚠️ 未知权限预设: ${cmd.target}。可用: ${service.names.join(", ")}`);
+                    await awaitInbound(this.sendReply(userId, `⚠️ 未知权限预设: ${cmd.target}。可用: ${service.names.join(", ")}`));
                     return;
                 }
-                const saved = await this.ops.saveDefaultPermission(name);
+                const saved = await awaitInbound(this.ops.saveDefaultPermission(name));
                 const lines = [`✅ 新会话默认权限已设为: ${this.describePermission(service, name)}`];
                 if (saved) {
                     lines.push("（已写入 DSH 设置，与 GUI 设置页同步，新会话生效）");
@@ -4100,7 +4172,7 @@ export class WeChatDSHBridge {
                 else {
                     lines.push("⚠️ 无法写入 DSH 设置（仅本次进程内生效）");
                 }
-                await this.sendReply(userId, lines.join("\n"));
+                await awaitInbound(this.sendReply(userId, lines.join("\n")));
                 return;
             }
         }
@@ -4414,7 +4486,7 @@ export class WeChatDSHBridge {
         if (this.interactionStopped || !this.dotOutbox || requireOnline && (!this.monitorRunning || this.tokenInvalid || this.tokenGiveUp) || !token?.token || users.length !== 1)
             return null;
         const user = users[0];
-        if (!sessionId || user.sessionId !== sessionId || this.peerUserId !== user.userId)
+        if (!sessionId || user.sessionId !== sessionId || !this.isAuthorizedPeer(user.userId))
             return null;
         return { identity: JSON.stringify([sessionId, user.userId, token.accountId ?? null, token.token]), userId: user.userId };
     }
@@ -4459,7 +4531,7 @@ export class WeChatDSHBridge {
                             if (!current(true) || input.authorize() !== true)
                                 throw Object.assign(Error('not dispatched'), { definitelyUnsent: true });
                             const payload = this.wechatMsgCount > MSG_LIMIT_WARN ? input.text + `\n\n⚠️ 微信限制连续发送消息数量10条（已发 ${this.wechatMsgCount} 条），发送 /next 可继续` : input.text;
-                            await sendTextMessage(identity.userId, payload, { baseUrl: token.baseUrl, token: token.token, contextToken: this.wireContextToken ?? undefined, retries: 0 });
+                            await sendTextMessage(identity.userId, payload, { baseUrl: token.baseUrl, token: token.token, contextToken: this.wireContextToken ?? undefined, retries: 0, authorize: () => current(true) && input.authorize() === true });
                             this.lastOutboundSentAt = new Date().toISOString();
                         } }) };
             }
@@ -4473,6 +4545,8 @@ export class WeChatDSHBridge {
         if (!user) {
             return { ok: false, message: "no WeChat user has interacted yet; a WeChat message must arrive before send_wechat can be used" };
         }
+        if (!this.isAuthorizedPeer(user.userId))
+            return { ok: false, message: "WeChat pairing requires confirmation in desktop settings" };
         if (!this.token) {
             return { ok: false, message: "WeChat is not logged in" };
         }
@@ -4603,9 +4677,12 @@ export class WeChatDSHBridge {
             : this.deliverOutboundLocked(userId, item, opts));
     }
     async deliverOutboundLocked(userId, item, opts) {
+        if (!this.isAuthorizedPeer(userId))
+            return "failed";
         const parkOnError = opts?.parkOnError !== false;
         const token = this.token;
         const generation = this.outboundGeneration;
+        const authorize = () => generation === this.outboundGeneration && this.token === token && this.isAuthorizedPeer(userId);
         if (!token || this.tokenGiveUp) {
             this.logDropOutbound(item.kind === "text" ? item.text.slice(0, 60) : item.fileName);
             return "failed";
@@ -4628,7 +4705,7 @@ export class WeChatDSHBridge {
                 return "failed";
             }
         }
-        if (generation !== this.outboundGeneration)
+        if (generation !== this.outboundGeneration || this.token !== token || !this.isAuthorizedPeer(userId))
             return "failed";
         // Payloads behind a failed / rate-limited item must not overtake it.
         if (parkOnError && this.outboundCache.length > 0) {
@@ -4653,6 +4730,7 @@ export class WeChatDSHBridge {
                     ? item.text + `\n\n⚠️ 微信限制连续发送消息数量10条（已发 ${count + 1} 条），发送 /next 可继续`
                     : item.text;
                 await sendTextMessage(userId, payload, {
+                    authorize,
                     baseUrl: token.baseUrl,
                     token: token.token,
                     contextToken,
@@ -4660,6 +4738,7 @@ export class WeChatDSHBridge {
             }
             else {
                 await sendMediaMessage(userId, mediaTypeForFile(item.fileName), buffer, {
+                    authorize,
                     baseUrl: token.baseUrl,
                     token: token.token,
                     contextToken,
@@ -4671,6 +4750,8 @@ export class WeChatDSHBridge {
             return "sent";
         }
         catch (err) {
+            if (err?.code === "PEER_AUTHORIZATION_CHANGED" || !authorize())
+                return "failed";
             this.recordOutboundError(err);
             if (generation !== this.outboundGeneration)
                 return "failed";
@@ -4733,7 +4814,7 @@ export class WeChatDSHBridge {
     }
     /** Best-effort notice for transient failures while budget remains. */
     async notifyCachePendingLocked(userId) {
-        if (this.cacheNoticeSent || this.wechatMsgCount >= MSG_LIMIT_MAX)
+        if (!this.isAuthorizedPeer(userId) || this.cacheNoticeSent || this.wechatMsgCount >= MSG_LIMIT_MAX)
             return;
         const token = this.token;
         if (!token || this.tokenInvalid || this.outboundCache.length === 0)
@@ -4744,6 +4825,7 @@ export class WeChatDSHBridge {
         const notice = `💾 有 ${this.outboundCache.length} 条消息暂存待发（微信限流或发送失败），发送 /next 可继续发送。`;
         try {
             await sendTextMessage(userId, notice, {
+                authorize: () => this.token === token && this.isAuthorizedPeer(userId),
                 baseUrl: token.baseUrl,
                 token: token.token,
                 ...(this.wireContextToken ? { contextToken: this.wireContextToken } : {}),
@@ -4779,7 +4861,7 @@ export class WeChatDSHBridge {
     }
     /** After -14 recovery, silently flush the one peer's parked outbound. */
     async flushParkedAfterRecover() {
-        const userId = this.peerUserId ?? this.state.all()[0]?.userId;
+        const userId = this.peerUserId;
         if (!userId || this.outboundCache.length === 0) {
             this.log("-14 recovered; no parked outbound to flush");
             return;
@@ -4792,6 +4874,8 @@ export class WeChatDSHBridge {
         return this.serializeOutbound(() => this.flushPendingLocked(userId, opts));
     }
     async flushPendingLocked(userId, opts) {
+        if (!this.isAuthorizedPeer(userId))
+            return { attempted: false, sent: 0, remaining: this.outboundCache.length, dropped: 0 };
         const generation = this.outboundGeneration;
         if (!opts?.automatic) {
             this.clearOutboundRetry();
@@ -4815,16 +4899,18 @@ export class WeChatDSHBridge {
         let sentCount = 0;
         for (let index = 0; index < cache.length; index++) {
             const msg = cache[index];
-            if (generation !== this.outboundGeneration || this.interactionStopped || !this.token || this.tokenGiveUp || this.tokenInvalid)
+            if (generation !== this.outboundGeneration || this.interactionStopped || !this.token || this.tokenGiveUp || this.tokenInvalid || !this.isAuthorizedPeer(userId))
                 break;
             if (this.wechatMsgCount >= MSG_LIMIT_MAX)
                 break;
             const token = this.token;
+            const authorize = () => generation === this.outboundGeneration && this.token === token && this.isAuthorizedPeer(userId);
             this.wechatMsgCount++;
             this.persistOutboundState(userId);
             try {
                 if (msg.kind === "text") {
                     await sendTextMessage(userId, msg.text, {
+                        authorize,
                         baseUrl: token.baseUrl,
                         token: token.token,
                         contextToken: this.wireContextToken ?? undefined,
@@ -4842,7 +4928,10 @@ export class WeChatDSHBridge {
                         this.persistOutboundState(userId);
                         continue;
                     }
+                    if (generation !== this.outboundGeneration || this.token !== token || !this.isAuthorizedPeer(userId))
+                        break;
                     await sendMediaMessage(userId, mediaTypeForFile(msg.fileName), buffer, {
+                        authorize,
                         baseUrl: token.baseUrl,
                         token: token.token,
                         contextToken: this.wireContextToken ?? undefined,
@@ -4861,6 +4950,8 @@ export class WeChatDSHBridge {
                 this.persistOutboundState(userId);
             }
             catch (err) {
+                if (err?.code === "PEER_AUTHORIZATION_CHANGED" || !authorize())
+                    break;
                 this.recordOutboundError(err);
                 if (generation !== this.outboundGeneration)
                     return { attempted: true, sent: sentCount, remaining: this.outboundCache.length, dropped };

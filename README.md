@@ -4,25 +4,37 @@
 
 作者：牛村木木山 · [正式仓库](https://github.com/oxmumu3/dsh-project-companion) · MIT。社区开源项目，非 DeepSeek 或 OpenAI 官方产品。
 
-**当前公开预览：`0.21.0-preview.5`，只需安装一个标准插件包。** 本版补上官方 RC.4、RC.5 的兼容声明与验证，安装无需版本豁免。产品运行代码延续公开 `0.21.0-preview.1`，加入官方版本比对检查代码，自动运行仍待GitHub工作流权限启用。主动关注仍在自然运行验收中；本版不宣称已解决所有来源或微信投递问题。Google 数据权限仍审核中，已知累计100个账号上限未解除。详见[本版验收与限制](docs/verification.md)。
+**当前公开预览：`0.21.0-preview.8`，只需安装一个标准插件包。** 本版修复内置微信首次配对：扫码确认的本人账号直接成为唯一操作者，陌生人先发消息不能认领。保留已验证的官方 RC.4、RC.5 兼容范围；除本轮配对修复外，产品运行代码延续公开 `0.21.0-preview.1`，不包含日常私有版的全部修复。主动关注仍在自然运行验收中；本版不宣称已解决所有来源或微信投递问题。Google 数据权限仍审核中，已知累计100个账号上限未解除。详见[本版验收与限制](docs/verification.md)。
 
 ## 只安装一个标准插件
 
 本版将经过固定来源与 MIT 许可审计的微信组件内置到 Dot。新用户无需再装第二个微信插件，也无需下载 ZIP、解压或运行 macOS 安装脚本。
 
 1. 打开已初始化的官方 DeepSeek Harness，进入「插件 → 添加插件」。
-2. 粘贴下面的插件地址，安装并点击「立即启用」。也可[下载插件包](https://github.com/oxmumu3/dsh-project-companion/releases/download/v0.21.0-preview.5/oxmumu3-dsh-project-companion-0.21.0-preview.5.tgz)后填写本地文件路径。
+2. 粘贴下面的插件地址，安装并点击「立即启用」。也可[下载插件包](https://github.com/oxmumu3/dsh-project-companion/releases/download/v0.21.0-preview.8/oxmumu3-dsh-project-companion-0.21.0-preview.8.tgz)后填写本地文件路径。
 3. 打开左侧「DSH Dot」。首页连接微信，或先在电脑对话；再按需选择工作区和资料来源。
 
 ```text
-https://github.com/oxmumu3/dsh-project-companion/releases/download/v0.21.0-preview.5/oxmumu3-dsh-project-companion-0.21.0-preview.5.tgz
+https://github.com/oxmumu3/dsh-project-companion/releases/download/v0.21.0-preview.8/oxmumu3-dsh-project-companion-0.21.0-preview.8.tgz
 ```
 
-新用户也可直接添加 `@oxmumu3/dsh-project-companion@0.21.0-preview.5`。若已有旧包名 `dsh-project-companion`，仅按[旧版同名更新分支](docs/install.md#已有用户)更新，不能同时再添加 npm 别名。
+新用户也可直接添加 `@oxmumu3/dsh-project-companion@0.21.0-preview.8`。若已有旧包名 `dsh-project-companion`，仅按[旧版同名更新分支](docs/install.md#已有用户)更新，不能同时再添加 npm 别名。
 
 已有兼容微信组件时沿用现有组件，包括它的禁用状态；不会为安装 Dot 重置绑定或覆盖组件配置。已有家庭入口继续按已配置的 Owner 委托运行，家人权限独立。Dot 不安装、升级 Family，也不自动扩大任何账号或资料授权。
 
-这是通过 GitHub Release 分发的标准 Harness 插件，npm latest 同步为本版，尚未上架官方插件市场。[发布与下载](https://github.com/oxmumu3/dsh-project-companion/releases/tag/v0.21.0-preview.5) · [安装说明](docs/install.md)。本版已完成官方隔离单包安装验证；新用户手机收件与多日运行仍分别验收。
+这是通过 GitHub Release 分发的标准 Harness 插件，npm latest 同步为本版，尚未上架官方插件市场。[发布与下载](https://github.com/oxmumu3/dsh-project-companion/releases/tag/v0.21.0-preview.8) · [安装说明](docs/install.md)。本版已完成官方隔离单包安装验证；新用户手机收件与多日运行仍分别验收。
+
+## 微信配对与账号限制
+
+内置组件在扫码确认时锁定扫码账号，不再由首个发消息的人认领。正常使用仍只需扫码、手机确认，然后用同一微信开始聊天；不用手填账号 ID。
+
+“入站白名单”是可选的额外限制。留空仅允许扫码确认的账号；填写后，该扫码账号还必须在名单中。旧凭据缺少扫码身份时，只有单个明确配置的白名单账号可用于恢复；仅有历史首条消息记录不算授权。身份缺失或与旧绑定冲突时暂停微信控制，在电脑微信设置页提示重新确认，不自动换绑、清除原会话或发送配对消息。重新扫码保留原会话关联和归属于原账号的待发队列；新的二维码确认本身不会补发。显式“退出登录”会解除微信会话关联并清空队列，操作前有说明。
+
+已有独立微信插件时，Dot 沿用该外部组件；本修复只适用于 Dot 内置的 `0.11.1-dot.3-embedded.2`，不能替第三方组件承诺相同配对规则。
+
+### WeChat pairing
+
+The bundled component authorizes the account identified by the confirmed QR login. Sending the earliest message cannot claim ownership. An empty allowlist permits that verified account only; a configured allowlist further restricts it. Legacy credentials need either a verifiable QR identity or one explicitly configured allowlist account. Conflicting or missing identity pauses WeChat control with desktop recovery guidance. Re-scanning preserves the original session mapping and recipient-owned queue and does not itself replay queued replies. An external standalone WeChat component retains its own policy.
 
 ## 第一次打开，先做一件有用的事
 
@@ -81,4 +93,4 @@ https://github.com/oxmumu3/dsh-project-companion/releases/download/v0.21.0-previ
 
 ## 源码与发布线
 
-本页安装包与验收对应固定标签 [`v0.21.0-preview.5`](https://github.com/oxmumu3/dsh-project-companion/tree/v0.21.0-preview.5)。开发本版请检出该标签或 `release/0.21.0-preview.5`；仓库 `main` 为 scoped npm 发布线，运行功能与本版相同，仅包身份与客户端注册名适配 scoped 安装。
+本页安装包与验收对应固定标签 [`v0.21.0-preview.8`](https://github.com/oxmumu3/dsh-project-companion/tree/v0.21.0-preview.8)。开发本版请检出该标签或 `release/0.21.0-preview.8`；仓库 `main` 为 scoped npm 发布线，运行功能与本版相同，仅包身份与客户端注册名适配 scoped 安装。

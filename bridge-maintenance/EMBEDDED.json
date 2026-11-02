@@ -1,17 +1,12 @@
 {
   "name": "dsh-wechat",
-  "version": "0.11.1-dot.3-embedded.1",
+  "version": "0.11.1-dot.3-embedded.2",
   "baseVersion": "0.11.1-dot.3",
   "archiveSha256": "2205931694cf84eadea55c7445d7f5ff5b2ae4c76a8f658b495120c811a7c41c",
   "upstream": "https://github.com/pan17/dsh-wechat",
   "runtimeModified": true,
-  "modification": "Cancellable QR login lifecycle; no late token writes after dispose/supersede. Queries, limits and delivery rules unchanged.",
+  "modification": "QR-scanner ownership, fail-closed legacy recovery, no first-sender authority; fresh ingress/agent/delivery and retry authorization; non-destructive QR recovery.",
   "license": "MIT",
-  "localPatch": {
-    "file": "embedded-login-lifecycle.patch",
-    "sha256": "791911003a01a1ec3051bcc41735afa2cab4e519be33f89eceb042c0c3084a7e",
-    "apply": "git apply --unidiff-zero embedded-login-lifecycle.patch"
-  },
   "modifiedFiles": [
     "NOTICE.md",
     "dist/bridge/bridge.js",
@@ -30,7 +25,7 @@
     },
     {
       "path": "NOTICE.md",
-      "sha256": "47e348833749e29ad24d9cd8615ec0ca907c4f6abd5d9720fb3cd2e5d81f45b1",
+      "sha256": "1205b740e9eb584571ed47687176a136e250aa7e00d20b9e11e37c039c7d5fbb",
       "baseSha256": "a0ee45e53d5a39471cee58899cb25d14f58cf2aa3cd88eaaee733c43b0f07f25",
       "modified": true
     },
@@ -198,7 +193,7 @@
     },
     {
       "path": "dist/bridge/bridge.js",
-      "sha256": "fea4e8d4c655a996f41b451d4e6e23630324a5f8b88f8bf12fad88515b4ccb7c",
+      "sha256": "750ae724671fbe89bc0ce8dd9d7564bae3ae5f524fd2835b74512a76067fcda3",
       "baseSha256": "9ce226e84e00aa3d72fb93f643617b229fb0fec2ad028187a705e146be0a510f",
       "modified": true
     },
@@ -233,6 +228,12 @@
       "modified": false
     },
     {
+      "path": "dist/bridge/peer-pairing.js",
+      "sha256": "f71ae0de2ee95fd8f788e2a359a978107e6750d2707b3a4571e537e44a4a0752",
+      "baseSha256": null,
+      "modified": true
+    },
+    {
       "path": "dist/bridge/slash.d.ts",
       "sha256": "a56618054d17f6d7620440b2fa560dd34d36f04c4ab5bdbe242ee7deb1dde6fc",
       "baseSha256": "a56618054d17f6d7620440b2fa560dd34d36f04c4ab5bdbe242ee7deb1dde6fc",
@@ -258,9 +259,9 @@
     },
     {
       "path": "dist/client.js",
-      "sha256": "0b3fd99a992589d1c881a5bc5104f7690d802f25bb1ded6c1c756dc4158f5e81",
+      "sha256": "e68710332f7817b485ae11ee7a58e5c73f8d5cbee69f94fc9a1ec7fdb678cc91",
       "baseSha256": "0b3fd99a992589d1c881a5bc5104f7690d802f25bb1ded6c1c756dc4158f5e81",
-      "modified": false
+      "modified": true
     },
     {
       "path": "dist/config-store.d.ts",
@@ -300,9 +301,9 @@
     },
     {
       "path": "dist/config.js",
-      "sha256": "6737c5ada50abb6cd7cce2b4704af625813cdb8bcddeb80d316b0f4edc1a83a7",
+      "sha256": "a06ec0768818c94ad2d1895ac8f8487bf8223e9a17f81fc6e0a74166853cf0e2",
       "baseSha256": "6737c5ada50abb6cd7cce2b4704af625813cdb8bcddeb80d316b0f4edc1a83a7",
-      "modified": false
+      "modified": true
     },
     {
       "path": "dist/config.js.map",
@@ -348,9 +349,9 @@
     },
     {
       "path": "dist/dsh/ops.js",
-      "sha256": "40090df423b89997e37816fe323c6d3b394c5618af0e74b420d13f57206c33a5",
+      "sha256": "fc55ed612008993c85149f1c5180ea56ae85d4d3c10fe91e5deb3a972e1055b5",
       "baseSha256": "40090df423b89997e37816fe323c6d3b394c5618af0e74b420d13f57206c33a5",
-      "modified": false
+      "modified": true
     },
     {
       "path": "dist/dsh/ops.js.map",
@@ -396,9 +397,9 @@
     },
     {
       "path": "dist/dsh/sessions.js",
-      "sha256": "9ba6aeb3317b3c7cd1e39254ad777a7e768351d60e1db7174b52f1876301b121",
+      "sha256": "b7a555e2130fc0114253f959c2b36ff78e8e2a2ecbd582041e53c56894c0af7c",
       "baseSha256": "9ba6aeb3317b3c7cd1e39254ad777a7e768351d60e1db7174b52f1876301b121",
-      "modified": false
+      "modified": true
     },
     {
       "path": "dist/dsh/sessions.js.map",
@@ -527,6 +528,12 @@
       "modified": false
     },
     {
+      "path": "dist/utils/inbound-authority.js",
+      "sha256": "04d3052421e27e4e98289d5468c0a80c15da5cfc9c090877d6326228e5235d67",
+      "baseSha256": null,
+      "modified": true
+    },
+    {
       "path": "dist/utils/network.d.ts",
       "sha256": "a07b7f5094178bea67328abc7fa05c4de06d3a27f694bd8d2e934989caaa3c08",
       "baseSha256": "a07b7f5094178bea67328abc7fa05c4de06d3a27f694bd8d2e934989caaa3c08",
@@ -600,7 +607,7 @@
     },
     {
       "path": "dist/weixin/api.d.ts",
-      "sha256": "65a3441aabb499ed84152e5afdf1c622451feafef668b11e85e7d13a2c42f0ea",
+      "sha256": "067486df2cd02cb41714ebc2b1e26b573c4f77e571b359c0b025447093b821e5",
       "baseSha256": "2c9b885e0aae17bfa38d713c4742133ae3ca168a2b3121aa740bc05a08d836c8",
       "modified": true
     },
@@ -612,7 +619,7 @@
     },
     {
       "path": "dist/weixin/api.js",
-      "sha256": "e54ad5000d30737c3c5b5603a46ce135e4e08fb7b61ff5bf3ddb3ec42dcca990",
+      "sha256": "78ff569a4289a65b0f9464b4f287d9b30447639d3b4131ff7b4b22b580435da7",
       "baseSha256": "9b2bb750eca4f63a75cc4903bb7cd06ee4ed9dbc37cd2f1a428eb0dd63d4a8e7",
       "modified": true
     },
@@ -636,7 +643,7 @@
     },
     {
       "path": "dist/weixin/auth.js",
-      "sha256": "e88213a3a02e5018212fd41a2ba836c00385a1c56a117dd8697e9f24647e5201",
+      "sha256": "ba89dca195b5ca39ea9e54b5ab4edf9dadcaa9c5e88f40e401190d8c9a8fef67",
       "baseSha256": "02971d3d2e6f19c706a37d06df5908381360a59b3655a5a516bd676cba0e269a",
       "modified": true
     },
@@ -647,10 +654,16 @@
       "modified": false
     },
     {
+      "path": "dist/weixin/authorize.js",
+      "sha256": "1654152efc8056a1ed78418abb89e31c88dc991b1b18a657eca090c09a027114",
+      "baseSha256": null,
+      "modified": true
+    },
+    {
       "path": "dist/weixin/media.d.ts",
-      "sha256": "fc73b5eb1a338d7d22f5e6cbf9459887cd7859a98dd5be34e00fbdb554b92683",
+      "sha256": "496d62e28a97beda8698b517a16b37f00b248c43023e34c00f1bd9827a4480a3",
       "baseSha256": "fc73b5eb1a338d7d22f5e6cbf9459887cd7859a98dd5be34e00fbdb554b92683",
-      "modified": false
+      "modified": true
     },
     {
       "path": "dist/weixin/media.d.ts.map",
@@ -660,9 +673,9 @@
     },
     {
       "path": "dist/weixin/media.js",
-      "sha256": "7056fd4ae056fb1956775919a7bc7b64d813e543877d000a14e6d67100fb3eeb",
+      "sha256": "cbeb10a9d6aefdb631ea46396bf38d41e15105008ef97d1d19ba261846bc7942",
       "baseSha256": "7056fd4ae056fb1956775919a7bc7b64d813e543877d000a14e6d67100fb3eeb",
-      "modified": false
+      "modified": true
     },
     {
       "path": "dist/weixin/media.js.map",
@@ -696,9 +709,9 @@
     },
     {
       "path": "dist/weixin/send.d.ts",
-      "sha256": "9405498fc8699e03416f1700e7b7cbe407a3c052572b76abc79a254cc9dc8b5a",
+      "sha256": "f50d63f7cee4357fd0d1d395b27294a96707d606649650dd23bc0b54426fe212",
       "baseSha256": "9405498fc8699e03416f1700e7b7cbe407a3c052572b76abc79a254cc9dc8b5a",
-      "modified": false
+      "modified": true
     },
     {
       "path": "dist/weixin/send.d.ts.map",
@@ -708,9 +721,9 @@
     },
     {
       "path": "dist/weixin/send.js",
-      "sha256": "b7f1cc3f360a27b3a9e0525d26f54eb43f7d5afa901becd77afb831437df60f2",
+      "sha256": "209dc3dca51f5dc9f9689bee1c8b13ff1e8948359b11315bc0c9b0c83ff8dbca",
       "baseSha256": "b7f1cc3f360a27b3a9e0525d26f54eb43f7d5afa901becd77afb831437df60f2",
-      "modified": false
+      "modified": true
     },
     {
       "path": "dist/weixin/send.js.map",
@@ -744,7 +757,7 @@
     },
     {
       "path": "package.json",
-      "sha256": "b4925019bede0056f9e920e931f01dd54dcc075955d10ffec86233435dc6cfdc",
+      "sha256": "783c3f6e71b56bd24cc0385a9c41e8086562a2de6d87f8b7c11b7e8a335f60ac",
       "baseSha256": "742eb53849e0d7295cf02e898ae290442e6f918a4a14b6a2463dcfe901519b16",
       "modified": true
     },
@@ -765,6 +778,19 @@
       "sha256": "783127acb589000d9a1529bfba7460a109e6138ee156ce9b8d0a7cb368ddfc88",
       "baseSha256": "783127acb589000d9a1529bfba7460a109e6138ee156ce9b8d0a7cb368ddfc88",
       "modified": false
+    }
+  ],
+  "localPatches": [
+    {
+      "file": "embedded-login-lifecycle.patch",
+      "sha256": "791911003a01a1ec3051bcc41735afa2cab4e519be33f89eceb042c0c3084a7e",
+      "apply": "git apply --unidiff-zero embedded-login-lifecycle.patch"
+    },
+    {
+      "file": "embedded-safe-pairing.patch",
+      "sha256": "c1f92a60b422a829754956afb6131c59b3ea249d54282e0feeb72db5bec854dd",
+      "apply": "git apply embedded-safe-pairing.patch",
+      "base": "0.11.1-dot.3-embedded.1"
     }
   ]
 }
