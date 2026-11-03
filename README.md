@@ -1,5 +1,7 @@
 # DSH Dot · 你的 DeepSeek Harness 个人助理
 
+📖 设计思考与生态复盘：[《DeepSeek Harness 要走向极客玩具还是大众普惠？》](https://mp.weixin.qq.com/s/RIAYNqo8OsUVx2JpR8MPyA)
+
 在电脑或微信交代事情，把资料、项目和下一步接起来。Dot 能结合你选择的邮件、日历、笔记和待办整理简报，组织跨会话的项目，并按明确安排跟进。
 
 作者：牛村木木山 · [正式仓库](https://github.com/oxmumu3/dsh-project-companion) · MIT。社区开源项目，非 DeepSeek 或 OpenAI 官方产品。
