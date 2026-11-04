@@ -14,11 +14,12 @@ import * as StorageDomain from '@deepseek-ai/dsh-storage-domain';
 import SessionStore, {SessionId} from '@deepseek-ai/dsh-session';
 import {createUserMessage} from '@deepseek-ai/dsh-llm';
 import {createScope,scopeTarget} from '@deepseek-ai/dsh-scope';
+import {executeHostTool} from '../src/host-tool-call.js';
 
 test('host integration runs against the selected verified official SDK packages',()=>{
   const sdk=process.env.DSH_TEST_SDK_VERSION??'0.2.0-rc.2';
-  const cordis=sdk.startsWith('0.2.1-')?'4.0.5':'4.0.4';
-  assert.ok(['0.2.0-rc.2','0.2.1-rc.2','0.2.1-rc.3','0.2.1-rc.4','0.2.1-rc.5'].includes(sdk),'unsupported test SDK version');
+  const cordis=sdk==='0.2.2-rc.1'?'4.1.0':sdk.startsWith('0.2.1-')?'4.0.5':'4.0.4';
+  assert.ok(['0.2.0-rc.2','0.2.1-rc.2','0.2.1-rc.3','0.2.1-rc.4','0.2.1-rc.5','0.2.2-rc.1'].includes(sdk),'unsupported test SDK version');
   const require=createRequire(import.meta.url);
   assert.equal(require('@deepseek-ai/cordis/package.json').version,cordis);
   for(const name of ['agent','tools','commands','storage-domain','session','llm','system-prompt','storage','storage-json'])assert.equal(require(`@deepseek-ai/dsh-${name}/package.json`).version,sdk,name);
@@ -32,7 +33,17 @@ async function openHost(t, options={}){
   await writeFile(join(workspace,'README.md'),'SYNTHETIC host project source');
   const ctx=new Context();let adapter;const live=new Map();const sent=[];const accepted=[];
   let now=new Date('2026-10-18T15:00:00Z');let timer;let timerStarts=0;let timerStops=0;let intervalMs;
-  await ctx.plugin(SystemPrompt,{});await ctx.plugin(ToolRuntime,{mode:options.mode??'native'});await ctx.plugin(CommandRuntime);
+  await ctx.plugin(SystemPrompt,{});
+  const batchTools=typeof ToolRuntime.prototype?.selectExecutor==='function';
+  await ctx.plugin(ToolRuntime,batchTools?{}:{mode:options.mode??'native'});
+  if(batchTools){
+    if(options.mode==='ptc'){
+      // Real official PTC executor; these cases never execute a program.
+      const {PtcExecutor}=await import('@deepseek-ai/dsh-tool-executor-ptc');
+      ctx.tools.setExecutor(new PtcExecutor(ctx));
+    }else await ctx.plugin(await import('@deepseek-ai/dsh-tool-executor-native'));
+  }
+  await ctx.plugin(CommandRuntime);
   await ctx.plugin(Storage);await ctx.plugin(JsonStorage,{root:join(root,'storage')});await ctx.plugin(StorageDomain,{backend:'json'});await ctx.plugin(SessionStore);
   const registry={get:id=>live.get(id),list:()=>[...live.values()]};ctx.provide('agents',registry);
   const known=[];ctx.provide('workspaceRegistry',{list:()=>known,resolveByPath:async path=>known.find(x=>x.path===path)});
@@ -45,7 +56,7 @@ async function openHost(t, options={}){
   const disableWeChat=ctx.tools.register(defineTool({name:'send_wechat',description:'Synthetic queue only; no real network',parameters:{text:{type:'string',required:true}},output:{schema:{type:'object',additionalProperties:true},render:(_args,value)=>[{type:'text',text:JSON.stringify(value)}]},execute:(_args,execution)=>{sent.push(execution);return options.sendResponse?.(execution)??{ok:true,message:'queued synthetic message; not real WeChat'};}}));
   const lifecycle=await ctx.plugin({name:'synthetic-companion-mount',inject:['tools','commands','storageDomain','sessions','systemPrompt'],async apply(scope){adapter=await installCompanion(scope,{clock:()=>now,hostTimeZone:()=>options.hostTimeZone??'America/Mexico_City',...(options.family?{family:options.family}:{}),...(options.readBinding?{readBinding:options.readBinding}:{}),...(options.readSetup?{readSetup:options.readSetup}:{}),...(options.readNativeRoute?{readNativeRoute:options.readNativeRoute}:{}),...(options.news?{news:options.news}:{}),...(options.projectUpdates?{projectUpdates:options.projectUpdates}:{}),...(options.personalReview?{personalReview:options.personalReview}:{}),...(options.context?{context:options.context}:{}),timers:{setInterval:(fn,ms)=>{intervalMs=ms;timer=fn;timerStarts++;return {unref(){}};},clearInterval:()=>{timer=undefined;timerStops++;}}});}});
   let count=0;const signal=()=>new AbortController().signal;
-  const nativeTool=async(args,agent=owner,callId=`synthetic-call-${++count}`)=>{const r=await ctx.tools.execute({callId,name:'project_companion',arguments:args,agent,signal:signal()});assert.equal(r.isError,false,JSON.stringify(r));return r;};
+  const nativeTool=async(args,agent=owner,callId=`synthetic-call-${++count}`)=>{const r=await executeHostTool(ctx.tools,{callId,name:'project_companion',arguments:args,agent,signal:signal()});assert.equal(r.isError,false,JSON.stringify(r));return r;};
   const tool=async(...args)=>(await nativeTool(...args)).value;
   const command=async(raw,agent=owner)=>{const r=await ctx.commands.execute(agent,`/companion ${raw}`,[],signal());assert.ok(r);return r.result;};
   const close=()=>ctx.fiber.dispose();
@@ -56,7 +67,7 @@ async function openHost(t, options={}){
 test('native rendered prepare and terminal hook preserve exact item/job references without accepting the business result',async t=>{
  const h=await openHost(t,{readSetup:async()=>({state:'bound',sessionId:'synthetic-owner',bindingKey:'a'.repeat(64)}),personalReview:{model:{summarize:async input=>({items:[{key:'synthetic-handoff',kind:'progress',title:'核对项目说明',summary:'项目说明已经提供。',why:'应先核对用途。',action:'整理说明核对清单。',unknown:'仍待本人验收。',evidenceIds:[input.evidence[0].id],priority:'normal',confidence:'source'}]})}}});
  const root=h.owner.session.header.cwd;await h.tool({action:'watch'});const target=addLive(h,'synthetic-review-target',root);await h.tool({action:'watch'});
- const invoke=async(args,id)=>h.ctx.tools.execute({name:'personal_review',callId:id,arguments:args,agent:h.owner,signal:new AbortController().signal});
+ const invoke=async(args,id)=>executeHostTool(h.ctx.tools,{name:'personal_review',callId:id,arguments:args,agent:h.owner,signal:new AbortController().signal});
  await invoke({action:'preview',sources:[],projects:[root]},'review-source');
  const prepared=await invoke({action:'prepare',itemTitle:'核对项目说明',userRequested:true},'prepare');assert.equal(prepared.value.status,'prepared');
  const visible=JSON.stringify(prepared.content);assert.ok(visible.includes(prepared.value.itemId));assert.match(visible,/助手内部事项索引/);
@@ -586,7 +597,7 @@ test('a restored effective directory may differ from its original workspace with
 
 test('agentless tool calls cannot resume a cold project even with a userRequested argument',async t=>{
   const h=await openHost(t);const root=await otherProject(h,'需要真实调用方的项目');const target=addLive(h,'synthetic-no-caller',root);await h.tool({action:'watch',project:'需要真实调用方的项目'});h.live.delete(target.id);const factory=syntheticFactory(h,{root});
-  const result=await h.ctx.tools.execute({callId:'synthetic-agentless-coordinate',name:'project_companion',arguments:{action:'coordinate',project:'需要真实调用方的项目',task:'没有调用方不能恢复',userRequested:true},signal:new AbortController().signal});
+  const result=await executeHostTool(h.ctx.tools,{callId:'synthetic-agentless-coordinate',name:'project_companion',arguments:{action:'coordinate',project:'需要真实调用方的项目',task:'没有调用方不能恢复',userRequested:true},signal:new AbortController().signal});
   assert.equal(result.isError,false);assert.equal(result.value.accepted,false);assert.equal(factory.calls.length,0);assert.equal(h.accepted.length,0);
 });
 
@@ -888,9 +899,9 @@ test('native authenticated onboarding is passive until an explicit start in the 
   const step=await h.ctx.serial('agent/pre-step',{agent:h.owner,turn:20,step:0,messages:[message],signal:new AbortController().signal},async()=>({kind:'enter',messages:[message]}));
   assert.equal(step.kind,'enter');
   const read=await h.tool({action:'digest',project:root,detail:'analysis'});assert.match(read.text,/SYNTHETIC/);
-  const denied=await h.ctx.tools.execute({callId:'welcome-must-not-send',name:'send_wechat',arguments:{text:'MUST_NOT_SEND'},agent:h.owner,signal:new AbortController().signal});
+  const denied=await executeHostTool(h.ctx.tools,{callId:'welcome-must-not-send',name:'send_wechat',arguments:{text:'MUST_NOT_SEND'},agent:h.owner,signal:new AbortController().signal});
   assert.equal(denied.isError,true);assert.equal(h.sent.length,0);
-  const write=await h.ctx.tools.execute({callId:'welcome-must-not-write',name:'project_companion',arguments:{action:'remind',title:'MUST_NOT_SCHEDULE',delayMinutes:2},agent:h.owner,signal:new AbortController().signal});
+  const write=await executeHostTool(h.ctx.tools,{callId:'welcome-must-not-write',name:'project_companion',arguments:{action:'remind',title:'MUST_NOT_SCHEDULE',delayMinutes:2},agent:h.owner,signal:new AbortController().signal});
   assert.equal(write.isError,true);assert.equal(h.timers().active,false);
   h.owner.session.append('turn/end',{turn:20,reason:{kind:'completed'}});h.owner.status='idle';h.ctx.emit('agent/status',{agent:h.owner,status:'idle'});
   assert.equal((await h.tool({action:'status'})).daily,null);assert.equal(h.sent.length,0);
@@ -925,7 +936,7 @@ function newsFixtures(){
   return {fetchCandidates:async()=>{feeds++;return{articles,stats:{totalFeeds:1,succeededFeeds:1,failedFeeds:0,totalArticles:10,eligibleArticles:10},warnings:[]};},readArticle:async article=>({article,content:`AI Builder publicly documented body ${article.id}`,coverage:'article',truncated:false}),model:{selectArticles:async()=>{models++;return articles.map(a=>a.id);},summarizeArticles:async({articles:items})=>({items:items.map(a=>({id:a.id,title:a.title,summary:'来自公开资料的简短中文摘要。',why:'可以用于 Builder 实践。'}))}),close(){}},counts:()=>({feeds,models})};
 }
 async function newsTool(h,args,callId='synthetic-news-call'){
-  const r=await h.ctx.tools.execute({callId,name:'ai_digest',arguments:args,agent:h.owner,signal:new AbortController().signal});
+  const r=await executeHostTool(h.ctx.tools,{callId,name:'ai_digest',arguments:args,agent:h.owner,signal:new AbortController().signal});
   assert.equal(r.isError,false,JSON.stringify(r));return r.value;
 }
 test('AI digest host tool defaults off; native preview uses injected pipeline without any WeChat send',async t=>{
@@ -1039,7 +1050,7 @@ test('standalone guarded WeChat owner can configure and send an existing-scope r
  const sends=[],key='e'.repeat(64),bridge={binding:id=>id==='synthetic-owner'?{bound:true,bindingKey:key}:null,routeStatus:()=> 'current',send:async input=>{assert.equal(input.expectedBinding,key);assert.equal(input.authorize(),true);sends.push(input);return{status:'accepted'};}};
  const h=await openHost(t,{guardedBridge:bridge,readSetup:async()=>({state:'bound',sessionId:'synthetic-owner',bindingKey:'a'.repeat(64)}),personalReview:{collect:async()=>({evidence:[{id:'p1',source:'project',title:'合成进度',text:'存在合成风险',at:'2026-10-18T15:00:00.000Z'}],coverage:[{source:'project',status:'ok',count:1}]}),model:{summarize:async()=>({items:[{key:'risk',kind:'risk',title:'合成风险',summary:'存在风险',why:'需要核对',action:'核对',unknown:'',evidenceIds:['p1'],priority:'high',confidence:'source'}]})}}});
  const root=h.owner.session.header.cwd;await h.tool({action:'watch'});
- const invoke=async args=>(await h.ctx.tools.execute({name:'personal_review',callId:'call-'+args.action,arguments:args,agent:h.owner,signal:new AbortController().signal})).value;
+ const invoke=async args=>(await executeHostTool(h.ctx.tools,{name:'personal_review',callId:'call-'+args.action,arguments:args,agent:h.owner,signal:new AbortController().signal})).value;
  const configured=await invoke({action:'configure',sources:[],projects:[root],schedule:{dailyTime:'10:00',timeZone:'America/Mexico_City'},userRequested:true});assert.notEqual(configured.status,'blocked',JSON.stringify(configured));
  h.time('2026-10-18T16:00:00Z');await h.tick();assert.equal(sends.length,1);assert.equal(h.sent.length,0,'legacy first-peer fallback must never be called');
 });
@@ -1047,7 +1058,7 @@ for(const change of ['collection','model','dispatch'])test(`standalone grant/bin
  let key='e'.repeat(64),transports=0;const bridge={binding:id=>id==='synthetic-owner'?{bound:true,bindingKey:key}:null,routeStatus:()=> 'current',send:async input=>{if(change==='dispatch')key='f'.repeat(64);if(input.authorize()&&input.expectedBinding===key)transports++;return{status:'blocked'};}};
  const evidence={id:'p1',source:'project',title:'合成进度',text:'存在合成风险',at:'2026-10-18T15:00:00.000Z'},candidate={key:'risk',kind:'risk',title:'合成风险',summary:'存在风险',why:'需要核对',action:'核对',unknown:'',evidenceIds:['p1'],priority:'high',confidence:'source'};
  const h=await openHost(t,{guardedBridge:bridge,readSetup:async()=>({state:'bound',sessionId:'synthetic-owner',bindingKey:'a'.repeat(64)}),personalReview:{collect:async()=>{if(change==='collection')key='f'.repeat(64);return{evidence:[evidence],coverage:[{source:'project',status:'ok',count:1}]};},model:{summarize:async()=>{if(change==='model')key='f'.repeat(64);return{items:[candidate]};}}}});
- const root=h.owner.session.header.cwd;await h.tool({action:'watch'});const r=await h.ctx.tools.execute({name:'personal_review',callId:'configure',arguments:{action:'configure',sources:[],projects:[root],schedule:{dailyTime:'10:00',timeZone:'America/Mexico_City'},userRequested:true},agent:h.owner,signal:new AbortController().signal});assert.notEqual(r.value.status,'blocked');
+ const root=h.owner.session.header.cwd;await h.tool({action:'watch'});const r=await executeHostTool(h.ctx.tools,{name:'personal_review',callId:'configure',arguments:{action:'configure',sources:[],projects:[root],schedule:{dailyTime:'10:00',timeZone:'America/Mexico_City'},userRequested:true},agent:h.owner,signal:new AbortController().signal});assert.notEqual(r.value.status,'blocked');
  h.time('2026-10-18T16:00:00Z');await h.tick();assert.equal(transports,0);assert.equal(h.sent.length,0);
 });
 for(const stage of ['collection','model','dispatch'])test(`standalone watched-scope revocation at ${stage} never reaches transport`,async t=>{
@@ -1056,7 +1067,7 @@ for(const stage of ['collection','model','dispatch'])test(`standalone watched-sc
  const bridge={binding:()=>({bound:true,bindingKey:key}),routeStatus:()=> 'current',send:async input=>{if(stage==='dispatch')await revoke();if(input.authorize())transports++;return{status:'blocked'};}};
  const evidence={id:'p1',source:'project',title:'合成进度',text:'存在合成风险',at:'2026-10-18T15:00:00.000Z'},candidate={key:'risk',kind:'risk',title:'合成风险',summary:'存在风险',why:'需要核对',action:'核对',unknown:'',evidenceIds:['p1'],priority:'high',confidence:'source'};
  h=await openHost(t,{guardedBridge:bridge,readSetup:async()=>({state:'bound',sessionId:'synthetic-owner',bindingKey:'a'.repeat(64)}),personalReview:{collect:async()=>{if(stage==='collection')await revoke();return{evidence:[evidence],coverage:[{source:'project',status:'ok',count:1}]};},model:{summarize:async()=>{if(stage==='model')await revoke();return{items:[candidate]};}}}});
- const root=h.owner.session.header.cwd;await h.tool({action:'watch'});const r=await h.ctx.tools.execute({name:'personal_review',callId:'configure',arguments:{action:'configure',sources:[],projects:[root],schedule:{dailyTime:'10:00',timeZone:'America/Mexico_City'},userRequested:true},agent:h.owner,signal:new AbortController().signal});assert.notEqual(r.value.status,'blocked');
+ const root=h.owner.session.header.cwd;await h.tool({action:'watch'});const r=await executeHostTool(h.ctx.tools,{name:'personal_review',callId:'configure',arguments:{action:'configure',sources:[],projects:[root],schedule:{dailyTime:'10:00',timeZone:'America/Mexico_City'},userRequested:true},agent:h.owner,signal:new AbortController().signal});assert.notEqual(r.value.status,'blocked');
  h.time('2026-10-18T16:00:00Z');await h.tick();assert.equal(transports,0);assert.equal(h.sent.length,0);
 });
 test('standalone official host and maintained bridge share guarded delivery without Family',{skip:!process.env.DOT_GUARDED_BRIDGE_ROOT},async t=>{
@@ -1068,7 +1079,7 @@ test('standalone official host and maintained bridge share guarded delivery with
  t.after(async()=>{await real.stop();globalThis.fetch=prior;await rm(dir,{recursive:true,force:true});});
  const guarded={binding:id=>real.dotProactiveBinding(id),routeStatus:input=>real.dotProactiveRouteStatus(input),send:input=>real.dotProactiveSend(input)};
  const h=await openHost(t,{guardedBridge:guarded,readSetup:async()=>({state:'bound',sessionId:'synthetic-owner',bindingKey:'a'.repeat(64)}),personalReview:{collect:async()=>({evidence:[{id:'p1',source:'project',title:'合成',text:'合成风险',at:'2026-10-18T15:00:00.000Z'}],coverage:[{source:'project',status:'ok',count:1}]}),model:{summarize:async()=>({items:[{key:'risk',kind:'risk',title:'合成风险',summary:'合成风险',why:'需要核对',action:'核对',unknown:'',evidenceIds:['p1'],priority:'high',confidence:'source'}]})}}});
- const root=h.owner.session.header.cwd;await h.tool({action:'watch'});const r=await h.ctx.tools.execute({name:'personal_review',callId:'configure-real-bridge',arguments:{action:'configure',sources:[],projects:[root],schedule:{dailyTime:'10:00',timeZone:'America/Mexico_City'},userRequested:true},agent:h.owner,signal:new AbortController().signal});assert.notEqual(r.value.status,'blocked');
+ const root=h.owner.session.header.cwd;await h.tool({action:'watch'});const r=await executeHostTool(h.ctx.tools,{name:'personal_review',callId:'configure-real-bridge',arguments:{action:'configure',sources:[],projects:[root],schedule:{dailyTime:'10:00',timeZone:'America/Mexico_City'},userRequested:true},agent:h.owner,signal:new AbortController().signal});assert.notEqual(r.value.status,'blocked');
  h.time('2026-10-18T16:00:00Z');await h.tick();assert.equal(network.length,1);await h.tick();assert.equal(network.length,1);assert.equal(h.sent.length,0);
 });
 test('maintained bridge plugin really provides the guarded capability to a sibling Dot host',{skip:!process.env.DOT_GUARDED_BRIDGE_ROOT},async t=>{
@@ -1079,7 +1090,7 @@ test('maintained bridge plugin really provides the guarded capability to a sibli
  t.after(async()=>{WeChatDSHBridge.prototype.start=oldStart;globalThis.fetch=oldFetch;await rm(dir,{recursive:true,force:true});});
  const h=await openHost(t,{readSetup:async()=>({state:'bound',sessionId:'synthetic-owner',bindingKey:'a'.repeat(64)}),personalReview:{collect:async()=>({evidence:[{id:'p1',source:'project',title:'合成',text:'合成风险',at:'2026-10-18T15:00:00.000Z'}],coverage:[{source:'project',status:'ok',count:1}]}),model:{summarize:async()=>({items:[{key:'risk',kind:'risk',title:'合成风险',summary:'合成风险',why:'需要核对',action:'核对',unknown:'',evidenceIds:['p1'],priority:'high',confidence:'source'}]})}}});
  h.disableWeChat();await h.ctx.plugin({name:'synthetic-maintained-wechat',apply:scope=>plugin.apply(scope,{storageDir:dir})});assert.ok(h.ctx.get('dotWechatGuarded',false));
- const root=h.owner.session.header.cwd;await h.tool({action:'watch'});const r=await h.ctx.tools.execute({name:'personal_review',callId:'configure-real-plugin',arguments:{action:'configure',sources:[],projects:[root],schedule:{dailyTime:'10:00',timeZone:'America/Mexico_City'},userRequested:true},agent:h.owner,signal:new AbortController().signal});assert.notEqual(r.value.status,'blocked',JSON.stringify(r.value));
+ const root=h.owner.session.header.cwd;await h.tool({action:'watch'});const r=await executeHostTool(h.ctx.tools,{name:'personal_review',callId:'configure-real-plugin',arguments:{action:'configure',sources:[],projects:[root],schedule:{dailyTime:'10:00',timeZone:'America/Mexico_City'},userRequested:true},agent:h.owner,signal:new AbortController().signal});assert.notEqual(r.value.status,'blocked',JSON.stringify(r.value));
  h.time('2026-10-18T16:00:00Z');await h.tick();assert.equal(network.length,1);assert.equal(h.sent.length,0);
 });
 
@@ -1087,7 +1098,7 @@ test('personal review default host collector masks configured secrets and paused
  let binding='a'.repeat(64);const summaries=[];
  const h=await openHost(t,{readSetup:async()=>({state:'bound',sessionId:'synthetic-owner',bindingKey:binding}),context:{readConfig:()=>({didaToken:'synthetic-review-private-secret'}),googlePublisher:null,fetch:async()=>assert.fail('project-only preview must not use network')},personalReview:{model:{summarize:async input=>{summaries.push(input);return{items:[]};}}}});
  const root=h.owner.session.header.cwd;await h.tool({action:'watch'});await writeFile(join(root,'README.md'),'Project status.\nsynthetic-review-private-secret\npassword=not-for-model\n');
- const invoke=async(args,id)=>{const r=await h.ctx.tools.execute({name:'personal_review',callId:id,arguments:args,agent:h.owner,signal:new AbortController().signal});assert.equal(r.isError,false,JSON.stringify(r));return r.value;};
+ const invoke=async(args,id)=>{const r=await executeHostTool(h.ctx.tools,{name:'personal_review',callId:id,arguments:args,agent:h.owner,signal:new AbortController().signal});assert.equal(r.isError,false,JSON.stringify(r));return r.value;};
  const preview=await invoke({action:'preview',sources:[],projects:[root]},'review-preview');assert.equal(preview.status,'preview',JSON.stringify(preview));assert.equal(summaries.length,1);assert.doesNotMatch(JSON.stringify(summaries),/synthetic-review-private-secret|not-for-model/);assert.match(JSON.stringify(summaries),/已隐藏/);assert.equal(h.sent.length,0);assert.equal(h.timers().active,false);
  const configured=await invoke({action:'configure',sources:[],projects:[root],schedule:{dailyTime:'09:00',timeZone:'UTC'},userRequested:true},'review-configure');assert.equal(configured.status,'blocked',JSON.stringify(configured));assert.match(configured.text,/可先预览.*共享家庭入口支持/);assert.equal(summaries.length,1);assert.equal(h.timers().active,false);
   for(const action of ['run_now','resume']){const denied=await invoke({action,sources:[],projects:[root],userRequested:true},'review-native-'+action);assert.equal(denied.status,'blocked');assert.match(denied.text,/授权复核/);}assert.equal(summaries.length,1);assert.equal(h.sent.length,0);

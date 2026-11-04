@@ -2,6 +2,7 @@ import {randomUUID,createHash} from 'node:crypto';
 import {resolve} from 'node:path';
 import {z} from 'zod';
 import {defineTool} from '@deepseek-ai/dsh-tools';
+import {executeHostTool} from './src/host-tool-call.js';
 import {defineDomain,domainTable} from '@deepseek-ai/dsh-storage-domain';
 import {createUserMessage} from '@deepseek-ai/dsh-llm';
 import {createService,parseCommand} from './src/service.js';
@@ -201,7 +202,7 @@ export async function installCompanion(ctx,options={}){
       const remaining=Date.parse(item.expiresAt)-(options.clock?.()??new Date()).getTime();
       if(remaining<=0)return{status:'blocked',detail:'Task return expired before dispatch'};
       try{
-        const result=await ctx.tools.execute({callId:`companion-result-${randomUUID()}`,name:'send_wechat',arguments:{text:item.text},agent,signal:AbortSignal.any([lifecycle.signal,AbortSignal.timeout(Math.min(30000,remaining))])});
+        const result=await executeHostTool(ctx.tools,{callId:`companion-result-${randomUUID()}`,name:'send_wechat',arguments:{text:item.text},agent,signal:AbortSignal.any([lifecycle.signal,AbortSignal.timeout(Math.min(30000,remaining))])});
         if(result.isError){const code=result.error?.info?.code;return{status:['UNKNOWN_TOOL','ABORTED_BEFORE_DISPATCH'].includes(code)?'blocked':'uncertain',detail:'Host tool pipeline did not confirm task return; no automatic retry'};}
         const value=result.value;
         if(value?.ok===true&&/\bqueued\b/i.test(value.message??''))return{status:'queued',detail:'Bridge queued task return; phone receipt unverified'};
@@ -243,7 +244,7 @@ export async function installCompanion(ctx,options={}){
       if(!ctx.tools.get('send_wechat',agent))return{status:'blocked',detail:'send_wechat unavailable; enable both WeChat and companion bundles'};
       const remaining=Date.parse(item.expiresAt)-(options.clock?.()??new Date()).getTime();
       if(remaining<=0)return{status:'blocked',detail:'Job expired before host dispatch; the next tick expires it without sending'};
-      const result=await ctx.tools.execute({callId:`companion-${randomUUID()}`,name:'send_wechat',arguments:{text:item.text},agent,signal:AbortSignal.timeout(Math.min(30000,remaining))});
+      const result=await executeHostTool(ctx.tools,{callId:`companion-${randomUUID()}`,name:'send_wechat',arguments:{text:item.text},agent,signal:AbortSignal.timeout(Math.min(30000,remaining))});
       if(result.isError){
         const code=result.error?.info?.code;
         return{status:['UNKNOWN_TOOL','ABORTED_BEFORE_DISPATCH'].includes(code)?'blocked':'uncertain',detail:`Host tool pipeline ${code??'rejected/failed'}: ${result.error?.message??'unknown outcome'}`};
@@ -291,7 +292,7 @@ export async function installCompanion(ctx,options={}){
       const agent=ctx.get('agents')?.get?.(item.sessionId);
       if(!agent||String(agent.id)!==item.sessionId||!effectiveCwd(ctx,agent)||!ctx.tools.get('send_wechat',agent))return{status:'failed',detail:'Original live source session or WeChat tool unavailable; not dispatched'};
       try{
-        const result=await ctx.tools.execute({callId:`companion-news-${randomUUID()}`,name:'send_wechat',arguments:{text:item.text},agent,signal:AbortSignal.any([lifecycle.signal,...(item.signal?[item.signal]:[]),AbortSignal.timeout(30000)])});
+        const result=await executeHostTool(ctx.tools,{callId:`companion-news-${randomUUID()}`,name:'send_wechat',arguments:{text:item.text},agent,signal:AbortSignal.any([lifecycle.signal,...(item.signal?[item.signal]:[]),AbortSignal.timeout(30000)])});
         if(result.isError)return{status:result.error?.info?.code==='ABORTED_BEFORE_DISPATCH'?'failed':'uncertain',detail:'News dispatch did not confirm sending; not automatically retried'};
         const value=result.value;
         if(value?.ok===true&&/\bqueued\b/i.test(value.message??''))return{status:'queued',detail:'Bridge queued news; phone receipt unverified'};

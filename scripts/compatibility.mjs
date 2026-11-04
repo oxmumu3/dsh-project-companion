@@ -4,6 +4,7 @@ const matrixVersions=JSON.parse(readFileSync(new URL('../compatibility.json',imp
 const sdkPeers=['agent','commands','llm','session','storage-domain','tools'].map(name=>'@deepseek-ai/dsh-'+name);
 import {resolve} from 'node:path';
 import {pathToFileURL} from 'node:url';
+import {readOfficialChannels} from './official-channels.mjs';
 // These contracts intentionally enumerate validated prereleases. Never bypass
 // Host admission or silently widen compatibility after an upstream release.
 export function validateCompatibility(metadata,version,verified=matrixVersions){
@@ -18,14 +19,18 @@ export function validateCompatibility(metadata,version,verified=matrixVersions){
  for(const [name,range] of Object.entries(metadata.peerDependencies??{}))if(name.startsWith('@deepseek-ai/dsh-')&&!admits(range))throw Error('Required peer is outside validated compatibility: '+name+' '+version);
  return version;
 }
+export function validateOfficialChannels(metadata,observed,verified=matrixVersions){
+ if(typeof observed?.sdkLatest!=='string'||typeof observed?.desktop!=='string')throw Error('Official desktop or latest lookup unavailable');
+ const targets=[...new Set([observed.sdkLatest,observed.desktop])];
+ for(const target of targets)validateCompatibility(metadata,target,verified);
+ return{sdkLatest:observed.sdkLatest,desktop:observed.desktop,targets};
+}
 async function main(){
  const metadata=JSON.parse(await readFile(new URL('../package.json',import.meta.url)));
  let version=process.argv[2];
- if(version==='--matrix'){validateCompatibility(metadata,matrixVersions.at(-1));console.log(JSON.stringify({sdk:matrixVersions}));return;}
+ if(version==='--matrix'){validateCompatibility(metadata,matrixVersions.at(-1));console.log(JSON.stringify({include:matrixVersions.map(sdk=>({sdk,node:sdk==='0.2.2-rc.1'?'24.22.1':'22.22.0'}))}));return;}
  if(version==='--latest'){
-  const response=await fetch('https://registry.npmjs.org/@deepseek-ai%2fdsh',{signal:AbortSignal.timeout(15000)});
-  if(!response.ok)throw Error('Official version lookup failed: '+response.status);
-  const value=await response.json();version=value['dist-tags']?.latest;
+  const observed=await readOfficialChannels();console.log(JSON.stringify({...validateOfficialChannels(metadata,observed),compatibilityOverride:false}));return;
  }
  validateCompatibility(metadata,version);console.log(JSON.stringify({supportedOfficialVersion:version,compatibilityOverride:false}));
 }
