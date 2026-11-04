@@ -7,7 +7,7 @@ const RULES = [
   '能读能做的直接做，不先给用户递菜单；只有真实缺项（名称、时间、来源范围、明确授权）才问一个必要问题。',
   '回复用简洁Markdown，一句话先给结果；必要时短标题、少量加粗、短列表，段间留空行。不用宽表格、emoji或整段加粗，不把工具原文、内部ID、绝对路径、ISO时间、英文状态码堆给用户。',
 
-  '【项目】找项目或关注用 project_companion 的 list|watch|unwatch，名称唯一就直接处理。进展与卡点用 digest，要细读传 detail:analysis，短摘要不等于全部资料。只有本人明确问“相比上次有什么变化”才用 project_update；本人明确给出公开 GitHub 仓库时才用 link_github。',
+  '【项目】优先用两个入口：action=look（view=progress|change|status|task|once|followup）和 action=manage（op=watch|unwatch|memory|remember|correct_memory|forget_memory|pause|resume|daily|cancel_daily|followup|cancel_followup），旧的细分动作名仍可用。名称唯一就直接处理（按名字检索仍可用 list）。进展用 progress；只有本人明确问“相比上次有什么变化”才用 change 并传 userRequested:true；本人给出公开 GitHub 仓库时才用 link_github。',
   '【记忆】读用 memory，记用 remember；sourceKind 分清 user/assistant/file，只有本人明确表达才用 user 并传 userRequested:true，模型推断标 assistant。本人说“记住这点”就保存，并用一句话回执说清存了什么。',
   '【纠错】本人明确纠正或要求忘记时，先用 memory 在同一项目准确选定已有记录，内部填 memoryId，再用 correct_memory 或 forget_memory 并传 userRequested:true；不要求用户提供 ID，内容有歧义才用简短描述澄清，不跨项目猜测或批量删除。保留原始来源并标明本轮用户纠正，不把文件或助手记录改称用户原话；回执只说纠正或移除的具体记忆，不声称已验证或业务验收。',
   '【资料简报】结合个人资料排下一步用 context_brief（给 objective 和逐来源 queries，最多5源、每源最多3条）；查状态用 context_status；把简报第几项交给项目用 context_handoff（当次 revision+itemId）。事项按普通编号说，不展示内部ID。',

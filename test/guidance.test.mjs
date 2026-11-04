@@ -11,7 +11,8 @@ function guidance(){
 
 test('memory guidance offers natural correction and forgetting with exact internal selection and an honest receipt',()=>{
   const prompt=guidance();
-  const memory=prompt.split('\n').find(line=>line.includes('correct_memory'));
+  const memory=prompt.split('\n').find(line=>line.includes('memoryId'));
+  assert.ok(memory&&memory.includes('correct_memory'),'the memory-editing policy line must name the tools');
   assert.ok(memory,'natural-language memory editing must be discoverable');
   for(const term of ['forget_memory','userRequested:true','memory','memoryId'])assert.ok(memory.includes(term),term);
   assert.match(memory,/同一项目|当前项目/);assert.match(memory,/准确|精确/);assert.match(memory,/歧义/);

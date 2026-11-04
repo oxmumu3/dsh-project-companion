@@ -7,6 +7,7 @@ import {defineDomain,domainTable} from '@deepseek-ai/dsh-storage-domain';
 import {createUserMessage} from '@deepseek-ai/dsh-llm';
 import {createService,parseCommand} from './src/service.js';
 import {registerGuidance} from './src/guidance.js';
+import {normalizeSurfaceAction,LOOK_VIEWS,MANAGE_OPS,SURFACE_COPY} from './src/action-surface.js';
 import {createWechatRecoveryGuard} from './src/wechat-recovery.js';
 import {createCoordinator,effectiveCwd} from './src/coordination.js';
 import {createFamilyProjectAdmission} from './src/family-project-admission.js';
@@ -1025,9 +1026,11 @@ export async function installCompanion(ctx,options={}){
   }));
   ctx.tools.register(defineTool({
     name:'project_companion',
-    description:'项目与交办。list/watch/unwatch 按友好项目名称查询或关注；digest 看进展与卡点（detail:analysis 读有界材料）；project_update 只回答“相比上次有什么变化”；memory/remember/correct_memory/forget_memory 管项目记忆；context_brief/context_status/context_handoff/context_check/context_forget 走个人资料简报闭环；check_once/once_status/cancel_once 是一次检查，configure_followup/cancel_followup/followup_status 是周期跟进，configure_daily/cancel_daily 是每日汇报；remind/cancel_reminder 是提醒；coordinate/task_status 是交办与结果查询；pause/resume 管自动跟进。查询不派工。',
+    description:'项目与交办。两类入口优先用：【看】action:look + view：progress=进展与卡点｜change=相比上次的变化（本人明确问了才传 userRequested:true）｜status=总状态｜task=交办到哪了｜once=一次检查｜followup=周期跟进。【管】action:manage + op：watch/unwatch=关注或取消｜memory/remember/correct_memory/forget_memory=项目记忆｜pause/resume=暂停或恢复自动跟进｜daily/cancel_daily=每日汇报｜followup/cancel_followup=周期跟进配置。【做】保持独立动作：coordinate=明确要求执行或继续；remind=提醒；personal_context 读外部资料；personal_review 做回顾；ai_digest 做资讯。【兼容】旧动作名仍可用，不删是为了不破坏已安装：list、digest、project_update、status、task_status、once_status、cancel_once、followup_status、check_once、configure_daily、cancel_daily、configure_followup、cancel_followup、link_github、context_brief、context_status、context_handoff、context_check、context_forget，提醒取消用 cancel_reminder。新调用优先用 look/manage。',
     parameters:{
-      action:{type:'string',required:true,enum:['watch','unwatch','list','digest','project_update','context_brief','context_status','context_handoff','context_check','context_forget','memory','remember','correct_memory','forget_memory','check_once','once_status','cancel_once','configure_followup','cancel_followup','followup_status','configure_daily','cancel_daily','pause','resume','remind','cancel_reminder','link_github','status','coordinate','task_status']},
+      action:{type:'string',required:true,enum:['look','manage','watch','unwatch','list','digest','project_update','context_brief','context_status','context_handoff','context_check','context_forget','memory','remember','correct_memory','forget_memory','check_once','once_status','cancel_once','configure_followup','cancel_followup','followup_status','configure_daily','cancel_daily','pause','resume','remind','cancel_reminder','link_github','status','coordinate','task_status']},
+      view:{type:'string',enum:LOOK_VIEWS,description:'look 的视角。'+SURFACE_COPY.look},
+      op:{type:'string',enum:MANAGE_OPS,description:'manage 的动作。'+SURFACE_COPY.manage},
       reviewItemId:{type:'string',description:'coordinate可选：仅当本人任务全文明确引用个人回顾「事项原题」时，从prepare结果映射稳定itemId。目标须在该事项原回顾项目范围内；不自行添加源正文或宣称已处理。'},
       objective:{type:'string',description:'context_brief：用户明确想推进的目标，最多160字；沿用同一目标时可省略。'},
       queries:{type:'array',items:{type:'object',additionalProperties:false,properties:{source:{type:'string',enum:CONTEXT_SOURCES,required:true},operation:{type:'string',required:true},query:{type:'string'},id:{type:'string'},ids:{type:'array',items:{type:'string'}},projectId:{type:'string'},range:{type:'string'},from:{type:'string'},to:{type:'string'},calendarId:{type:'string'},limit:{type:'number'}}},description:'context_brief：用户明确限定的最多5项来源查询（每个来源一次），每项最多3条。每源独立参数，沿用当前简报范围时省略；不因已连接而扫描全部账号。'},
@@ -1091,6 +1094,7 @@ export async function installCompanion(ctx,options={}){
     }},
     async execute(args,execution){
       if(disposed)return{status:'blocked',accepted:false,text:'项目助理正在关闭，暂不接收新的交办。'};
+      args=normalizeSurfaceAction(args);
       try{return await withFamily(execution,args,async admittedArgs=>{args=admittedArgs;try{
         if(args.action.startsWith('context_')){
           try{

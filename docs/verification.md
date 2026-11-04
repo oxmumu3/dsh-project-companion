@@ -1,3 +1,16 @@
+# 0.23.0 验证增量
+
+2026-11-04，把项目工具的 30 个动作收敛为 `look` / `manage` 两个首选入口（旧名保留兼容）。
+
+- `node --max-old-space-size=256 --test --test-concurrency=1 test/*.test.mjs`：2,343 项 / 2,306 通过 / 0 失败 / 37 跳过（跳过项均需 Family 源码树）。
+- `node --test test/contract-guidance.test.mjs test/guidance.test.mjs test/action-surface.test.mjs test/routing-surface.test.mjs`：15/15。
+- `npm run report:routing`：动作 32（入口 2 + 兼容旧名 30）、look 视角 6、manage 动作 12、策略提示词 3,112 字符、`project_companion` 描述 722 字符、四个工具描述合计 1,367 字符、40 句语料 40 句可解析到入口。
+- 契约测试固定三件事：入口只能翻译成已声明的动作；语料覆盖每个 view/op；描述写明全部取值。
+
+**本版没有验证的**：没有用真实模型跑这 40 句，所以"入口收敛是否让模型选得更准"仍未证实——本版只证明入口集合更小、映射正确、语料可解析。旧动作名仍在 enum 中，模型理论上仍可直接调用它们。界面上的首屏简报与诊断码可视化未做。
+
+---
+
 # 0.22.1 验证增量
 
 2026-11-04，把 0.21 私有线独有的 3 个诊断模块移植到发布线并接回 9 个引用点（另补上私有线清单里漏掉的 `news-model.js` 与 `review-runtime-health.js`）。
