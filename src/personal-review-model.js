@@ -1,6 +1,7 @@
 import {reviewDeadlineCatalog,resolveReviewDeadlines} from './review-deadline-candidates.js';
 import {remainingModelOutputBudget,awaitModelGuard} from './model-generation-controls.js';
 import {safeReviewOutputRule,reviewRepairInstruction} from './review-output-diagnostics.js';
+import {safeModelOutputIssue} from './model-output-issue.js';
 /** Bounded private-context generation with at most one validated repair. No tools, session, transcript or raw diagnostics. */
 import { z } from 'zod';
 import { runNewsModel, NewsModelError, safeModelCallDiagnostic, boundedModelControls } from './news-model.js';
@@ -51,7 +52,7 @@ export function createPersonalReviewModel(ctx, { clock = () => new Date(), timeo
         if (data.length > 190000) fail('MODEL_INVALID_INPUT');
       } catch { fail('MODEL_INVALID_INPUT'); }
       if (!input.length) return { items: [] };
-      const controller = new AbortController(); active.add(controller); let timedOut=false, modelDiagnostic, outputRule;
+      const controller = new AbortController(); active.add(controller); let timedOut=false, modelDiagnostic, outputRule, outputIssue;
       const checkedGuard=guard?async()=>{try{if(await awaitModelGuard(guard,controller.signal)===false)fail('MODEL_AUTHORIZATION_CHANGED');}catch{fail('MODEL_AUTHORIZATION_CHANGED');}}:undefined;
       const stop = () => controller.abort(); signal?.addEventListener('abort', stop, { once: true });
       const timer = setTimeout(()=>{timedOut=true;stop();}, timeoutMs);
@@ -65,9 +66,9 @@ export function createPersonalReviewModel(ctx, { clock = () => new Date(), timeo
           if(checkedGuard)await checkedGuard();controller.signal.throwIfAborted();return result;
         };
         const parse=result=>{
-          outputRule=undefined;let parsed;
-          try{parsed=JSON.parse(result.text);}catch{outputRule='json';fail('MODEL_INVALID_OUTPUT');}
-          try{return validatePersonalReviewSummary(resolveReviewDeadlines(parsed,deadlineCandidates),input);}catch(error){outputRule=safeReviewOutputRule(error?.reviewValidationRule);fail('MODEL_INVALID_OUTPUT');}
+          outputRule=undefined;outputIssue=undefined;let parsed;
+          try{parsed=JSON.parse(result.text);}catch{outputRule='json';outputIssue={field:'root',rule:'json'};fail('MODEL_INVALID_OUTPUT');}
+          try{return validatePersonalReviewSummary(resolveReviewDeadlines(parsed,deadlineCandidates),input);}catch(error){outputRule=safeReviewOutputRule(error?.reviewValidationRule);outputIssue=safeModelOutputIssue(error?.outputIssue);fail('MODEL_INVALID_OUTPUT');}
         };
         const result=await request(SYSTEM,6500);let answer;
         try{answer=parse(result);}
@@ -81,7 +82,7 @@ export function createPersonalReviewModel(ctx, { clock = () => new Date(), timeo
         }
         totals.successful++;return answer;
       } catch (error) {
-        totals.failed++; const safe=new NewsModelError(timedOut?'MODEL_TIMEOUT':controller.signal.aborted?'MODEL_ABORTED':error instanceof NewsModelError?error.code:'MODEL_REQUEST_FAILED'); if(modelDiagnostic)safe.modelDiagnostic=modelDiagnostic;if(safe.code==='MODEL_INVALID_OUTPUT'&&outputRule)safe.outputRule=outputRule;throw safe;
+        totals.failed++; const safe=new NewsModelError(timedOut?'MODEL_TIMEOUT':controller.signal.aborted?'MODEL_ABORTED':error instanceof NewsModelError?error.code:'MODEL_REQUEST_FAILED'); if(modelDiagnostic)safe.modelDiagnostic=modelDiagnostic;if(safe.code==='MODEL_INVALID_OUTPUT'&&outputRule)safe.outputRule=outputRule;if(safe.code==='MODEL_INVALID_OUTPUT'&&outputIssue)safe.outputIssue=outputIssue;throw safe;
       } finally { clearTimeout(timer); signal?.removeEventListener('abort', stop); active.delete(controller); controller.abort(); }
     },
     usage: () => structuredClone(totals),

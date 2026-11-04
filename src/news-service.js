@@ -5,23 +5,26 @@ import {z} from 'zod';
 import {renderNewsDigest,newsPublicUrl} from './news-render.js';
 import {normalizeNewsTopics} from './news-topics.js';
 import {safeModelCallDiagnostic} from './news-model.js';
+import {modelOutputIssueSchema,safeModelOutputIssue} from './model-output-issue.js';
 const NEWS_MODEL_CODES = new Set(['MODEL_UNAVAILABLE','MODEL_INVALID_INPUT','MODEL_INVALID_OUTPUT','MODEL_TOOL_OUTPUT','MODEL_INCOMPLETE','MODEL_TOKEN_LIMIT','MODEL_OUTPUT_LIMIT','MODEL_TIMEOUT','MODEL_ABORTED','MODEL_CLOSED','MODEL_AUTHORIZATION_CHANGED','MODEL_REQUEST_FAILED']);
 const NEWS_STAGE_CODES = {sources:'NEWS_SOURCE_FAILED',selection:'NEWS_SELECTION_FAILED',summary:'NEWS_SUMMARY_FAILED',article:'NEWS_ARTICLE_FAILED'};
 const NEWS_DIAGNOSTIC_STAGES = ['sources','selection','summary','article','authorization','cancelled','unknown'];
 const NEWS_DIAGNOSTIC_CODES = [...NEWS_MODEL_CODES,...Object.values(NEWS_STAGE_CODES),'NEWS_AUTHORIZATION_CHANGED','NEWS_REQUEST_FAILED','NEWS_CANCELLED','NEWS_PAUSED','NEWS_TIMEOUT'];
 const diagnosticCount=z.number().int().min(0).max(1000000000).nullable();
 const authorizationReasons=['owner_offline','owner_changed','owner_unknown'];
-const newsDiagnosticSchema=z.object({stage:z.enum(NEWS_DIAGNOSTIC_STAGES),code:z.enum(NEWS_DIAGNOSTIC_CODES),authorizationReason:z.enum(authorizationReasons).optional(),model:z.object({requestedMaxTokens:diagnosticCount,preparedMaxTokens:diagnosticCount,reasoningEffort:z.enum(['off','none','minimal','low','medium','high','max','other','unset']),finish:z.enum(['none','stop','max-tokens','other']),textChars:diagnosticCount,reasoningChars:diagnosticCount,outputTokens:diagnosticCount,reasoningTokens:diagnosticCount}).strict().optional()}).strict();
+const newsDiagnosticSchema=z.object({stage:z.enum(NEWS_DIAGNOSTIC_STAGES),code:z.enum(NEWS_DIAGNOSTIC_CODES),authorizationReason:z.enum(authorizationReasons).optional(),outputIssue:modelOutputIssueSchema.optional(),model:z.object({requestedMaxTokens:diagnosticCount,preparedMaxTokens:diagnosticCount,reasoningEffort:z.enum(['off','none','minimal','low','medium','high','max','other','unset']),finish:z.enum(['none','stop','max-tokens','other']),textChars:diagnosticCount,reasoningChars:diagnosticCount,outputTokens:diagnosticCount,reasoningTokens:diagnosticCount}).strict().optional()}).strict();
 function jobDiagnostic(error) {
   const code=NEWS_DIAGNOSTIC_CODES.includes(error?.code)?error.code:'NEWS_REQUEST_FAILED';
   const stage=code==='NEWS_AUTHORIZATION_CHANGED'?'authorization':['NEWS_CANCELLED','NEWS_PAUSED'].includes(code)?'cancelled':NEWS_DIAGNOSTIC_STAGES.includes(error?.newsDiagnostic?.stage)?error.newsDiagnostic.stage:'unknown';
   const model=safeModelCallDiagnostic(error?.newsDiagnostic?.model);
-  return newsDiagnosticSchema.parse({stage,code,...(authorizationReasons.includes(error?.authorizationReason)?{authorizationReason:error.authorizationReason}:{}),...(model?{model}:{})});
+  const issue=code==='MODEL_INVALID_OUTPUT'?safeModelOutputIssue(error?.newsDiagnostic?.outputIssue):undefined;
+  return newsDiagnosticSchema.parse({stage,code,...(authorizationReasons.includes(error?.authorizationReason)?{authorizationReason:error.authorizationReason}:{}),...(model?{model}:{}),...(issue?{outputIssue:issue}:{})});
 }
 function pipelineFailure(error, stage, label) {
   const code = NEWS_MODEL_CODES.has(error?.code) ? error.code : NEWS_STAGE_CODES[stage];
   const model = safeModelCallDiagnostic(error?.modelCallDiagnostic);
-  return Object.assign(new Error(label), {code, newsDiagnostic:{stage,code,...(model?{model}:{})}});
+  const issue=code==='MODEL_INVALID_OUTPUT'?safeModelOutputIssue(error?.outputIssue):undefined;
+  return Object.assign(new Error(label), {code, newsDiagnostic:{stage,code,...(model?{model}:{}),...(issue?{outputIssue:issue}:{})}});
 }
 
 const SIX_HOURS=21600000,PIPELINE_TIMEOUT=240000;

@@ -11,5 +11,7 @@ export function reviewRuntimeHealth({subscription,jobs=[],now=new Date()}={}){
    state=['generating','dispatching'].includes(latest.status)?(age>180000?'stalled':'running'):['reported_sent','queued'].includes(latest.status)?'channel_accepted':latest.status==='uncertain'?'uncertain':latest.status==='quiet'?'quiet':latest.status==='unknown'?'unknown':'failed';
   }
  }
- return{state,label:labels[state],kind:latest?.kind??null,at:latest?.createdAt??null,phoneReceipt:'unverified',retryAllowed:false};
+ const decision=latest?.attentionDecision;
+ const label=state==='unknown'&&decision?.outcome==='no_actionable_in_covered_scope'?'最近一次已检查，未发现达到提醒门槛的新事项；部分来源覆盖有限':state==='unknown'&&decision?.outcome==='sources_unavailable'?'最近一次未能读取授权来源，变化情况未知':labels[state];
+ return{state,label,kind:latest?.kind??null,at:latest?.createdAt??null,phoneReceipt:'unverified',retryAllowed:false};
 }

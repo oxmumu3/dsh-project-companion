@@ -2,7 +2,8 @@ import {reviewRuntimeHealth} from './review-runtime-health.js';
 import {prepareReviewContinuation,reviewOrigin,mergeReviewExecutions} from './review-continuation.js';
 import {reviewGoalSchema,meetingCacheSchema,changeReviewGoal,activeReviewGoals,calendarCoverageComplete,captureReviewMeetings,dueReviewMeeting,prepareReviewMeeting,selectMeetingPreparation,meetingWorkHours} from './personal-review-goals.js';
 import {recoveryCheck,recoveryWindow,recoveryWorkTime,RECOVERY_CHECKPOINT_INTERVAL} from './personal-review-recovery.js';
-import { attentionDue, attentionStatus, selectAttentionItems } from './personal-review-attention.js';
+import { attentionDue, attentionStatus, attentionDeadlineThrough, selectAttentionItems } from './personal-review-attention.js';
+import {attentionDecisionSchema} from './personal-review-attention-diagnostics.js';
 import { randomUUID } from 'node:crypto';
 import { isAbsolute, resolve } from 'node:path';
 import { z } from 'zod';
@@ -21,7 +22,7 @@ const attentionSchema=z.object({enabled:z.boolean(),intervalMinutes:z.literal(12
 const recoverySchema=z.object({key:digest,observedAt:reviewInstant,offlineSince:reviewInstant.nullable(),blocked:z.boolean(),diagnostic:personalReviewRecoveryDiagnosticSchema.optional()}).strict();
 const lastViewSchema=z.object({viewToken:reviewId.optional(),caller:callerSchema,scopeKey:digest,bindingKey:digest,grant:digest,at:reviewInstant,itemIds:z.array(reviewId).max(5)}).strict();
 const statuses = ['generating', 'dispatching', 'reported_sent', 'queued', 'uncertain', 'failed', 'cancelled', 'expired', 'quiet', 'unknown'];
-const jobSchema = z.object({ id: reviewId, sessionId: reviewId, requestId: reviewId, kind: z.enum(['daily', 'weekly', 'attention']), occurrence: reviewId, createdAt: reviewInstant, status: z.enum(statuses), itemIds: z.array(reviewId).max(5), diagnostic: personalReviewDiagnosticSchema.optional(),sourceDiagnostics:reviewSourceDiagnosticsSchema.optional() }).strict();
+const jobSchema = z.object({ id: reviewId, sessionId: reviewId, requestId: reviewId, kind: z.enum(['daily', 'weekly', 'attention']), occurrence: reviewId, createdAt: reviewInstant, status: z.enum(statuses), itemIds: z.array(reviewId).max(5), diagnostic: personalReviewDiagnosticSchema.optional(),sourceDiagnostics:reviewSourceDiagnosticsSchema.optional(),attentionDecision:attentionDecisionSchema.optional() }).strict();
 export const personalReviewRowSchema = z.object({ id: z.literal('profile'), version: z.literal(1), scope: scopeSchema.nullable(), goals:z.array(reviewGoalSchema).max(50).default([]), meetingCache:meetingCacheSchema.default(null), recovery:recoverySchema.nullable().default(null), lastView:lastViewSchema.nullable().default(null), attentionClaims:z.array(z.object({id:reviewId,at:reviewInstant,timeZone:z.string(),status:z.enum(['dispatching','reported_sent','queued','uncertain'])}).strict()).max(100).default([]), subscription: scopeSchema.extend({ schedule: scheduleSchema, createdAt: reviewInstant, paused: z.boolean(), attention:attentionSchema.optional() }).strict().nullable(), items: z.array(reviewItemSchema).max(300), jobs: z.array(jobSchema).max(60), occurrences: z.array(reviewId).max(800), watermarks: z.record(z.string(), z.object({ daily: reviewInstant.optional(), weekly: reviewInstant.optional(), attention:reviewInstant.optional() }).strict()), receipts: z.array(z.object({ sessionId: reviewId, requestId: reviewId, action: z.string().max(30), at: reviewInstant }).strict()).max(200) }).strict();
 const fresh = () => ({ id: 'profile', version: 1, scope: null, subscription: null, items: [], jobs: [], occurrences: [], watermarks: {}, receipts: [] });
 const labels = { generating: '正在整理', dispatching: '正在提交通道', reported_sent: '通道报告已发出，手机送达与已读未知', queued: '通道已排队，手机送达未知', uncertain: '发送结果不确定，不自动重发', failed: '本次回顾失败，不自动重试', cancelled: '本次已取消', expired: '已错过本次检查窗口，不补发', quiet: '没有达到提醒门槛的新事项，本次保持安静', unknown: '来源覆盖未知，未作无变化判断' };
@@ -188,7 +189,8 @@ export function createPersonalReviewService({ store, readBinding, readBindingSyn
     if(recovery.coverageUnknown)for(const coverage of data.coverage)if(coverage.status==='ok'){coverage.status='partial';coverage.truncated=true;}
     const recoveryNote=recovery.coverageUnknown?'未覆盖时段超过 7 天；本次仅检查最近 7 天与当前状态，更早变化仍未知。\n\n':'';
     const reconciled = reconcileReviewSourceTasks(state.items, data.taskChecks, { scopeKey: run.key, taskScopeKey });
-    if (!data.coverage.some(c => ['ok', 'partial'].includes(c.status))) { generationStatus('unknown'); return { ...data,sourceDiagnostics, items: [], selected: [], ledger: reconciled, text: recoveryNote+renderPersonalReview([], data.coverage, { kind, now: at, unknown: true, timeZone }), unknown: true, at }; }
+    const selectAttention=items=>selectAttentionItems(items,{now:at,scopeKey:run.key,coverage:data.coverage,remaining:Math.max(0,(run.attention?.maxMessagesPerDay??2)-usedAttention(run)),deadlineThrough:attentionDeadlineThrough({now:at,attention:run.attention,createdAt:run.attention?.createdAt??run.createdAt,occurrences:state.occurrences,...run.schedule})});
+    if (!data.coverage.some(c => ['ok', 'partial'].includes(c.status))) { generationStatus('unknown'); return { ...data,sourceDiagnostics,...(kind==='attention'?{attentionDecision:selectAttention([]).decision}:{}), items: [], selected: [], ledger: reconciled, text: recoveryNote+renderPersonalReview([], data.coverage, { kind, now: at, unknown: true, timeZone }), unknown: true, at }; }
     const previousItems = reconciled.filter(i => i.scopeKey === run.key && currentTaskScope(i)).slice(-60).map(i => ({ id: i.id, key: i.key, kind: i.kind, title: i.title, summary: i.summary, status: i.status, dueAt: i.dueAt ?? null, evidenceIds: i.evidence.map(e => e.id), lastSeenAt: i.lastSeenAt }));
     // Trusted control metadata comes from the guarded current subscription,
     // never from project notes or collector-supplied fields. It grants no IO.
@@ -202,12 +204,13 @@ export function createPersonalReviewService({ store, readBinding, readBindingSyn
     if (data.evidence.length) { stage='model'; const summary = await race(() => summarize({ ...copy(data), previousItems, currentReview, goals:activeReviewGoals(state.goals,run).map(g=>({objective:g.objective,project:g.project,meetingTitle:g.meetingTitle??null})), kind: materialKind, now: checkedAt, signal: run.signal, guard: () => guard(run), authorizeSync: () => authorizeSync(run) }), run.signal, 'REVIEW_MODEL_FAILED'); await guard(run); candidates = validatePersonalReviewSummary(summary, data.evidence).items; }
     const meetingCandidates=kind==='attention'&&calendarCoverageComplete(data.coverage)?prepareReviewMeeting(state.goals,run,data.evidence,candidates,at):[];
     const ledger = mergeReviewItems(reconciled, [...candidates,...meetingCandidates], data.evidence, { now: at, scopeKey: run.key, grantScopeKey: taskScopeKey });
-    const attentionSelection=kind==='attention'?selectAttentionItems(ledger.filter(i=>currentTaskScope(i)&&i.lastSeenAt===at),{now:at,scopeKey:run.key,coverage:data.coverage,remaining:Math.max(0,(run.attention?.maxMessagesPerDay??2)-usedAttention(run))}):null;
+    const attentionSelection=kind==='attention'?selectAttention(ledger.filter(i=>currentTaskScope(i)&&i.lastSeenAt===at)):null;
     let selected = occurrence.startsWith('meeting:')?[]:attentionSelection?.selected ?? selectReviewItems(ledger.filter(currentTaskScope), { now: at, kind, occurrence, scopeKey: run.key });
     if(kind==='attention'&&usedAttention(run)<(run.attention?.maxMessagesPerDay??2)){const preparation=selectMeetingPreparation(ledger.filter(currentTaskScope),meetingCandidates.map(c=>c.key),{scopeKey:run.key,now:at});selected=[...selected,...preparation].filter((v,i,a)=>a.findIndex(x=>x.item.id===v.item.id)===i).slice(0,3);}
     const items = selected.map(s => copy(s.item)); const text = recoveryNote+(kind==='attention'?'有新的变化值得留意。\n\n':'')+renderPersonalReview(items, data.coverage, { kind:kind==='attention'?'daily':kind, now: at, timeZone });
     selected = selected.filter(s => items.some(i => i.id === s.item.id));
-    generationStatus('completed'); return { ...data,sourceDiagnostics, items, selected, ledger, text, unknown: attentionSelection?.status==='unknown', at };
+    const attentionDecision=attentionSelection?attentionDecisionSchema.parse({...attentionSelection.decision,selectedItems:items.length,eligibleItems:Math.max(attentionSelection.decision.eligibleItems,items.length),...(items.length?{outcome:'selected'}:{})}):null;
+    generationStatus('completed'); return { ...data,sourceDiagnostics,...(attentionDecision?{attentionDecision}:{}), items, selected, ledger, text, unknown: attentionSelection?.status==='unknown', at };
     } catch(error) { const failure=personalReviewFailure(error,{...counts,stage,sourceDiagnostics,elapsedMs:Date.now()-started,code:stage==='collection'?'REVIEW_COLLECTION_FAILED':stage==='validation'?'REVIEW_VALIDATION_FAILED':stage==='model'?'REVIEW_MODEL_FAILED':'REVIEW_FAILED'});generationStatus('failed',failure.reviewDiagnostic);throw failure; }
   }
   async function runJob(scope, { requestId, kind = 'daily', occurrence, signal, expired = false, input = {}, admission = generation, coClaim=[], recovery=null }) {
@@ -224,6 +227,7 @@ export function createPersonalReviewService({ store, readBinding, readBindingSyn
       if (!expired) await guard(run); await persist(draft, input); state = draft; journaled = true; if (expired) return result(job);
       const generated = await generate(run, kind, occurrence); await guard(run);
       if(generated.sourceDiagnostics.length)job.sourceDiagnostics=copy(generated.sourceDiagnostics);
+      if(generated.attentionDecision)job.attentionDecision=copy(generated.attentionDecision);
       // A slow read/model or delayed transport must not carry proactive work
       // into quiet hours, or deliver a meeting briefing after the meeting starts.
       const deliveryEligible=()=>kind!=='attention'||meetingWorkHours(now(),scope.schedule.timeZone)&&generated.items.every(item=>!item.key.startsWith('meeting-prep:')||typeof item.eventStartAt==='string'&&Date.parse(item.eventStartAt)>now().getTime());

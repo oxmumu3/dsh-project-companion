@@ -1,5 +1,6 @@
 import {canonicalizeTimeZone,makeLocalFormatter,localProjection,resolveLocalInstant} from '../vendor/proactive/lib/domain.js';
 import {reviewNotificationReason} from './personal-review-ledger.js';
+import {attentionDecisionSchema,attentionCoverageSummary} from './personal-review-attention-diagnostics.js';
 
 const DAY=86400000,GRACE=15*60000,DEADLINE_WINDOW=2*3600000;
 const iso=epoch=>new Date(epoch).toISOString();
@@ -36,22 +37,47 @@ export function attentionDue({now,timeZone,attention,createdAt,occurrences=[],da
  result.occurrence=latest;result.status=current-latest.epoch<=GRACE?'due':'expired';return result;
 }
 
+/** Cover the quiet-hours gap using the next actual regular check, at most a day.
+ * This only selects from already-collected evidence; it grants no extra reads. */
+export function attentionDeadlineThrough(options={}){
+ const current=epochOf(options.now),zone=canonicalizeTimeZone(options.timeZone),local=localProjection(makeLocalFormatter(zone),current);
+ const next=attentionDue(options).nextRun,candidates=next?[epochOf(next)]:[];
+ const day=Date.UTC(local.year,local.month-1,local.day);
+ for(const date of [day,day+DAY]){
+  const value=new Date(date),times=[['daily',options.dailyTime],...(value.getUTCDay()===options.weeklyDay?[['weekly',options.weeklyTime]]:[])];
+  for(const [kind,time] of times){if(typeof time!=='string'||!/^([01]\d|2[0-3]):[0-5]\d$/.test(time)||(options.occurrences??[]).includes(`${kind}:${datePart(date)}`))continue;
+   try{const when=resolveLocalInstant({year:value.getUTCFullYear(),month:value.getUTCMonth()+1,day:value.getUTCDate(),hour:Number(time.slice(0,2)),minute:Number(time.slice(3)),second:0,millisecond:0},zone);if(when>current)candidates.push(when);}catch{/* A DST gap is not an actual check. */}
+  }
+ }
+ const earliest=candidates.length?Math.min(...candidates):current+DEADLINE_WINDOW;
+ return iso(Math.min(current+DAY,Math.max(current+DEADLINE_WINDOW,earliest)));
+}
+
 /** Existing ledger rows and source coverage in; no effects or ledger changes. */
-export function selectAttentionItems(items,{now,scopeKey,coverage,remaining}={}){
- const instant=epochOf(now);if(!Array.isArray(items)||!Array.isArray(coverage)||typeof scopeKey!=='string'||!Number.isInteger(remaining)||remaining<0)throw new Error('主动关注输入无效');
- if(!coverage.some(row=>row&&['ok','partial'].includes(row.status)))return{status:'unknown',selected:[]};
- if(remaining===0)return{status:'budget_exhausted',selected:[]};
+export function selectAttentionItems(items,{now,scopeKey,coverage,remaining,deadlineThrough}={}){
+ const instant=epochOf(now);if(!Array.isArray(items)||items.length>300||!Array.isArray(coverage)||typeof scopeKey!=='string'||!Number.isInteger(remaining)||remaining<0)throw new Error('主动关注输入无效');
+ const horizon=deadlineThrough===undefined?instant+DEADLINE_WINDOW:epochOf(deadlineThrough);
+ if(horizon<=instant||horizon-instant>DAY)throw Error('主动关注期限窗口无效');
+ const safeCoverage=attentionCoverageSummary(coverage),reasonCounts={scope_or_evidence:0,already_handled_or_not_new:0,not_urgent:0,estimated_deadline:0,outside_deadline_window:0};
+ let evaluatedItems=0;
+ const finish=(status,selected=[],eligibleItems=0)=>({status,selected,decision:attentionDecisionSchema.parse({checkedAt:iso(instant),deadlineThrough:iso(horizon),outcome:status==='selected'?'selected':status==='budget_exhausted'?'budget_exhausted':safeCoverage.some(r=>r.status!=='unavailable')?'no_actionable_in_covered_scope':'sources_unavailable',observedItems:items.length,evaluatedItems,eligibleItems,selectedItems:selected.length,reasonCounts,coverage:safeCoverage})});
+ if(!coverage.some(row=>row&&['ok','partial'].includes(row.status)))return finish('unknown');
+ if(remaining===0)return finish('budget_exhausted');
  const candidates=[];
  for(const item of items){
-  if(item?.scopeKey!==scopeKey||!Array.isArray(item.evidence)||!item.evidence.length||!Array.isArray(item.notifications)||item.evidence.some(e=>!coverage.some(c=>c.source===e.source&&['ok','partial'].includes(c.status))))continue;
-  const reason=reviewNotificationReason(item,iso(instant),'daily');if(!reason||item.notifications.includes(reason))continue;
+  evaluatedItems++;
+  if(item?.scopeKey!==scopeKey||!Array.isArray(item.evidence)||!item.evidence.length||!Array.isArray(item.notifications)||item.evidence.some(e=>!coverage.some(c=>c.source===e.source&&['ok','partial'].includes(c.status)))){reasonCounts.scope_or_evidence++;continue;}
+  const reason=reviewNotificationReason(item,iso(instant),'daily');if(!reason||item.notifications.includes(reason)){reasonCounts.already_handled_or_not_new++;continue;}
   const delta=Date.parse(item.dueAt??'')-instant;
-  const deadline=item.kind==='deadline'&&item.dueAtBasis==='source'&&Number.isFinite(delta)&&delta>=0&&delta<=DEADLINE_WINDOW&&!item.notifications.includes(`due:${item.dueAt}`);
+  const deadline=item.kind==='deadline'&&item.dueAtBasis==='source'&&Number.isFinite(delta)&&delta>=0&&delta<=horizon-instant&&!item.notifications.includes(`due:${item.dueAt}`);
   const freshRisk=item.kind==='risk'&&item.priority==='high'&&(reason==='new'||reason.startsWith('update:')||reason.startsWith('snooze:'));
   if(deadline||freshRisk)candidates.push({item,reason,deadline});
+  else if(item.kind==='deadline'&&item.dueAtBasis==='relative')reasonCounts.estimated_deadline++;
+  else if(item.kind==='deadline'&&Number.isFinite(delta))reasonCounts.outside_deadline_window++;
+  else reasonCounts.not_urgent++;
  }
  candidates.sort((a,b)=>Number(b.deadline)-Number(a.deadline)||Date.parse(a.item.dueAt??'9999-01-01')-Date.parse(b.item.dueAt??'9999-01-01')||String(a.item.id).localeCompare(String(b.item.id)));
- const selected=candidates.slice(0,2).map(({item,reason})=>({item,reason}));return{status:selected.length?'selected':coverage.some(row=>row.status!=='ok'||row.truncated===true)?'unknown':'quiet',selected};
+ const selected=candidates.slice(0,2).map(({item,reason})=>({item,reason}));return finish(selected.length?'selected':coverage.some(row=>row.status!=='ok'||row.truncated===true)?'unknown':'quiet',selected,candidates.length);
 }
 
 export function attentionStatus(options={}){

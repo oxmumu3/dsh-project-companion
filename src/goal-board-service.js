@@ -1,7 +1,8 @@
 import {randomUUID} from 'node:crypto';
 import {z} from 'zod';
-import {goalBoardRowSchema,freshGoalBoardRow,goalFragmentSchema,goalCoverageSchema,goalIdentitySchema,validateGoalBoardResult} from './goal-board-store.js';
+import {goalBoardRowSchema,freshGoalBoardRow,goalFragmentSchema,goalCoverageSchema,goalIdentitySchema,isolateUnsupportedGoalProposals} from './goal-board-store.js';
 import {cleanGoalSource} from './goal-board-collect.js';
+import {safeGoalOutputRule} from './goal-board-diagnostics.js';
 export {goalBoardRowSchema} from './goal-board-store.js';
 
 const error=code=>Object.assign(new Error(code),{code});
@@ -62,7 +63,7 @@ export function createGoalBoard({store,access,collect,model,clock=()=>new Date()
   if(parsed.coverage.some(c=>!snapshot.grants.some(g=>g.workspaceId===c.workspaceId)))fail('GOAL_COLLECT_INVALID');
   return{fragments:parsed.fragments.map(f=>({...f,workspaceLabel:cleanGoalSource(f.workspaceLabel,200),reference:cleanGoalSource(f.reference,1000),text:cleanGoalSource(f.text,3000)})),coverage:parsed.coverage,nextCursor:parsed.nextCursor};
  }
- function applyResult(result,fragments,snapshot,coverage,cursor,preserveUntouched=false){
+ function applyResult(result,fragments,snapshot,coverage,cursor,preserveUntouched=false,quarantinedIds=[]){
   const projects=clone(state.projects),locks=new Map(state.locks.map(lock=>[lock.evidenceId,lock.targetProjectId])),incoming=new Set(fragments.map(f=>f.id));
   const sourceOwners=new Map();for(const p of projects)for(const id of p.evidenceIds)sourceOwners.set(id,p.id);
   const assigned=new Map(),modelAssignments=new Map(),standalone=new Set(result.standaloneIds),uncertain=new Set(result.uncertainIds),updated=new Set();
@@ -79,6 +80,9 @@ export function createGoalBoard({store,access,collect,model,clock=()=>new Date()
     target.lane=group.lane;target.progress=group.progress;target.nextStep=group.nextStep;target.stale=false;target.updatedAt=now();updated.add(target.id);
    }
   }
+  // An unsupported new proposal cannot undo an already confirmed association.
+  // Only isolated evidence is affected; ordinary model uncertainty keeps its meaning.
+  for(const id of quarantinedIds){const owner=sourceOwners.get(id),prior=projects.find(p=>p.id===owner);if(prior?.state==='confirmed'){uncertain.delete(id);assigned.set(id,owner);prior.progress=null;prior.nextStep=null;prior.lane='unknown';prior.stale=true;}}
   // Manual assignments win over every model partition, including standalone.
   for(const f of fragments)if(locks.has(f.id)){const owner=locks.get(f.id);standalone.delete(f.id);uncertain.delete(f.id);if(owner===null){assigned.delete(f.id);standalone.add(f.id);}else assigned.set(f.id,owner);}
   for(const p of projects){
@@ -113,18 +117,20 @@ export function createGoalBoard({store,access,collect,model,clock=()=>new Date()
     if(!job.sweep)coverage=data.coverage;
     const inputIds=new Set(data.fragments.map(f=>f.id));
     const existingProjects=state.projects.map(({id,title,goal,constraints,state,ignored,evidenceIds})=>({id,title,goal,constraints,state,ignored,evidenceIds:evidenceIds.filter(id=>inputIds.has(id))}));
-    const result=await bounded(Promise.resolve().then(()=>{checkJobRevision(job);return model.recognize({fragments:clone(data.fragments),existingProjects:clone(existingProjects),signal:job.controller.signal,guard:()=>checkJob(job),authorizeSync:()=>authorizeJob(job)});}),job.controller.signal);
-    await bounded(checkJob(job),job.controller.signal);const validated=validateGoalBoardResult(result,data.fragments,existingProjects);
+    let quarantinedIds=[];
+    const result=await bounded(Promise.resolve().then(()=>{checkJobRevision(job);return model.recognize({fragments:clone(data.fragments),existingProjects:clone(existingProjects),signal:job.controller.signal,guard:()=>checkJob(job),authorizeSync:()=>authorizeJob(job),onQuarantined:ids=>{checkJobRevision(job);if(!Array.isArray(ids)||new Set(ids).size!==ids.length||ids.some(id=>!inputIds.has(id)))fail('MODEL_INVALID_OUTPUT');quarantinedIds=[...ids];}});}),job.controller.signal);
+    await bounded(checkJob(job),job.controller.signal);const normalized=isolateUnsupportedGoalProposals(result,data.fragments,existingProjects),validated=normalized.result;quarantinedIds=[...new Set([...quarantinedIds,...normalized.quarantinedIds])];
+    if(quarantinedIds.some(id=>!validated.uncertainIds.includes(id)))fail('MODEL_INVALID_OUTPUT');
     await serial(async()=>{
      job.controller.signal.throwIfAborted();if(state.revision!==job.revision)fail('GOAL_CHANGED');
      const nextCoverage=job.sweep?[...coverage,...data.coverage]:coverage,processed=job.processed+(workspaceIds?.length??0);
-     const next=applyResult(validated,data.fragments,job.snapshot,nextCoverage,data.nextCursor,job.sweep&&job.processed>0);
+     const next=applyResult(validated,data.fragments,job.snapshot,nextCoverage,data.nextCursor,job.sweep&&job.processed>0,quarantinedIds);
      if(job.sweep)next.scan={...next.scan,phase:processed<job.snapshot.grants.length?'running':'complete',processed,total:job.snapshot.grants.length};
      await guardedPut(next,job.snapshot);job.revision=state.revision;job.revisions.add(state.revision);job.cursor=data.nextCursor??job.cursor;job.processed=processed;coverage=nextCoverage;
     });
    }while(job.sweep&&job.processed<job.snapshot.grants.length);
   }catch(err){
-   const code=codeOf(err);await serial(async()=>{if(failed)return;await put({...state,revision:revision(),scan:{phase:'failed',at:now(),scopeRevision:job.snapshot.revision,coverage:job.sweep?coverage:code==='GOAL_ACCESS_CHANGED'?[]:coverage,code,...(state.scan.cursor!==undefined?{cursor:state.scan.cursor}:{}),...(job.sweep?{processed:job.processed,total:job.snapshot.grants.length}:{})}});},{allowClosed:true}).catch(()=>{});
+   const code=codeOf(err);await serial(async()=>{if(failed)return;await put({...state,revision:revision(),scan:{phase:'failed',at:now(),scopeRevision:job.snapshot.revision,coverage:job.sweep?coverage:code==='GOAL_ACCESS_CHANGED'?[]:coverage,code,...(code==='MODEL_INVALID_OUTPUT'&&safeGoalOutputRule(err?.goalOutputRule)?{outputRule:safeGoalOutputRule(err.goalOutputRule)}:{}),...(state.scan.cursor!==undefined?{cursor:state.scan.cursor}:{}),...(job.sweep?{processed:job.processed,total:job.snapshot.grants.length}:{})}});},{allowClosed:true}).catch(()=>{});
   }finally{clearTimeout(job.timer);job.signal?.removeEventListener('abort',job.stop);if(flight===job)flight=null;}
  }
  const unsubscribe=typeof access.subscribe==='function'?access.subscribe(()=>{flight?.controller.abort(error('GOAL_ACCESS_CHANGED'));}):null;

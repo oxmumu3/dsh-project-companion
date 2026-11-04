@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { reviewSourceTaskSchema, reviewTaskResolutionSchema, reviewSourceTaskKey, singleReviewSourceTask } from './personal-review-source-tasks.js';
 import {reviewSourceFailureSchema} from './personal-review-source-diagnostics.js';
 import {reviewExecutionSchema} from './review-continuation.js';
+import {reviewSchemaOutputIssue} from './model-output-issue.js';
 
 export const reviewSources = ['gmail', 'calendar', 'drive', 'flomo', 'dida'];
 export const reviewEvidenceSources = [...reviewSources, 'project', 'memory'];
@@ -23,7 +24,7 @@ const locator = evidence => evidence.url ? `url:${evidence.url}` : `${evidence.s
 
 /** Model claims must point at supplied evidence; only structured or verbatim dates may become reminders. */
 export function validatePersonalReviewSummary(value, evidence) {
-  let result;try{result=z.object({ items: z.array(reviewCandidateSchema).max(12) }).strict().parse(value);}catch(error){error.reviewValidationRule='schema';throw error;}
+  let result;try{result=z.object({ items: z.array(reviewCandidateSchema).max(12) }).strict().parse(value);}catch(error){error.reviewValidationRule='schema';error.outputIssue=reviewSchemaOutputIssue(error);throw error;}
   const reject=(rule,message)=>{throw Object.assign(new Error(message),{reviewValidationRule:rule});};
   const known = new Map(evidence.map(e => [e.id, e]));
   for (const item of result.items) {

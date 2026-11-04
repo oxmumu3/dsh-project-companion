@@ -41,6 +41,7 @@ export class NewsModelError extends Error {
 }
 const failure = code => new NewsModelError(code);
 const fail = code => { throw failure(code); };
+const outputFail=(field,rule,extra={})=>{throw Object.assign(failure('MODEL_INVALID_OUTPUT'),extra,{outputIssue:{field,rule}});};
 
 function string(value, max, { empty = false, output = false } = {}) {
   const code = output ? 'MODEL_INVALID_OUTPUT' : 'MODEL_INVALID_INPUT';
@@ -73,49 +74,53 @@ function inputArticles(articles, summarize) {
   });
 }
 
-function strictObject(value, keys) {
-  if (!record(value) || Object.keys(value).some(key => !keys.includes(key))) fail('MODEL_INVALID_OUTPUT');
+function strictObject(value, keys, field='root') {
+  if (!record(value)) outputFail(field,'type');
+  if (Object.keys(value).some(key => !keys.includes(key))) outputFail(field,'extra_field');
   return value;
 }
 
 function jsonObject(text) {
   let value;
-  try { value = JSON.parse(text); } catch { fail('MODEL_INVALID_OUTPUT'); }
-  if (!record(value)) fail('MODEL_INVALID_OUTPUT');
+  try { value = JSON.parse(text); } catch { outputFail('root','json'); }
+  if (!record(value)) outputFail('root','type');
   return value;
 }
 
 function selectedIds(text, articles) {
   const result = strictObject(jsonObject(text), ['ids']);
-  if (!Array.isArray(result.ids) || result.ids.length > 10) fail('MODEL_INVALID_OUTPUT');
+  if (!Array.isArray(result.ids) || result.ids.length > 10) outputFail('ids','count');
   const known = new Set(articles.map(article => article.id)), seen = new Set();
   for (const id of result.ids) {
-    if (typeof id !== 'string' || !known.has(id) || seen.has(id)) fail('MODEL_INVALID_OUTPUT');
+    if (typeof id !== 'string' || !known.has(id) || seen.has(id)) outputFail('id','identity');
     seen.add(id);
   }
   return result.ids;
 }
 
-function outputText(value, max, chinese = false) {
-  if (typeof value === 'string' && value.length > max) throw Object.assign(failure('MODEL_INVALID_OUTPUT'), {validationDiagnostic:'TEXT_LIMIT'});
-  const text = string(value, max, { output: true }).trim();
-  if ((chinese && !/[\u3400-\u9fff]/u.test(text)) || /https?:\/\/|www\.|\[[^\]]*\]\([^)]*\)/iu.test(text)) fail('MODEL_INVALID_OUTPUT');
+function outputText(value, max, chinese = false, field='other') {
+  if (typeof value === 'string' && value.length > max) outputFail(field,'length',{validationDiagnostic:'TEXT_LIMIT'});
+  let text;try{text=string(value,max,{output:true}).trim();}catch(error){error.outputIssue={field,rule:typeof value!=='string'?'type':CONTROL.test(value)?'content':'empty'};throw error;}
+  if (chinese && !/[\u3400-\u9fff]/u.test(text)) outputFail(field,'language');
+  if (/https?:\/\/|www\.|\[[^\]]*\]\([^)]*\)/iu.test(text)) outputFail(field,'link');
   return text;
 }
 
 function summarizedItems(text, articles) {
   const result = strictObject(jsonObject(text), ['items']);
-  if (!Array.isArray(result.items) || result.items.length !== articles.length) fail('MODEL_INVALID_OUTPUT');
+  if (!Array.isArray(result.items) || result.items.length !== articles.length) outputFail('items','count');
   const items = result.items.map((raw, index) => {
-    const item = strictObject(raw, ['id', 'title', 'summary', 'why', 'tier', 'kind', 'coverage']);
-    if (item.id !== articles[index].id || hasOwn(item, 'coverage') && item.coverage !== articles[index].coverage) fail('MODEL_INVALID_OUTPUT');
+    const item = strictObject(raw, ['id', 'title', 'summary', 'why', 'tier', 'kind', 'coverage'],'item');
+    if (item.id !== articles[index].id) outputFail('id','identity');
+    if (hasOwn(item,'coverage') && item.coverage !== articles[index].coverage) outputFail('coverage','source_metadata');
     // Known metadata echoes are harmless only when exactly equal to the
     // trusted input; discard them so the model cannot author source coverage.
-    if (!['deep', 'brief', 'omit'].includes(item.tier) || !['substantive', 'commentary', 'insufficient'].includes(item.kind)) fail('MODEL_INVALID_OUTPUT');
+    if (!['deep', 'brief', 'omit'].includes(item.tier)) outputFail('tier','enum');
+    if (!['substantive', 'commentary', 'insufficient'].includes(item.kind)) outputFail('kind','enum');
     const answer = { id: item.id, tier: item.tier, kind: item.kind };
-    if (hasOwn(item, 'title')) answer.title = outputText(item.title, 180);
-    answer.summary = outputText(item.summary, item.tier === 'deep' ? 360 : 120, true);
-    if (item.tier === 'deep' || hasOwn(item, 'why')) answer.why = outputText(item.why, 90, true);
+    if (hasOwn(item, 'title')) answer.title = outputText(item.title, 180,false,'title');
+    answer.summary = outputText(item.summary, item.tier === 'deep' ? 360 : 120,true,'summary');
+    if (item.tier === 'deep' || hasOwn(item, 'why')) answer.why = outputText(item.why,90,true,'why');
     return answer;
   });
   return { items };
