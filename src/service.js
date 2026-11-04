@@ -186,13 +186,27 @@ export function createService(options = {}) {
     counts:{projects:state.projects.length,reminders:state.reminders.length,activeReminders:state.reminders.filter(activeReminder).length,outbox:state.outbox.length,outboxByStatus:Object.fromEntries([...new Set(state.outbox.map(item=>item.status))].map(status=>[status,state.outbox.filter(item=>item.status===status).length]))},
     recovery:'发送会话不可用时，在当前对话告诉我恢复每日汇报，或取消后重新安排一次提醒。已排队或结果不确定的消息不会重复投递；桥接报告发送不代表已读。',
   });
+  // User-facing status: no internal ids, ISO timestamps or English status codes.
+  // The structured snapshot above keeps the exact fields tools and tests rely on.
+  const DELIVERY = {scheduled:'待发送',enqueued:'已进发送队列',pending:'待发送',blocked:'等发送会话恢复',dispatching:'发送中',queued:'已排队，等通道取走',reported_sent:'已交给通道，未确认手机收到',failed:'发送失败',uncertain:'结果未知，不会自动重发',expired:'已过期，不再发送',cancelled:'已取消'};
+  const KIND = {daily:'每日汇报',reminder:'提醒',review:'个人回顾',news:'AI资讯',attention:'关注检查',dot_result:'交办结果'};
   const statusText = snapshot => {
-    const lines=[`DSH 项目助理 | ${snapshot.paused?'paused':'active'}`,`现在: ${snapshot.now}；电脑时区: ${snapshot.hostTimeZone}`,`日报: ${snapshot.daily?`${snapshot.daily.time} ${snapshot.daily.timeZone}; session ${snapshot.daily.sessionId}`:'未启用'}`,`关注 ${snapshot.counts.projects}；活动提醒 ${snapshot.counts.activeReminders}；投递记录 ${snapshot.counts.outbox}（仅列最新8条）`];
-    for(const p of snapshot.projects)lines.push(`${p.id} ${p.label}; session ${p.sessionIds.join(', ')||'无'}${p.sessionCount>2?'（更多会话未列出）':''}`);
-    for(const r of snapshot.reminders)lines.push(`提醒 ${r.id} ${r.dueAt} ${r.deliveryStatus??r.status} ${r.title}`);
-    for(const item of snapshot.outbox)lines.push(`${item.id} ${item.kind} ${item.status}; ${item.detail}`);
+    const day = value => { try { return new Intl.DateTimeFormat('zh-CN',{timeZone:snapshot.hostTimeZone,month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit',hourCycle:'h23'}).format(new Date(value)); } catch { return '时间待确认'; } };
+    const lines = [`项目助理 · ${snapshot.paused?'自动跟进已暂停':'运行中'}`];
+    lines.push(`现在 ${day(snapshot.now)}（${snapshot.hostTimeZone}）`);
+    lines.push(snapshot.daily ? `每天汇报 ${snapshot.daily.time}（${snapshot.daily.timeZone}）` : '每天汇报未开启');
+    lines.push(`关注 ${snapshot.counts.projects} 个项目；活动提醒 ${snapshot.counts.activeReminders} 条；最近投递 ${snapshot.counts.outbox} 条`);
+    if (snapshot.projects.length) lines.push(`项目：${snapshot.projects.slice(0,5).map(p=>p.label).join('、')}`);
+    for (const r of snapshot.reminders) lines.push(`提醒 · ${day(r.dueAt)}｜${r.title}｜${DELIVERY[r.deliveryStatus??r.status]??'状态待确认'}`);
+    for (const item of snapshot.outbox) {
+      // Only surface a reason the user can read; host/tool internals stay out of the reply.
+      const reason = ['failed','blocked','uncertain'].includes(item.status) && item.detail && /[\u4e00-\u9fa5]/.test(item.detail) ? `（${snippet(item.detail,80)}）` : '';
+      const pending = reason || (['failed','blocked','uncertain'].includes(item.status) ? '（不会自动重发）' : '');
+      lines.push(`投递 · ${KIND[item.kind]??'消息'}｜${DELIVERY[item.status]??'状态待确认'}${pending}`);
+    }
     lines.push(snapshot.recovery);
-    const full=lines.join('\n');return full.length<=3200?full:`${full.slice(0,2850)}\n[状态已截断]\n${snapshot.recovery}`;
+    const full = lines.join('\n');
+    return full.length <= 3200 ? full : `${full.slice(0,2850)}\n[状态已截断]\n${snapshot.recovery}`;
   };
   async function digest(project,owner,detail='summary') {
     if (!['summary','analysis'].includes(detail)) throw new Error('digest detail must be summary or analysis');

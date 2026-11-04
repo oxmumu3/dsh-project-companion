@@ -643,7 +643,7 @@ test('missing live agent blocks without invoking the bridge or creating a replac
 test('PTC native denial stays blocked and never calls the raw send tool',async t=>{
   const h=await openHost(t,{mode:'ptc'});await h.command('daily 09:00 America/Mexico_City');await h.tick();
   assert.equal(h.sent.length,0);
-  const result=await h.command('status');assert.match(result.text,/blocked/);
+  const result=await h.command('status');assert.match(result.text,/等发送会话恢复/);assert.ok(!/UNKNOWN_TOOL|send_wechat/.test(result.text),'no raw tool internals in the status reply');
 });
 
 test('job deadline aborts approval waiting before an expired send reaches the tool body',async t=>{

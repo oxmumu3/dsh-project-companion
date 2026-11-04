@@ -1,6 +1,6 @@
 {
   "name": "@oxmumu3/dsh-project-companion",
-  "version": "0.21.0-preview.10",
+  "version": "0.22.0",
   "description": "DSH Dot: WeChat personal agent, project memory and proactive follow-up for DeepSeek Harness",
   "author": "牛村木木山",
   "license": "MIT",
@@ -24,6 +24,7 @@
     "docs/verification.md",
     "docs/comparison.md",
     "scripts/demo.mjs",
+    "scripts/prompt-report.mjs",
     "test/",
     "docs/developer-commands.md",
     "vendor/",
@@ -55,7 +56,9 @@
   ],
   "scripts": {
     "test": "node --max-old-space-size=128 --test --test-concurrency=1 test/*.test.mjs",
-    "demo": "node --max-old-space-size=128 scripts/demo.mjs"
+    "demo": "node --max-old-space-size=128 scripts/demo.mjs",
+    "report:prompt": "node scripts/prompt-report.mjs",
+    "verify": "node --max-old-space-size=256 --test --test-concurrency=1 test/*.test.mjs && node scripts/prompt-report.mjs"
   },
   "dependencies": {
     "zod": "4.6.7"

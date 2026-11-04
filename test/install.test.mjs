@@ -8,6 +8,7 @@ import {gzipSync} from 'node:zlib';
 import {execFile} from 'node:child_process';
 import {promisify} from 'node:util';
 const execFileAsync=promisify(execFile);
+const {fileURLToPath}=await import('node:url');
 
 const installer=await import('../src/installation.js').catch(error=>{
   if(error.code==='ERR_MODULE_NOT_FOUND')return {};
@@ -63,7 +64,9 @@ async function fixture(t,{installed={},enabled=true,bridgeVersion='0.11.0'}={}){
     }
     return {code:0,stdout:''};
   };
-  return {bundleDir,appPath,homeDir,profile,manifest,calls,runner,platform:'darwin',ownPid:999999};
+  // Hermetic: never inherit the developer's DSH_HOME/DSH_PROFILE, or the
+  // preview would read (and the install path could touch) the real profile.
+  return {bundleDir,appPath,homeDir,dshHome:join(homeDir,'.dsh'),env:{PATH:'/usr/bin:/bin'},profile,manifest,calls,runner,platform:'darwin',ownPid:999999};
 }
 function ready(){assert.equal(typeof installer.runInstallation,'function','installer entry point is missing');return installer.runInstallation;}
 
@@ -108,7 +111,7 @@ test('Install.command waits and retries in the same window for initialization th
 });
 test('CLI returns a distinct initialization status without invoking package installation',async t=>{
  const f=await fixture(t);await rm(f.profile,{recursive:true});await writeFile(join(f.appPath,'Contents/MacOS/DeepSeek Harness'),'#!/bin/sh\nprintf \'%s\\n\' \'{"runtimeVersion":"0.2.1-rc.2","sdkVersion":"0.2.1-rc.2"}\'\n');
- let result;try{result=await execFileAsync(process.execPath,[new URL('../scripts/install.mjs',import.meta.url).pathname,'--bundle-dir',f.bundleDir,'--app',f.appPath,'--install'],{env:{...process.env,DSH_HOME:join(f.homeDir,'.dsh')}});}catch(error){result=error;}
+ let result;try{result=await execFileAsync(process.execPath,[fileURLToPath(new URL('../scripts/install.mjs',import.meta.url)),'--bundle-dir',f.bundleDir,'--app',f.appPath,'--install'],{env:{...process.env,DSH_HOME:join(f.homeDir,'.dsh')}});}catch(error){result=error;}
  assert.equal(result.code,3);assert.match(result.stdout,/needs_initialization/);await assert.rejects(readFile(join(f.profile,'package.json')),{code:'ENOENT'});
 });
 test('verified 0.2.1-rc.3 host and SDK match the candidate manifest without exemptions',async t=>{

@@ -6,25 +6,25 @@
 
 作者：牛村木木山 · [正式仓库](https://github.com/oxmumu3/dsh-project-companion) · MIT。社区开源项目，非 DeepSeek 或 OpenAI 官方产品。
 
-**当前公开预览：`0.21.0-preview.10`，只需安装一个标准插件包。** 本版适配官方桌面 `0.2.2-rc.1`：按官方批量工具接口保留原调用方、取消信号与唯一结果核验，同时保留旧 SDK 路径。延续内置微信扫码确认本人账号的安全配对；除兼容与配对修复外，产品运行代码延续公开 `0.21.0-preview.1`，不包含日常私有版的全部修复。主动关注仍在自然运行验收中；本版不宣称已解决所有来源或微信投递问题。Google 数据权限仍审核中，已知累计100个账号上限未解除。详见[本版验收与限制](docs/verification.md)。
+**当前版本 `0.22.0`，只需安装一个标准插件包。** 本版不新增功能，专门修两件事：让模型更容易用对，以及让发布质量可核对。策略提示词 6,152 → 2,951 字符、四个工具描述 1,952 → 1,102 字符（`npm run report:prompt` 可复现），参数语义只留在各处 schema；`status` 改为中文可读投递状态，不再输出内部 ID、ISO 时间或英文状态码；安装器测试改为真正隔离开发机 `DSH_HOME`（此前本机 28 项安装测试全红），并修复路径含空格时 CLI 测试失效。本版由此前 `0.21.0-preview.10` 的官方桌面 `0.2.2-rc.1` 兼容与微信配对基线继续，不改变产品能力。Google 数据权限仍审核中、已知累计100个账号上限未解除，主动关注与手机收件仍分别验收，详见[本版验收与限制](docs/verification.md)。
 
 ## 只安装一个标准插件
 
 本版将经过固定来源与 MIT 许可审计的微信组件内置到 Dot。新用户无需再装第二个微信插件，也无需下载 ZIP、解压或运行 macOS 安装脚本。
 
 1. 打开已初始化的官方 DeepSeek Harness，进入「插件 → 添加插件」。
-2. 粘贴下面的插件地址，安装并点击「立即启用」。也可[下载插件包](https://github.com/oxmumu3/dsh-project-companion/releases/download/v0.21.0-preview.10/oxmumu3-dsh-project-companion-0.21.0-preview.10.tgz)后填写本地文件路径。
+2. 粘贴下面的插件地址，安装并点击「立即启用」。也可[下载插件包](https://github.com/oxmumu3/dsh-project-companion/releases/download/v0.22.0/oxmumu3-dsh-project-companion-0.22.0.tgz)后填写本地文件路径。
 3. 打开左侧「DSH Dot」。首页连接微信，或先在电脑对话；再按需选择工作区和资料来源。
 
 ```text
-https://github.com/oxmumu3/dsh-project-companion/releases/download/v0.21.0-preview.10/oxmumu3-dsh-project-companion-0.21.0-preview.10.tgz
+https://github.com/oxmumu3/dsh-project-companion/releases/download/v0.22.0/oxmumu3-dsh-project-companion-0.22.0.tgz
 ```
 
-新用户也可直接添加 `@oxmumu3/dsh-project-companion@0.21.0-preview.10`。若已有旧包名 `dsh-project-companion`，仅按[旧版同名更新分支](docs/install.md#已有用户)更新，不能同时再添加 npm 别名。
+新用户也可直接添加 `@oxmumu3/dsh-project-companion@0.22.0`。若已有旧包名 `dsh-project-companion`，仅按[旧版同名更新分支](docs/install.md#已有用户)更新，不能同时再添加 npm 别名。
 
 已有兼容微信组件时沿用现有组件，包括它的禁用状态；不会为安装 Dot 重置绑定或覆盖组件配置。已有家庭入口继续按已配置的 Owner 委托运行，家人权限独立。Dot 不安装、升级 Family，也不自动扩大任何账号或资料授权。
 
-这是通过 GitHub Release 分发的标准 Harness 插件，npm latest 同步为本版，尚未上架官方插件市场。[发布与下载](https://github.com/oxmumu3/dsh-project-companion/releases/tag/v0.21.0-preview.10) · [安装说明](docs/install.md)。本版已完成官方隔离单包安装验证；新用户手机收件与多日运行仍分别验收。
+这是通过 GitHub Release 分发的标准 Harness 插件，npm latest 同步为本版，尚未上架官方插件市场。[发布与下载](https://github.com/oxmumu3/dsh-project-companion/releases/tag/v0.22.0) · [安装说明](docs/install.md)。本版已完成官方隔离单包安装验证；新用户手机收件与多日运行仍分别验收。
 
 ## 微信配对与账号限制
 
@@ -95,4 +95,4 @@ The bundled component authorizes the account identified by the confirmed QR logi
 
 ## 源码与发布线
 
-本页安装包与验收对应固定标签 [`v0.21.0-preview.10`](https://github.com/oxmumu3/dsh-project-companion/tree/v0.21.0-preview.10)。开发本版请检出该标签或 `release/0.21.0-preview.10`；仓库 `main` 为 scoped npm 发布线，运行功能与本版相同，发布包身份与客户端注册名适配 scoped 安装；本版源码与候选包按同一提交核验。
+本页安装包与验收对应固定标签 [`v0.22.0`](https://github.com/oxmumu3/dsh-project-companion/tree/v0.22.0)。开发本版请检出该标签或 `release/0.22.0`；仓库 `main` 为 scoped npm 发布线，运行功能与本版相同，发布包身份与客户端注册名适配 scoped 安装；本版源码与候选包按同一提交核验。

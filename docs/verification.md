@@ -1,3 +1,17 @@
+# 0.22.0 验证增量
+
+2026-11-04，在本机开发环境（`DSH_HOME` 已设置、仓库路径含空格）执行源码全量回归：**2,304 项，2,267 通过，37 跳过，0 失败**。跳过项均为未提供 Family 源码树的合成夹具。改动前同一命令在本机有 28 项失败，源于安装器测试继承真实 `DSH_HOME`。
+
+- `node --test test/native-draft.test.mjs test/workbench-ui.test.mjs test/onboarding-ui.test.mjs test/context-client.test.mjs`：167/167 通过，这是 `npm-release.yml` 的必过子集。
+- `node --test test/install.test.mjs test/contract-guidance.test.mjs`：42/42 通过。
+- `npm run report:prompt`：策略提示词 2,951 字符、工具描述 1,102 字符、合计 4,053；`project_companion` 25/30 动作在提示词中可直接发现，其余 5 个由工具描述承担。
+- 状态正文回归：不含 `p_`/`r_` 前缀 ID、UUID、ISO 时间或 `reported_sent`/`queued` 等英文状态码；`blocked` 场景的宿主内部错误不再进入用户可见正文。
+- 发布经 `.github/workflows/npm-release.yml`（`workflow_dispatch` + Trusted Publisher OIDC）完成，npm 身份与包内 `publishConfig` 由工作流断言，不经过本机 2FA 手填。
+
+**本版没有验证的**：没有重做手机收件、真实微信扫码到首件、多日/断网/休眠恢复，也没有用真实私人资料跑自然简报；契约测试只证明"指令与 schema 对得上"，不代表模型在真实对话中的路由质量提高。Google 权限审核、flomo 历史投影失败归因、通道回执与手机送达的区分都未在本版改变。
+
+---
+
 # 0.21.0-preview.10 官方桌面 rc.1 兼容验证（2026-11-04）
 
 本版在公开 scoped 发布线增加准确 `0.2.2-rc.1`，保留此前五个 SDK；不覆盖维护者日常私有安装。
