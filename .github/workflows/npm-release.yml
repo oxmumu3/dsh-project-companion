@@ -9,6 +9,11 @@ on:
         type: boolean
         required: true
         default: false
+      expected_sha:
+        description: SHA256 of the exact validated and Host-tested release TGZ; required to publish.
+        type: string
+        required: false
+        default: ""
 permissions: {}
 concurrency:
   group: npm-release-dsh-project-companion
@@ -139,6 +144,7 @@ jobs:
         id: verify
         env:
           VALIDATED_SHA256: ${{ needs.validate.outputs.sha256 }}
+          EXPECTED_ARTIFACT_SHA256: ${{ inputs.expected_sha }}
         run: |-
           set -euo pipefail
           python3 - <<'PY'
@@ -151,6 +157,8 @@ jobs:
           assert manifest['source_commit']==os.environ['GITHUB_SHA'],'Source commit mismatch'
           assert manifest['run_id']==os.environ['GITHUB_RUN_ID'] and manifest['run_attempt']==os.environ['GITHUB_RUN_ATTEMPT'],'Artifact is from another run or attempt'
           assert re.fullmatch('[a-f0-9]{64}',os.environ['VALIDATED_SHA256']) and manifest['sha256']==os.environ['VALIDATED_SHA256'],'Validation output mismatch'
+          expected=os.environ['EXPECTED_ARTIFACT_SHA256']
+          assert re.fullmatch('[a-f0-9]{64}',expected) and manifest['sha256']==expected,'Artifact differs from the exact Host-tested release TGZ'
           filename=manifest['filename']; assert Path(filename).name==filename and filename.endswith('.tgz'),'Unsafe artifact path'
           artifact=root/filename
           assert artifact.is_file() and not artifact.is_symlink() and artifact.stat().st_size<=32*1024*1024
