@@ -1,3 +1,15 @@
+# 0.22.1 验证增量
+
+2026-11-04，把 0.21 私有线独有的 3 个诊断模块移植到发布线并接回 9 个引用点（另补上私有线清单里漏掉的 `news-model.js` 与 `review-runtime-health.js`）。
+
+- `node --max-old-space-size=256 --test --test-concurrency=1 test/*.test.mjs`：2,336 项 / 2,299 通过 / 0 失败 / 37 跳过；同命令在 0.22.0 干净 worktree 为 2,304 / 2,267 / 0 / 37，净增 32 条全绿。
+- `node --test test/install.test.mjs test/contract-guidance.test.mjs`：42/42。
+- 新增字段全部 `.optional()`，老存档解析不变；没有迁移脚本。
+- 明确未移植：goal board 的 run progress 集群、review-continuation 执行屏障、runtime lanes 分栏视图——它们属于独立特性，不在本次范围。
+- 未验证：GUI 未渲染规则码与"纠正中"阶段；`attentionDecision` 只验证了持久化与 runtime-health 标签消费，未验证界面呈现。模型谎报隔离的新组合没有单独补测试，沿用私有线原有用例。
+
+---
+
 # 0.22.0 验证增量
 
 2026-11-04，在本机开发环境（`DSH_HOME` 已设置、仓库路径含空格）执行源码全量回归：**2,304 项，2,267 通过，37 跳过，0 失败**。跳过项均为未提供 Family 源码树的合成夹具。改动前同一命令在本机有 28 项失败，源于安装器测试继承真实 `DSH_HOME`。
