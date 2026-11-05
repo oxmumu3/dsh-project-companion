@@ -1,65 +1,78 @@
-# DSH Dot · 你的 DeepSeek Harness 个人助理
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/preview/workbench-dark.png">
+    <img src="docs/assets/preview/workbench.png" alt="DSH Dot 工作台：今日、项目、记忆、连接" width="100%">
+  </picture>
+</p>
 
-📖 设计思考与生态复盘：[《DeepSeek Harness 要走向极客玩具还是大众普惠？》](https://mp.weixin.qq.com/s/RIAYNqo8OsUVx2JpR8MPyA)
+<h1 align="center">DSH Dot · 长在微信里的项目助理</h1>
 
-在电脑或微信交代事情，把资料、项目和下一步接起来。Dot 能结合你选择的邮件、日历、笔记和待办整理简报，组织跨会话的项目，并按明确安排跟进。
+<p align="center"><b>在微信或电脑交代一件事，Dot 把它接进对应项目、记住来龙去脉、按你定的时间跟进，再把执行结果带回原对话。</b></p>
 
-作者：牛村木木山 · [正式仓库](https://github.com/oxmumu3/dsh-project-companion) · MIT。社区开源项目，非 DeepSeek 或 OpenAI 官方产品。
+<p align="center">
+  <img alt="DeepSeek Harness 0.2.x" src="https://img.shields.io/badge/DeepSeek%20Harness-0.2.x-111?style=flat-square">
+  <img alt="MIT" src="https://img.shields.io/badge/MIT-%E5%BC%80%E6%BA%90-111?style=flat-square">
+  <img alt="macOS" src="https://img.shields.io/badge/macOS-%E6%A1%8C%E9%9D%A2%E7%89%88%E4%B8%8E%E7%BD%91%E9%A1%B5%E7%89%88-111?style=flat-square">
+</p>
 
-**当前版本 `0.22.0`，只需安装一个标准插件包。** 本版不新增功能，专门修两件事：让模型更容易用对，以及让发布质量可核对。策略提示词 6,152 → 2,951 字符、四个工具描述 1,952 → 1,102 字符（`npm run report:prompt` 可复现），参数语义只留在各处 schema；`status` 改为中文可读投递状态，不再输出内部 ID、ISO 时间或英文状态码；安装器测试改为真正隔离开发机 `DSH_HOME`（此前本机 28 项安装测试全红），并修复路径含空格时 CLI 测试失效。本版由此前 `0.21.0-preview.10` 的官方桌面 `0.2.2-rc.1` 兼容与微信配对基线继续，不改变产品能力。Google 数据权限仍审核中、已知累计100个账号上限未解除，主动关注与手机收件仍分别验收，详见[本版验收与限制](docs/verification.md)。
+<p align="center"><sub>界面预览为设计稿，数据全部为示例；实机截图会随后替换。</sub></p>
 
-## 只安装一个标准插件
+作者：牛村木木山 · MIT · 社区开源项目，非 DeepSeek 官方产品。
 
-本版将经过固定来源与 MIT 许可审计的微信组件内置到 Dot。新用户无需再装第二个微信插件，也无需下载 ZIP、解压或运行 macOS 安装脚本。
+---
 
-1. 打开已初始化的官方 DeepSeek Harness，进入「插件 → 添加插件」。
-2. 粘贴下面的插件地址，安装并点击「立即启用」。也可[下载插件包](https://github.com/oxmumu3/dsh-project-companion/releases/download/v0.22.0/oxmumu3-dsh-project-companion-0.22.0.tgz)后填写本地文件路径。
-3. 打开左侧「DSH Dot」。首页连接微信，或先在电脑对话；再按需选择工作区和资料来源。
+## 为什么是 Dot，而不是又一个聊天框
 
-```text
-https://github.com/oxmumu3/dsh-project-companion/releases/download/v0.22.0/oxmumu3-dsh-project-companion-0.22.0.tgz
+聊天框只回答这一句。Dot 想接住的是接下来那一周：
+
+- **事常常在微信里想起。** 你不在电脑前，但话要先记下来、交给对的项目。
+- **项目跨会话，模型记不住。** 上次定的约束、否掉的方案、卡住的点，下次还得重新讲一遍。
+- **交了事，结果要回到原对话。** 不是去另一个页面找，也不是"已发送，请自行确认"。
+
+所以 Dot 只做一件事：**把一件事接进项目，记住它，跟进它，把结果带回来。** 其余连接和资料，都是可选增强。
+
+## 三步上手
+
+1. **装。** 打开 Harness 的「插件 → 添加插件」，在包名或地址里填 `@oxmumu3/dsh-project-companion`，安装后点「立即启用」。
+2. **开。** 左侧出现「DSH Dot」。第一次打开不需要登录任何账号，先看一眼今日页。
+3. **说。** 首页直接说一件正在推进的事，或先连微信，在手机上交办。
+
+```bash
+# 网页版也可以用命令行
+dsh plugin --profile web add @oxmumu3/dsh-project-companion
 ```
 
-新用户也可直接添加 `@oxmumu3/dsh-project-companion@0.22.0`。若已有旧包名 `dsh-project-companion`，仅按[旧版同名更新分支](docs/install.md#已有用户)更新，不能同时再添加 npm 别名。
+桌面版只走插件页面安装；装完若宿主提示，再完整退出并重开。要求官方 Harness `0.2.x`、Node.js 22.13+。离线安装包在 [Releases](https://github.com/oxmumu3/dsh-project-companion/releases)。
 
-已有兼容微信组件时沿用现有组件，包括它的禁用状态；不会为安装 Dot 重置绑定或覆盖组件配置。已有家庭入口继续按已配置的 Owner 委托运行，家人权限独立。Dot 不安装、升级 Family，也不自动扩大任何账号或资料授权。
+<p align="center">
+  <img src="docs/assets/preview/first-use-mobile.png" alt="第一次打开：先说一件事" width="300">
+</p>
 
-这是通过 GitHub Release 分发的标准 Harness 插件，npm latest 同步为本版，尚未上架官方插件市场。[发布与下载](https://github.com/oxmumu3/dsh-project-companion/releases/tag/v0.22.0) · [安装说明](docs/install.md)。本版已完成官方隔离单包安装验证；新用户手机收件与多日运行仍分别验收。
-
-## 微信配对与账号限制
-
-内置组件在扫码确认时锁定扫码账号，不再由首个发消息的人认领。正常使用仍只需扫码、手机确认，然后用同一微信开始聊天；不用手填账号 ID。
-
-“入站白名单”是可选的额外限制。留空仅允许扫码确认的账号；填写后，该扫码账号还必须在名单中。旧凭据缺少扫码身份时，只有单个明确配置的白名单账号可用于恢复；仅有历史首条消息记录不算授权。身份缺失或与旧绑定冲突时暂停微信控制，在电脑微信设置页提示重新确认，不自动换绑、清除原会话或发送配对消息。重新扫码保留原会话关联和归属于原账号的待发队列；新的二维码确认本身不会补发。显式“退出登录”会解除微信会话关联并清空队列，操作前有说明。
-
-已有独立微信插件时，Dot 沿用该外部组件；本修复只适用于 Dot 内置的 `0.11.1-dot.3-embedded.2`，不能替第三方组件承诺相同配对规则。
-
-### WeChat pairing
-
-The bundled component authorizes the account identified by the confirmed QR login. Sending the earliest message cannot claim ownership. An empty allowlist permits that verified account only; a configured allowlist further restricts it. Legacy credentials need either a verifiable QR identity or one explicitly configured allowlist account. Conflicting or missing identity pauses WeChat control with desktop recovery guidance. Re-scanning preserves the original session mapping and recipient-owned queue and does not itself replay queued replies. An external standalone WeChat component retains its own policy.
+<p align="center"><sub>第一次打开：不用填表，先说一件事。</sub></p>
 
 ## 第一次打开，先做一件有用的事
 
-1. **连微信**：首页直接显示首次连接二维码；已有兼容绑定直接沿用。连接后能在手机交代任务、收执行回复和已开启的提醒。也能先在电脑聊。
-2. **选工作区**：想整理正在推进的项目时，先选一两个 Harness 已登记工作区，点“保存并整理项目”一次发起后连续分批处理；只想记住范围则点“仅保存范围”。以后可在「连接」增减，不会扫描未选工作区。
-3. **继续事情**：在首页输入目标，或从「项目」看板点进一个项目，在当前视野继续原生对话。草稿、附件和原生审批保留，不会静默填入屏幕外文本框。
-4. **按需连资料**：在「连接」登录 Google、flomo 或滴答，再启用愿意读取的来源。账号连接、来源启用、一次读取和持续跟进分别授权；安装不会默认开启推送。
+1. **连微信（可选）。** 首页直接显示二维码，本人扫码后从微信发一句「你好」。不连也能先在电脑聊。
+2. **选工作区（可选）。** 点「保存并整理项目」，选一两个 Harness 已登记的目录；这是一次明确的有限读取，之后可随时增减，不会扫描没选的目录。
+3. **继续事情。** 在首页输入目标，或从「项目」点进一个项目，在当前视野继续原生对话；草稿、附件和审批都保留。
+4. **按需连资料。** Google、flomo、滴答都在「连接」里单独登录、单独启用；登录不会自动开始扫描。
 
-详细动线见[首次使用](docs/first-use.md)与[快速开始](docs/quickstart.md)。
+<p align="center">
+  <img src="docs/assets/preview/connections.png" alt="连接页：账号、来源、读取与跟进分别授权" width="100%">
+</p>
+
+<p align="center"><sub>连接、启用、读取、持续跟进是四件事，分开授权。</sub></p>
 
 ## 能做什么
 
-| 场景 | 本版能力 |
+| 你想要的 | Dot 提供的 |
 | --- | --- |
-| 电脑与微信对话 | 首页原生对话、Harness 内全局 Dot 浮层；明确微信交办、状态查询及一次结果回传 |
-| 项目看板 | 从明确授权工作区的有限资料与近期会话中识别持续目标；先给建议，由你保留、忽略或纠正关联 |
-| 项目记忆 | 保存目标、约束、决策、阻塞和下一步；人工目标保留，来源、推断和验收分开 |
-| 五源简报 | 有限读取 Gmail、主日历、Drive、flomo、滴答，加上已选项目资料，整理有来源的进展、风险与下一步 |
-| 个人回顾 | 明确开启每日、每周回顾；可加工作时段主动关注，出现符合条件的风险或临期事项才提示，支持暂停、取消与事项反馈 |
-| 提醒与项目跟进 | 明确时间的一次提醒、一次检查或周期跟进；不确定投递不盲重发，无值得告知的变化可静默 |
-| AI 资讯日报 | 沿用本人保存的关注点，从 92 个技术 RSS 中最多选 3 篇重点＋7 篇速览，附原文链接，不足不凑数 |
-
-**工作区、项目、会话分别是什么？** 工作区是本地读取范围；项目是持续目标，可以跨工作区、跨会话；会话承载讨论和执行。新增工作区或逻辑项目不会自动加入既有私人回顾或微信资料委托。见[逻辑项目与工作区](docs/logical-projects.md)。
+| 在微信里办事 | 明确交办、状态查询、把这一轮执行回复带回原对话；电脑端原生对话与 Harness 内浮层 |
+| 记得住项目 | 从你选定的工作区与近期会话里识别持续目标，保存目标、约束、决策、阻塞和下一步；保留来源，建议由你保留或纠正 |
+| 每天早上知道该干啥 | 有限读取 Gmail、主日历、Drive、flomo、滴答和已选项目，整理有来源的进展、风险与下一步 |
+| 按节奏跟进 | 一次提醒、一次检查、周期跟进；无值得说的变化可以静默，结果不确定不盲重发 |
+| 读你今天该看的 | AI 资讯日报：沿用你保存的关注点，从公开 RSS 里最多 3 篇重点 + 7 篇速览，附原文链接 |
+| 自己先体检 | `health` 自检六行：助理、微信、资料来源、个人回顾、AI 资讯、投递；只读本机，不发外部请求 |
 
 ## 可以直接这样说
 
@@ -67,32 +80,61 @@ The bundled component authorizes the account identified by the confirmed QR logi
 - 「把这个任务交给 我的工作区：读取 README.md，用三句话说明用途，完成后把结果回给我。」
 - 「两分钟后提醒我检查结果。」
 - 「预览一份个人回顾，使用我在电脑启用的资料和已关注项目，不建立计划。」
-- 「每天09:00、每周一09:00，使用我在电脑启用的资料和已关注项目做个人回顾，有风险或临期事项告诉我。」
-- 「开启个人回顾的工作时段主动关注。」
-- 「AI 日报关注：Agent 产品、插件生态、增长实践。」
-- 「每天09:10发AI日报。」
-- 「准备个人回顾「事项原题」的下一步。」（使用最近回顾中的准确标题）
-- 「暂停个人回顾。」或「取消AI日报。」
+- 「每天 09:00、每周一 09:00 做个人回顾，有风险或临期事项告诉我。」
 
-交办中的项目名称使用目标 Harness 已登记工作区名称；看板整理出的逻辑项目在专属桌面对话继续。时间未指定时区时按电脑时区，并在确认中说明。私人来源先本人登录、启用并确认范围；家庭共享入口只开放已配置的 Owner 权限。更多范围与示例见[个人资料闭环](docs/context-loop.md)、[个人回顾](docs/personal-review.md)和[AI 日报](docs/news.md)。
+## 它不会替你做的事
 
-## 公开预览的边界
+- **不替你扩大授权。** 账号连接、来源启用、一次读取、持续跟进分别确认；新增账号或工作区不会静默进入旧计划。
+- **不把"发出去了"说成"你收到了"。** 通道接受、手机收到、本人验收是三种状态，Dot 分开说。
+- **不在失败时反复重发。** 结果不确定只核对，不重放；被拒绝的消息留在原队列。
+- **不把私人资料随手外发。** 本轮读过私人来源后，要把整理内容推到微信，需要你再确认一次。
+- **不默认扫描或推送。** 安装不等于开启；工作区、个人回顾和日报都要你明确说一句。
 
-- **电脑端验证**：兼容候选五套SDK各2257项完整回归、最终CI检查增量各6项通过，零失败/跳过；本次独立审读、精确官方隔离Host及版本准入已验；原生输入、草稿附件及日常升级属于此前0.21.0-preview.1的历史证据，本次未覆盖安装当前日常修复版。本次公开npm身份另做精确包安装与兼容检查，验证结果见验证记录。手机和长期运行分别验收。
-- **真实使用记录**：维护者此前确认收到有限五源简报、项目交办、提醒、变化推送及10月30日一份自然回顾。10月31日09:00回顾与09:10资讯通道报告已发出，手机收到未核对；11:00检查状态为来源覆盖未知，并非“没有变化”。
-- **尚待验证／已知问题**：历史flomo范围投影与模型输出失败未全部归因；本轮没有将它们凭空归为已修。新用户从模型配置、扫码到收件，多日、断网、休眠恢复及真实macOS输入法仍待实际验收。运行健康只显示持久记录，不自动重放不确定发送。执行完成是待验收，不自动认定业务事项已处理。见[验证记录](docs/verification.md)。
-- **Google**：品牌验证已通过，三项数据权限已提交但未批准，CASA 未完成、已知累计 100 个账号上限未解除；不保证任意账号均能接入。看到未验证提示时核对应用与只读范围，由本人决定是否继续。flomo 需要 MAX。
-- **运行条件**：电脑、Harness、网络和相关会话需可用。微信连续主动消息窗口有限，通道回执不等于手机收到。取消不能撤回已交给通道的消息。
-- **数据与权限**：授权数据和状态保存在本机；读取结果可能进入 Harness 会话、宿主记录、你配置的模型以及微信通道，并非资料永远不离开电脑。工作区授权不是原生 Agent 文件系统沙箱。不要用保存的助手结论代替业务验收。参见[隐私说明](https://dot.finvo.ai/privacy.html)。
+## 微信配对的一句话说明
 
-工作时段主动关注默认为电脑时区 09:00–19:00 每两小时检查，每天最多额外两条；需要已有明确范围的个人回顾订阅，开启后才运行。它不保证每天一定产生消息，也不在没有来源读取时声称没有变化。
+扫码确认时锁定扫码那个账号，之后不会因为"谁先发消息"改变归属；可选的白名单只是额外限制。身份缺失或冲突时暂停微信控制，提示你重新确认，不自动换绑、不静默补发。细节见[第一次使用](docs/first-use.md)与[安装说明](docs/install.md)。
 
-## 社区复用与许可
+## 版本与数据
 
-微信能力复用 [pan17/dsh-wechat](https://github.com/pan17/dsh-wechat)；项目记忆选取 `dsh-yolo` 的 SQLite 存储库，调度与唤醒选取 `dsh-proactive` 的库，并保留固定来源、完整 MIT 许可和版权。不需要额外启用这些整包。完整来源、修改与许可证见[第三方声明](THIRD_PARTY_NOTICES.md)及[桥接维护说明](bridge-maintenance/README.md)。
+- 当前版本 **`0.24.0`**：新增自检（`health`）、私人外发确认、个人回顾的自然语言关注点；`0.23` 把模型可见的项目工具收敛成 `look` / `manage` 两个入口。
+- 兼容官方 Harness `0.2.0-rc.2`、`0.2.1-rc.2` 至 `rc.5`、`0.2.2-rc.1`；清单在 [compatibility.json](compatibility.json)。
+- 数据留在本机 Harness profile 内，不经过第三方服务器；微信组件内置部分保留上游 MIT 许可，见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
+- 已知边界（Google 数据权限审核、flomo MAX、主动关注与手机收件的验收状态）统一写在[验证记录](docs/verification.md)，本页不重复。
 
-问题反馈：[GitHub Issues](https://github.com/oxmumu3/dsh-project-companion/issues)。请勿提交令牌、授权回调网址、私人邮件或家人资料；提供版本、操作步骤和已脱敏提示即可。
+## 常见问题
 
-## 源码与发布线
+**要装两个插件吗？**
+不用。微信组件已内置在同一个标准插件包里；已经有兼容的外部微信组件时沿用原来的，不会重置绑定。
 
-本页安装包与验收对应固定标签 [`v0.22.0`](https://github.com/oxmumu3/dsh-project-companion/tree/v0.22.0)。开发本版请检出该标签或 `release/0.22.0`；仓库 `main` 为 scoped npm 发布线，运行功能与本版相同，发布包身份与客户端注册名适配 scoped 安装；本版源码与候选包按同一提交核验。
+**不连微信能用吗？**
+能。电脑端对话、项目、记忆、回顾都可用；微信只是"人不在电脑前"时的入口。
+
+**和 Harness 自带的会话有什么区别？**
+Harness 管一次对话；Dot 管跨会话的项目：它记得目标、约束、决策和下一步，并在你定的时间回来看一眼。
+
+**为什么有时微信没收到？**
+先看「连接」页的通道状态和自检结果。发送被拒时 Dot 会说明，不会假装已送达，也不会替你重发。
+
+## 文档与开发
+
+- [安装说明](docs/install.md) · [第一次使用](docs/first-use.md) · [快速开始](docs/quickstart.md)
+- [验证记录](docs/verification.md) · [对照与复用](docs/comparison.md) · [版本记录](CHANGELOG.md)
+- [单插件分发边界](docs/single-plugin.md) · [逻辑项目与工作区](docs/logical-projects.md) · [个人回顾](docs/personal-review.md)
+
+```bash
+npm test          # 源码全量回归
+npm run demo      # 离线合成演示（不连模型、微信或云端）
+npm run verify    # 发布前自检
+```
+
+## 设计思考
+
+[《DeepSeek Harness 要走向极客玩具还是大众普惠？》](https://mp.weixin.qq.com/s/RIAYNqo8OsUVx2JpR8MPyA)
+
+## 许可
+
+MIT。内置微信组件保留上游 MIT 许可与版权声明，见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) 与 [bridge-maintenance](bridge-maintenance/)。
+
+---
+
+<p align="center"><sub>如果 Dot 帮你少翻了一次聊天记录，欢迎点个 Star；用得不对劲，开 Issue 告诉我。</sub></p>
