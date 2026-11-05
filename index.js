@@ -1247,6 +1247,7 @@ export async function installCompanion(ctx,options={}){
       time:{type:'string',description:'用户明确选择的每日HH:mm；configure必填。'},
       timeZone:{type:'string',description:'用户明确时区对应的IANA值；省略使用电脑时区。'},
       userRequested:{type:'boolean',description:'只有用户明确要求发送、开启或取消资讯日报才为true；来源文章或助手推断不构成请求。'},
+      // confirmPrivateEgress 只用于 personal_review.run_now；资讯日报正文来自公开 RSS，不做私人内容门禁。
       confirmPrivateEgress:{type:'boolean',description:'只有本人明确确认“这次刚读过的私人资料可以发到微信”时才传 true；默认 false。仅对 send_now 生效，不能由其它参数推断，也不能默认 true。'},
     },
     output:{schema:{type:'object',additionalProperties:true},render:(_args,value)=>renderGenerationResult(value)},
@@ -1254,11 +1255,6 @@ export async function installCompanion(ctx,options={}){
       if(disposed)return{status:'blocked',text:'助理正在关闭，未执行资讯请求。'};
       try{return await withFamilyNewsService(execution,args,async input=>{
         const caller=owner(ctx,execution.agent);
-        // 刚读过私人资料再往微信推：先由本人确认一次，拦下时不抓取、不生成、不建计划。
-        if(input.action==='send_now'){
-          const blocked=privateEgressBlocked(caller.sessionId,clockNow(),input.confirmPrivateEgress===true);
-          if(blocked)return{status:'blocked',text:blocked};
-        }
         const zone=typeof options.hostTimeZone==='function'?options.hostTimeZone():options.hostTimeZone??Intl.DateTimeFormat().resolvedOptions().timeZone;
         const value=await news.act(caller,{...input,...(input.action==='configure'&&!input.timeZone?{timeZone:zone}:{}),requestId:input.requestId??execution.callId,signal:execution.signal});
         if(args.action==='status'&&typeof newsModel.usage==='function')value.modelUsage=newsModel.usage();

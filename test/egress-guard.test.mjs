@@ -88,24 +88,17 @@ test('没有私人读取标记时 send_now 照常抓取并发送',async t=>{
   assert.equal(h.sent.length,1);assert.deepEqual(news.counts(),{feeds:1,models:1});
 });
 
-test('刚读过私人资料时 send_now 被拦下：不抓取、不生成、不建任务',async t=>{
+test('资讯日报不设私人外发门禁：正文来自公开 RSS，读了私人资料也照常发送',async t=>{
   const news=newsFixtures(),h=await openHost(t,{news});
   markPrivateRead('synthetic-owner',{at:h.now(),source:'personal_context:gmail'});
   const value=await h.tool('ai_digest',{action:'send_now',userRequested:true},'egress-send-2');
-  assert.equal(value.status,'blocked');
-  assert.equal(value.text,PRIVATE_EGRESS_BLOCKED_TEXT);
-  assert.deepEqual(news.counts(),{feeds:0,models:0});
-  assert.equal(h.sent.length,0);
-  const status=await h.tool('ai_digest',{action:'status'});
-  assert.deepEqual(status.jobs,[]);
-});
-
-test('明确传 confirmPrivateEgress 后才放行同一条外发路径',async t=>{
-  const news=newsFixtures(),h=await openHost(t,{news});
-  markPrivateRead('synthetic-owner',{at:h.now(),source:'context_brief'});
-  const value=await h.tool('ai_digest',{action:'send_now',userRequested:true,confirmPrivateEgress:true},'egress-send-3');
+  // Deliberate: the digest carries public RSS content, so blocking it on "this
+  // session read something private" would be an unrelated proxy check that only
+  // adds friction. The private-egress gate lives on personal_review.run_now.
   assert.ok(['queued','reported_sent'].includes(value.status),JSON.stringify(value));
-  assert.deepEqual(news.counts(),{feeds:1,models:1});assert.equal(h.sent.length,1);
+  assert.deepEqual(news.counts(),{feeds:1,models:1});
+  assert.equal(h.sent.length,1);
+  assert.ok(privateReadSince('synthetic-owner',h.now()),'the marker stays: it is what the review gate reads');
 });
 
 test('personal_review run_now 被拦时不读取也不建计划，确认后才继续',async t=>{
