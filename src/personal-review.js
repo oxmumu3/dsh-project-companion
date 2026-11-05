@@ -18,12 +18,20 @@ const digest = z.string().regex(/^[a-f0-9]{64}$/), localTime = z.string().regex(
 const callerSchema = z.object({ sessionId: reviewId, cwd: z.string().min(1).max(4096).refine(isAbsolute) }).strict();
 const scopeSchema = z.object({ caller: callerSchema, sources: z.array(z.enum(reviewSources)).max(5), projects: z.array(z.string().min(1).max(4096).refine(isAbsolute)).max(5), bindingKey: digest, grant: digest, key: digest }).strict();
 const scheduleSchema = z.object({ dailyTime: localTime.optional(), weeklyDay: z.number().int().min(0).max(6).optional(), weeklyTime: localTime.optional(), timeZone: z.string().min(1).max(100) }).strict().refine(s => Boolean(s.dailyTime || s.weeklyTime) && (s.weeklyTime === undefined) === (s.weeklyDay === undefined));
+// 关注点是本人给的注意力偏好：短、非空、无控制字符。非法直接报错，不静默截断。
+const focusSchema = z.string().min(1).max(200).refine(value => value.trim().length > 0 && !/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/.test(value));
+function focusInput(raw) {
+  if (raw === undefined) return undefined;
+  const parsed = focusSchema.safeParse(raw);
+  if (!parsed.success) throw new Error('关注点需要 1–200 字、非空且不含控制字符的正常文本；本次没有保存或发送。');
+  return parsed.data;
+}
 const attentionSchema=z.object({enabled:z.boolean(),intervalMinutes:z.literal(120),startHour:z.literal(9),endHour:z.literal(19),maxMessagesPerDay:z.literal(2),createdAt:reviewInstant}).strict();
 const recoverySchema=z.object({key:digest,observedAt:reviewInstant,offlineSince:reviewInstant.nullable(),blocked:z.boolean(),diagnostic:personalReviewRecoveryDiagnosticSchema.optional()}).strict();
 const lastViewSchema=z.object({viewToken:reviewId.optional(),caller:callerSchema,scopeKey:digest,bindingKey:digest,grant:digest,at:reviewInstant,itemIds:z.array(reviewId).max(5)}).strict();
 const statuses = ['generating', 'dispatching', 'reported_sent', 'queued', 'uncertain', 'failed', 'cancelled', 'expired', 'quiet', 'unknown'];
 const jobSchema = z.object({ id: reviewId, sessionId: reviewId, requestId: reviewId, kind: z.enum(['daily', 'weekly', 'attention']), occurrence: reviewId, createdAt: reviewInstant, status: z.enum(statuses), itemIds: z.array(reviewId).max(5), diagnostic: personalReviewDiagnosticSchema.optional(),sourceDiagnostics:reviewSourceDiagnosticsSchema.optional(),attentionDecision:attentionDecisionSchema.optional() }).strict();
-export const personalReviewRowSchema = z.object({ id: z.literal('profile'), version: z.literal(1), scope: scopeSchema.nullable(), goals:z.array(reviewGoalSchema).max(50).default([]), meetingCache:meetingCacheSchema.default(null), recovery:recoverySchema.nullable().default(null), lastView:lastViewSchema.nullable().default(null), attentionClaims:z.array(z.object({id:reviewId,at:reviewInstant,timeZone:z.string(),status:z.enum(['dispatching','reported_sent','queued','uncertain'])}).strict()).max(100).default([]), subscription: scopeSchema.extend({ schedule: scheduleSchema, createdAt: reviewInstant, paused: z.boolean(), attention:attentionSchema.optional() }).strict().nullable(), items: z.array(reviewItemSchema).max(300), jobs: z.array(jobSchema).max(60), occurrences: z.array(reviewId).max(800), watermarks: z.record(z.string(), z.object({ daily: reviewInstant.optional(), weekly: reviewInstant.optional(), attention:reviewInstant.optional() }).strict()), receipts: z.array(z.object({ sessionId: reviewId, requestId: reviewId, action: z.string().max(30), at: reviewInstant }).strict()).max(200) }).strict();
+export const personalReviewRowSchema = z.object({ id: z.literal('profile'), version: z.literal(1), scope: scopeSchema.nullable(), goals:z.array(reviewGoalSchema).max(50).default([]), meetingCache:meetingCacheSchema.default(null), recovery:recoverySchema.nullable().default(null), lastView:lastViewSchema.nullable().default(null), attentionClaims:z.array(z.object({id:reviewId,at:reviewInstant,timeZone:z.string(),status:z.enum(['dispatching','reported_sent','queued','uncertain'])}).strict()).max(100).default([]), subscription: scopeSchema.extend({ schedule: scheduleSchema, createdAt: reviewInstant, paused: z.boolean(), attention:attentionSchema.optional(), focus:focusSchema.optional() }).strict().nullable(), items: z.array(reviewItemSchema).max(300), jobs: z.array(jobSchema).max(60), occurrences: z.array(reviewId).max(800), watermarks: z.record(z.string(), z.object({ daily: reviewInstant.optional(), weekly: reviewInstant.optional(), attention:reviewInstant.optional() }).strict()), receipts: z.array(z.object({ sessionId: reviewId, requestId: reviewId, action: z.string().max(30), at: reviewInstant }).strict()).max(200) }).strict();
 const fresh = () => ({ id: 'profile', version: 1, scope: null, subscription: null, items: [], jobs: [], occurrences: [], watermarks: {}, receipts: [] });
 const labels = { generating: '正在整理', dispatching: '正在提交通道', reported_sent: '通道报告已发出，手机送达与已读未知', queued: '通道已排队，手机送达未知', uncertain: '发送结果不确定，不自动重发', failed: '本次回顾失败，不自动重试', cancelled: '本次已取消', expired: '已错过本次检查窗口，不补发', quiet: '没有达到提醒门槛的新事项，本次保持安静', unknown: '来源覆盖未知，未作无变化判断' };
 function requireCaller(raw) { try { const caller = callerSchema.parse({ sessionId: raw?.sessionId, cwd: raw?.cwd }); caller.cwd = resolve(caller.cwd); return caller; } catch { throw new Error('需要本人真实本地会话'); } }
@@ -141,6 +149,7 @@ export function createPersonalReviewService({ store, readBinding, readBindingSyn
     }
     const unconfirmed=includeScope&&scope&&state.items.some(item=>item.scopeKey===scope.key&&!['handled','dismissed'].includes(item.status)&&!itemInScope(item,scope));
     return { status: state.subscription ? state.subscription.paused ? 'paused' : 'enabled' : 'off', schedule: state.subscription ? copy(state.subscription.schedule) : null,
+      focus: state.subscription?.focus ?? null,
       health:reviewRuntimeHealth({subscription:state.subscription,jobs:state.jobs,now:now()}),attention,goals:includeScope&&scope?state.goals.filter(g=>g.scopeKey===scope.key&&g.grant===scope.grant).sort((a,b)=>Number(a.status==='completed')-Number(b.status==='completed')).slice(0,5).map(g=>({title:g.title,objective:g.objective,status:g.status,meetingTitle:g.meetingTitle??null})):[],
       sources: includeScope ? scope?.sources ?? [] : [], projects: includeScope ? scope?.projects ?? [] : [], items: includeScope ? state.items.filter(i => itemInScope(i,scope)).map(i => ({ id: i.id, title: i.title, status: i.status, dueAt: i.dueAt ?? null, snoozeUntil: i.snoozeUntil })) : [],
       jobs: state.jobs.slice(-8).map(j => ({ kind: j.kind, status: j.status, createdAt: j.createdAt, detail: labels[j.status],...(j.diagnostic?{diagnostic:copy(j.diagnostic)}:{}) })),
@@ -201,7 +210,9 @@ export function createPersonalReviewService({ store, readBinding, readBindingSyn
     const attentionEnabledAt=scopeConfirmedAt&&attentionAt&&Date.parse(attentionAt)>=Date.parse(scopeConfirmedAt)&&Date.parse(attentionAt)<=Date.parse(checkedAt)?attentionAt:null;
     const currentReview={checkedAt,scopeConfirmedAt,attentionEnabledAt,sourceCount:run.sources.length,projectCount:run.projects.length};
     let candidates = [];
-    if (data.evidence.length) { stage='model'; const summary = await race(() => summarize({ ...copy(data), previousItems, currentReview, goals:activeReviewGoals(state.goals,run).map(g=>({objective:g.objective,project:g.project,meetingTitle:g.meetingTitle??null})), kind: materialKind, now: checkedAt, signal: run.signal, guard: () => guard(run), authorizeSync: () => authorizeSync(run) }), run.signal, 'REVIEW_MODEL_FAILED'); await guard(run); candidates = validatePersonalReviewSummary(summary, data.evidence).items; }
+    // 关注点只影响整理时的注意力，不参与范围判断；没有就退回订阅里保存的那条。
+    const focus = typeof run.request?.focus === 'string' ? run.request.focus : state.subscription?.key === run.key ? state.subscription?.focus : undefined;
+    if (data.evidence.length) { stage='model'; const summary = await race(() => summarize({ ...copy(data), previousItems, currentReview, goals:activeReviewGoals(state.goals,run).map(g=>({objective:g.objective,project:g.project,meetingTitle:g.meetingTitle??null})), kind: materialKind, now: checkedAt, ...(focus ? { focus } : {}), signal: run.signal, guard: () => guard(run), authorizeSync: () => authorizeSync(run) }), run.signal, 'REVIEW_MODEL_FAILED'); await guard(run); candidates = validatePersonalReviewSummary(summary, data.evidence).items; }
     const meetingCandidates=kind==='attention'&&calendarCoverageComplete(data.coverage)?prepareReviewMeeting(state.goals,run,data.evidence,candidates,at):[];
     const ledger = mergeReviewItems(reconciled, [...candidates,...meetingCandidates], data.evidence, { now: at, scopeKey: run.key, grantScopeKey: taskScopeKey });
     const attentionSelection=kind==='attention'?selectAttention(ledger.filter(i=>currentTaskScope(i)&&i.lastSeenAt===at)):null;
@@ -294,6 +305,9 @@ export function createPersonalReviewService({ store, readBinding, readBindingSyn
     input = { ...input, receiptSessionId: caller.sessionId };
     if (!['configure', 'preview', 'run_now', 'status', 'pause', 'resume', 'cancel', 'feedback', 'attention','goal','prepare'].includes(action)) throw new Error('未知个人回顾操作');
     if (input.signal !== undefined && !(input.signal instanceof AbortSignal)) throw new Error('无效取消信号');
+    // 关注点只在 configure/preview 里有效；非法值在这里直接失败，不静默截断、不落库。
+    if (input.focus !== undefined && !['configure', 'preview'].includes(action)) throw new Error('本操作不接受关注点；关注点只用于 configure 或 preview。');
+    if (input.focus !== undefined) input.focus = focusInput(input.focus);
     if (input.guard !== undefined && typeof input.guard !== 'function' || input.authorizeSync !== undefined && typeof input.authorizeSync !== 'function') throw new Error('无效本次请求授权检查');
     if (!['preview', 'status'].includes(action) && (input.userRequested !== true || !reviewId.safeParse(input.requestId).success)) throw new Error('需要用户明确要求及本次请求 ID');
     if (input.kind !== undefined && !['daily', 'weekly'].includes(input.kind)) throw new Error('无效回顾频率');
@@ -317,8 +331,10 @@ export function createPersonalReviewService({ store, readBinding, readBindingSyn
       if (action === 'status') { if (displayScope()) { const run = execution(displayScope(), input.signal, input); try { await guard(run, { allowPaused: true }); } finally { run.dispose(); } } return view(); }
       if (action === 'configure') {
         const schedule = scheduleInput(input.schedule), scope = await buildScope(caller, input, displayScope()); if (!await canRun()) throw new Error('助理已暂停');
+        // 不传 focus 时沿用上一条，避免只改时间就把本人写过的关注点弄丢。
+        const keptFocus = input.focus ?? state.subscription?.focus;
         const run = execution(scope, input.signal, input); try { await guard(run); } finally { run.dispose(); }
-        await commitMutation(input, admission, draft => { setScope(scope, draft); draft.subscription = { ...copy(scope), schedule, createdAt: now().toISOString(), paused: false }; }); return view();
+        await commitMutation(input, admission, draft => { setScope(scope, draft); draft.subscription = { ...copy(scope), schedule, createdAt: now().toISOString(), paused: false, ...(keptFocus !== undefined ? { focus: keptFocus } : {}) }; }); return view();
       }
       if (action === 'cancel' || action === 'pause') { await requestGuard(input); await commitMutation(input, admission, draft => { if (action === 'cancel') draft.subscription = null; else if (draft.subscription) draft.subscription.paused = true; }); return view(false); }
       if (action === 'resume') {

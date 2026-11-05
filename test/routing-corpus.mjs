@@ -7,6 +7,7 @@ export const CORPUS = [
   ['跟上次比有什么变化', 'look', 'change'],
   ['这两天有什么新动静', 'look', 'change'],
   ['助理现在什么状态', 'look', 'status'],
+  ['你自己先自检一下', 'look', 'health'],
   ['上次那个任务成了吗', 'look', 'task'],
   ['交办的事有结果了吗', 'look', 'task'],
   ['那次检查跑完了吗', 'look', 'once'],
