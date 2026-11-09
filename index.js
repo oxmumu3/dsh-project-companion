@@ -1408,9 +1408,36 @@ export async function installCompanion(ctx,options={}){
     }catch(error){return{kind:'error',text:String(error?.message??error)};}
   }});
   const track=operation=>{if(disposed)return;void operation().catch(noteError).finally(syncTimer);};
+  // 手机侧先回一句：本人通过微信发来的消息，立刻回执，再让主流程继续干活。
+  // 只对绑定了微信的会话生效；同一消息只回一次；发送失败不影响主流程。
+  const quickAcked=new Map();
+  const quickAck=async(sessionId,messageId)=>{
+    // 家庭微信入口的会话走 Family 桥；独立微信走站点桥。两条都不猜绑定。
+    const familyScope=familyDelegate.scopeFor(sessionId);
+    if(familyScope){
+      if(!familyDelegate.current(familyScope))return;
+      const key=sessionId+':'+messageId;
+      if(quickAcked.has(key))return;
+      quickAcked.set(key,Date.now());
+      if(quickAcked.size>200)quickAcked.delete(quickAcked.keys().next().value);
+      try{await getFamilyBridge()?.sendOwner({sessionId,bindingRevision:familyScope.bindingRevision,text:'收到，我先看一下，随后把结果发你。',requestId:'ack-'+messageId,authorize:()=>familyDelegate.current(familyScope)});}catch{}
+      return;
+    }
+    const binding=standaloneBinding(sessionId);
+    if(!binding)return;
+    const key=sessionId+':'+messageId;
+    if(quickAcked.has(key))return;
+    quickAcked.set(key,Date.now());
+    if(quickAcked.size>200)quickAcked.delete(quickAcked.keys().next().value);
+    const bridge=standaloneBridge();
+    if(typeof bridge?.send!=='function')return;
+    try{await bridge.send({sessionId,expectedBinding:binding.bindingKey,requestId:'ack-'+messageId,text:'收到，我先看一下，随后把结果发你。',authorize:()=>!disposed&&!lifecycle.signal.aborted});}catch{}
+  };
   ctx.on('agent/inbox/claimed',payload=>{
     if(!payload?.agent?.id||!payload.message?.id||!Number.isInteger(payload.turn))return;
-    track(async()=>{await taskResults.claimed({sessionId:String(payload.agent.id),messageId:String(payload.message.id),turn:payload.turn,sourceKind:payload.message.source?.kind,sourceCallId:payload.message.source?.callId});await personalReview.reconcileJobs();});
+    const sessionId=String(payload.agent.id),messageId=String(payload.message.id);
+    track(async()=>{await quickAck(sessionId,messageId);});
+    track(async()=>{await taskResults.claimed({sessionId,messageId,turn:payload.turn,sourceKind:payload.message.source?.kind,sourceCallId:payload.message.source?.callId});await personalReview.reconcileJobs();});
   });
   ctx.on('agent/inbox/discarded',payload=>{
     if(!payload?.agent?.id||!payload.message?.id)return;

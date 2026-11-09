@@ -1152,3 +1152,29 @@ test('项目变化提醒：没连微信不开，关闭时明确说停',async t=>
  assert.match(off.text,/已停止项目变化提醒/);
  assert.equal(h.sent.length,0);
 });
+
+test('微信绑定会话收到本人消息时先回一句，再让主流程继续',async t=>{
+ const sends=[];
+ const bridge={binding:()=>({bound:true,bindingKey:'a'.repeat(64)}),send:async item=>{sends.push(item);return{status:'accepted'};}};
+ const h=await openHost(t,{guardedBridge:bridge,readSetup:async()=>({state:'unbound'})});
+ const live=addLive(h,'wechat-live',h.root);
+ const message={id:'m-1',source:{kind:'user'},content:[{type:'text',text:'帮我看看项目'}]};
+ h.ctx.emit('agent/inbox/claimed',{agent:live,message,turn:1});
+ await new Promise(resolve=>setTimeout(resolve,30));
+ assert.equal(sends.length,1);
+ assert.match(sends[0].text,/收到，我先看一下/);
+ assert.equal(sends[0].sessionId,'wechat-live');
+ h.ctx.emit('agent/inbox/claimed',{agent:live,message,turn:1});
+ await new Promise(resolve=>setTimeout(resolve,30));
+ assert.equal(sends.length,1,'同一条消息不重复回执');
+});
+
+test('没绑微信的会话不会凭空回执',async t=>{
+ const sends=[];
+ const bridge={binding:()=>({bound:false}),send:async item=>{sends.push(item);return{status:'accepted'};}};
+ const h=await openHost(t,{guardedBridge:bridge,readSetup:async()=>({state:'unbound'})});
+ const live=addLive(h,'gui-live',h.root);
+ h.ctx.emit('agent/inbox/claimed',{agent:live,message:{id:'g-1',source:{kind:'user'},content:[]},turn:1});
+ await new Promise(resolve=>setTimeout(resolve,30));
+ assert.equal(sends.length,0);
+});
