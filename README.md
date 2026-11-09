@@ -15,7 +15,7 @@
   <img alt="macOS" src="https://img.shields.io/badge/macOS-%E6%A1%8C%E9%9D%A2%E7%89%88%E4%B8%8E%E7%BD%91%E9%A1%B5%E7%89%88-111?style=flat-square">
 </p>
 
-<p align="center"><sub>界面预览为设计稿，数据全部为示例；实机截图会随后替换。</sub></p>
+<p align="center"><sub>界面预览为设计稿，数据为示例。产品站与实机截图见 <a href="https://dot.finvo.ai/">dot.finvo.ai</a>。</sub></p>
 
 作者：牛村木木山 · MIT · 社区开源项目，非 DeepSeek 官方产品。
 
@@ -42,7 +42,7 @@
 dsh plugin --profile web add @oxmumu3/dsh-project-companion
 ```
 
-桌面版只走插件页面安装；装完若宿主提示，再完整退出并重开。要求官方 Harness `0.2.x`、Node.js 22.13+。离线安装包在 [Releases](https://github.com/oxmumu3/dsh-project-companion/releases)。
+桌面版只走插件页面安装；装完若宿主提示，再完整退出并重开。要求官方 Harness `0.2.x`、Node.js 22.13+。0.24 起不再随版本附带离线安装包，桌面版和网页版都走上面这条插件安装路径。
 
 <p align="center">
   <img src="docs/assets/preview/first-use-mobile.png" alt="第一次打开：先说一件事" width="300">

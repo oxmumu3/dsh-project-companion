@@ -1,6 +1,6 @@
 /** Local macOS distribution installer. No daemon, profile editing, login or WeChat access. */
 import {access, readFile, readdir, realpath, stat} from 'node:fs/promises';
-import {constants} from 'node:fs';
+import {constants, readFileSync} from 'node:fs';
 import {basename, dirname, join, resolve} from 'node:path';
 import {homedir} from 'node:os';
 import {createHash} from 'node:crypto';
@@ -8,7 +8,10 @@ import {gunzipSync} from 'node:zlib';
 import {spawn} from 'node:child_process';
 
 export const OFFICIAL_HARNESS_URL='https://github.com/deepseek-ai/deepseek-harness/releases';
-const RUNTIMES=['0.2.0-rc.2','0.2.1-rc.2','0.2.1-rc.3'];
+// One matrix, one source: the same compatibility.json that package.json declares and CI validates.
+// Keeping a second hard-coded list here is how the offline installer fell behind and started
+// rejecting Hosts the plugin already supported.
+const RUNTIMES=JSON.parse(readFileSync(new URL('../compatibility.json',import.meta.url),'utf8'));
 const NAMES=['dsh-wechat','dsh-project-companion'];
 const BRIDGE_VERSIONS=new Set(['0.11.0','0.11.1-dot.1','0.11.1-dot.2','0.11.1-dot.3']);
 const MAX_PACKAGE=20*1024*1024;
