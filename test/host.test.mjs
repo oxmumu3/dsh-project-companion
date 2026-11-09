@@ -54,7 +54,7 @@ async function openHost(t, options={}){
   const session=ctx.sessions.create(SessionId('synthetic-owner'),{meta:{cwd:workspace}});
   const owner={id:session.id,session,ctx,status:'idle',followup:message=>accepted.push(message)};live.set(owner.id,owner);
   const disableWeChat=ctx.tools.register(defineTool({name:'send_wechat',description:'Synthetic queue only; no real network',parameters:{text:{type:'string',required:true}},output:{schema:{type:'object',additionalProperties:true},render:(_args,value)=>[{type:'text',text:JSON.stringify(value)}]},execute:(_args,execution)=>{sent.push(execution);return options.sendResponse?.(execution)??{ok:true,message:'queued synthetic message; not real WeChat'};}}));
-  const lifecycle=await ctx.plugin({name:'synthetic-companion-mount',inject:['tools','commands','storageDomain','sessions','systemPrompt'],async apply(scope){adapter=await installCompanion(scope,{clock:()=>now,hostTimeZone:()=>options.hostTimeZone??'America/Mexico_City',...(options.family?{family:options.family}:{}),...(options.readBinding?{readBinding:options.readBinding}:{}),...(options.readSetup?{readSetup:options.readSetup}:{}),...(options.readNativeRoute?{readNativeRoute:options.readNativeRoute}:{}),...(options.news?{news:options.news}:{}),...(options.projectUpdates?{projectUpdates:options.projectUpdates}:{}),...(options.projectPulse?{projectPulse:options.projectPulse}:{}),...(options.personalReview?{personalReview:options.personalReview}:{}),...(options.context?{context:options.context}:{}),timers:{setInterval:(fn,ms)=>{intervalMs=ms;timer=fn;timerStarts++;return {unref(){}};},clearInterval:()=>{timer=undefined;timerStops++;}}});}});
+  const lifecycle=await ctx.plugin({name:'synthetic-companion-mount',inject:['tools','commands','storageDomain','sessions','systemPrompt'],async apply(scope){adapter=await installCompanion(scope,{clock:()=>now,hostTimeZone:()=>options.hostTimeZone??'America/Mexico_City',...(options.family?{family:options.family}:{}),...(options.readBinding?{readBinding:options.readBinding}:{}),...(options.readSetup?{readSetup:options.readSetup}:{}),...(options.readNativeRoute?{readNativeRoute:options.readNativeRoute}:{}),...(options.news?{news:options.news}:{}),...(options.projectUpdates?{projectUpdates:options.projectUpdates}:{}),...(options.projectPulse?{projectPulse:options.projectPulse}:{}),...(options.pulseLedger?{pulseLedger:options.pulseLedger}:{}),...(options.personalReview?{personalReview:options.personalReview}:{}),...(options.context?{context:options.context}:{}),timers:{setInterval:(fn,ms)=>{intervalMs=ms;timer=fn;timerStarts++;return {unref(){}};},clearInterval:()=>{timer=undefined;timerStops++;}}});}});
   let count=0;const signal=()=>new AbortController().signal;
   const nativeTool=async(args,agent=owner,callId=`synthetic-call-${++count}`)=>{const r=await executeHostTool(ctx.tools,{callId,name:'project_companion',arguments:args,agent,signal:signal()});assert.equal(r.isError,false,JSON.stringify(r));return r;};
   const tool=async(...args)=>(await nativeTool(...args)).value;
@@ -1123,4 +1123,22 @@ test('已授权但未关注的工作区也能问进度，且不因此获得项�
  const denied=await h.tool({action:'digest',project:'未授权项目'});
  assert.equal(denied.status,'blocked');
  assert.match(denied.text,/没找到这个名字的已关注项目或已授权工作区/);
+});
+
+test('第二次问同一项目时只报自上次以来的增量',async t=>{
+ const routes=[];let head='abc1234',dirty=1;
+ const pulse={capture:async()=>({repo:true,branch:'main',head,commits:[{short:head,date:'2026-11-08',subject:head==='abc1234'?'初始提交':'新增推送'}],dirty:{total:dirty,modified:dirty,untracked:0,truncated:false},unavailable:[]})};
+ const h=await openHost(t,{projectPulse:pulse,connection:{fetch:{register:r=>{routes.push(r);return()=>{};}}},readSetup:async()=>({state:'unbound'})});
+ h.known.push({id:'delta-fixture',path:h.root,title:'增量项目',sessionIds:[]});
+ const request=async(path,input)=>{const r=routes.find(x=>x.path===path);const response=await r.fetch(new Request('http://synthetic.invalid'+path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(input)}));assert.equal(response.status,200);return response.json();};
+ const first=await request('/api/project_companion/workspaces',{action:'list'});
+ await request('/api/project_companion/workspaces',{action:'save',expectedRevision:first.revision,expectedCatalogRevision:first.catalogRevision,workspaceIds:[first.items[0].id]});
+ const one=await h.tool({action:'digest',project:'增量项目'});
+ assert.doesNotMatch(one.memoryContext,/自上次查看以来/);
+ head='def5678';dirty=4;
+ const two=await h.tool({action:'digest',project:'增量项目'});
+ assert.match(two.memoryContext,/自上次查看以来：HEAD abc1234 → def5678/);
+ assert.match(two.memoryContext,/未提交改动 1 → 4（\+3）/);
+ const three=await h.tool({action:'digest',project:'增量项目'});
+ assert.doesNotMatch(three.memoryContext,/自上次查看以来/);
 });

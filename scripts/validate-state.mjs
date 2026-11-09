@@ -23,6 +23,7 @@ const DOMAINS = {
   project_companion_context_loop: ['context-loop.js', 'contextLoopRowSchema'],
   project_companion_task_results: ['task-results.js', 'taskResultsRowSchema'],
   project_companion_workspace_access: ['workspace-access.js', 'workspaceAccessRowSchema'],
+  project_companion_pulse: ['project-pulse-ledger.js', 'pulseLedgerRowSchema'],
 };
 
 if (!existsSync(storages)) {

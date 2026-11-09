@@ -15,6 +15,7 @@ import {createTaskResults,taskResultsRowSchema} from './src/task-results.js';
 import {readWechatBinding,readWechatRoute,readWechatSetup} from './src/wechat-route.js';
 import {createProjectMemory} from './src/project-memory.js';
 import {createProjectPulse,summarize as summarizePulse} from './src/project-pulse.js';
+import {createProjectPulseLedger,pulseLedgerRowSchema} from './src/project-pulse-ledger.js';
 import {createProjectFollowup} from './src/project-followup.js';
 import {createOnboarding,registerOnboardingRoute} from './src/onboarding.js';
 import {createWelcomeGuard} from './src/welcome-guard.js';
@@ -95,6 +96,7 @@ const domainSpec=defineDomain({name:'project_companion',version:1,tables:{state:
 const taskResultsDomainSpec=defineDomain({name:'project_companion_task_results',version:1,tables:{state:domainTable(taskResultsRowSchema)}});
 const onboardingRow=z.object({id:z.literal('profile'),version:z.literal(1),completed:z.boolean(),welcomeStatus:z.enum(['none','dispatching','accepted','unknown']),sessionId:identity.nullable(),bindingKey:z.string().regex(/^[a-f0-9]{64}$/).nullable(),messageId:identity.nullable(),userReceivedAt:timestamp.optional(),welcomeRoots:z.array(z.string().min(1).max(4096)).min(1).max(5).optional(),previousAttempts:z.array(z.object({messageId:identity,status:z.enum(['stopped','no_text']),finishedAt:timestamp.optional()}).strict()).max(5).optional()}).strict();
 const projectUpdatesDomainSpec=defineDomain({name:'project_companion_updates',version:1,tables:{state:domainTable(projectUpdateRowSchema)}});
+const pulseLedgerDomainSpec=defineDomain({name:'project_companion_pulse',version:1,tables:{state:domainTable(pulseLedgerRowSchema)}});
 const contextLoopDomainSpec=defineDomain({name:'project_companion_context_loop',version:1,tables:{state:domainTable(contextLoopRowSchema)}});
 const contextDomainSpec=defineDomain({name:'project_companion_context',version:1,tables:{state:domainTable(contextRowSchema)}});
 const familyDelegationRow=z.union([
@@ -148,6 +150,8 @@ export async function installCompanion(ctx,options={}){
   const familyTable=familyDomain.table('state');
   const projectUpdatesDomain=await ctx.storageDomain.open(projectUpdatesDomainSpec);
   const projectUpdatesTable=projectUpdatesDomain.table('state');
+  const pulseLedgerDomain=await ctx.storageDomain.open(pulseLedgerDomainSpec);
+  const pulseLedgerTable=pulseLedgerDomain.table('state');
   const contextLoopDomain=await ctx.storageDomain.open(contextLoopDomainSpec);
   const contextLoopTable=contextLoopDomain.table('state');
   const workspaceAccessDomain=await ctx.storageDomain.open(workspaceAccessDomainSpec);
@@ -159,7 +163,7 @@ export async function installCompanion(ctx,options={}){
   let disposed=false;
   const coordinates=new Set();
   let lastRuntimeError='';
-  let projectPulse,memory,followup,onboarding,welcomeGuard,contextRoute,workbench,workbenchActions,projectUpdates,projectUpdateModel,contextLoop,context,familyDelegate,familyContext,personalReview,personalReviewModel;
+  let projectPulse,pulseLedger,memory,followup,onboarding,welcomeGuard,contextRoute,workbench,workbenchActions,projectUpdates,projectUpdateModel,contextLoop,context,familyDelegate,familyContext,personalReview,personalReviewModel;
   // 污点标记只活在本进程内存里；这次装载从干净状态开始，不继承上一次运行的标记。
   clearPrivateReads();
   const lifecycle=new AbortController();
@@ -416,6 +420,7 @@ export async function installCompanion(ctx,options={}){
   const noteError=error=>{lastRuntimeError=String(error?.message??error).slice(0,200);};
   const authorizeRoot=async root=>(await service.coordinationTarget(root))?.root===root;
   const familyRead=createFamilyReadAdapter({getBridge:getFamilyBridge,isCurrent:scope=>familyDelegate.current(scope),authorizeRoot,recheck:scope=>familyDelegate.recheck(scope)});
+  pulseLedger=options.pulseLedger??createProjectPulseLedger({store:{get:key=>pulseLedgerTable.get(key),put:(key,value)=>pulseLedgerTable.put(key,pulseLedgerRowSchema.parse(value))},...(options.clock?{clock:options.clock}:{})});
   projectPulse=options.projectPulse??createProjectPulse({...(options.clock?{clock:options.clock}:{})});
   memory=createProjectMemory({authorizeRoot,...(options.clock?{clock:options.clock}:{}),...(options.hostTimeZone?{hostTimeZone:options.hostTimeZone}:{})});
   // Personal review is Owner-wide; it never borrows a synthetic project or a
@@ -947,7 +952,14 @@ export async function installCompanion(ctx,options={}){
         else{try{const snapshot=await memory.read({root:project.root,sessionId:owner(ctx,agent).sessionId});if(snapshot.goals.length||snapshot.entries.length)context.push(`${project.label}\n${snapshot.text}`);}
         catch(error){context.push(`${project.label}：项目记忆读取失败，内容未知。${String(error?.message??error).slice(0,120)}`);}}
         if(projects.indexOf(project)<20){
-          try{const pulse=summarizePulse(await projectPulse.capture(project.root));if(pulse)context.push(`${project.label} 最近变化\n${pulse}`);}
+          try{
+            const captured=await projectPulse.capture(project.root),pulse=summarizePulse(captured);
+            if(pulse)context.push(`${project.label} 最近变化\n${pulse}`);
+            if(captured?.repo===true){
+              try{const observed=await pulseLedger.observe({root:project.root,label:project.label,pulse:captured});if(observed?.changes?.length)context.push(`${project.label} 自上次查看以来：${observed.changes.join('；')}`);}
+              catch{context.push(`${project.label} 变化对比失败，本次只给当前状态。`);}
+            }
+          }
           catch{context.push(`${project.label} 最近变化：本机读取失败，状态未知。`);}
         }
       }

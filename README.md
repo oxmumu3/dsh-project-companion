@@ -96,7 +96,7 @@ dsh plugin --profile web add @oxmumu3/dsh-project-companion
 
 ## 版本与数据
 
-- 当前版本 **`0.31.0`**：任意已授权工作区都能直接问进度（未关注会说明没有项目记忆）；`0.30.0` 项目简报会读本机 git 的最近提交与未提交改动。
+- 当前版本 **`0.32.0`**：项目变化账本，第二次看同一项目只报「自上次以来」的增量；`0.31.0` 任意已授权工作区都能直接问进度。
 - 兼容官方 Harness `0.2.0-rc.2`、`0.2.1-rc.2` 至 `rc.5`、`0.2.2-rc.1`；清单在 [compatibility.json](compatibility.json)。
 - 数据留在本机 Harness profile 内，不经过第三方服务器；微信组件内置部分保留上游 MIT 许可，见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
 - 已知边界（Google 数据权限审核、flomo MAX、主动关注与手机收件的验收状态）统一写在[验证记录](docs/verification.md)，本页不重复。
