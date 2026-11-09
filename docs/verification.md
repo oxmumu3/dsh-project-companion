@@ -5,6 +5,7 @@
 - `node --max-old-space-size=256 --test --test-concurrency=1 test/*.test.mjs`：2,376 项 / 2,339 通过 / 0 失败 / 37 跳过（0.28.0 基线 2,372 / 2,335 / 0 / 37）。
 - 新增 4 条用例：合法状态返回 0 且逐域「兼容」、多出未知字段返回 1 并点名域与字段、目录不存在返回 2、无 schema 的域标「未核对」。
 - 本机实跑：用 0.28.0 的自带 schema 解开 7 个域，0 个不兼容；三个未导出 schema 的域标为未核对。这是重启前的补充证据，不替代真实 Host 激活。
+**隔离目录里的全新安装（追加）**：在空目录 `npm install @oxmumu3/dsh-project-companion@0.29.0`，2 分钟后装上 24 个包；`index.js` 可导入，导出 `Config/apply/inject/installCompanion/name`；`cordis.patch.yml` 与内置桥 `vendor/dsh-wechat`（0.11.1-dot.3-embedded.2）都在；包内 `scripts/validate-state.mjs` 直接跑通，读本机 7 个域 0 个不兼容。这只证明发布产物能被新用户装上并加载，不等于真实 Host 里已激活。
 
 **没有验证的**：脚本在激活失败的真实场景里的表现（只有一处历史失败，已从存储中清理）。
 
