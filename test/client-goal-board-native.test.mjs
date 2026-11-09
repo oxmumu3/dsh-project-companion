@@ -50,7 +50,7 @@ const nativeIds=tree=>nodes(tree,n=>n.props['data-native-session']).map(n=>n.pro
 
 test('actual Workbench switches global and two project native conversations with drafts, attachments and approvals retained',async()=>{
  const f=await fixture();try{
-  let tree=await f.settle();assert.equal(editors(tree).length,1);assert.deepEqual(nativeIds(tree),['global-native']);assert.ok(nodes(tree,n=>n.props['data-dot-inline-wechat']).length);assert.ok(button(tree,'选择工作区'));
+  let tree=await f.settle();assert.equal(editors(tree).length,1);assert.deepEqual(nativeIds(tree),['global-native']);assert.ok(nodes(tree,n=>n.props['data-dot-inline-wechat']).length);assert.ok(button(tree,'选择范围'));
   button(tree,'项目').props.onClick();tree=await f.settle();assert.equal(editors(tree).length,0);button(tree,'目标 1').props.onClick();tree=await f.settle();assert.equal(editors(tree).length,1);assert.deepEqual(nativeIds(tree),['dot-goal-1']);assert.equal(button(tree,'打开 Dot 对话'),undefined);assert.equal(nodes(tree,n=>n.props.role==='dialog').length,1);f.drafts.get('dot-goal-1').text='项目一继续写，尚未发送';
   button(tree,'关闭项目').props.onClick();tree=await f.settle();button(tree,'目标 2').props.onClick();tree=await f.settle();assert.equal(editors(tree).length,1);assert.deepEqual(nativeIds(tree),['dot-goal-2']);f.drafts.get('dot-goal-2').text='项目二独立草稿';
   button(tree,'关闭项目').props.onClick();tree=await f.settle();button(tree,'目标 1').props.onClick();tree=await f.settle();assert.deepEqual(nativeIds(tree),['dot-goal-1']);assert.equal(f.drafts.get('dot-goal-1').text,'项目一继续写，尚未发送');assert.deepEqual(f.drafts.get('dot-goal-1').attachments,['attachment-dot-goal-1']);assert.deepEqual(f.drafts.get('dot-goal-1').approvals,['approval-dot-goal-1']);

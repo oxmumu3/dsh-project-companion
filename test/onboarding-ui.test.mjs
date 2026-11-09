@@ -3,9 +3,11 @@ import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
 import vm from 'node:vm';
 
+const packageUrl=new URL('../package.json',import.meta.url);
+const metadata=JSON.parse(await readFile(packageUrl,'utf8'));
 const endpoint='/api/project_companion/onboarding';
 async function loadClient(){
-  const source=await readFile(new URL('../src/client.js',import.meta.url),'utf8');
+  const source=await readFile(new URL(metadata.exports['./client'],packageUrl),'utf8');
   const registrations=[],effects=[],requests=[],opened=[];
   let descriptor;
   let values=[],cursor=0,pending=[];
@@ -56,7 +58,7 @@ test('a stale retry button cannot repeat an accepted or uncertain attempt',async
 
 test('client keeps WeChat setup explicit and registers no first-run blocking onboarding',async()=>{
   const c=await loadClient();c.context.snapshot=snapshot({state:'waiting-qr',qrAvailable:true,qrRevision:'1234567890abcdef'});
-  assert.equal(c.descriptor.id,'dsh-project-companion');
+  assert.equal(c.descriptor.id,metadata.name);
   assert.equal(c.registrations.length,1);assert.equal(c.registrations.some(row=>row.definition.name==='settings.onboarding'),false);
   c.render();await c.flush();const view=c.render();
   assert.equal(c.requests.length,1);assert.equal(c.requests[0].url,endpoint);assert.equal(c.requests[0].options.method??'GET','GET');

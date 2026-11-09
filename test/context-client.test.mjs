@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import vm from 'node:vm';
 
+const { name: packageName } = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'));
 const endpoint = '/api/project_companion/context';
 const ids = ['gmail', 'calendar', 'drive', 'docs', 'sheets', 'slides', 'dida', 'flomo'];
 const snapshot = () => ({ sources: ids.map(id => ({ id, name: id, configured: id === 'flomo', enabled: false, status: id === 'flomo' ? 'disabled' : 'needs_authorization', lastReadAt: null })), googleAuth: { clientConfigured: true, refreshConfigured: false, authInProgress: false }, googleSuiteAuth: { clientConfigured: true, refreshConfigured: false, authInProgress: false, grantedSources: [] } });
@@ -168,7 +169,7 @@ test('native credential form is reachable in Dot and Plugin Configure without ex
   const c = await load({ native: true });
   try {
     c.render(); await c.flush(); const panel = c.render(), form = c.renderCredentials(panel); await c.flush();
-    assert.ok(c.registrations.some(row => row.spec.name === 'plugins.row.config' && row.spec.key === 'dsh-project-companion#project-companion'));
+    assert.equal(c.registrations.find(row => row.spec.name === 'plugins.row.config')?.spec.key, `${packageName}#project-companion`);
     assert.ok(c.configNames.length>=1);
     assert.ok(c.configNames.every(name=>name==='project-companion'));
     assert.equal(nodes(form, node => node.type === 'native-secret').length, 4);

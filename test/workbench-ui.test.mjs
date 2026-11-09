@@ -88,7 +88,7 @@ for(const scope of ['schedules','projects','jobs','coverage','connection'])test(
 
 test('independent Dot still reports unavailable legacy plans',async()=>{
  const h=await harness();sharedOwnerProjection(h);h.context.snapshot.connection={state:'bound',sessionId:'dot-source'};
- try{h.render();await h.flush();const banner=nodes(h.render(),n=>n.props['data-dot-recovery']);assert.equal(banner.length,1);assert.match(text(banner[0]),/已有安排尚未核对/);assert.deepEqual(actionPosts(h),[]);}finally{h.dispose();}
+ try{h.render();await h.flush();const banner=nodes(h.render(),n=>n.props['data-dot-recovery']);assert.equal(banner.length,1);assert.match(text(banner[0]),/已有安排还在核对/);assert.deepEqual(actionPosts(h),[]);}finally{h.dispose();}
 });
 
 test('native reset schedule rail uses stored scope timezone and unverified runtime without claiming phone receipt',async()=>{
@@ -656,14 +656,14 @@ test('secondary history keeps newer running or blocked jobs before older results
 
 test('shared Family results remain read-only while desktop conversation input stays visible',async()=>{
  const h=await harness();h.context.snapshot.connection.readOnly=true;h.context.snapshot.contextBindingRevision=null;h.context.snapshot.projects[0].followup={available:true,followup:null,once:null};seedMemory(h,memoryRow('m1','context','已有背景'));
- try{h.render();await h.flush();let view=h.render();assert.match(text(view),/今天想推进哪件事/);assert.equal(nodes(view,n=>n.type==='textarea'&&n.props['aria-label']==='交代给 Dot 的事情').length,1);assert.equal(button(view,'和 Dot 接着聊'),undefined);assert.equal(button(view,'安排提醒'),undefined);button(view,'公开项目 A').props.onClick();view=h.render();assert.equal(button(view,'和 Dot 聊这个项目'),undefined);button(view,'记住的事').props.onClick();view=h.render();assert.equal(button(view,'纠正或忘记'),undefined);assert.equal(button(view,'告诉 Dot 要记住什么'),undefined);
+ try{h.render();await h.flush();let view=h.render();assert.match(text(view),/今天想做什么/);assert.equal(nodes(view,n=>n.type==='textarea'&&n.props['aria-label']==='交代给 Dot 的事情').length,1);assert.equal(button(view,'和 Dot 接着聊'),undefined);assert.equal(button(view,'安排提醒'),undefined);button(view,'公开项目 A').props.onClick();view=h.render();assert.equal(button(view,'和 Dot 聊这个项目'),undefined);button(view,'记住的事').props.onClick();view=h.render();assert.equal(button(view,'纠正或忘记'),undefined);assert.equal(button(view,'告诉 Dot 要记住什么'),undefined);
   button(view,'连接').props.onClick();view=h.render();const panel=nodes(view,n=>n.props?.bindingRevision===null&&typeof n.type==='function')[0];assert.ok(panel);assert.equal(panel.props.onFirstValue,undefined);assert.equal(panel.props.bound,false);assert.equal(h.opened.length,0);assert.deepEqual(actionPosts(h),[]);
  }finally{h.dispose();}
 });
 
 test('offline shared Family mode preserves the return-to-WeChat path instead of offering legacy re-pairing',async()=>{
  const h=await harness();h.context.snapshot.connection={state:'unknown',readOnly:true};
- try{h.render();await h.flush();const view=h.render();assert.match(text(view),/今天想推进哪件事/);assert.equal(button(view,'连接微信'),undefined);assert.equal(button(view,'选择关注项目'),undefined);assert.equal(nodes(view,n=>n.type==='textarea'&&n.props['aria-label']==='交代给 Dot 的事情').length,1);assert.equal(h.opened.length,0);}finally{h.dispose();}
+ try{h.render();await h.flush();const view=h.render();assert.match(text(view),/今天想做什么/);assert.equal(button(view,'连接微信'),undefined);assert.equal(button(view,'选择关注项目'),undefined);assert.equal(nodes(view,n=>n.type==='textarea'&&n.props['aria-label']==='交代给 Dot 的事情').length,1);assert.equal(h.opened.length,0);}finally{h.dispose();}
 });
 
 
