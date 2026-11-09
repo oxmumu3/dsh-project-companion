@@ -72,7 +72,7 @@ dsh plugin --profile web add @oxmumu3/dsh-project-companion
 | 每天早上知道该干啥 | 有限读取 Gmail、主日历、Drive、flomo、滴答和已选项目，整理有来源的进展、风险与下一步 |
 | 按节奏跟进 | 一次提醒、一次检查、周期跟进；无值得说的变化可以静默，结果不确定不盲重发 |
 | 读你今天该看的 | AI 资讯日报：沿用你保存的关注点，从公开 RSS 里最多 3 篇重点 + 7 篇速览，附原文链接 |
-| 自己先体检 | `health` 自检六行：助理、微信、资料来源、个人回顾、AI 资讯、投递；只读本机，不发外部请求 |
+| 自己先体检 | `health` 自检七行：助理、微信、资料来源、个人回顾、AI 资讯、投递、手机控制；只读本机，不发外部请求 |
 
 ## 可以直接这样说
 
@@ -96,7 +96,7 @@ dsh plugin --profile web add @oxmumu3/dsh-project-companion
 
 ## 版本与数据
 
-- 当前版本 **`0.26.0`**：并入手机端任务控制的 Dot 侧（对端就绪后生效）；`0.25.0` 补上滴答账户级只读搜索；`0.24.1` 带来示例简报与「记录」页。
+- 当前版本 **`0.27.0`**：自检新增「手机控制」一行，看得出两边接没接上；`0.26.0` 并入手机端任务控制的 Dot 侧；`0.25.0` 补上滴答账户级只读搜索。
 - 兼容官方 Harness `0.2.0-rc.2`、`0.2.1-rc.2` 至 `rc.5`、`0.2.2-rc.1`；清单在 [compatibility.json](compatibility.json)。
 - 数据留在本机 Harness profile 内，不经过第三方服务器；微信组件内置部分保留上游 MIT 许可，见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
 - 已知边界（Google 数据权限审核、flomo MAX、主动关注与手机收件的验收状态）统一写在[验证记录](docs/verification.md)，本页不重复。

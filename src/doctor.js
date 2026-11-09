@@ -6,7 +6,7 @@
  *  抛错、超时、返回值不合法的探测一律显示「未知」，绝不当作没问题。
  */
 const MAX_CHARS = 1500, DETAIL_MAX = 120, DEFAULT_TIMEOUT_MS = 2000;
-const ROWS = [['assistant', '助理'], ['wechat', '微信'], ['sources', '资料来源'], ['review', '个人回顾'], ['news', 'AI 资讯'], ['delivery', '投递']];
+const ROWS = [['assistant', '助理'], ['wechat', '微信'], ['sources', '资料来源'], ['review', '个人回顾'], ['news', 'AI 资讯'], ['delivery', '投递'], ['mobile', '手机控制']];
 const STATE_TEXT = { ok: '正常', warn: '需要留意', unknown: '未知', off: '未启用' };
 const ISO = /\d{4}-\d\d-\d\d[T ]\d\d:\d\d(?::\d\d(?:\.\d{1,6})?)?(?:Z|[+-]\d\d:?\d\d)?/g;
 const UUID = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;

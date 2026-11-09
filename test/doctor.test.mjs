@@ -11,12 +11,13 @@ const healthy = () => ({
   review: good('已启用，每天 09:00；本次只读计划，没有执行回顾'),
   news: good('每天 09:30 发送；最近一次：通道报告已发出'),
   delivery: good('没有卡住的待发消息'),
+  mobile: good('已连上家庭助手，手机端可以停止或继续任务'),
 });
 
 test('全正常时每行一个方面，末尾一条建议', async () => {
   const text = await buildDoctorReport({now: NOW, hostTimeZone: ZONE, probes: healthy()});
   const lines = text.split('\n');
-  assert.deepEqual(lines.map(line => line.split('：')[0]), ['助理', '微信', '资料来源', '个人回顾', 'AI 资讯', '投递', '建议']);
+  assert.deepEqual(lines.map(line => line.split('：')[0]), ['助理', '微信', '资料来源', '个人回顾', 'AI 资讯', '投递', '手机控制', '建议']);
   assert.ok(!text.includes('未知'), text);
   assert.ok(!text.includes('需要留意'), text);
   assert.match(lines[0], /正常 · 运行中，关注 2 个项目/);
@@ -67,7 +68,7 @@ test('总长压到 1500 字符以内，并且建议行一定保留', async () =>
   const text = await buildDoctorReport({now: NOW, hostTimeZone: ZONE, probes});
   assert.ok(text.length <= 1500, `report is ${text.length} chars`);
   assert.match(text.split('\n').at(-1), /^建议：/);
-  assert.equal(text.split('\n').length, 7);
+  assert.equal(text.split('\n').length, 8);
 });
 
 test('时区或时间读不出来时助理行明确提醒，而不是报正常', async () => {
@@ -133,4 +134,16 @@ test('工具动作 doctor 与 look 的 health 视角都产出同一份本机自�
   const viaLook=await h.call({action:'look',view:'health'},'doctor-look');
   assert.equal(viaLook.view,'health');
   assert.match(viaLook.text,/(^|\n)微信：未启用/);
+});
+test('手机控制按对端有无分档，不把没接上算成正常', async () => {
+  const cases = [
+    [async () => ({state: 'off', detail: '没有检测到家庭助手，手机端控制不可用，电脑端不受影响'}), /^手机控制：未启用 · 没有检测到家庭助手/],
+    [async () => ({state: 'warn', detail: '家庭助手在，但注册没有完成，手机端控制可能不生效'}), /^手机控制：需要留意 · 家庭助手在/],
+    [async () => ({state: 'ok', detail: '已连上家庭助手，手机端可以停止或继续任务'}), /^手机控制：正常 · 已连上家庭助手/],
+  ];
+  for (const [probe, expected] of cases) {
+    const probes = healthy(); probes.mobile = probe;
+    const lines = (await buildDoctorReport({now: NOW, hostTimeZone: ZONE, probes})).split('\n');
+    assert.match(lines[6], expected);
+  }
 });

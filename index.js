@@ -363,16 +363,17 @@ export async function installCompanion(ctx,options={}){
   });
   familyDelegate=createFamilyOwnerDelegation({store:{get:key=>familyTable.get(key),put:(key,value)=>familyTable.put(key,familyDelegationRow.parse(value))},getBridge:getFamilyBridge,readGrantedLeases:async()=>context.delegationLeases(),readGrantedLeasesSync:()=>context.delegationLeases(),readLegacySetup:readSetup});
   familyContext=createFamilyContextAdapter({delegation:familyDelegate,context});
-  let mobileBridge,mobileRelease;
+  let mobileBridge,mobileRelease,mobileRegistered=false;
   const syncMobileBridge=()=>{
     const bridge=getFamilyBridge();if(bridge===mobileBridge)return;
-    mobileRelease?.();mobileRelease=undefined;mobileBridge=bridge;
+    mobileRelease?.();mobileRelease=undefined;mobileBridge=bridge;mobileRegistered=false;
     if(typeof bridge?.registerMobileTasks!=='function')return;
     mobileRelease=bridge.registerMobileTasks((sessionId,messageId)=>{
       const captured=taskResults.mobileTaskScope(sessionId,messageId);if(!captured)return null;
       const authorize=()=>{const scope=familyDelegate.scopeFor(captured.origin.sessionId),binding=scope&&familyBinding(scope),current=binding&&taskResults.mobileTaskScope(sessionId,messageId,{expectedBinding:binding});return !disposed&&current?.jobId===captured.jobId&&scope?.bindingRevision===captured.origin.bindingRevision&&binding?.userHash===captured.returnBinding?.userHash&&(binding?.botHash??null)===(captured.returnBinding?.botHash??null)&&familyDelegate.current(scope);};
       return authorize()?{...captured,authorize,questionState:input=>taskResults.mobileQuestionState(sessionId,messageId,input)}:null;
     });
+    mobileRegistered=true;
   };
   syncMobileBridge();
 
@@ -876,6 +877,14 @@ export async function installCompanion(ctx,options={}){
         if(lost)return{state:'warn',detail:`有 ${lost} 条投递结果不确定，不会自动重发`};
         if(waiting)return{state:'warn',detail:`有 ${waiting} 条消息还没发出去，等通道或原会话恢复`};
         return{state:'ok',detail:'没有卡住的待发消息'};
+      },
+      // 手机端控制要两个插件都在：家庭助手提供接口，Dot 注册后才能收手机指令。
+      mobile:async()=>{
+        syncMobileBridge();
+        const bridge=getFamilyBridge();
+        if(!bridge)return{state:'off',detail:'没有检测到家庭助手，手机端控制不可用，电脑端不受影响'};
+        if(typeof bridge.registerMobileTasks!=='function')return{state:'off',detail:'家庭助手版本较早，没有提供手机端控制接口'};
+        return mobileRegistered?{state:'ok',detail:'已连上家庭助手，手机端可以停止或继续任务'}:{state:'warn',detail:'家庭助手在，但注册没有完成，手机端控制可能不生效'};
       },
     };
   }
