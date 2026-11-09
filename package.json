@@ -55,7 +55,8 @@
     "scripts/official-channels.mjs",
     "scripts/validate-state.mjs",
     "docs/mobile-control.md",
-    "src/project-pulse.js"
+    "src/project-pulse.js",
+    "docs/dual-agent.md"
   ],
   "scripts": {
     "test": "node --max-old-space-size=128 --test --test-concurrency=1 test/*.test.mjs",
