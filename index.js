@@ -363,9 +363,23 @@ export async function installCompanion(ctx,options={}){
   });
   familyDelegate=createFamilyOwnerDelegation({store:{get:key=>familyTable.get(key),put:(key,value)=>familyTable.put(key,familyDelegationRow.parse(value))},getBridge:getFamilyBridge,readGrantedLeases:async()=>context.delegationLeases(),readGrantedLeasesSync:()=>context.delegationLeases(),readLegacySetup:readSetup});
   familyContext=createFamilyContextAdapter({delegation:familyDelegate,context});
+  let mobileBridge,mobileRelease;
+  const syncMobileBridge=()=>{
+    const bridge=getFamilyBridge();if(bridge===mobileBridge)return;
+    mobileRelease?.();mobileRelease=undefined;mobileBridge=bridge;
+    if(typeof bridge?.registerMobileTasks!=='function')return;
+    mobileRelease=bridge.registerMobileTasks((sessionId,messageId)=>{
+      const captured=taskResults.mobileTaskScope(sessionId,messageId);if(!captured)return null;
+      const authorize=()=>{const scope=familyDelegate.scopeFor(captured.origin.sessionId),binding=scope&&familyBinding(scope),current=binding&&taskResults.mobileTaskScope(sessionId,messageId,{expectedBinding:binding});return !disposed&&current?.jobId===captured.jobId&&scope?.bindingRevision===captured.origin.bindingRevision&&binding?.userHash===captured.returnBinding?.userHash&&(binding?.botHash??null)===(captured.returnBinding?.botHash??null)&&familyDelegate.current(scope);};
+      return authorize()?{...captured,authorize,questionState:input=>taskResults.mobileQuestionState(sessionId,messageId,input)}:null;
+    });
+  };
+  syncMobileBridge();
+
   ctx.effect(()=>async()=>{
     disposed=true;
     lifecycle.abort();
+    mobileRelease?.();
     goalBoard.close();goalBoardModel.close();workspaceAccess.close();
     await goalBoard.waitForIdle().catch(()=>{});
     workbench?.close();workbenchActions?.close();recoveryGuard.close();const familyClosing=familyDelegate.close();
@@ -999,6 +1013,7 @@ export async function installCompanion(ctx,options={}){
     // General dispatch has its own exact original-message capability; the
     // constrained source turn never inherits the target's native tools.
     if(args.action==='coordinate'&&!familyReadOnlyIntent(scope.userText)){
+      syncMobileBridge();
       const admission=await familyProject.acquire({scope,args:admittedArgs,signal:execution.signal});
       if(!admission)throw new Error('本次原始 Owner 消息或原生项目交办范围无法安全确认；尚未派发。');
       scope={...scope,nativeProjectAdmission:admission};
@@ -1314,7 +1329,7 @@ export async function installCompanion(ctx,options={}){
   const track=operation=>{if(disposed)return;void operation().catch(noteError).finally(syncTimer);};
   ctx.on('agent/inbox/claimed',payload=>{
     if(!payload?.agent?.id||!payload.message?.id||!Number.isInteger(payload.turn))return;
-    track(async()=>{await taskResults.claimed({sessionId:String(payload.agent.id),messageId:String(payload.message.id),turn:payload.turn,sourceKind:payload.message.source?.kind});await personalReview.reconcileJobs();});
+    track(async()=>{await taskResults.claimed({sessionId:String(payload.agent.id),messageId:String(payload.message.id),turn:payload.turn,sourceKind:payload.message.source?.kind,sourceCallId:payload.message.source?.callId});await personalReview.reconcileJobs();});
   });
   ctx.on('agent/inbox/discarded',payload=>{
     if(!payload?.agent?.id||!payload.message?.id)return;

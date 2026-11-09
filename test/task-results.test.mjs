@@ -410,3 +410,38 @@ test('abnormal direct-input history fails closed instead of forgetting an earlie
   await f.service.claimed({sessionId:'target-session',messageId:'message-1',turn:12,sourceKind:'user'}); await reply(f.service,'unsafe'); await end(f.service);
   assert.equal(f.sends.length,0);
 });
+
+const mobileOrigin = (overrides = {}) => ({
+  sessionId: 'origin-session', bindingRevision: 'c'.repeat(64), sourceRequestId: 'request-1',
+  workspaceId: 'workspace-1', root: '/synthetic/public-project', projectName: '公开项目',
+  taskHash: 'd'.repeat(64), ...overrides,
+});
+
+test('mobile scope exposes exactly one live family task and refuses to guess', async () => {
+  const f = await fixture();
+  const id = await running(f, { familyOrigin: mobileOrigin() });
+  const scope = f.service.mobileTaskScope('target-session', 'message-1');
+  assert.equal(scope.jobId, id);
+  assert.equal(scope.label, '公开项目');
+  assert.deepEqual(scope.returnBinding, binding);
+  assert.equal(f.service.mobileTaskScope('target-session', 'message-1', { expectedBinding: { userHash: 'e'.repeat(64), botHash: 'b'.repeat(64) } }), null);
+  assert.equal(f.service.mobileTaskScope('other-session', 'message-1'), null);
+  await running(f, { familyOrigin: mobileOrigin({ sourceRequestId: 'request-2' }), originToolCallId: 'call-2' });
+  assert.equal(f.service.mobileTaskScope('target-session', 'message-1'), null, '两个同目标任务时不给范围');
+});
+
+test('mobile scope ignores tasks that did not come through the family entry', async () => {
+  const f = await fixture();
+  await running(f);
+  assert.equal(f.service.mobileTaskScope('target-session', 'message-1'), null);
+});
+
+test('mobile question state ignores malformed input and accepts open/closed for a live scope', async () => {
+  const f = await fixture();
+  await running(f, { familyOrigin: mobileOrigin() });
+  assert.doesNotThrow(() => f.service.mobileQuestionState('target-session', 'message-1', { callId: '', state: 'open' }));
+  assert.doesNotThrow(() => f.service.mobileQuestionState('target-session', 'message-1', { callId: 'c'.repeat(201), state: 'open' }));
+  f.service.mobileQuestionState('target-session', 'message-1', { callId: 'call-9', state: 'open' });
+  f.service.mobileQuestionState('target-session', 'message-1', { callId: 'call-9', state: 'closed' });
+  assert.equal(f.service.mobileTaskScope('target-session', 'message-1').jobId.length > 0, true);
+});

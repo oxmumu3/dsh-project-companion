@@ -134,7 +134,7 @@ export function createTaskResults({store,clock = () => new Date(),send = async (
   let closing = false;
   let closePromise;
   let storageFailed = false;
-  const directClaims = new Map();
+  const directClaims = new Map(),mobileQuestions=new Map();
   const serial = work => { const run = queue.then(work); queue = run.catch(() => {}); return run; };
   const now = () => {
     const date = clock();
@@ -234,12 +234,26 @@ export function createTaskResults({store,clock = () => new Date(),send = async (
     if (closing) return;
     await load(); await expire();
     const {sessionId,messageId,turn,sourceKind}=event ?? {};
+    if(sourceKind==='user-question-reply'&&typeof event.sourceCallId==='string'){
+      const link=mobileQuestions.get(JSON.stringify([sessionId,event.sourceCallId])),job=link&&state.jobs.find(row=>row.id===link.jobId&&row.targetSessionId===sessionId&&LIVE.has(row.status));
+      if(job&&Number.isInteger(turn)&&turn>=0){
+        let claims=directClaims.get(sessionId);if(!claims){claims=new Map();directClaims.set(sessionId,claims);}
+        const existing=claims.get(turn);
+        if(existing&&(existing.mixed||existing.first!==job.targetMessageId)||!existing&&claims.size>=32){
+          if(existing)existing.mixed=true;
+          for(const other of state.jobs.filter(row=>row.targetSessionId===sessionId&&LIVE.has(row.status)&&(row.turn===turn||row.id===job.id)))stopMixed(other);
+          mobileQuestions.delete(JSON.stringify([sessionId,event.sourceCallId]));await save();return;
+        }
+        claims.set(turn,{first:job.targetMessageId,mixed:false});job.turn=turn;job.status='running';job.reply='';job.replyTruncated=false;mobileQuestions.delete(JSON.stringify([sessionId,event.sourceCallId]));await save();return;
+      }
+    }
+
     if (typeof sessionId!=='string' || typeof messageId!=='string' || !messageId || messageId.length>200 || !Number.isInteger(turn) || turn<0) return;
     const watching=state.jobs.filter(job=>job.targetSessionId===sessionId && LIVE.has(job.status));
     if (!watching.length) return;
     let claims=directClaims.get(sessionId);
     if (!claims) { claims=new Map(); directClaims.set(sessionId,claims); }
-    if (sourceKind==='user') {
+    if (sourceKind==='user'||sourceKind==='user-question-reply') {
       if (!claims.has(turn) && claims.size>=32) {
         // An abnormal stream must fail closed instead of forgetting a prior
         // direct input and accidentally treating a later mixed turn as clean.
@@ -316,6 +330,10 @@ export function createTaskResults({store,clock = () => new Date(),send = async (
     if (event.type!=='turn/end') return;
     const rawReason=typeof event.reason==='string'?event.reason:event.reason?.kind;
     const reason=knownReasons.has(rawReason)?rawReason:'unknown';
+    if(reason==='completed'&&[...mobileQuestions.values()].some(link=>link.jobId===job.id)){
+      job.reply='';job.replyTruncated=false;await save();return;
+    }
+
     job.reason=reason; job.status=reason==='completed'?(job.reply?'completed':'no_text'):reason;
     if (job.status!=='completed') { job.reply=''; job.replyTruncated=false; }
     job.finishedAt=now().toISOString();
@@ -377,8 +395,22 @@ export function createTaskResults({store,clock = () => new Date(),send = async (
   const needsTimer = () => !closing && Boolean(state?.jobs.some(active));
   const close = () => {
     closing=true;
-    closePromise ??= serial(async()=>{await load();directClaims.clear();});
+    closePromise ??= serial(async()=>{await load();directClaims.clear();mobileQuestions.clear();});
     return closePromise;
   };
-  return {ready,byRequest,reviewOutcomes,prepare,admitted,notAdmitted,claimed,discarded,observe,status,inspect,trustedLastTarget,tick,needsTimer,close};
+  const mobileTaskScope = (sessionId,messageId,{expectedBinding}={}) => {
+    if(closing||storageFailed||!state)return null;
+    const matches=state.jobs.filter(job=>LIVE.has(job.status)&&job.targetSessionId===sessionId&&job.targetMessageId===messageId&&job.familyOrigin&&(!expectedBinding||job.returnBinding?.userHash===expectedBinding.userHash&&(job.returnBinding?.botHash??null)===(expectedBinding.botHash??null))&&now().getTime()<Date.parse(job.expiresAt));
+    if(matches.length!==1)return null;
+    const job=matches[0];return{jobId:job.id,origin:copy(job.familyOrigin),returnBinding:copy(job.returnBinding),label:job.projectLabel};
+  };
+  const mobileQuestionState=(sessionId,messageId,{callId,state:phase}={})=>{
+    if(typeof callId!=='string'||!callId||callId.length>200)return;
+    const scope=mobileTaskScope(sessionId,messageId);
+    if(!scope)return;
+    const key=JSON.stringify([sessionId,callId]);
+    if(phase==='closed'){if(mobileQuestions.get(key)?.jobId===scope.jobId)mobileQuestions.delete(key);}
+    else if(['open','continued','answered_continued'].includes(phase))mobileQuestions.set(key,{jobId:scope.jobId});
+  };
+  return {mobileQuestionState,mobileTaskScope,ready,byRequest,reviewOutcomes,prepare,admitted,notAdmitted,claimed,discarded,observe,status,inspect,trustedLastTarget,tick,needsTimer,close};
 }
