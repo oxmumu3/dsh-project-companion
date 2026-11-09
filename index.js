@@ -14,6 +14,7 @@ import {createFamilyProjectAdmission} from './src/family-project-admission.js';
 import {createTaskResults,taskResultsRowSchema} from './src/task-results.js';
 import {readWechatBinding,readWechatRoute,readWechatSetup} from './src/wechat-route.js';
 import {createProjectMemory} from './src/project-memory.js';
+import {createProjectPulse,summarize as summarizePulse} from './src/project-pulse.js';
 import {createProjectFollowup} from './src/project-followup.js';
 import {createOnboarding,registerOnboardingRoute} from './src/onboarding.js';
 import {createWelcomeGuard} from './src/welcome-guard.js';
@@ -158,7 +159,7 @@ export async function installCompanion(ctx,options={}){
   let disposed=false;
   const coordinates=new Set();
   let lastRuntimeError='';
-  let memory,followup,onboarding,welcomeGuard,contextRoute,workbench,workbenchActions,projectUpdates,projectUpdateModel,contextLoop,context,familyDelegate,familyContext,personalReview,personalReviewModel;
+  let projectPulse,memory,followup,onboarding,welcomeGuard,contextRoute,workbench,workbenchActions,projectUpdates,projectUpdateModel,contextLoop,context,familyDelegate,familyContext,personalReview,personalReviewModel;
   // 污点标记只活在本进程内存里；这次装载从干净状态开始，不继承上一次运行的标记。
   clearPrivateReads();
   const lifecycle=new AbortController();
@@ -415,6 +416,7 @@ export async function installCompanion(ctx,options={}){
   const noteError=error=>{lastRuntimeError=String(error?.message??error).slice(0,200);};
   const authorizeRoot=async root=>(await service.coordinationTarget(root))?.root===root;
   const familyRead=createFamilyReadAdapter({getBridge:getFamilyBridge,isCurrent:scope=>familyDelegate.current(scope),authorizeRoot,recheck:scope=>familyDelegate.recheck(scope)});
+  projectPulse=createProjectPulse({...(options.clock?{clock:options.clock}:{})});
   memory=createProjectMemory({authorizeRoot,...(options.clock?{clock:options.clock}:{}),...(options.hostTimeZone?{hostTimeZone:options.hostTimeZone}:{})});
   // Personal review is Owner-wide; it never borrows a synthetic project or a
   // one-project follow-up capability. Persisted runs re-enter the exact grant.
@@ -924,7 +926,12 @@ export async function installCompanion(ctx,options={}){
       for(const project of projects){
         try{const snapshot=await memory.read({root:project.root,sessionId:owner(ctx,agent).sessionId});if(snapshot.goals.length||snapshot.entries.length)context.push(`${project.label}\n${snapshot.text}`);}
         catch(error){context.push(`${project.label}：项目记忆读取失败，内容未知。${String(error?.message??error).slice(0,120)}`);}
+        if(projects.indexOf(project)<20){
+          try{const pulse=summarizePulse(await projectPulse.capture(project.root));if(pulse)context.push(`${project.label} 最近变化\n${pulse}`);}
+          catch{context.push(`${project.label} 最近变化：本机读取失败，状态未知。`);}
+        }
       }
+      if(projects.length>20)context.push(`另外 ${projects.length-20} 个项目本轮没有读取最近变化。`);
       if(context.length)result.memoryContext=context.join('\n\n').slice(0,10000);
     }
     syncTimer();
