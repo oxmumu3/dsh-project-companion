@@ -75,3 +75,46 @@ test('状态页只说记了多少，不泄露路径', async () => {
   assert.equal(JSON.stringify(view).includes('/p/one'), false);
   assert.match(view.text, /已记录 1 个项目/);
 });
+
+test('开启盯项目后按间隔检查，只在真有变化时发一条', async () => {
+  let saved; const sent = [];
+  const start = new Date('2026-11-09T10:00:00Z');
+  const ledger = createProjectPulseLedger({store: {get: async () => structuredClone(saved), put: async (_k, v) => { saved = structuredClone(v); }}, clock: () => start});
+  let head = 'abc1234';
+  const capture = async () => ({repo: true, branch: 'main', head, commits: [{short: head, subject: '改动'}], dirty: {total: 0, modified: 0, untracked: 0}, at: start.toISOString()});
+  await ledger.enable({sessionId: 'session-a', bindingKey: 'a'.repeat(64), projects: [{root: '/p/one', label: '项目一'}], intervalMinutes: 30, capture});
+  assert.equal(ledger.needsTimer(), true);
+  const notify = async item => { sent.push(item); return {status: 'reported_sent'}; };
+
+  const first = await ledger.tick({capture, notify, now: start});
+  assert.equal(first.checked, 0, '刚开启时还没到间隔，不检查');
+  assert.equal(sent.length, 0);
+
+  head = 'def5678';
+  const early = await ledger.tick({capture, notify, now: new Date(start.getTime() + 60000)});
+  assert.equal(early.changed, 0, '没到间隔不检查');
+  const second = await ledger.tick({capture, notify, now: new Date(start.getTime() + 31 * 60000)});
+  assert.equal(second.changed, 1);
+  assert.equal(sent.length, 1);
+  assert.match(sent[0].text, /项目有变化/);
+  assert.match(sent[0].text, /项目一：HEAD abc1234 → def5678/);
+  assert.match(sent[0].text, /建议：/);
+  assert.equal(sent[0].sessionId, 'session-a');
+
+  const quiet = await ledger.tick({capture, notify, now: new Date(start.getTime() + 62 * 60000)});
+  assert.equal(quiet.changed, 0);
+  assert.equal(sent.length, 1, '没有变化不再发');
+});
+
+test('关闭盯项目后不再检查，换绑要求重新授权', async () => {
+  let saved;
+  const ledger = createProjectPulseLedger({store: {get: async () => structuredClone(saved), put: async (_k, v) => { saved = structuredClone(v); }}});
+  await assert.rejects(ledger.enable({sessionId: 's', bindingKey: 'not-a-binding', projects: [{root: '/p', label: 'p'}]}), /binding/);
+  await assert.rejects(ledger.enable({sessionId: 's', bindingKey: 'a'.repeat(64), projects: []}), /projects/);
+  await ledger.enable({sessionId: 's', bindingKey: 'a'.repeat(64), projects: [{root: '/p', label: 'p'}]});
+  assert.equal(ledger.needsTimer(), true);
+  await ledger.disable();
+  assert.equal(ledger.needsTimer(), false);
+  const result = await ledger.tick({capture: async () => ({repo: true}), notify: async () => ({status: 'reported_sent'}), now: new Date('2026-11-10T00:00:00Z')});
+  assert.equal(result.changed, 0);
+});

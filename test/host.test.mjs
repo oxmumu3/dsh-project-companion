@@ -1142,3 +1142,13 @@ test('第二次问同一项目时只报自上次以来的增量',async t=>{
  const three=await h.tool({action:'digest',project:'增量项目'});
  assert.doesNotMatch(three.memoryContext,/自上次查看以来/);
 });
+
+test('项目变化提醒：没连微信不开，关闭时明确说停',async t=>{
+ const h=await openHost(t,{readSetup:async()=>({state:'unbound'})});
+ const blocked=await h.tool({action:'manage',op:'pulse',everyMinutes:15});
+ assert.equal(blocked.status,'blocked');
+ assert.match(blocked.text,/先连上微信/);
+ const off=await h.tool({action:'manage',op:'pulse',enabled:false});
+ assert.match(off.text,/已停止项目变化提醒/);
+ assert.equal(h.sent.length,0);
+});

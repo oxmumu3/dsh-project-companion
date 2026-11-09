@@ -1,6 +1,7 @@
 /** Natural phrasings a user actually types, and the entry each should land on.
  *  Kept as data so both the test and scripts/routing-report.mjs read one list. */
 export const CORPUS = [
+  ['项目有变化就提醒我', 'manage', 'pulse'],
   ['这个项目最近推进到哪了', 'look', 'progress'],
   ['看看有什么卡住的', 'look', 'progress'],
   ['把资料再读细一点说', 'look', 'progress'],

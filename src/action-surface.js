@@ -6,7 +6,7 @@
  *  guard and test keeps working unchanged. Old action names stay valid.
  */
 export const LOOK_VIEWS = ['progress', 'change', 'status', 'health', 'task', 'once', 'followup'];
-export const MANAGE_OPS = ['watch', 'unwatch', 'memory', 'remember', 'correct_memory', 'forget_memory', 'pause', 'resume', 'daily', 'cancel_daily', 'followup', 'cancel_followup'];
+export const MANAGE_OPS = ['watch', 'unwatch', 'memory', 'remember', 'correct_memory', 'forget_memory', 'pause', 'resume', 'daily', 'cancel_daily', 'followup', 'cancel_followup', 'pulse'];
 
 const LOOK = {
   progress: a => ({ action: 'digest', project: a.project, ...(a.detail ? { detail: a.detail } : {}) }),
@@ -31,6 +31,7 @@ const MANAGE = {
   cancel_daily: () => ({ action: 'cancel_daily' }),
   followup: a => ({ action: 'configure_followup', everyMinutes: a.everyMinutes, ...(a.project ? { project: a.project } : {}) }),
   cancel_followup: a => ({ action: 'cancel_followup', ...(a.project ? { project: a.project } : {}) }),
+  pulse: a => ({ action: 'pulse_projects', ...(a.enabled === false ? { enabled: false } : {}), ...(a.project ? { project: a.project } : {}), ...(Number.isSafeInteger(a.everyMinutes) ? { everyMinutes: a.everyMinutes } : {}) }),
 };
 
 /** Pure translation. Unknown view/op or a missing discriminator throws, so a
@@ -53,5 +54,5 @@ export function normalizeSurfaceAction(args) {
 /** What each composite view/op means, for the tool description and reports. */
 export const SURFACE_COPY = {
   look: 'progress=进展与卡点｜change=相比上次的变化（需本人明确问了才传 userRequested:true）｜status=助理总状态｜health=本机自检（doctor）｜task=交办到哪了｜once=一次检查的状态｜followup=周期跟进的状态',
-  manage: 'watch=关注项目｜unwatch=取消关注｜memory=读项目记忆｜remember=记一条｜correct_memory=改一条｜forget_memory=忘一条｜pause=暂停自动跟进｜resume=恢复｜daily=每日汇报时间｜cancel_daily=取消日报｜followup=设置周期跟进（要分钟数）｜cancel_followup=取消周期跟进',
+  manage: 'watch=关注项目｜unwatch=取消关注｜memory=读项目记忆｜remember=记一条｜correct_memory=改一条｜forget_memory=忘一条｜pause=暂停自动跟进｜resume=恢复｜daily=每日汇报时间｜cancel_daily=取消日报｜followup=设置周期跟进（要分钟数）｜cancel_followup=取消周期跟进｜pulse=所有关注项目有变化才提醒，可带 everyMinutes 与 enabled:false 关闭（动作名 pulse_projects）',
 };

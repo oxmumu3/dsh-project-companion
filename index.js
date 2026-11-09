@@ -478,6 +478,17 @@ export async function installCompanion(ctx,options={}){
     readMemory:async(caller,root)=>{const result=await memory.inspect({root,sessionId:caller.sessionId});return[...result.goals,...result.entries].map(row=>({...row,text:reviewClean(row.text)}));},
   });
   personalReviewModel=options.personalReview?.model??createPersonalReviewModel(ctx,{...(options.clock?{clock:options.clock}:{})});
+  async function sendOwnerNotice(item){
+    if(disposed||lifecycle.signal.aborted)return{status:'failed'};
+    const familyScope=familyDelegate.scopeFor(item.sessionId);
+    if(item.sessionId.startsWith('family_owner_')||familyDelegate.matchesSession(item.sessionId)){
+      if(!familyScope||item.bindingKey!==familyScope.bindingRevision||!await familyDelegate.recheck(familyScope))return{status:'failed'};
+      try{const result=await getFamilyBridge()?.sendOwner({sessionId:item.sessionId,bindingRevision:familyScope.bindingRevision,text:item.text,requestId:item.requestId,authorize:()=>familyDelegate.current(familyScope)});return{status:result?.status==='accepted'?'reported_sent':result?.status==='failed'?'failed':'uncertain'};}catch{return{status:'uncertain'};}
+    }
+    const bridge=standaloneBridge(),binding=standaloneBinding(item.sessionId);
+    if(!bridge||!binding||binding.bindingKey!==item.bindingKey)return{status:'blocked'};
+    try{const result=await bridge.send({sessionId:item.sessionId,expectedBinding:item.bindingKey,requestId:item.requestId,text:item.text,authorize:()=>!disposed&&!lifecycle.signal.aborted});return{status:result?.status==='accepted'?'reported_sent':result?.status==='blocked'?'blocked':'uncertain'};}catch{return{status:'uncertain'};}
+  }
   personalReview=createPersonalReviewService({
     store:{get:key=>personalReviewTable.get(key),put:(key,value)=>personalReviewTable.put(key,personalReviewRowSchema.parse(value))},
     readBinding:reviewBinding,readBindingSync:reviewBindingSync,authorization:reviewAuthorization,authorizationSync:reviewAuthorizationSync,
@@ -505,7 +516,7 @@ export async function installCompanion(ctx,options={}){
       try{const result=await bridge.send({sessionId:item.sessionId,expectedBinding:item.bindingKey,requestId:item.requestId,text:item.text,authorize:()=>!disposed&&!lifecycle.signal.aborted&&!item.signal?.aborted&&item.authorize()===true});return{status:result?.status==='accepted'?'reported_sent':result?.status==='blocked'?'blocked':'uncertain'};}catch{return{status:'uncertain'};}
     },
   });
-  await personalReview.ready();
+  await personalReview.ready();await pulseLedger.ready();
 
   const familyRoute={
     getScope:sessionId=>familyDelegate.scopeFor(sessionId),
@@ -821,8 +832,8 @@ export async function installCompanion(ctx,options={}){
   }
   function syncTimer(){
     if(disposed)return;
-    if((service.needsTimer()||taskResults.needsTimer()||news.needsTimer()||personalReview.needsTimer()||familyRecoveryPending)&&timer===undefined){timer=timers.setInterval(async()=>{try{await service.tick();await taskResults.tick();await news.tick();await personalReview.tick();if(familyRecoveryPending)await recoverFamilyPlans();}catch(error){noteError(error);}finally{syncTimer();}},15000);timer?.unref?.();}
-    else if(!service.needsTimer()&&!taskResults.needsTimer()&&!news.needsTimer()&&!personalReview.needsTimer()&&!familyRecoveryPending&&timer!==undefined){timers.clearInterval(timer);timer=undefined;}
+    if((service.needsTimer()||taskResults.needsTimer()||news.needsTimer()||personalReview.needsTimer()||pulseLedger.needsTimer()||familyRecoveryPending)&&timer===undefined){timer=timers.setInterval(async()=>{try{await service.tick();await taskResults.tick();await news.tick();await personalReview.tick();if(pulseLedger.needsTimer()&&!service.isPausedSync())await pulseLedger.tick({capture:root=>projectPulse.capture(root),notify:item=>sendOwnerNotice(item)});if(familyRecoveryPending)await recoverFamilyPlans();}catch(error){noteError(error);}finally{syncTimer();}},15000);timer?.unref?.();}
+    else if(!service.needsTimer()&&!taskResults.needsTimer()&&!news.needsTimer()&&!personalReview.needsTimer()&&!pulseLedger.needsTimer()&&!familyRecoveryPending&&timer!==undefined){timers.clearInterval(timer);timer=undefined;}
   }
   async function recoverFamilyPlans(){
     if(disposed||familyRecoveryRunning)return;
@@ -905,6 +916,23 @@ export async function installCompanion(ctx,options={}){
     return buildDoctorReport({now:clockNow(),hostTimeZone:zone,probes:doctorProbes(caller)});
   }
   async function act(agent,input){
+    if(input.action==='pulse_projects'){
+      const caller=owner(ctx,agent);
+      if(input.enabled===false){const view=await pulseLedger.disable();return{...view,text:'已停止项目变化提醒；不会再自动检查，也不会再发这类消息。'};}
+      const binding=await reviewBinding(caller.sessionId);
+      if(!binding?.bound)return{status:'blocked',text:'项目变化提醒要先连上微信：当前会话没有可用的微信绑定，所以没有开启。'};
+      const watched=await service.watchedProjects();
+      let projects=watched.map(row=>({root:row.root,label:row.label}));
+      if(input.project!==undefined){
+        const target=await service.coordinationTarget(input.project);
+        if(!target)return{status:'blocked',text:'没找到这个项目；先关注它再开启提醒。'};
+        projects=[{root:target.root,label:target.label}];
+      }
+      if(!projects.length)return{status:'blocked',text:'还没有关注项目；先关注一个项目，再开启变化提醒。'};
+      const minutes=Number.isSafeInteger(input.everyMinutes)?Math.min(1440,Math.max(5,input.everyMinutes)):30;
+      const view=await pulseLedger.enable({sessionId:caller.sessionId,bindingKey:binding.bindingKey,projects,intervalMinutes:minutes,capture:root=>projectPulse.capture(root)});
+      return{...view,text:`已开启：每 ${minutes} 分钟只看这 ${projects.length} 个项目的 git 变化，真的变了才发一条；没变不打扰。停止随时说一声。`};
+    }
     if(input.action==='pause'){personalReview.suspend();news.suspend?.();context.suspend();projectUpdates.suspend();contextLoop.suspend();}
     if(input.action==='unwatch'){
       personalReview.suspend();projectUpdates.suspend();contextLoop.suspend();
@@ -1153,9 +1181,9 @@ export async function installCompanion(ctx,options={}){
   }));
   ctx.tools.register(defineTool({
     name:'project_companion',
-    description:'项目与交办。两类入口优先用：【看】action:look + view：progress=进展与卡点｜change=相比上次的变化（本人明确问了才传 userRequested:true）｜status=总状态｜health=本机自检（doctor，只读本机状态，不发消息）｜task=交办到哪了｜once=一次检查｜followup=周期跟进。【管】action:manage + op：watch/unwatch=关注或取消｜memory/remember/correct_memory/forget_memory=项目记忆｜pause/resume=暂停或恢复自动跟进｜daily/cancel_daily=每日汇报｜followup/cancel_followup=周期跟进配置。【做】保持独立动作：coordinate=明确要求执行或继续；remind=提醒；personal_context 读外部资料；personal_review 做回顾；ai_digest 做资讯。【兼容】旧动作名仍可用，不删是为了不破坏已安装：list、digest、project_update、status、doctor、task_status、once_status、cancel_once、followup_status、check_once、configure_daily、cancel_daily、configure_followup、cancel_followup、link_github、context_brief、context_status、context_handoff、context_check、context_forget，提醒取消用 cancel_reminder。新调用优先用 look/manage。',
+    description:'项目与交办。两类入口优先用：【看】action:look + view：progress=进展与卡点｜change=相比上次的变化（本人明确问了才传 userRequested:true）｜status=总状态｜health=本机自检（doctor，只读本机状态，不发消息）｜task=交办到哪了｜once=一次检查｜followup=周期跟进。【管】action:manage + op：watch/unwatch=关注或取消｜memory/remember/correct_memory/forget_memory=项目记忆｜pause/resume=暂停或恢复自动跟进｜daily/cancel_daily=每日汇报｜followup/cancel_followup=周期跟进配置｜pulse=所有关注项目有变化才提醒（动作名 pulse_projects，可带 everyMinutes；enabled:false 关闭）。【做】保持独立动作：coordinate=明确要求执行或继续；remind=提醒；personal_context 读外部资料；personal_review 做回顾；ai_digest 做资讯。【兼容】旧动作名仍可用，不删是为了不破坏已安装：list、digest、project_update、status、doctor、task_status、once_status、cancel_once、followup_status、check_once、configure_daily、cancel_daily、configure_followup、cancel_followup、link_github、context_brief、context_status、context_handoff、context_check、context_forget，提醒取消用 cancel_reminder。新调用优先用 look/manage。',
     parameters:{
-      action:{type:'string',required:true,enum:['look','manage','doctor','watch','unwatch','list','digest','project_update','context_brief','context_status','context_handoff','context_check','context_forget','memory','remember','correct_memory','forget_memory','check_once','once_status','cancel_once','configure_followup','cancel_followup','followup_status','configure_daily','cancel_daily','pause','resume','remind','cancel_reminder','link_github','status','coordinate','task_status']},
+      action:{type:'string',required:true,enum:['look','manage','doctor','watch','unwatch','list','digest','project_update','context_brief','context_status','context_handoff','context_check','context_forget','memory','remember','correct_memory','forget_memory','check_once','once_status','cancel_once','configure_followup','cancel_followup','followup_status','configure_daily','cancel_daily','pause','resume','remind','cancel_reminder','link_github','status','coordinate','task_status','pulse_projects']},
       view:{type:'string',enum:LOOK_VIEWS,description:'look 的视角。'+SURFACE_COPY.look},
       op:{type:'string',enum:MANAGE_OPS,description:'manage 的动作。'+SURFACE_COPY.manage},
       reviewItemId:{type:'string',description:'coordinate可选：仅当本人任务全文明确引用个人回顾「事项原题」时，从prepare结果映射稳定itemId。目标须在该事项原回顾项目范围内；不自行添加源正文或宣称已处理。'},
@@ -1186,6 +1214,7 @@ export async function installCompanion(ctx,options={}){
       sourceKind:{type:'string',enum:['user','assistant','file'],description:'remember来源角色。用户明确表达才用user并传userRequested:true；模型推断用assistant。'},
       sourceReference:{type:'string',description:'remember来源：user/assistant用当前session:<会话ID>；file用项目内安全相对路径及可选行号，不得引用其他项目。内部填写，不让用户输入ID。'},
       everyMinutes:{type:'number',description:'configure_followup：用户明确要求的跟进间隔，30–1440分钟；不默认开启。'},
+      enabled:{type:'boolean',description:'pulse：省略或 true 表示开启提醒；false 表示关闭。'},
       delaySeconds:{type:'number',description:'check_once：单次只读检查延迟，30–300整数秒；未指定默认60秒。无需用户输入命令。'},
     },
     output:{schema:{type:'object',additionalProperties:true},render:(args,value)=>{
