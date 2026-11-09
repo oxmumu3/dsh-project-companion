@@ -41,6 +41,13 @@ export const newsRowSchema=z.union([currentRowSchema,legacyRowSchema]);
 const fresh=()=>({id:'profile',version:2,schedule:null,preferences:null,jobs:[],articleHistory:[],dailyDates:[],receipts:[]});
 const copy=x=>structuredClone(x);
 const clip=(s,n)=>String(s??'').toWellFormed().replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g,'').slice(0,n);
+/** 授权失败时给出下一步；换绑是永久性的，离线只是这一次。 */
+function authorizationAdvice(diagnostic){
+  if(diagnostic?.code!=='NEWS_AUTHORIZATION_CHANGED')return '';
+  if(diagnostic.authorizationReason==='owner_changed')return '上次失败是因为微信绑定变了，旧日报不会迁移；请回到原绑定会话重新设置日报。';
+  if(diagnostic.authorizationReason==='owner_offline')return '上次失败是因为当时微信离线，没有发出；下一个到点会再试。';
+  return '上次失败是因为当时授权不可用，没有发出；下一个到点会再试。';
+}
 const deliveryLabels={generating:'正在生成',pending:'等待发送',dispatching:'正在提交通道',blocked:'原绑定或助理暂不可用，尚未发送',reported_sent:'通道报告已发出，手机送达与已读未知',queued:'通道已排队，手机送达未知',uncertain:'结果不确定，不自动重发',failed:'本次失败，不自动重发',expired:'超过六小时窗口，不补发',cancelled:'本次已取消'};
 function requireOwner(owner){if(typeof owner?.sessionId!=='string'||!owner.sessionId||owner.sessionId.length>200||typeof owner.cwd!=='string'||!isAbsolute(owner.cwd))throw new Error('需要真实本地会话');return{sessionId:owner.sessionId,cwd:resolve(owner.cwd)};}
 function mutation(input){if(input.userRequested!==true)throw new Error('需要用户明确要求');if(typeof input.requestId!=='string'||!input.requestId||input.requestId.length>200)throw new Error('需要本次真实请求 ID');}
@@ -113,7 +120,7 @@ export function createNewsService({store,fetchCandidates,selectArticles,readArti
   function status({topics=state.preferences?.topics,available=true,editable=true}={}){
     const focus=topics?copy(topics):null;
     const topicText=!available?'已保存关注点在当前绑定不可用。':focus?`已保存关注点：${focus.join('、')}。`:'未保存关注点，使用通用 AI 资讯范围。';
-    return{schedule:state.schedule?{time:state.schedule.time,timeZone:state.schedule.timeZone}:null,topics:focus,topicSource:!available?'unavailable':focus?'explicit':'default',topicsEditable:editable,jobs:state.jobs.slice(-8).map(j=>({kind:j.kind,status:j.status,createdAt:j.createdAt,detail:deliveryLabels[j.status],...(j.diagnostic?{diagnostic:copy(j.diagnostic)}:{})})),counts:{jobs:state.jobs.length,articleHistory:state.articleHistory.length},text:`AI 资讯日报：${state.schedule?`每天 ${state.schedule.time}（${state.schedule.timeZone}），3 篇重点＋7 篇简讯`:'未启用'}。${topicText}${state.jobs.length?`最近一次任务：${deliveryLabels[state.jobs.at(-1).status]}。`:'尚无发送任务。'}电脑与宿主须在线；超过六小时不补发。通道回执不等于手机送达或已读。`};
+    return{schedule:state.schedule?{time:state.schedule.time,timeZone:state.schedule.timeZone}:null,topics:focus,topicSource:!available?'unavailable':focus?'explicit':'default',topicsEditable:editable,jobs:state.jobs.slice(-8).map(j=>({kind:j.kind,status:j.status,createdAt:j.createdAt,detail:deliveryLabels[j.status],...(j.diagnostic?{diagnostic:copy(j.diagnostic)}:{})})),counts:{jobs:state.jobs.length,articleHistory:state.articleHistory.length},text:`AI 资讯日报：${state.schedule?`每天 ${state.schedule.time}（${state.schedule.timeZone}），3 篇重点＋7 篇简讯`:'未启用'}。${topicText}${state.jobs.length?`最近一次任务：${deliveryLabels[state.jobs.at(-1).status]}。${authorizationAdvice(state.jobs.at(-1).diagnostic)}`:'尚无发送任务。'}电脑与宿主须在线；超过六小时不补发。通道回执不等于手机送达或已读。`};
   }
   async function visibleStatus(owner){
     try{const key=await connection(owner.sessionId);verifyKnownBinding(key);return status();}

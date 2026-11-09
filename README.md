@@ -96,7 +96,7 @@ dsh plugin --profile web add @oxmumu3/dsh-project-companion
 
 ## 版本与数据
 
-- 当前版本 **`0.27.0`**：自检新增「手机控制」一行，看得出两边接没接上；`0.26.0` 并入手机端任务控制的 Dot 侧；`0.25.0` 补上滴答账户级只读搜索。
+- 当前版本 **`0.28.0`**：早报失败会说明下一步（换绑需重设、离线下次再试）；`0.27.0` 自检新增「手机控制」一行；`0.26.0` 并入手机端任务控制的 Dot 侧。
 - 兼容官方 Harness `0.2.0-rc.2`、`0.2.1-rc.2` 至 `rc.5`、`0.2.2-rc.1`；清单在 [compatibility.json](compatibility.json)。
 - 数据留在本机 Harness profile 内，不经过第三方服务器；微信组件内置部分保留上游 MIT 许可，见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
 - 已知边界（Google 数据权限审核、flomo MAX、主动关注与手机收件的验收状态）统一写在[验证记录](docs/verification.md)，本页不重复。

@@ -467,3 +467,25 @@ test('suspending news cancels a hung request recheck and releases the serial que
 test('scheduled public news records only safe Owner route failure classification',async()=>{
  let offline=false;const f=await fixture({hooks:{readBinding:async()=>offline?{bound:false,reason:'owner_offline'}:{bound:true,bindingKey:binding}}});await f.service.act(owner,mutate('configure',{time:'09:00',timeZone:'America/Mexico_City'}));offline=true;await f.service.tick();const job=f.persisted().jobs.at(-1);assert.equal(job.status,'failed');assert.equal(job.diagnostic.code,'NEWS_AUTHORIZATION_CHANGED');assert.equal(job.diagnostic.authorizationReason,'owner_offline');assert.equal(f.sends.length,0);assert.equal(f.fetches(),0);await f.service.close();
 });
+
+const failedRow = reason => ({
+  id: 'profile', version: 2,
+  schedule: { time: '09:30', timeZone: 'America/Mexico_City', sessionId: owner.sessionId, bindingKey: binding, createdAt: '2026-11-01T00:00:00.000Z' },
+  preferences: null,
+  jobs: [{
+    id: 'job-1', kind: 'daily', requestId: 'req-1', sessionId: owner.sessionId, bindingKey: binding,
+    date: '2026-11-08', createdAt: '2026-11-08T15:10:00.000Z', expiresAt: '2026-11-08T21:10:00.000Z',
+    status: 'failed', articleIds: [], text: '', detail: '本次失败，不自动重发', topics: null, timeZone: 'America/Mexico_City',
+    diagnostic: { stage: 'authorization', code: 'NEWS_AUTHORIZATION_CHANGED', authorizationReason: reason },
+  }],
+  articleHistory: [], dailyDates: [], receipts: [],
+});
+
+test('authorization failures say what to do next instead of only "failed"', async () => {
+  for (const [reason, expected] of [['owner_changed', /绑定变了/], ['owner_offline', /微信离线/], ['owner_unknown', /授权不可用/]]) {
+    const f = await fixture({ persisted: failedRow(reason) });
+    const r = await f.service.act(owner, { action: 'status' });
+    assert.match(r.text, expected, reason);
+    assert.match(r.text, /最近一次任务：本次失败/);
+  }
+});

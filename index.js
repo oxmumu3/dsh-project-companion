@@ -869,6 +869,10 @@ export async function installCompanion(ctx,options={}){
       news:async()=>{
         const view=await news.act(caller,{action:'status'}),schedule=view?.schedule;
         if(!schedule)return{state:'off',detail:'AI 资讯日报没有开启'};
+        const last=view.jobs?.at(-1),failed=last?.diagnostic?.code==='NEWS_AUTHORIZATION_CHANGED';
+        if(failed&&last.diagnostic.authorizationReason==='owner_changed')return{state:'warn',detail:'日报上次没发出：微信绑定变了，旧计划不会迁移，请回到原绑定会话重新设置'};
+        if(failed&&last.diagnostic.authorizationReason==='owner_offline')return{state:'warn',detail:'日报上次没发出：当时微信离线，下一个到点会再试'};
+        if(failed)return{state:'warn',detail:'日报上次没发出：当时授权不可用，下一个到点会再试'};
         return{state:'ok',detail:`每天 ${schedule.time} 发送；最近一次：${view.jobs?.at(-1)?.detail??'还没有发送记录'}`};
       },
       delivery:async()=>{
