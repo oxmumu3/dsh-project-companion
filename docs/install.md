@@ -1,4 +1,4 @@
-# 安装 DSH Dot 0.24.2
+# 安装 DSH Dot 0.25.0
 
 ## 在创造模式中安装／更新
 
@@ -8,7 +8,7 @@
 请安装或更新并启用 DSH Dot。先检查现有插件，避免重复添加和降级。从 npm 官方源实时查询 @oxmumu3/dsh-project-companion 的 latest，按查到的精确版本安装或更新，不直接采用本机缓存的旧 latest。保留已有微信绑定、账号授权、资料范围、设置和其他插件，不自动读取或新建计划。核对实际版本、启用状态，再打开 DSH Dot。
 ```
 
-新用户也可在「插件 → 添加插件」填写 `@oxmumu3/dsh-project-companion`（或精确版本 `@oxmumu3/dsh-project-companion@0.24.2`），安装后启用。它是一个标准插件包，已内置独立微信组件。已有未带 namespace 的历史安装应沿原包名更新；不要将两个名称当成同一个插件重复添加。
+新用户也可在「插件 → 添加插件」填写 `@oxmumu3/dsh-project-companion`（或精确版本 `@oxmumu3/dsh-project-companion@0.25.0`），安装后启用。它是一个标准插件包，已内置独立微信组件。已有未带 namespace 的历史安装应沿原包名更新；不要将两个名称当成同一个插件重复添加。
 
 牛村木木山制作的 DeepSeek Harness 社区插件，非 DeepSeek 或 OpenAI 官方产品。本版内置微信组件，只需添加一个标准插件包，不包含 Harness 应用或 Family 家庭助手。
 
@@ -26,7 +26,7 @@
 
 无法联网或想用离线包时，到 [Releases](https://github.com/oxmumu3/dsh-project-companion/releases) 下载对应版本的 `.tgz`，在官方管理器填写下载后的文件实际路径；无需解压、另装微信组件或运行 macOS 脚本。
 
-[本版发布页](https://github.com/oxmumu3/dsh-project-companion/releases/tag/v0.24.2)记录本版变更。插件包从 npm 安装，npm 页面提供 integrity 与 provenance 可核；0.24 起 release 不再附带离线包。插件尚未上架官方插件市场，npm latest 同步为本版；不要用旧版 ZIP 或第二个微信安装包代替这条单插件路径。
+[本版发布页](https://github.com/oxmumu3/dsh-project-companion/releases/tag/v0.25.0)记录本版变更。插件包从 npm 安装，npm 页面提供 integrity 与 provenance 可核；0.24 起 release 不再附带离线包。插件尚未上架官方插件市场，npm latest 同步为本版；不要用旧版 ZIP 或第二个微信安装包代替这条单插件路径。
 
 ## 已有用户
 
@@ -68,7 +68,7 @@ Google 品牌已验证，Gmail、日历、Drive 数据权限已提交审核但�
 
 ## 本版验证与已知问题
 
-0.24.2 源码全量回归 2,365 项 / 2,328 通过 / 0 失败 / 37 跳过（跳过项均需 Family 源码树，不在本包范围）。自检只读本机状态，不发外部请求；单项探测 2 秒上限，超时或抛错显示「未知」。私人外发确认只覆盖 `personal_review.run_now` 这条路径，宿主自带的 `send_wechat`、定时投递和带内容的 `remind` / `coordinate` 不经过这道门禁——插件单方面无法覆盖全部外发路径。
+0.25.0 源码全量回归 2,365 项 / 2,328 通过 / 0 失败 / 37 跳过（跳过项均需 Family 源码树，不在本包范围）。自检只读本机状态，不发外部请求；单项探测 2 秒上限，超时或抛错显示「未知」。私人外发确认只覆盖 `personal_review.run_now` 这条路径，宿主自带的 `send_wechat`、定时投递和带内容的 `remind` / `coordinate` 不经过这道门禁——插件单方面无法覆盖全部外发路径。
 
 自动回顾仍为实验能力：自然语言 `focus` 尚未用真实模型验证实际效果，手机端呈现也未验证。历史 flomo 范围投影与模型失败未全部归因。新用户独立扫码到收件、多日与休眠恢复、真实 macOS 输入法仍分别验收。通道报告发送不等于手机收到。详见[验证记录](verification.md)。
 

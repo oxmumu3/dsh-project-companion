@@ -7,7 +7,7 @@ import {validateContextCall} from './context-contracts.js';
 import {insufficientScope} from './context-transport.js';
 
 const ORIGIN='https://api.dida365.com';
-const MAX_BYTES=1024*1024,REQUEST_MS=20000,MAX_ITEMS=10;
+const MAX_BYTES=1024*1024,REQUEST_MS=20000,MAX_ITEMS=10,SEARCH_ITEMS=50,MAX_ALL=1000,CONCURRENCY=3;
 const CONTROL=/[\u0000-\u001f\u007f]/u;
 const CODES=new Set(['CONTEXT_ARGUMENTS_INVALID','CONTEXT_UNSUPPORTED_OPERATION','CONTEXT_CANCELLED','CONTEXT_AUTH_REQUIRED','CONTEXT_INSUFFICIENT_SCOPE','CONTEXT_ABORTED','CONTEXT_TIMEOUT','CONTEXT_CLOSED','CONTEXT_HTTP_ERROR','CONTEXT_REDIRECT','CONTEXT_PROTOCOL_INVALID','CONTEXT_RESPONSE_TOO_LARGE','CONTEXT_CREDENTIALS_CHANGED']);
 const plain=v=>v!==null&&typeof v==='object'&&!Array.isArray(v);
@@ -16,12 +16,16 @@ const fail=code=>{throw error(code);};
 const validId=v=>typeof v==='string'&&/^[A-Za-z0-9_-]{1,512}$/u.test(v);
 const ident={type:'string',minLength:1,maxLength:512,pattern:'^[A-Za-z0-9_-]{1,512}$'};
 const tool=(name,properties)=>({name,inputSchema:{type:'object',additionalProperties:false,required:Object.keys(properties),properties}});
-const CATALOG={provenance:'bundled-contract',unsupportedOperations:['search'],tools:[
+const searchTool=(name,required)=>({name,inputSchema:{type:'object',additionalProperties:false,required,properties:{...(required.includes('query')?{query:{type:'string',minLength:1,maxLength:120}}:{}) ,limit:{type:'integer',minimum:1,maximum:SEARCH_ITEMS}}}});
+const CATALOG={provenance:'bundled-contract',tools:[
  tool('list_projects',{offset:{type:'integer',enum:[0]},limit:{type:'integer',minimum:1,maximum:MAX_ITEMS}}),
  tool('get_project_with_undone_tasks',{project_id:ident}),
  tool('get_project_tasks_bounded',{project_id:ident,limit:{type:'integer',minimum:1,maximum:MAX_ITEMS}}),
  tool('get_named_project_with_undone_tasks',{project_name:{type:'string',minLength:1,maxLength:180},limit:{type:'integer',minimum:1,maximum:MAX_ITEMS}}),
  tool('get_task_in_project',{project_id:ident,task_id:ident}),
+ searchTool('search_task',['query']),
+ searchTool('search',['query']),
+ searchTool('list_all_tasks',[]),
 ]};
 
 function validate(source,name,args){
@@ -126,6 +130,33 @@ export function createDidaRest({getToken,fetch:fetchImpl=globalThis.fetch,clock=
      }catch(e){if(CODES.has(e?.code))throw e;fail('CONTEXT_HTTP_ERROR');}
      const value=await readBody(reply,signal);await authorized(settings,signal);cancelled(settings);return value;
     };
+    if(name==='list_all_tasks'||name==='search_task'||name==='search'){
+     const take=Math.min(Number.isInteger(args.limit)?args.limit:20,SEARCH_ITEMS);
+     const key=name==='list_all_tasks'?null:String(args.query).toLowerCase();
+     const rows=await get(new URL('/open/v1/project',ORIGIN));
+     if(!Array.isArray(rows)||rows.length>MAX_ALL)fail('CONTEXT_PROTOCOL_INVALID');
+     const projects=rows.filter(row=>plain(row)&&validId(row.id)).slice(0,MAX_ALL);
+     const coverage={truncated:rows.length>MAX_ALL},collected=[];
+     for(let i=0;i<projects.length;i+=CONCURRENCY){
+      const batch=projects.slice(i,i+CONCURRENCY);
+      const pages=await Promise.all(batch.map(async row=>{
+       const raw=await get(new URL(`/open/v1/project/${encodeURIComponent(row.id)}/data`,ORIGIN));
+       if(!plain(raw)||!Array.isArray(raw.tasks))fail('CONTEXT_PROTOCOL_INVALID');
+       if(raw.project!==undefined&&(!plain(raw.project)||raw.project.id!==row.id))fail('CONTEXT_PROTOCOL_INVALID');
+       return raw.tasks.slice(0,MAX_ALL).map(t=>({row:t,projectId:row.id}));
+      }));
+      for(const page of pages)for(const entry of page)collected.push(entry);
+     }
+     collected.sort((a,b)=>{
+      const ta=Date.parse(a.row?.createdTime??a.row?.modifiedTime??'')||0;
+      const tb=Date.parse(b.row?.createdTime??b.row?.modifiedTime??'')||0;
+      return tb-ta;
+     });
+     const matched=key===null?collected:collected.filter(entry=>plain(entry.row)&&typeof entry.row.title==='string'&&`${entry.row.title}\n${entry.row.content??''}\n${entry.row.desc??''}`.toLowerCase().includes(key));
+     const items=matched.slice(0,take).map(entry=>task(entry.row,entry.projectId,null,coverage));
+     if(matched.length>take)coverage.truncated=true;
+     return{value:{items,truncated:coverage.truncated},fetchedAt:new Date(clock()).toISOString()};
+    }
     if(name==='get_named_project_with_undone_tasks'){
      const rows=await get(new URL('/open/v1/project',ORIGIN));
      if(!Array.isArray(rows)||rows.length>2048)fail('CONTEXT_PROTOCOL_INVALID');

@@ -11,10 +11,10 @@ const response=value=>Response.json(value);
 const code=expected=>e=>e.code===expected&&!e.message.includes('private');
 const task=(id='t1',projectId='p1')=>({id,projectId,title:'Example task',content:'Short note',status:0,dueDate:'2026-10-23T12:00:00+0000',priority:3});
 
-test('Dida catalog is passive, bundled and excludes unsupported account search',async()=>{
+test('Dida catalog is passive, bundled and declares bounded account search',async()=>{
  let calls=0;const t=create({getToken:async()=>{calls++;return'token';},fetch:async()=>{calls++;return response([]);},clock:()=>fixed});
- const c=await t.catalog('dida',gates);assert.equal(c.provenance,'bundled-contract');assert.deepEqual(c.tools.map(t=>t.name),['list_projects','get_project_with_undone_tasks','get_project_tasks_bounded','get_named_project_with_undone_tasks','get_task_in_project']);assert.deepEqual(c.unsupportedOperations,['search']);assert.equal(calls,0);
- assert.throws(()=>validateContextCall(buildContextCall('dida',{operation:'search',query:'work'}),c),code('CONTEXT_UNSUPPORTED_OPERATION'));
+ const c=await t.catalog('dida',gates);assert.equal(c.provenance,'bundled-contract');assert.deepEqual(c.tools.map(t=>t.name),['list_projects','get_project_with_undone_tasks','get_project_tasks_bounded','get_named_project_with_undone_tasks','get_task_in_project','search_task','search','list_all_tasks']);assert.equal(c.unsupportedOperations,undefined);assert.equal(calls,0);
+ assert.equal(validateContextCall(buildContextCall('dida',{operation:'search',query:'work'}),c).name,'search');
  const legacy={tools:[{name:'search',inputSchema:{type:'object',properties:{query:{type:'string'}}}}]};assert.equal(validateContextCall({name:'search',args:{query:'work'}},legacy).name,'search');
  for(const unsupportedOperations of [['delete'],['search','search'],'search',['search',42]])assert.throws(()=>validateContextCall({name:'list_projects',args}, {...c,unsupportedOperations}),code('CONTEXT_SCHEMA_MISMATCH'));
  await t.close();
@@ -69,7 +69,7 @@ test('inbox is supported only when explicitly requested as the project',async()=
 
 test('unsupported operations, pagination overrides and injected paths fail before token or network',async()=>{
  let calls=0;const t=create({getToken:async()=>{calls++;return'x';},fetch:async()=>{calls++;return response([]);}});
- for(const [source,name,input]of [['dida','search',{query:'work'}],['dida','create_task',{}],['flomo','list_projects',args],['dida','list_projects',{offset:1,limit:2}],['dida','list_projects',{offset:0,limit:11}],['dida','list_projects',{offset:0,limit:0}],['dida','list_projects',{...args,url:'https://evil.example'}],['dida','get_project_with_undone_tasks',{project_id:'../p1'}],['dida','get_project_with_undone_tasks',{project_id:'p1?limit=100'}],['dida','get_task_in_project',{project_id:'p1',task_id:'t1/complete'}],['dida','get_task_in_project',{project_id:'p1',task_id:'x'.repeat(513)}]])await assert.rejects(t.call(source,name,input,gates),e=>['CONTEXT_UNSUPPORTED_OPERATION','CONTEXT_ARGUMENTS_INVALID'].includes(e.code));
+ for(const [source,name,input]of [['dida','search',{query:''}],['dida','create_task',{}],['flomo','list_projects',args],['dida','list_projects',{offset:1,limit:2}],['dida','list_projects',{offset:0,limit:11}],['dida','list_projects',{offset:0,limit:0}],['dida','list_projects',{...args,url:'https://evil.example'}],['dida','get_project_with_undone_tasks',{project_id:'../p1'}],['dida','get_project_with_undone_tasks',{project_id:'p1?limit=100'}],['dida','get_task_in_project',{project_id:'p1',task_id:'t1/complete'}],['dida','get_task_in_project',{project_id:'p1',task_id:'x'.repeat(513)}]])await assert.rejects(t.call(source,name,input,gates),e=>['CONTEXT_UNSUPPORTED_OPERATION','CONTEXT_ARGUMENTS_INVALID'].includes(e.code));
  assert.equal(calls,0);await t.close();
 });
 
@@ -136,4 +136,28 @@ test('close cancels waiting token and blocked body; late fetch responses are rel
 
 test('request deadline bounds even a token getter that ignores abort',async t=>{
  t.mock.timers.enable({apis:['setTimeout']});let entered;const ready=new Promise(r=>entered=r);const adapter=create({getToken:()=>{entered();return new Promise(()=>{});}});const pending=adapter.call('dida','list_projects',args,gates);await ready;t.mock.timers.tick(20000);await assert.rejects(pending,code('CONTEXT_TIMEOUT'));await adapter.close();
+});
+test('account search reads bounded project pages, filters by title text and reports truncation',async()=>{
+ const paths=[];const t=create({getToken:async()=> 'x',fetch:async(url)=>{const u=new URL(url);paths.push(u.pathname);
+  if(u.pathname==='/open/v1/project')return response([{id:'p1',name:'A',private:'x'},{id:'p2',name:'B'}]);
+  if(u.pathname==='/open/v1/project/p1/data')return response({project:{id:'p1'},tasks:[{...task('t1','p1'),title:'买牛奶',content:'备注',assignee:'private',attachments:['private']},{...task('t2','p1'),title:'写周报'}]});
+  if(u.pathname==='/open/v1/project/p2/data')return response({project:{id:'p2'},tasks:[{...task('t3','p2'),title:'买咖啡豆'}]});
+  return response({});
+ }});
+ const r=await t.call('dida','search',{query:'买',limit:1},gates);
+ assert.equal(r.value.items.length,1);assert.equal(r.value.truncated,true);assert.equal(r.value.items[0].projectId,'p1');
+ assert.equal(JSON.stringify(r).includes('private'),false);
+ const all=await t.call('dida','list_all_tasks',{limit:10},gates);
+ assert.equal(all.value.items.length,3);assert.equal(all.value.truncated,false);
+ await t.close();
+});
+
+test('account search fails closed on an unbounded project list or a mismatched project id',async()=>{
+ const paths=[];const t=create({getToken:async()=> 'x',fetch:async(url)=>{const u=new URL(url);paths.push(u.pathname);
+  if(u.pathname==='/open/v1/project')return response(Array.from({length:1001},(_,i)=>({id:'p'+i})));return response({});}});
+ await assert.rejects(t.call('dida','list_all_tasks',{limit:5},gates),code('CONTEXT_PROTOCOL_INVALID'));
+ assert.deepEqual(paths,['/open/v1/project']);
+ const u=create({getToken:async()=> 'x',fetch:async(url)=>{const p=new URL(url).pathname;if(p==='/open/v1/project')return response([{id:'p1'}]);return response({project:{id:'other'},tasks:[task('t1','p1')]});}});
+ await assert.rejects(u.call('dida','search_task',{query:'x',limit:2},gates),code('CONTEXT_PROTOCOL_INVALID'));
+ await t.close();await u.close();
 });

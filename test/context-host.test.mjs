@@ -56,12 +56,12 @@ test('installs a passive native context tool and authenticated route without rea
 });
 
 test('installed OAuth Dida uses bounded official REST while legacy token keeps its explicit MCP route',async t=>{
- const requests=[];const h=await fixture(t,{contextFetch:async(url,init)=>{requests.push({url,init});return Response.json([{id:'p1',name:'Example list'}]);}});
+ const requests=[];const h=await fixture(t,{contextFetch:async(url,init)=>{requests.push({url,init});return new URL(url).pathname==='/open/v1/project'?Response.json([{id:'p1',name:'Example list'}]):Response.json({project:{id:'p1'},tasks:[{id:'t1',projectId:'p1',title:'test task',status:0}]});}});
  h.config.didaOAuthCredentials=JSON.stringify({version:1,source:'dida',connectionId:'connection',clientId:'client',accessToken:'synthetic-oauth',refreshToken:'',expiresAt:Date.parse('2026-10-20T12:00:00Z'),scope:'tasks:read'});
  const c=await h.tool({action:'connect',source:'dida',userRequested:true});assert.match(c.text,/尚未验证实际读取/);assert.deepEqual(requests,[]);assert.deepEqual(h.calls,[]);
  const result=await h.tool({action:'query',source:'dida',operation:'projects',limit:2,userRequested:true});assert.equal(result.items[0].title,'Example list');assert.equal(requests.length,1);assert.equal(requests[0].url,'https://api.dida365.com/open/v1/project?offset=0&limit=2');assert.equal(requests[0].init.headers.authorization,'Bearer synthetic-oauth');assert.deepEqual(h.calls,[]);
- const unsupported=await h.tool({action:'query',source:'dida',operation:'search',query:'test',userRequested:true});assert.equal(unsupported.status,'blocked');assert.match(unsupported.text,/不支持本次读取范围/);assert.equal(requests.length,1);assert.deepEqual(h.calls,[]);
- h.config.didaOAuthCredentials='';await h.tool({action:'connect',source:'dida',userRequested:true});await h.tool({action:'query',source:'dida',operation:'projects',userRequested:true});assert.equal(h.calls.at(-1).name,'list_projects');assert.equal(requests.length,1);
+ const searched=await h.tool({action:'query',source:'dida',operation:'search',query:'test',userRequested:true});assert.equal(searched.items.length,1);assert.equal(requests.length,3);assert.deepEqual(h.calls,[]);
+ h.config.didaOAuthCredentials='';await h.tool({action:'connect',source:'dida',userRequested:true});await h.tool({action:'query',source:'dida',operation:'projects',userRequested:true});assert.equal(h.calls.at(-1).name,'list_projects');assert.equal(requests.length,3);
  h.config.didaOAuthCredentials='invalid';const before=h.calls.length;const invalid=await h.tool({action:'connect',source:'dida',userRequested:true});assert.equal(invalid.status,'blocked');assert.equal(h.calls.length,before,'invalid OAuth cannot fall back to saved legacy token');
 });
 

@@ -10,7 +10,7 @@ const record={version:1,source:'dida',connectionId:'connection',clientId:'client
 function fixture(t,options={}){
  let config={didaOAuthCredentials:JSON.stringify(record),didaToken:'legacy-synthetic'},state,binding='a'.repeat(64);const calls=[],writes=[],mcpCalls=[];
  const auth=createContextAccountAuth({source:'dida',readConfig:()=>config,saveCredentials:async()=>{writes.push('unexpected-save');},fetch:async()=>{throw Error('No OAuth exchange expected');},clock:()=>fixed.getTime()});
- const dida=createDidaRest({getToken:settings=>auth.getToken(settings),fetch:async(url,init)=>{calls.push({url,method:init.method});assert.equal(init.headers.authorization,'Bearer read-only-synthetic');await options.beforeRead?.();return options.response?.()??Response.json([{id:'p1',name:'My project'}]);},clock:()=>fixed});
+ const dida=createDidaRest({getToken:settings=>auth.getToken(settings),fetch:async(url,init)=>{calls.push({url,method:init.method});assert.equal(init.headers.authorization,'Bearer read-only-synthetic');await options.beforeRead?.();if(options.response)return options.response();return new URL(url).pathname==='/open/v1/project'?Response.json([{id:'p1',name:'My project'}]):Response.json({project:{id:'p1'},tasks:[{id:'t1',projectId:'p1',title:'test task',status:0}]});},clock:()=>fixed});
  const provider=createContextProvider({calendar:{catalog:async()=>{},call:async()=>{}},dida,useDidaRest:()=>true,mcp:{catalog:async()=>{mcpCalls.push('catalog');throw Error('No MCP fallback');},call:async()=>{mcpCalls.push('call');throw Error('No MCP fallback');}}});
  const service=createPersonalContext({store:{get:async()=>state,put:async(_key,value)=>state=value},transport:provider,readConfig:()=>config,readBinding:async()=>({kind:'bound',bindingKey:binding}),clock:()=>fixed});
  t.after(async()=>{await service.close();await provider.close();await auth.close();});
@@ -20,7 +20,7 @@ function fixture(t,options={}){
 test('saved read-scope OAuth enables passively then reads only explicit bounded GET through service',async t=>{
  const h=fixture(t);const connected=await h.service.act(owner,{action:'connect',source:'dida',userRequested:true});assert.match(connected.text,/尚未验证实际读取/);assert.deepEqual(h.calls,[]);
  const result=await h.service.act(owner,{action:'query',source:'dida',operation:'projects',limit:2,userRequested:true});assert.equal(result.items[0].title,'My project');assert.equal(result.accessMode,'read-only');assert.equal(result.truncated,false);assert.equal(result.text.includes('read-only-synthetic'),false);assert.deepEqual(h.calls,[{url:'https://api.dida365.com/open/v1/project?offset=0&limit=2',method:'GET'}]);assert.deepEqual(h.writes,[]);assert.deepEqual(h.mcpCalls,[]);
- await assert.rejects(h.service.act(owner,{action:'query',source:'dida',operation:'search',query:'test',userRequested:true}),e=>e.code==='CONTEXT_UNSUPPORTED_OPERATION');assert.equal(h.calls.length,1);
+ const searched=await h.service.act(owner,{action:'query',source:'dida',operation:'search',query:'test',userRequested:true});assert.equal(searched.items.length,1);assert.equal(h.calls.length,3);assert.deepEqual(h.mcpCalls,[]);
 });
 
 test('owner binding and OAuth account changes during REST request discard content',async t=>{

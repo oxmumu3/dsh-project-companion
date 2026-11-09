@@ -12,16 +12,16 @@ const INPUT_KEYS = new Set(['operation', 'query', 'id', 'ids', 'projectId', 'ran
 const OPERATION_INPUTS = {
   gmail: { search: ['query', 'limit'], read: ['id'] }, calendar: { upcoming: ['from', 'to', 'calendarId', 'limit'] },
   drive: { search: ['query', 'limit'], recent: ['from', 'to', 'limit'], read: ['id'] }, docs: { read: ['id'] }, sheets: { read: ['id', 'range'] }, slides: { read: ['id'] },
-  dida: { projects: ['limit'], tasks: ['projectId', 'query', 'limit'], read: ['id', 'projectId'], search: ['query'] },
+  dida: { projects: ['limit'], tasks: ['projectId', 'query', 'limit'], read: ['id', 'projectId'], search: ['query', 'limit'] },
   flomo: { search: ['query', 'limit'], recent: ['from', 'to', 'limit'], read: ['id', 'ids'] },
 };
-const READ_TOOLS = new Set(['search_threads', 'get_message', 'list_events', 'search_files', 'read_file_content', 'read_doc', 'get_values', 'read_presentation', 'list_projects', 'get_project_with_undone_tasks', 'get_project_tasks_bounded', 'get_named_project_with_undone_tasks', 'get_task_in_project', 'search', 'memo_search', 'memo_batch_get']);
+const READ_TOOLS = new Set(['search_threads', 'get_message', 'list_events', 'search_files', 'read_file_content', 'read_doc', 'get_values', 'read_presentation', 'list_projects', 'get_project_with_undone_tasks', 'get_project_tasks_bounded', 'get_named_project_with_undone_tasks', 'get_task_in_project', 'search', 'search_task', 'list_all_tasks', 'memo_search', 'memo_batch_get']);
 const ARG_KEYS = {
   search_threads: ['query', 'pageSize', 'includeTrash', 'view'], get_message: ['messageId', 'messageFormat'],
   list_events: ['calendarId', 'startTime', 'endTime', 'orderBy', 'pageSize'], search_files: ['query', 'pageSize', 'excludeContentSnippets'],
   read_file_content: ['fileId', 'includeComments'], read_doc: ['documentId', 'commentsIncluded'], get_values: ['spreadsheetId', 'range'],
   read_presentation: ['presentationId', 'fields', 'commentsIncluded'], list_projects: ['limit', 'offset'],
-  get_project_with_undone_tasks: ['project_id'], get_project_tasks_bounded: ['project_id','limit'], get_task_in_project: ['project_id', 'task_id'], search: ['query'],
+  get_project_with_undone_tasks: ['project_id'], get_project_tasks_bounded: ['project_id','limit'], get_task_in_project: ['project_id', 'task_id'], search: ['query','limit'], search_task: ['query','limit'], list_all_tasks: ['limit'],
   get_named_project_with_undone_tasks: ['project_name', 'limit'],
   memo_search: ['keywords', 'limit', 'start_date', 'end_date'], memo_batch_get: ['ids'],
 };
@@ -90,7 +90,7 @@ export function buildContextCall(source, input, { now = new Date() } = {}) {
       return make('get_project_with_undone_tasks', { project_id: id(input.projectId) });
     }
     if (operation === 'read') return make('get_task_in_project', { project_id: id(input.projectId), task_id: id(input.id) });
-    if (operation === 'search') return make('search', { query: string(input.query) });
+    if (operation === 'search') return make('search', { query: string(input.query), ...(input.limit !== undefined ? { limit: limit(input.limit, 20) } : {}) });
   }
   if (source === 'flomo') {
     if (operation === 'search') return make('memo_search', { keywords: string(input.query), limit: limit(input.limit, 5) });

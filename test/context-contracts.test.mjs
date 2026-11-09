@@ -221,7 +221,6 @@ test('scope filters unsupported by an operation are rejected instead of widening
     ['sheets', { operation: 'read', id: 'sheet1', range: 'A1:B2', query: 'budget' }],
     ['slides', { operation: 'read', id: 'deck1', projectId: 'unrelated' }],
     ['flomo', { operation: 'read', id: 'm1', ids: ['m2'] }],
-    ['dida', { operation: 'search', query: 'budget', limit: 3 }],
   ];
   for (const [source, input] of cases) assert.throws(() => build(source, input));
 });
