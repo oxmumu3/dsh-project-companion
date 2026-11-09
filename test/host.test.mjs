@@ -54,7 +54,7 @@ async function openHost(t, options={}){
   const session=ctx.sessions.create(SessionId('synthetic-owner'),{meta:{cwd:workspace}});
   const owner={id:session.id,session,ctx,status:'idle',followup:message=>accepted.push(message)};live.set(owner.id,owner);
   const disableWeChat=ctx.tools.register(defineTool({name:'send_wechat',description:'Synthetic queue only; no real network',parameters:{text:{type:'string',required:true}},output:{schema:{type:'object',additionalProperties:true},render:(_args,value)=>[{type:'text',text:JSON.stringify(value)}]},execute:(_args,execution)=>{sent.push(execution);return options.sendResponse?.(execution)??{ok:true,message:'queued synthetic message; not real WeChat'};}}));
-  const lifecycle=await ctx.plugin({name:'synthetic-companion-mount',inject:['tools','commands','storageDomain','sessions','systemPrompt'],async apply(scope){adapter=await installCompanion(scope,{clock:()=>now,hostTimeZone:()=>options.hostTimeZone??'America/Mexico_City',...(options.family?{family:options.family}:{}),...(options.readBinding?{readBinding:options.readBinding}:{}),...(options.readSetup?{readSetup:options.readSetup}:{}),...(options.readNativeRoute?{readNativeRoute:options.readNativeRoute}:{}),...(options.news?{news:options.news}:{}),...(options.projectUpdates?{projectUpdates:options.projectUpdates}:{}),...(options.personalReview?{personalReview:options.personalReview}:{}),...(options.context?{context:options.context}:{}),timers:{setInterval:(fn,ms)=>{intervalMs=ms;timer=fn;timerStarts++;return {unref(){}};},clearInterval:()=>{timer=undefined;timerStops++;}}});}});
+  const lifecycle=await ctx.plugin({name:'synthetic-companion-mount',inject:['tools','commands','storageDomain','sessions','systemPrompt'],async apply(scope){adapter=await installCompanion(scope,{clock:()=>now,hostTimeZone:()=>options.hostTimeZone??'America/Mexico_City',...(options.family?{family:options.family}:{}),...(options.readBinding?{readBinding:options.readBinding}:{}),...(options.readSetup?{readSetup:options.readSetup}:{}),...(options.readNativeRoute?{readNativeRoute:options.readNativeRoute}:{}),...(options.news?{news:options.news}:{}),...(options.projectUpdates?{projectUpdates:options.projectUpdates}:{}),...(options.projectPulse?{projectPulse:options.projectPulse}:{}),...(options.personalReview?{personalReview:options.personalReview}:{}),...(options.context?{context:options.context}:{}),timers:{setInterval:(fn,ms)=>{intervalMs=ms;timer=fn;timerStarts++;return {unref(){}};},clearInterval:()=>{timer=undefined;timerStops++;}}});}});
   let count=0;const signal=()=>new AbortController().signal;
   const nativeTool=async(args,agent=owner,callId=`synthetic-call-${++count}`)=>{const r=await executeHostTool(ctx.tools,{callId,name:'project_companion',arguments:args,agent,signal:signal()});assert.equal(r.isError,false,JSON.stringify(r));return r;};
   const tool=async(...args)=>(await nativeTool(...args)).value;
@@ -1105,4 +1105,22 @@ test('personal review default host collector masks configured secrets and paused
  const visible=await h.adapter.workbench.snapshot();assert.equal(visible.personalReview.available,true);assert.equal(visible.personalReview.review.status,'off');assert.equal(visible.personalReview.deliverySupported,false);assert.match(visible.personalReview.review.text,/授权复核/);assert.deepEqual(visible.personalReview.review.projects,['synthetic-project']);assert.equal(summaries.length,1);
  await h.tool({action:'pause'});const paused=await h.adapter.workbench.snapshot();assert.equal(paused.personalReview.available,true);assert.equal(summaries.length,1);
  binding='b'.repeat(64);const changed=await h.adapter.workbench.snapshot();assert.notEqual(changed.bindingRevision,visible.bindingRevision);assert.equal(changed.personalReview.available,false);assert.equal(changed.personalReview.review,undefined);assert.equal(summaries.length,1);
+});
+
+test('已授权但未关注的工作区也能问进度，且不因此获得项目记忆',async t=>{
+ const routes=[];const pulseCalls=[];
+ const pulse={capture:async root=>{pulseCalls.push(root);return{repo:true,branch:'main',head:'abc1234',commits:[{short:'abc1234',date:'2026-11-08',subject:'补齐推送'}],dirty:{total:1,modified:1,untracked:0,truncated:false},unavailable:[]};}};
+ const h=await openHost(t,{projectPulse:pulse,connection:{fetch:{register:r=>{routes.push(r);return()=>{};}}},readSetup:async()=>({state:'unbound'})});
+ h.known.push({id:'granted-only',path:h.root,title:'只授权项目',sessionIds:[]});
+ const request=async(path,input)=>{const r=routes.find(x=>x.path===path);assert.ok(r,path);const response=await r.fetch(new Request('http://synthetic.invalid'+path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(input)}));assert.equal(response.status,200);return response.json();};
+ const first=await request('/api/project_companion/workspaces',{action:'list'});
+ await request('/api/project_companion/workspaces',{action:'save',expectedRevision:first.revision,expectedCatalogRevision:first.catalogRevision,workspaceIds:[first.items[0].id]});
+ const result=await h.tool({action:'digest',project:'只授权项目'});
+ assert.match(result.memoryContext,/只授权项目 只做了范围授权、还没加入关注/);
+ assert.match(result.memoryContext,/最近变化[\s\S]*分支 main/);
+ assert.match(result.memoryContext,/abc1234 补齐推送/);
+ assert.deepEqual(pulseCalls,[h.root]);
+ const denied=await h.tool({action:'digest',project:'未授权项目'});
+ assert.equal(denied.status,'blocked');
+ assert.match(denied.text,/没找到这个名字的已关注项目或已授权工作区/);
 });

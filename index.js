@@ -416,7 +416,7 @@ export async function installCompanion(ctx,options={}){
   const noteError=error=>{lastRuntimeError=String(error?.message??error).slice(0,200);};
   const authorizeRoot=async root=>(await service.coordinationTarget(root))?.root===root;
   const familyRead=createFamilyReadAdapter({getBridge:getFamilyBridge,isCurrent:scope=>familyDelegate.current(scope),authorizeRoot,recheck:scope=>familyDelegate.recheck(scope)});
-  projectPulse=createProjectPulse({...(options.clock?{clock:options.clock}:{})});
+  projectPulse=options.projectPulse??createProjectPulse({...(options.clock?{clock:options.clock}:{})});
   memory=createProjectMemory({authorizeRoot,...(options.clock?{clock:options.clock}:{}),...(options.hostTimeZone?{hostTimeZone:options.hostTimeZone}:{})});
   // Personal review is Owner-wide; it never borrows a synthetic project or a
   // one-project follow-up capability. Persisted runs re-enter the exact grant.
@@ -910,6 +910,19 @@ export async function installCompanion(ctx,options={}){
       if(plan.enabled&&origin)await followup.cancel({root:project.root,sessionId:origin});
       await followup.cancelOnceForProject({root:project.root});
     }
+    // 已授权但没加入关注的工作区也能问进度；这里只解析目标，不改任何范围。
+    const resolveDigestTarget=async reference=>{
+      let watched=null;try{watched=await service.coordinationTarget(reference);}catch{watched=null;}
+      if(watched)return watched;
+      try{
+        const snapshot=await workspaceAccess.capture(),key=String(reference).trim().toLowerCase();
+        const matches=snapshot.grants.filter(grant=>grant.id===reference||grant.workspaceId===reference||String(grant.label).toLowerCase()===key);
+        if(matches.length!==1)return null;
+        const grant=matches[0];
+        return{id:'workspace:'+grant.id,root:grant.root,label:grant.label,sessionIds:grant.sessionIds,grantedOnly:true};
+      }catch{return null;}
+    };
+    if(input.action==='digest'&&input.project!==undefined&&!await resolveDigestTarget(input.project))return{status:'blocked',accepted:false,text:'没找到这个名字的已关注项目或已授权工作区。请先在工作区选择里允许这个项目，再加入关注；本次没有读取任何内容。'};
     const familyScope=familyContext.activeScope();
     const result=await service.act(owner(ctx,agent),familyScope&&['configure_daily','remind'].includes(input.action)?{...input,expectedBinding:familyBinding(familyScope)}:input);
     if(input.action==='status'){
@@ -921,11 +934,18 @@ export async function installCompanion(ctx,options={}){
       if(result.followups.length){const summary=`主动跟进：${result.followups.map(plan=>`${plan.projectLabel} ${plan.unknown?'状态未知':plan.paused?'已暂停':plan.blocked?'等待恢复绑定':`每${plan.everyMinutes}分钟只读检查`}`).join('；')}`;result.text=`${result.text.slice(0,3199-summary.length)}\n${summary}`;}
     }
     if(input.action==='digest'){
-      const projects=input.project===undefined?await service.watchedProjects():[await service.coordinationTarget(input.project)].filter(Boolean);
+      let projects;
+      if(input.project===undefined)projects=await service.watchedProjects();
+      else{
+        const target=await resolveDigestTarget(input.project);
+        if(!target){result.status='blocked';result.text='没找到这个名字的已关注项目或已授权工作区。请先在工作区选择里允许这个项目，再加入关注；本次没有读取任何内容。';return result;}
+        projects=[target];
+      }
       const context=[];
       for(const project of projects){
-        try{const snapshot=await memory.read({root:project.root,sessionId:owner(ctx,agent).sessionId});if(snapshot.goals.length||snapshot.entries.length)context.push(`${project.label}\n${snapshot.text}`);}
-        catch(error){context.push(`${project.label}：项目记忆读取失败，内容未知。${String(error?.message??error).slice(0,120)}`);}
+        if(project.grantedOnly){context.push(`${project.label} 只做了范围授权、还没加入关注，因此没有项目记忆；以下是它本机最近的改动。`);}
+        else{try{const snapshot=await memory.read({root:project.root,sessionId:owner(ctx,agent).sessionId});if(snapshot.goals.length||snapshot.entries.length)context.push(`${project.label}\n${snapshot.text}`);}
+        catch(error){context.push(`${project.label}：项目记忆读取失败，内容未知。${String(error?.message??error).slice(0,120)}`);}}
         if(projects.indexOf(project)<20){
           try{const pulse=summarizePulse(await projectPulse.capture(project.root));if(pulse)context.push(`${project.label} 最近变化\n${pulse}`);}
           catch{context.push(`${project.label} 最近变化：本机读取失败，状态未知。`);}
