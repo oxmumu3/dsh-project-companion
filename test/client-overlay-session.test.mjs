@@ -2,17 +2,25 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
 import {readFile} from 'node:fs/promises';
+import {fileURLToPath} from 'node:url';
+import {build} from 'esbuild';
 
 // Mount the registered shell component and its real nested Dot components using
 // synthetic hook storage. Native session transport is stubbed; no messages send.
-async function fixture(){
+async function fixture({bundle,fetchResponse}={}){
+ let poll;
  const instances=new Map(),registrations=[],requests=[],retained=[],released=[];let current,cursor,pending=[],definition,created=0;
  const React={createElement:(type,props,...children)=>({type,props:{...props,children:children.flat(Infinity)},children:children.flat(Infinity)}),
   useState(initial){const row=current,i=cursor++;if(!(i in row.values))row.values[i]=typeof initial==='function'?initial():initial;return[row.values[i],v=>{row.values[i]=typeof v==='function'?v(row.values[i]):v;}];},
   useRef(value){const row=current,i=cursor++;return row.values[i]??(row.values[i]={current:value});},
-  useEffect(fn,deps){const row=current,i=cursor++,old=row.values[i];if(!old||deps.some((v,j)=>v!==old.deps[j])){old?.cleanup?.();const cell={deps};row.values[i]=cell;pending.push(()=>cell.cleanup=fn());}},useCallback:fn=>fn};
+  useEffect(fn,deps){const row=current,i=cursor++,old=row.values[i];if(!old||deps.some((v,j)=>v!==old.deps[j])){old?.cleanup?.();const cell={deps};row.values[i]=cell;pending.push(()=>cell.cleanup=fn());}},useCallback:fn=>fn,
+  useSyncExternalStore(_subscribe,getSnapshot){return getSnapshot();}};
  const state={phase:'ready',ids:[],byId:{}},route={state:'unavailable'};
- vm.runInNewContext(await readFile(new URL('../src/client.js',import.meta.url),'utf8'),{window:{__ModuleLoader__:{load:d=>definition=d}},AbortController,AbortSignal,fetch:async(url)=>{requests.push(url);return Response.json(route);}});
+ vm.runInNewContext(bundle??await readFile(new URL('../src/client.js',import.meta.url),'utf8'),{
+  window:{__ModuleLoader__:{load:d=>definition=d}},AbortController,AbortSignal,setTimeout,clearTimeout,
+  setInterval:fn=>{poll=fn;return 1;},clearInterval:()=>{poll=undefined;},
+  fetch:async url=>{requests.push(url);return fetchResponse ? fetchResponse(url) : Response.json(route);},
+ });
  const api=definition.factory(id=>id==='react'?React:{Modal:'modal'});
  const cleanups=[],bindings=new Map();
  const ctx={effect:fn=>cleanups.push(fn()),layout:{selectPanel(){}},slots:{inject:(_name,fn)=>fn(),register:(spec,component)=>{registrations.push({spec,component});return()=>{};}},
@@ -27,7 +35,7 @@ async function fixture(){
   }const tree=walk(React.createElement(root,props));for(const[path,row]of instances)if(!seen.has(path)){row.values.forEach(v=>v?.cleanup?.());instances.delete(path);}return tree;
  }
  const settle=async()=>{let tree;for(let i=0;i<5;i++){tree=render();const run=pending;pending=[];run.forEach(fn=>fn());await new Promise(resolve=>setImmediate(resolve));}return render();};
- return{render,settle,state,route,props,requests,retained,released,get created(){return created;},dispose(){for(const row of instances.values())row.values.forEach(v=>v?.cleanup?.());cleanups.forEach(fn=>fn?.());}};
+ return{render,settle,state,route,props,requests,retained,released,tick:()=>poll?.(),get created(){return created;},dispose(){for(const row of instances.values())row.values.forEach(v=>v?.cleanup?.());cleanups.forEach(fn=>fn?.());}};
 }
 function nodes(tree,predicate){if(!tree||typeof tree!=='object')return[];return[...(predicate(tree)?[tree]:[]),...tree.children.flatMap(child=>nodes(child,predicate))];}
 const text=tree=>typeof tree==='string'?tree:(tree?.children??[]).map(text).join(' ');
@@ -58,4 +66,38 @@ for(const map of [undefined,null,[], 'invalid'])test(`overlay treats a missing o
   assert.equal(nodes(tree,n=>n.type==='native-composer').length,0);assert.deepEqual(f.retained,[]);
   assert.match(text(tree),/请打开完整工作台继续对话/);
  }finally{f.dispose();}
+});
+
+
+test('the bundled Today launcher stays neutral before its first request and reports a real failure', async () => {
+ const {outputFiles}=await build({
+  entryPoints:[fileURLToPath(new URL('../client/index.jsx',import.meta.url))],
+  bundle:true,write:false,platform:'browser',loader:{'.css':'text'},
+  define:{__DOT_BUILD__:JSON.stringify('overlay-test')},
+ });
+ const f=await fixture({bundle:outputFiles[0].text,fetchResponse:()=>Response.json({}, {status:503})});
+ try {
+  let tree=await f.settle();
+  const launcher=button(tree,'打开小今天');
+  assert.equal(launcher.props['aria-expanded'],false);
+  assert.equal(text(launcher).trim(),'');
+  f.tick();
+  tree=await f.settle();
+  assert.deepEqual(f.requests,[]);
+
+  button(tree,'打开小今天').props.onClick();
+  tree=await f.settle();
+  assert.deepEqual(f.requests,['/api/project_companion/activity']);
+  assert.match(text(button(tree,'收起小今天')),/看不到状态/);
+  assert.match(text(tree),/宿主没有回应/);
+
+  button(tree,'收起小今天').props.onClick();
+  tree=await f.settle();
+  assert.match(text(button(tree,'打开小今天')),/看不到状态/);
+  f.tick();
+  await f.settle();
+  assert.deepEqual(f.requests,['/api/project_companion/activity']);
+ } finally {
+  f.dispose();
+ }
 });

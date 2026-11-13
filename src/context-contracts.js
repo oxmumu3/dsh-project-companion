@@ -12,16 +12,16 @@ const INPUT_KEYS = new Set(['operation', 'query', 'id', 'ids', 'projectId', 'ran
 const OPERATION_INPUTS = {
   gmail: { search: ['query', 'limit'], read: ['id'] }, calendar: { upcoming: ['from', 'to', 'calendarId', 'limit'] },
   drive: { search: ['query', 'limit'], recent: ['from', 'to', 'limit'], read: ['id'] }, docs: { read: ['id'] }, sheets: { read: ['id', 'range'] }, slides: { read: ['id'] },
-  dida: { projects: ['limit'], tasks: ['projectId', 'query', 'limit'], read: ['id', 'projectId'], search: ['query', 'limit'] },
+  dida: { projects: ['limit'], tasks: ['projectId', 'query', 'limit'], inboxWindow: ['from', 'to'], read: ['id', 'projectId'], search: ['query', 'limit'] },
   flomo: { search: ['query', 'limit'], recent: ['from', 'to', 'limit'], read: ['id', 'ids'] },
 };
-const READ_TOOLS = new Set(['search_threads', 'get_message', 'list_events', 'search_files', 'read_file_content', 'read_doc', 'get_values', 'read_presentation', 'list_projects', 'get_project_with_undone_tasks', 'get_project_tasks_bounded', 'get_named_project_with_undone_tasks', 'get_task_in_project', 'search', 'search_task', 'list_all_tasks', 'memo_search', 'memo_batch_get']);
+const READ_TOOLS = new Set(['search_threads', 'get_message', 'list_events', 'search_files', 'read_file_content', 'read_doc', 'get_values', 'read_presentation', 'list_projects', 'get_project_with_undone_tasks', 'get_project_tasks_bounded', 'get_inbox_undone_window', 'get_named_project_with_undone_tasks', 'get_task_in_project', 'search', 'search_task', 'list_all_tasks', 'memo_search', 'memo_batch_get']);
 const ARG_KEYS = {
   search_threads: ['query', 'pageSize', 'includeTrash', 'view'], get_message: ['messageId', 'messageFormat'],
   list_events: ['calendarId', 'startTime', 'endTime', 'orderBy', 'pageSize'], search_files: ['query', 'pageSize', 'excludeContentSnippets'],
   read_file_content: ['fileId', 'includeComments'], read_doc: ['documentId', 'commentsIncluded'], get_values: ['spreadsheetId', 'range'],
   read_presentation: ['presentationId', 'fields', 'commentsIncluded'], list_projects: ['limit', 'offset'],
-  get_project_with_undone_tasks: ['project_id'], get_project_tasks_bounded: ['project_id','limit'], get_task_in_project: ['project_id', 'task_id'], search: ['query','limit'], search_task: ['query','limit'], list_all_tasks: ['limit'],
+  get_project_with_undone_tasks: ['project_id'], get_project_tasks_bounded: ['project_id','limit'], get_inbox_undone_window: ['start_date','end_date'], get_task_in_project: ['project_id', 'task_id'], search: ['query','limit'], search_task: ['query','limit'], list_all_tasks: ['limit'],
   get_named_project_with_undone_tasks: ['project_name', 'limit'],
   memo_search: ['keywords', 'limit', 'start_date', 'end_date'], memo_batch_get: ['ids'],
 };
@@ -51,7 +51,11 @@ function boundedRange(value) {
 /** Construct only known read operations, never a caller-provided tool name. */
 export function buildContextCall(source, input, { now = new Date() } = {}) {
   if (!Object.hasOwn(SOURCE_INFO, source) || !plain(input) || Object.keys(input).some(key => !INPUT_KEYS.has(key))) fail();
-  const operation = string(input.operation, 30), max = limit(input.limit);
+  const operation = string(input.operation, 30);
+  // Dot's rule-based readers (DESIGN.md 3.3 path 1) need every list/task in the
+  // due window, not the five-lists-by-three-tasks preview. Model-facing reads
+  // keep the old ten-item shape by passing no larger limit.
+  const max = limit(input.limit, source === 'dida' ? 200 : source === 'calendar' ? 100 : source === 'gmail' ? 30 : 10);
   const accepted = OPERATION_INPUTS[source]?.[operation];
   if (!accepted || Object.keys(input).some(key => key !== 'operation' && input[key] !== undefined && !accepted.includes(key))) fail('CONTEXT_UNSUPPORTED_OPERATION');
   const make = (name, args) => ({ name, args });
@@ -83,6 +87,14 @@ export function buildContextCall(source, input, { now = new Date() } = {}) {
   if (source === 'sheets' && operation === 'read') return make('get_values', { spreadsheetId: id(input.id), range: boundedRange(input.range) });
   if (source === 'slides' && operation === 'read') return make('read_presentation', { presentationId: id(input.id), fields: ['presentationId', 'title', 'slides.pageElements(objectId,shape.text)'], commentsIncluded: false });
   if (source === 'dida') {
+    if (operation === 'inboxWindow') {
+      // The window is fixed to Inbox and capped at the provider's 14-day
+      // maximum. Callers cannot pass a project id or task ids through it.
+      const startDate = date(input.from), endDate = date(input.to);
+      const duration = Date.parse(endDate) - Date.parse(startDate);
+      if (duration <= 0 || duration > 14 * 86_400_000) fail();
+      return make('get_inbox_undone_window', {start_date: startDate, end_date: endDate});
+    }
     if (operation === 'projects') return make('list_projects', { limit: max, offset: 0 });
     if (operation === 'tasks') {
       if (input.query !== undefined) { if (input.projectId !== undefined) fail(); return make('get_named_project_with_undone_tasks', { project_name: string(input.query,180), limit:max }); }
@@ -302,4 +314,107 @@ export function projectContextResult(source, canonical, { operation, id: request
     else { items.pop(); omittedCount++; }
   }
   return envelope();
+}
+
+/**
+ * Compact, allowlisted rows for Dot's rule-based bulk readers. This is NOT the
+ * model-facing envelope: it returns no body text and no raw provider metadata,
+ * and is capped before leaving the transport boundary. Only the fields a
+ * due-window item needs survive.
+ */
+export function projectDotBulk(source, canonical, { operation } = {}) {
+  const value = unwrap(canonical);
+  const rowsOf = keys => {
+    if (Array.isArray(value)) return value;
+    if (!plain(value)) return [];
+    for (const key of keys) if (Array.isArray(value[key])) return value[key];
+    return [];
+  };
+  const rows = rowsOf(['tasks', 'projects', 'events', 'items']);
+  const clipped = (text, max) => typeof text === 'string' ? cleanText(text).slice(0, max) : '';
+  const items = [];
+  if (source === 'gmail' && operation === 'search') {
+    for (const row of rows.slice(0, 30)) {
+      if (!plain(row)) continue;
+      const message = Array.isArray(row.messages) ? row.messages[0] : row;
+      const id = firstText(row.id, message?.id);
+      if (!id || !/^[A-Za-z0-9_-]{1,512}$/.test(id)) continue;
+      const threadId = firstText(row.threadId, message?.threadId);
+      const received = firstText(row.receivedAt, message?.receivedAt);
+      items.push({
+        id,
+        ...(threadId && /^[A-Za-z0-9_-]{1,512}$/.test(threadId) ? {threadId} : {}),
+        subject: clipped(firstText(row.subject, message?.subject, header(message, 'Subject')), 240),
+        from: clipped(firstText(row.from, message?.from, header(message, 'From')), 200),
+        ...(received && Number.isFinite(Date.parse(received)) ? {receivedAt: new Date(received).toISOString()} : {}),
+        snippet: clipped(firstText(row.snippet, message?.snippet, row.text), 600),
+      });
+    }
+    return {items, truncated: value?.truncated === true || rows.length > 30};
+  }
+  if (source === 'dida' && operation === 'projects') {
+    for (const row of rows.slice(0, 200)) {
+      if (!plain(row) || typeof row.id !== 'string' || !row.id) continue;
+      items.push({ id: row.id.slice(0, 512), name: clipped(row.name, 180) });
+    }
+    return { items, truncated: rows.length > 200 };
+  }
+  if (source === 'dida' && operation === 'tasks') {
+    for (const row of rows.slice(0, 1000)) {
+      if (!plain(row) || typeof row.id !== 'string' || !row.id || typeof row.title !== 'string') continue;
+      const due = firstText(row.dueDate, row.dueAt);
+      items.push({
+        id: row.id.slice(0, 512),
+        projectId: typeof row.projectId === 'string' ? row.projectId.slice(0, 512) : '',
+        title: clipped(row.title, 200),
+        ...(due && Number.isFinite(Date.parse(due)) ? { dueAt: new Date(due).toISOString() } : {}),
+        status: row.status === 2 || row.status === 'completed' || row.done === true ? 'completed' : 'open',
+      });
+    }
+    return { items, truncated: rows.length > 1000 };
+  }
+  if (source === 'dida' && operation === 'inboxWindow') {
+    // The adapter has already checked that every row has the same non-empty
+    // projectId. Keep both dates so the page can show the due date first and
+    // mark a start-only row honestly.
+    for (const row of rows.slice(0, 200)) {
+      if (!plain(row) || typeof row.id !== 'string' || !row.id || typeof row.projectId !== 'string' || !row.projectId || typeof row.title !== 'string') continue;
+      const due = firstText(row.dueDate, row.dueAt);
+      const start = firstText(row.startDate, row.startAt);
+      items.push({
+        id: row.id.slice(0, 512),
+        projectId: row.projectId.slice(0, 512),
+        title: clipped(row.title, 200),
+        ...(start && Number.isFinite(Date.parse(start)) ? { startAt: new Date(start).toISOString() } : {}),
+        ...(due && Number.isFinite(Date.parse(due)) ? { dueAt: new Date(due).toISOString() } : {}),
+        status: row.status === 2 || row.status === 'completed' || row.done === true ? 'completed' : 'open',
+      });
+    }
+    return { items, truncated: rows.length > 200 };
+  }
+  if (source === 'calendar' && operation === 'upcoming') {
+    for (const row of rows.slice(0, 500)) {
+      if (!plain(row) || typeof row.id !== 'string' || !row.id) continue;
+      let startAt, endAt, allDay = false;
+      if (plain(row.start) && typeof row.start.date === 'string') {
+        allDay = true;
+        try { const bounds = calendarEventBounds(row); startAt = new Date(bounds.startMs).toISOString(); endAt = new Date(bounds.endMs).toISOString(); } catch { /* Missing timezone: omit rather than guess. */ }
+      } else {
+        const start = firstText(row.start?.dateTime, row.startAt), end = firstText(row.end?.dateTime, row.endAt);
+        if (start && Number.isFinite(Date.parse(start))) startAt = new Date(start).toISOString();
+        if (end && Number.isFinite(Date.parse(end))) endAt = new Date(end).toISOString();
+      }
+      if (!startAt) continue;
+      items.push({
+        id: row.id.slice(0, 512),
+        title: clipped(firstText(row.summary, row.title), 200),
+        startAt,
+        ...(endAt ? { endAt } : {}),
+        ...(allDay ? { allDay: true } : {}),
+        ...(['confirmed', 'tentative', 'cancelled'].includes(row.status) ? { status: row.status } : {}),
+      });
+    }
+    return { items, truncated: rows.length > 500 };
+  }
+  fail('CONTEXT_UNSUPPORTED_OPERATION');
 }

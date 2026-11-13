@@ -13,7 +13,7 @@ const task=(id='t1',projectId='p1')=>({id,projectId,title:'Example task',content
 
 test('Dida catalog is passive, bundled and declares bounded account search',async()=>{
  let calls=0;const t=create({getToken:async()=>{calls++;return'token';},fetch:async()=>{calls++;return response([]);},clock:()=>fixed});
- const c=await t.catalog('dida',gates);assert.equal(c.provenance,'bundled-contract');assert.deepEqual(c.tools.map(t=>t.name),['list_projects','get_project_with_undone_tasks','get_project_tasks_bounded','get_named_project_with_undone_tasks','get_task_in_project','search_task','search','list_all_tasks']);assert.equal(c.unsupportedOperations,undefined);assert.equal(calls,0);
+ const c=await t.catalog('dida',gates);assert.equal(c.provenance,'bundled-contract');assert.deepEqual(c.tools.map(t=>t.name),['list_projects','get_project_with_undone_tasks','get_project_tasks_bounded','get_inbox_undone_window','get_named_project_with_undone_tasks','get_task_in_project','search_task','search','list_all_tasks']);assert.equal(c.unsupportedOperations,undefined);assert.equal(calls,0);
  assert.equal(validateContextCall(buildContextCall('dida',{operation:'search',query:'work'}),c).name,'search');
  const legacy={tools:[{name:'search',inputSchema:{type:'object',properties:{query:{type:'string'}}}}]};assert.equal(validateContextCall({name:'search',args:{query:'work'}},legacy).name,'search');
  for(const unsupportedOperations of [['delete'],['search','search'],'search',['search',42]])assert.throws(()=>validateContextCall({name:'list_projects',args}, {...c,unsupportedOperations}),code('CONTEXT_SCHEMA_MISMATCH'));
@@ -36,7 +36,7 @@ test('bounded ID task read rejects mismatched project or task ownership and inva
   await assert.rejects(t.call('dida','get_project_tasks_bounded',{project_id:'p1',limit:3},gates),code('CONTEXT_PROTOCOL_INVALID'));await t.close();
  }
  let reads=0;const t=create({getToken:async()=>{reads++;return 'x';},fetch:async()=>{reads++;return response({});}});
- for(const input of [{project_id:'p1',limit:0},{project_id:'p1',limit:11},{project_id:'../p1',limit:3},{project_id:'p1',limit:3,project_name:'other'}])await assert.rejects(t.call('dida','get_project_tasks_bounded',input,gates),code('CONTEXT_ARGUMENTS_INVALID'));
+ for(const input of [{project_id:'p1',limit:0},{project_id:'p1',limit:201},{project_id:'../p1',limit:3},{project_id:'p1',limit:3,project_name:'other'}])await assert.rejects(t.call('dida','get_project_tasks_bounded',input,gates),code('CONTEXT_ARGUMENTS_INVALID'));
  assert.equal(reads,0);await t.close();
 });
 
@@ -54,7 +54,7 @@ test('project list sends one fixed GET with user limit and projects only leave a
 
 test('explicit project tasks use only that project and clip tasks without following other projects',async()=>{
  const calls=[];const t=create({getToken:async()=> 'x',fetch:async(url)=>{calls.push(url);return response({project:{id:'p1',name:'A project',private:'discard'},tasks:Array.from({length:12},(_,i)=>({...task('t'+i),assignee:'private',attachments:['private']})),columns:[{name:'private'}]});}});
- const r=await t.call('dida','get_project_with_undone_tasks',{project_id:'p1'},gates);assert.deepEqual(calls,['https://api.dida365.com/open/v1/project/p1/data']);assert.equal(r.value.items.length,10);assert.equal(r.value.truncated,true);assert.equal(r.value.items[0].projectId,'p1');assert.equal(r.value.items[0].status,0);assert.match(r.value.items[0].content,/2026-10-23/);assert.equal(JSON.stringify(r).includes('private'),false);assert.equal(projectContextResult('dida',r.value,{operation:'tasks'}).items.length,10);await t.close();
+ const r=await t.call('dida','get_project_with_undone_tasks',{project_id:'p1'},gates);assert.deepEqual(calls,['https://api.dida365.com/open/v1/project/p1/data']);assert.equal(r.value.items.length,12);assert.equal(r.value.truncated,false);assert.equal(r.value.items[0].projectId,'p1');assert.equal(r.value.items[0].status,0);assert.match(r.value.items[0].content,/2026-10-23/);assert.equal(JSON.stringify(r).includes('private'),false);assert.equal(projectContextResult('dida',r.value,{operation:'tasks'}).items.length,10);await t.close();
 });
 
 test('explicit task reads preserve identity and do not retrieve another project or attachments',async()=>{
@@ -67,9 +67,48 @@ test('inbox is supported only when explicitly requested as the project',async()=
  const r=await t.call('dida','get_project_with_undone_tasks',{project_id:'inbox'},gates);assert.equal(url,'https://api.dida365.com/open/v1/project/inbox/data');assert.equal(r.value.items[0].projectId,'inbox');await t.close();
 });
 
+for(const [label,metadata] of [['omitted',{}],['null',{project:null}]]){
+ test(`bounded Inbox accepts ${label} project metadata and keeps row scope and caps`,async()=>{
+  const paths=[];
+  const withoutProject={...task('t2','inbox'),projectId:undefined};
+  const raw={...metadata,tasks:[task('t1','inbox'),withoutProject,task('t3','inbox')]};
+  const t=create({getToken:async()=> 'x',fetch:async(url)=>{paths.push(new URL(url).pathname);return response(raw);}});
+  const result=await t.call('dida','get_project_tasks_bounded',{project_id:'inbox',limit:2},gates);
+  assert.deepEqual(paths,['/open/v1/project/inbox/data']);
+  assert.deepEqual(result.value.items.map(row=>[row.id,row.projectId,row.status]),[['t1','inbox',0],['t2','inbox',0]]);
+  assert.equal(result.value.truncated,true);
+  await assert.rejects(t.call('dida','get_project_tasks_bounded',{project_id:'p1',limit:2},gates),code('CONTEXT_PROTOCOL_INVALID'));
+  await assert.rejects(t.call('dida','get_project_with_undone_tasks',{project_id:'inbox'},gates),code('CONTEXT_PROTOCOL_INVALID'));
+  await t.close();
+ });
+}
+
+test('bounded Inbox diagnostics distinguish failures without changing unrelated responses',async()=>{
+ const cases=[
+  ['content_type',()=>new Response('private response',{headers:{'content-type':'text/html'}})],
+  ['json',()=>new Response('{ private response',{headers:{'content-type':'application/json'}})],
+  ['project_data',()=>response([])],
+  ['project_metadata',()=>response({project:false,tasks:[]})],
+  ['project_id',()=>response({project:{},tasks:[]})],
+  ['project_id_mismatch',()=>response({project:{id:'private-canonical'},tasks:[]})],
+  ['tasks_array',()=>response({project:null,tasks:{}})],
+  ['task_project',()=>response({tasks:[task('t1','private-project')]})],
+  ['task_project',()=>response({project:{id:'inbox'},tasks:[task('t1','private-project')]})],
+  ['task_status',()=>response({project:{id:'inbox'},tasks:[{...task('t1','inbox'),status:99}]})],
+ ];
+ for(const [stage,reply] of cases){
+  let requests=0;
+  const t=create({getToken:async()=> 'x',fetch:async()=>{requests++;return reply();}});
+  await assert.rejects(t.call('dida','get_project_tasks_bounded',{project_id:'inbox',limit:200},gates),e=>code('CONTEXT_PROTOCOL_INVALID')(e)&&e.inboxProtocolStage===stage&&!JSON.stringify(e).includes('private'));
+  await assert.rejects(t.call('dida','get_project_tasks_bounded',{project_id:'p1',limit:200},gates),e=>code('CONTEXT_PROTOCOL_INVALID')(e)&&Object.keys(e).join(',')==='code');
+  assert.equal(requests,2,'each operation makes one request');
+  await t.close();
+ }
+});
+
 test('unsupported operations, pagination overrides and injected paths fail before token or network',async()=>{
  let calls=0;const t=create({getToken:async()=>{calls++;return'x';},fetch:async()=>{calls++;return response([]);}});
- for(const [source,name,input]of [['dida','search',{query:''}],['dida','create_task',{}],['flomo','list_projects',args],['dida','list_projects',{offset:1,limit:2}],['dida','list_projects',{offset:0,limit:11}],['dida','list_projects',{offset:0,limit:0}],['dida','list_projects',{...args,url:'https://evil.example'}],['dida','get_project_with_undone_tasks',{project_id:'../p1'}],['dida','get_project_with_undone_tasks',{project_id:'p1?limit=100'}],['dida','get_task_in_project',{project_id:'p1',task_id:'t1/complete'}],['dida','get_task_in_project',{project_id:'p1',task_id:'x'.repeat(513)}]])await assert.rejects(t.call(source,name,input,gates),e=>['CONTEXT_UNSUPPORTED_OPERATION','CONTEXT_ARGUMENTS_INVALID'].includes(e.code));
+ for(const [source,name,input]of [['dida','search',{query:''}],['dida','create_task',{}],['flomo','list_projects',args],['dida','list_projects',{offset:1,limit:2}],['dida','list_projects',{offset:0,limit:201}],['dida','list_projects',{offset:0,limit:0}],['dida','list_projects',{...args,url:'https://evil.example'}],['dida','get_project_with_undone_tasks',{project_id:'../p1'}],['dida','get_project_with_undone_tasks',{project_id:'p1?limit=100'}],['dida','get_task_in_project',{project_id:'p1',task_id:'t1/complete'}],['dida','get_task_in_project',{project_id:'p1',task_id:'x'.repeat(513)}]])await assert.rejects(t.call(source,name,input,gates),e=>['CONTEXT_UNSUPPORTED_OPERATION','CONTEXT_ARGUMENTS_INVALID'].includes(e.code));
  assert.equal(calls,0);await t.close();
 });
 
@@ -160,4 +199,100 @@ test('account search fails closed on an unbounded project list or a mismatched p
  const u=create({getToken:async()=> 'x',fetch:async(url)=>{const p=new URL(url).pathname;if(p==='/open/v1/project')return response([{id:'p1'}]);return response({project:{id:'other'},tasks:[task('t1','p1')]});}});
  await assert.rejects(u.call('dida','search_task',{query:'x',limit:2},gates),code('CONTEXT_PROTOCOL_INVALID'));
  await t.close();await u.close();
+});
+
+const windowStart='2026-10-15T00:00:00.000Z';
+const windowEnd='2026-10-29T00:00:00.000Z';
+const windowInput={start_date:windowStart,end_date:windowEnd};
+const windowTask=(id,projectId='inbox-69a85785',extra={})=>({id,projectId,title:'Example inbox task',status:0,startDate:'2026-10-20T00:00:00+0000',dueDate:'2026-10-22T12:00:00+0000',...extra});
+
+test('Inbox window is a fixed, bounded POST and keeps due and start dates', async () => {
+ const calls=[];const t=create({getToken:async()=> 'synthetic-bearer',fetch:async(url,init)=>{calls.push({url:new URL(url),init});return response([windowTask('t1',undefined,{content:'private',tags:['private']})]);},clock:()=>fixed});
+ const r=await t.call('dida','get_inbox_undone_window',windowInput,gates);
+ assert.equal(calls.length,1);
+ assert.equal(calls[0].url.origin,'https://api.dida365.com');
+ assert.equal(calls[0].url.pathname,'/open/v1/task/undone');
+ assert.equal(calls[0].init.method,'POST');
+ assert.equal(calls[0].init.redirect,'manual');
+ assert.equal(calls[0].init.headers['content-type'],'application/json');
+ assert.equal(calls[0].init.headers.authorization,'Bearer synthetic-bearer');
+ assert.deepEqual(JSON.parse(calls[0].init.body),{projectIds:['inbox'],startDate:windowStart,endDate:windowEnd});
+ assert.deepEqual(r.value.items,[{id:'t1',projectId:'inbox-69a85785',title:'Example inbox task',startDate:'2026-10-20T00:00:00.000Z',dueDate:'2026-10-22T12:00:00.000Z',status:0}]);
+ assert.equal(JSON.stringify(r).includes('private'),false);
+ await t.close();
+});
+
+test('Inbox window accepts an empty batch and one non-empty internal owner', async () => {
+ let reply=[];const paths=[];const t=create({getToken:async()=> 'x',fetch:async url=>{paths.push(new URL(url).pathname);return response(reply);}});
+ const empty=await t.call('dida','get_inbox_undone_window',windowInput,gates);
+ assert.deepEqual(empty.value,{items:[],truncated:false});
+ reply=[windowTask('t1'),windowTask('t2')];
+ const kept=await t.call('dida','get_inbox_undone_window',windowInput,gates);
+ assert.deepEqual(kept.value.items.map(row=>row.id),['t1','t2']);
+ assert.ok(kept.value.items.every(row=>row.projectId==='inbox-69a85785'));
+ assert.deepEqual(paths,['/open/v1/task/undone','/open/v1/task/undone']);
+ await t.close();
+});
+
+test('Inbox window drops the whole batch on mixed or malformed ownership and shapes', async () => {
+ const cases=[
+  ['window_array',()=>response({tasks:[]})],
+  ['window_project',()=>response([windowTask('t1','a'),windowTask('t2','b')])],
+  ['window_project',()=>response([windowTask('t1','')])],
+  ['window_project',()=>response([windowTask('t1',undefined,{projectId:undefined})])],
+  ['window_task_shape',()=>response([null])],
+  ['window_task_id',()=>response([windowTask('bad/id')])],
+  ['window_task_title',()=>response([windowTask('t1',undefined,{title:42})])],
+  ['window_task_status',()=>response([windowTask('t1',undefined,{status:99})])],
+  ['window_dates',()=>response([windowTask('t1',undefined,{startDate:null,dueDate:null})])],
+  ['window_dates',()=>response([windowTask('t1',undefined,{dueDate:'not-a-date'})])],
+ ];
+ for(const [stage,reply] of cases){
+  let requests=0;const t=create({getToken:async()=> 'x',fetch:async()=>{requests++;return reply();}});
+  await assert.rejects(t.call('dida','get_inbox_undone_window',windowInput,gates),e=>code('CONTEXT_PROTOCOL_INVALID')(e)&&e.inboxProtocolStage===stage);
+  assert.equal(requests,1);
+  await t.close();
+ }
+});
+
+test('Inbox window rejects overlong, reversed or missing ranges before token or network', async () => {
+ let calls=0;const t=create({getToken:async()=>{calls++;return 'x';},fetch:async()=>{calls++;return response([]);}});
+ for(const input of [
+  {start_date:windowStart},
+  {start_date:windowStart,end_date:windowStart},
+  {start_date:windowEnd,end_date:windowStart},
+  {start_date:'2026-10-01T00:00:00.000Z',end_date:'2026-10-16T00:00:00.000Z'},
+  {...windowInput,projectIds:['p1']},
+  {...windowInput,taskIds:['t1']},
+ ])await assert.rejects(t.call('dida','get_inbox_undone_window',input,gates),code('CONTEXT_ARGUMENTS_INVALID'));
+ assert.equal(calls,0);
+ await t.close();
+});
+
+test('Inbox window validates the whole batch before the 200-row projection cap', async () => {
+ const same=Array.from({length:201},(_,i)=>windowTask(`t${i}`));
+ const t=create({getToken:async()=> 'x',fetch:async()=>response(same)});
+ const r=await t.call('dida','get_inbox_undone_window',windowInput,gates);
+ assert.equal(r.value.items.length,200);assert.equal(r.value.truncated,true);
+ await t.close();
+
+ // A second owner after the output cap still drops the whole batch.
+ const mixed=[...same,windowTask('t200','another-owner')];
+ const rejected=create({getToken:async()=> 'x',fetch:async()=>response(mixed)});
+ await assert.rejects(rejected.call('dida','get_inbox_undone_window',windowInput,gates),e=>code('CONTEXT_PROTOCOL_INVALID')(e)&&e.inboxProtocolStage==='window_project');
+ await rejected.close();
+
+ let http=0;const blocked=create({getToken:async()=> 'x',fetch:async()=>{http++;return response([]);}});
+ await assert.rejects(blocked.call('dida','get_inbox_undone_window',windowInput,{authorize:async()=>true,authorizeSync:()=>false}),code('CONTEXT_CANCELLED'));
+ assert.equal(http,0);
+ await blocked.close();
+});
+
+test('Inbox window contract builds only the fixed tool with a 14-day bound', () => {
+ assert.deepEqual(
+  buildContextCall('dida',{operation:'inboxWindow',from:'2026-10-15T08:00:00+08:00',to:'2026-10-29T08:00:00+08:00'}),
+  {name:'get_inbox_undone_window',args:{start_date:windowStart,end_date:windowEnd}},
+ );
+ assert.throws(()=>buildContextCall('dida',{operation:'inboxWindow',from:'2026-10-01T00:00:00Z',to:'2026-10-16T00:00:00Z'}));
+ assert.throws(()=>buildContextCall('dida',{operation:'inboxWindow',from:windowStart,to:windowEnd,projectId:'p1'}));
 });

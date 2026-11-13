@@ -20,9 +20,11 @@ const DOMAINS = {
   project_companion_news: ['news-service.js', 'newsRowSchema'],
   project_companion_personal_review: ['personal-review.js', 'personalReviewRowSchema'],
   project_companion_context: ['context-service.js', 'contextRowSchema'],
+  project_companion_dot_sources: ['dot-sources.js', 'dotSourcesRowSchema'],
   project_companion_context_loop: ['context-loop.js', 'contextLoopRowSchema'],
   project_companion_task_results: ['task-results.js', 'taskResultsRowSchema'],
   project_companion_workspace_access: ['workspace-access.js', 'workspaceAccessRowSchema'],
+  project_companion_sessions: ['session-ledger.js', 'sessionLedgerRowSchema'],
   project_companion_pulse: ['project-pulse-ledger.js', 'pulseLedgerRowSchema'],
 };
 

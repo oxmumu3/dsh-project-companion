@@ -28,7 +28,7 @@ export function validateOfficialChannels(metadata,observed,verified=matrixVersio
 async function main(){
  const metadata=JSON.parse(await readFile(new URL('../package.json',import.meta.url)));
  let version=process.argv[2];
- if(version==='--matrix'){validateCompatibility(metadata,matrixVersions.at(-1));console.log(JSON.stringify({include:matrixVersions.map(sdk=>({sdk,node:sdk==='0.2.2-rc.1'?'24.22.1':'22.22.0'}))}));return;}
+ if(version==='--matrix'){validateCompatibility(metadata,matrixVersions.at(-1));console.log(JSON.stringify({include:matrixVersions.map(sdk=>({sdk,node:sdk.startsWith('0.2.2-rc.')?'24.22.1':'22.22.0'}))}));return;}
  if(version==='--latest'){
   const observed=await readOfficialChannels();console.log(JSON.stringify({...validateOfficialChannels(metadata,observed),compatibilityOverride:false}));return;
  }

@@ -64,6 +64,8 @@ jobs:
         run: npm ci --ignore-scripts --no-audit --no-fund
       - name: Check source and build the actual package
         run: node --max-old-space-size=128 --test --test-concurrency=1 test/native-draft.test.mjs test/workbench-ui.test.mjs test/onboarding-ui.test.mjs test/context-client.test.mjs
+      - name: Build the Dot desktop client
+        run: npm run build
       - name: Recheck official latest immediately before packing
         run: node scripts/compatibility.mjs --latest
       - name: Pack and validate the exact release artifact

@@ -13,13 +13,13 @@ export async function planSdk(args) {
   const metadata = JSON.parse(await readFile(join(source, 'package.json')));
   const sdk = validateCompatibility(metadata, args[1]);
   const dependencies = { ...metadata.dependencies, ...metadata.devDependencies };
-  dependencies['@deepseek-ai/cordis'] = sdk === '0.2.2-rc.1' ? '4.1.0' : sdk === '0.2.0-rc.2' ? '4.0.4' : '4.0.5';
-  dependencies['@deepseek-ai/schemastery'] = sdk === '0.2.2-rc.1' ? '3.19.0' : sdk === '0.2.0-rc.2' ? '3.18.4' : '3.18.5';
+  dependencies['@deepseek-ai/cordis'] = sdk.startsWith('0.2.2-rc.') ? '4.1.0' : sdk === '0.2.0-rc.2' ? '4.0.4' : '4.0.5';
+  dependencies['@deepseek-ai/schemastery'] = sdk.startsWith('0.2.2-rc.') ? '3.19.0' : sdk === '0.2.0-rc.2' ? '3.18.4' : '3.18.5';
   for (const name of Object.keys(dependencies)) if (name.startsWith('@deepseek-ai/dsh-')) dependencies[name] = sdk;
   for (const name of Object.keys(metadata.peerDependencies ?? {})) if (name.startsWith('@deepseek-ai/dsh-')) dependencies[name] = sdk;
   Object.assign(dependencies, { fflate: '0.8.3', qrcode: '1.5.4' });
   for (const name of ['dsh-storage', 'dsh-storage-domain', 'dsh-storage-json', 'dsh-client-connection', 'dsh-scope']) dependencies['@deepseek-ai/' + name] = sdk;
-  if (sdk === '0.2.2-rc.1') for (const name of ['dsh-tool-executor-native', 'dsh-tool-executor-ptc']) dependencies['@deepseek-ai/' + name] = sdk;
+  if (sdk.startsWith('0.2.2-rc.')) for (const name of ['dsh-tool-executor-native', 'dsh-tool-executor-ptc']) dependencies['@deepseek-ai/' + name] = sdk;
   return { sdk, dependencies, compatibilityOverride: false, hooks: false };
 }
 async function main() {

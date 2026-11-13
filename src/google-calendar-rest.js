@@ -14,9 +14,9 @@ const fail=code=>{throw error(code);};
 const text=(v,n)=>typeof v==='string'?v.replace(/[\u0000-\u001f\u007f]/gu,'').slice(0,n):undefined;
 const isTime=v=>typeof v==='string'&&v.length<=60&&/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d{1,3})?(?:Z|[+-]\d\d:\d\d)$/u.test(v)&&Number.isFinite(Date.parse(v));
 
-const CATALOG=Object.freeze({provenance:'bundled-contract',tools:[{name:'list_events',inputSchema:{type:'object',additionalProperties:false,required:['calendarId','startTime','endTime','orderBy','pageSize'],properties:{calendarId:{type:'string',enum:['primary']},startTime:{type:'string'},endTime:{type:'string'},orderBy:{type:'string',enum:['startTime']},pageSize:{type:'integer',minimum:1,maximum:10}}}}]});
+const CATALOG=Object.freeze({provenance:'bundled-contract',tools:[{name:'list_events',inputSchema:{type:'object',additionalProperties:false,required:['calendarId','startTime','endTime','orderBy','pageSize'],properties:{calendarId:{type:'string',enum:['primary']},startTime:{type:'string'},endTime:{type:'string'},orderBy:{type:'string',enum:['startTime']},pageSize:{type:'integer',minimum:1,maximum:100}}}}]});
 function validate(source,name,args){
- if(source!=='calendar'||name!=='list_events'||!plain(args)||Object.keys(args).some(k=>!['calendarId','startTime','endTime','orderBy','pageSize'].includes(k))||args.calendarId!=='primary'||args.orderBy!=='startTime'||!Number.isInteger(args.pageSize)||args.pageSize<1||args.pageSize>10||!isTime(args.startTime)||!isTime(args.endTime))fail('CONTEXT_ARGUMENTS_INVALID');
+ if(source!=='calendar'||name!=='list_events'||!plain(args)||Object.keys(args).some(k=>!['calendarId','startTime','endTime','orderBy','pageSize'].includes(k))||args.calendarId!=='primary'||args.orderBy!=='startTime'||!Number.isInteger(args.pageSize)||args.pageSize<1||args.pageSize>100||!isTime(args.startTime)||!isTime(args.endTime))fail('CONTEXT_ARGUMENTS_INVALID');
  const duration=Date.parse(args.endTime)-Date.parse(args.startTime);
  if(duration<=0||duration>7*86400000)fail('CONTEXT_ARGUMENTS_INVALID');
  return{...args};
@@ -100,19 +100,58 @@ export function createGoogleCalendarRest({getToken,fetch:fetchImpl=globalThis.fe
     let bearer;try{bearer=await wait(Promise.resolve().then(()=>{signal.throwIfAborted();cancelled(settings);return getToken?.({signal,authorizeMutation:()=>authorized(settings,signal)});}),signal);}catch(e){if(e?.code?.startsWith('CONTEXT_'))throw e;const safe=error('CONTEXT_AUTH_REQUIRED');throw e?.authDiagnostic?withAuthDiagnostic(safe,e.authDiagnostic):safe;}
     if(typeof bearer!=='string'||!bearer.length||bearer.length>8192||/\s/u.test(bearer)||CONTROL.test(bearer))fail('CONTEXT_AUTH_REQUIRED');
     await authorized(settings,signal);signal.throwIfAborted();
-    const url=new URL(PATH,ORIGIN);for(const [key,value]of Object.entries({timeMin:args.startTime,timeMax:args.endTime,singleEvents:'true',orderBy:'startTime',showDeleted:'false',maxResults:String(args.pageSize),fields:'summary,timeZone,updated,nextPageToken,items(id,status,summary,htmlLink,updated,start,end)'}))url.searchParams.set(key,value);
-    cancelled(settings); // No asynchronous boundary between this final gate and fetch admission.
-    let reply;try{const pending=Promise.resolve(fetchImpl(url.href,{method:'GET',redirect:'manual',headers:{authorization:`Bearer ${bearer}`,accept:'application/json'},signal}));
-     // An adapter may ignore abort and return a late body; release it without publishing.
-     const owned=pending.then(response=>{if(signal.aborted){try{void response.body?.cancel().catch(()=>{});}catch{}}return response;});
-     reply=await wait(owned,signal);}catch(e){if(e?.code?.startsWith('CONTEXT_'))throw e;fail('CONTEXT_HTTP_ERROR');}
-    const raw=await body(reply,signal);await authorized(settings,signal);cancelled(settings);
-    if(!plain(raw)||(raw.items!==undefined&&!Array.isArray(raw.items))||(raw.nextPageToken!==undefined&&(typeof raw.nextPageToken!=='string'||raw.nextPageToken.length>8192)))fail('CONTEXT_PROTOCOL_INVALID');
-    let calendarTimeZone;
-    if(raw.timeZone!==undefined){try{if(typeof raw.timeZone!=='string'||raw.timeZone.length>100)throw Error();calendarTimeZone=canonicalizeTimeZone(raw.timeZone);}catch{fail('CONTEXT_PROTOCOL_INVALID');}}
-    const rows=raw.items??[];if(rows.length>1000)fail('CONTEXT_PROTOCOL_INVALID');const items=rows.slice(0,args.pageSize).map(row=>event(row,calendarTimeZone));const hasMore=Boolean(raw.nextPageToken)||rows.length>args.pageSize;
-    const partial=rows.slice(0,args.pageSize).some(row=>typeof row.summary==='string'&&row.summary.length>500);
-    return{value:{items,truncated:hasMore||partial},fetchedAt:new Date(clock()).toISOString(),coverage:{source:'calendar',calendarId:'primary',from:args.startTime,to:args.endTime,returned:items.length,hasMore}};
+    // Paginate internally: the reader must see every event in the window, and
+    // the model-facing contract never exposes a page token. A partial page is
+    // reported as truncated so the caller can keep the partial result with a
+    // partial state instead of pretending the window was complete.
+    const FETCH_PAGES=5;
+    let allItems=[],pageToken=null,hasMore=false,partial=false,hasNextSyncToken=false,calendarTimeZone,requests=0;
+    do{
+     const url=new URL(PATH,ORIGIN);for(const [key,value]of Object.entries({timeMin:args.startTime,timeMax:args.endTime,singleEvents:'true',orderBy:'startTime',showDeleted:'false',maxResults:String(args.pageSize),fields:'summary,timeZone,updated,nextPageToken,nextSyncToken,items(id,status,summary,htmlLink,updated,start,end)'}))url.searchParams.set(key,value);
+     if(pageToken)url.searchParams.set('pageToken',pageToken);
+     cancelled(settings); // No asynchronous boundary between this final gate and fetch admission.
+     let reply;try{const pending=Promise.resolve(fetchImpl(url.href,{method:'GET',redirect:'manual',headers:{authorization:`Bearer ${bearer}`,accept:'application/json'},signal}));
+      // An adapter may ignore abort and return a late body; release it without publishing.
+      const owned=pending.then(response=>{if(signal.aborted){try{void response.body?.cancel().catch(()=>{});}catch{}}return response;});
+      reply=await wait(owned,signal);}catch(e){if(e?.code?.startsWith('CONTEXT_'))throw e;fail('CONTEXT_HTTP_ERROR');}
+     const raw=await body(reply,signal);await authorized(settings,signal);cancelled(settings);
+     if(!plain(raw)||(raw.items!==undefined&&!Array.isArray(raw.items))||(raw.nextPageToken!==undefined&&(typeof raw.nextPageToken!=='string'||raw.nextPageToken.length>8192)))fail('CONTEXT_PROTOCOL_INVALID');
+     if(raw.timeZone!==undefined){try{if(typeof raw.timeZone!=='string'||raw.timeZone.length>100)throw Error();calendarTimeZone=canonicalizeTimeZone(raw.timeZone);}catch{fail('CONTEXT_PROTOCOL_INVALID');}}
+     const rows=raw.items??[];if(rows.length>1000)fail('CONTEXT_PROTOCOL_INVALID');
+     allItems.push(...rows.slice(0,args.pageSize).map(row=>event(row,calendarTimeZone)));
+     partial ||= rows.slice(0,args.pageSize).some(row=>typeof row.summary==='string'&&row.summary.length>500);
+     hasNextSyncToken=typeof raw.nextSyncToken==='string';
+     pageToken=typeof raw.nextPageToken==='string'?raw.nextPageToken:null;
+     hasMore=Boolean(pageToken);
+     requests+=1;
+    }while(pageToken&&requests<FETCH_PAGES);
+    const items=allItems;
+    return{value:{items,truncated:hasMore||partial},fetchedAt:new Date(clock()).toISOString(),coverage:{source:'calendar',calendarId:'primary',from:args.startTime,to:args.endTime,returned:items.length,hasMore,pages:requests,hasNextSyncToken}};
+   });
+  },
+  async diagnose(name,settings={}){
+   if(name!=='updated_min')fail('CONTEXT_UNSUPPORTED_OPERATION');
+   return operate(settings,async signal=>{
+    await authorized(settings,signal);cancelled(settings);
+    let bearer;try{bearer=await wait(Promise.resolve().then(()=>{signal.throwIfAborted();cancelled(settings);return getToken?.({signal,authorizeMutation:()=>authorized(settings,signal)});}),signal);}catch(e){if(e?.code?.startsWith('CONTEXT_'))throw e;fail('CONTEXT_AUTH_REQUIRED');}
+    if(typeof bearer!=='string'||!bearer.length||bearer.length>8192||/\s/u.test(bearer)||CONTROL.test(bearer))fail('CONTEXT_AUTH_REQUIRED');
+    await authorized(settings,signal);signal.throwIfAborted();
+    const url=new URL(PATH,ORIGIN);
+    // Sample one page of changes in the same forward seven-day window Today reads.
+    const sampleLimit=1;
+    url.searchParams.set('timeMin',new Date(clock().getTime()).toISOString());
+    url.searchParams.set('timeMax',new Date(clock().getTime()+7*86_400_000).toISOString());
+    url.searchParams.set('updatedMin',new Date(clock().getTime()).toISOString());
+    url.searchParams.set('maxResults',String(sampleLimit));url.searchParams.set('singleEvents','true');
+    url.searchParams.set('fields','nextPageToken,items(id)');
+    cancelled(settings);
+    let reply;try{reply=await wait(Promise.resolve(fetchImpl(url.href,{method:'GET',redirect:'manual',headers:{authorization:`Bearer ${bearer}`,accept:'application/json'},signal})),signal);}catch{fail('CONTEXT_HTTP_ERROR');}
+    await authorized(settings,signal);cancelled(settings);
+    if(!reply||typeof reply.status!=='number')fail('CONTEXT_PROTOCOL_INVALID');
+    let raw=null;try{raw=await reply.json();}catch{raw=null;}
+    const count=Array.isArray(raw?.items)?Math.min(raw.items.length,sampleLimit):0;
+    const hasMore=typeof raw?.nextPageToken==='string'&&raw.nextPageToken.length>0;
+    return{value:{ok:reply.status===200,httpStatus:reply.status,count,sampleLimit,hasMore},fetchedAt:new Date(clock()).toISOString()};
    });
   },
   async close(){closed=true;for(const controller of active)controller.abort('calendar-close');}

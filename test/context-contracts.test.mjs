@@ -15,12 +15,12 @@ test('source inventory shares Google auth without representing other providers a
 });
 
 test('Gmail maps bounded metadata search and explicit full message read only', () => {
-  assert.deepEqual(build('gmail', { operation: 'search', query: 'subject:meeting', limit: 50 }), { name: 'search_threads', args: { query: 'subject:meeting', pageSize: 10, includeTrash: false, view: 'THREAD_VIEW_METADATA_ONLY' } });
+  assert.deepEqual(build('gmail', { operation: 'search', query: 'subject:meeting', limit: 50 }), { name: 'search_threads', args: { query: 'subject:meeting', pageSize: 30, includeTrash: false, view: 'THREAD_VIEW_METADATA_ONLY' } });
   assert.deepEqual(build('gmail', { operation: 'read', id: 'abc123' }), { name: 'get_message', args: { messageId: 'abc123', messageFormat: 'FULL_CONTENT' } });
 });
 
 test('calendar defaults to primary and one day, requires timezone-aware bounded ranges', () => {
-  assert.deepEqual(build('calendar', { operation: 'upcoming' }), { name: 'list_events', args: { calendarId: 'primary', startTime: '2026-10-19T12:00:00.000Z', endTime: '2026-10-20T12:00:00.000Z', orderBy: 'startTime', pageSize: 10 } });
+  assert.deepEqual(build('calendar', { operation: 'upcoming' }), { name: 'list_events', args: { calendarId: 'primary', startTime: '2026-10-19T12:00:00.000Z', endTime: '2026-10-20T12:00:00.000Z', orderBy: 'startTime', pageSize: 100 } });
   assert.equal(build('calendar', { operation: 'upcoming', from: '2026-10-19T06:00:00-06:00', to: '2026-10-20T06:00:00-06:00', calendarId: 'work@example.com', limit: 3 }).args.calendarId, 'work@example.com');
   for (const input of [{ from: '2026-10-19', to: '2026-10-20' }, { to: '2026-11-01T00:00:00Z' }, { to: '2026-10-18T00:00:00Z' }]) assert.throws(() => build('calendar', { operation: 'upcoming', ...input }));
 });
@@ -40,7 +40,7 @@ test('Docs and Slides read explicit documents, Sheets requires a small bounded A
 });
 
 test('Dida supports exact read operations and explicit project ownership', () => {
-  assert.deepEqual(build('dida', { operation: 'projects' }), { name: 'list_projects', args: { limit: 10, offset: 0 } });
+  assert.deepEqual(build('dida', { operation: 'projects' }), { name: 'list_projects', args: { limit: 200, offset: 0 } });
   assert.deepEqual(build('dida', { operation: 'tasks', projectId: 'project1' }), { name: 'get_project_with_undone_tasks', args: { project_id: 'project1' } });
   assert.deepEqual(build('dida', { operation: 'read', projectId: 'project1', id: 'task1' }), { name: 'get_task_in_project', args: { project_id: 'project1', task_id: 'task1' } });
   assert.deepEqual(build('dida', { operation: 'search', query: 'DeepSeek' }), { name: 'search', args: { query: 'DeepSeek' } });

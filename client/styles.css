@@ -1,0 +1,234 @@
+/* Dot v2 today page and floating panel.
+   Colors come only from host tokens (DESIGN.md 4.3): no hardcoded values and no
+   fallbacks, so light and dark both follow the host theme. */
+.dotv2{
+  --ink:var(--dsw-alias-label-primary);
+  --ink2:var(--dsw-alias-label-secondary);
+  --ink3:var(--dsw-alias-label-tertiary);
+  --ink4:var(--dsw-alias-label-caption);
+  --bg:var(--dsw-alias-bg-base);
+  --card:var(--dsw-alias-bg-layer-2);
+  --line:var(--dsw-alias-border-l2);
+  --line2:var(--dsw-alias-border-l4);
+  --hover:var(--dsw-alias-interactive-bg-hover);
+  --primary:var(--dsw-alias-button-primary-fill);
+  --on-primary:var(--dsw-alias-label-primary-inverted);
+  --run:var(--dsw-alias-link);
+  --wait:var(--dsw-alias-state-warn-primary);
+  --ok:var(--dsw-alias-state-success-primary);
+  --stuck:var(--dsw-alias-state-error-primary);
+  --serif:"Songti SC","STSong","Noto Serif SC","Source Han Serif SC",Georgia,serif;
+  --sans:var(--dsw-font-family,-apple-system,BlinkMacSystemFont,"PingFang SC","Helvetica Neue",sans-serif);
+  --r-sm:var(--dsw-radius-sm);--r-md:var(--dsw-radius-md);--r-xl:var(--dsw-radius-xl);
+  --ease:cubic-bezier(.2,.8,.2,1);--dock:400px;
+  position:relative;min-height:100%;background:var(--bg);color:var(--ink);font:14px/22px var(--sans);
+  -webkit-font-smoothing:antialiased;
+}
+.dotv2 *,.dotv2 *::before,.dotv2 *::after{box-sizing:border-box}
+.dotv2 :is(h1,h2,h3,p,ul,ol){margin:0;padding:0}
+.dotv2 :is(ul,ol){list-style:none}
+.dotv2 button{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:pointer;text-align:inherit}
+.dotv2 :focus-visible{outline:2px solid var(--run);outline-offset:2px;border-radius:4px}
+
+.d{display:inline-block;flex:none;width:12px;height:12px;border-radius:50%;background:var(--ink);position:relative}
+.d.run{background:var(--run)}
+.d.run::after{content:"";position:absolute;inset:0;border-radius:50%;border:1.5px solid var(--run);animation:dv2-breathe 2.2s var(--ease) infinite}
+.d.wait{background:var(--wait);box-shadow:0 0 0 4px color-mix(in srgb,var(--wait) 24%,transparent)}
+.d.stuck{background:transparent;border:2px solid var(--stuck)}
+.d.quiet{background:transparent;border:1.5px solid var(--ink4)}
+.d.none{background:transparent;border:1.5px dashed var(--ink4)}
+.d.ok,.d.done{background:var(--ok)}
+.d.s{width:7px;height:7px}.d.s.wait{box-shadow:0 0 0 2.5px color-mix(in srgb,var(--wait) 24%,transparent)}.d.s.stuck{border-width:1.5px}
+.d.m{width:9px;height:9px}
+@keyframes dv2-breathe{from{transform:scale(1);opacity:.9}to{transform:scale(2.6);opacity:0}}
+
+.dotv2 .stage{max-width:1180px;margin:0 auto;padding:44px 40px 96px}
+.dotv2 .hero{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:48px;align-items:center}
+.dotv2 .when-row{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.dotv2 .when{color:var(--ink3);font-size:13px;letter-spacing:.02em}
+.dotv2 .sample-clear{font-size:12px}
+.dotv2 .sample-mark{margin-top:10px;color:var(--ink3);font-size:13px}
+.dotv2 .srcwarn{font-size:12.5px;color:var(--stuck)}
+.dotv2 .line{margin-top:14px;font:400 37px/1.58 var(--serif);letter-spacing:.01em}
+.dotv2 .line .lead{color:var(--ink3)}
+.dotv2 .line .cl{white-space:nowrap}
+.dotv2 .line .ds{display:inline-flex;gap:.2em;margin:0 .14em 0 .06em;vertical-align:.02em}
+.dotv2 .line .ds .d{width:.42em;height:.42em}
+.dotv2 .line .ds .d.wait{box-shadow:0 0 0 .13em color-mix(in srgb,var(--wait) 24%,transparent)}
+
+.dotv2 .ask{display:flex;align-items:center;gap:10px;margin-top:28px;max-width:640px;height:56px;padding:0 8px 0 22px;border:1px solid var(--line2);border-radius:28px;background:var(--card);transition:border-color .15s,box-shadow .2s}
+.dotv2 .ask:focus-within{border-color:var(--ink);box-shadow:0 0 0 4px var(--hover)}
+.dotv2 .ask input{flex:1;min-width:0;border:0;outline:0;background:transparent;color:var(--ink);font:16px/24px var(--sans)}
+.dotv2 .ask input::placeholder{color:var(--ink3)}
+.dotv2 .send{display:flex;align-items:center;justify-content:center;flex:none;width:40px;height:40px;border-radius:50%;background:var(--primary);color:var(--on-primary);font-size:18px;transition:transform .2s var(--ease)}
+.dotv2 .send:hover{transform:scale(1.06)}
+.dotv2 .starters{display:flex;flex-wrap:wrap;gap:8px;margin-top:14px}
+.dotv2 .starters button{height:34px;padding:0 14px;border:1px solid var(--line);border-radius:17px;color:var(--ink2);font-size:13px}
+.dotv2 .starters button:hover{background:var(--hover)}
+
+.dotv2 .matrix{display:grid;grid-template-columns:repeat(7,18px);gap:30px 32px;padding-right:8px}
+.dotv2 .matrix button{display:flex}
+.dotv2 .matrix .d{width:18px;height:18px;transition:transform .25s var(--ease)}
+.dotv2 .matrix button:hover .d{transform:scale(1.25)}
+.dotv2 .matrix .d.wait{box-shadow:0 0 0 6px color-mix(in srgb,var(--wait) 24%,transparent)}
+.dotv2 .field{display:flex;align-items:flex-start;gap:6px;margin-top:44px;padding:22px 0 20px;border-top:1px solid var(--line);border-bottom:1px solid var(--line)}
+.dotv2 .field.is-empty{display:none}
+.dotv2 .cell{position:relative;display:flex;flex-direction:column;align-items:flex-start;gap:9px;flex:0 1 148px;min-width:0;padding:6px 10px 6px 8px;border-radius:var(--r-sm)}
+.dotv2 .cell:hover{background:var(--hover)}
+.dotv2 .cell .d{margin:3px 0 0 1px}
+.dotv2 .cell b{display:block;font-weight:600;font-size:13.5px;line-height:20px}
+.dotv2 .cell>div{min-width:0;max-width:100%}
+.dotv2 .cell span{display:block;color:var(--ink3);font-size:12.5px;line-height:18px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.dotv2 .cell.is-wait span{color:var(--wait)}.dotv2 .cell.is-stuck span{color:var(--stuck)}
+.dotv2 .rest{margin-left:auto;display:flex;flex-direction:column;align-items:flex-end;gap:10px;padding:8px 4px 0 0;flex:none}
+.dotv2 .rest p{color:var(--ink3);font-size:12.5px;white-space:nowrap}
+
+.dotv2 .cols{display:grid;grid-template-columns:minmax(0,1fr) 316px;gap:56px;margin-top:36px}
+.dotv2 .cols.is-flush{margin-top:44px;padding-top:36px;border-top:1px solid var(--line)}
+.dotv2 h2{display:flex;align-items:baseline;gap:8px;font-size:13px;font-weight:600;color:var(--ink2);margin-bottom:14px}
+.dotv2 h2 small{font-weight:400;color:var(--ink3);font-size:12.5px}
+.dotv2 .focus{padding:24px 26px 20px;border:1px solid var(--line2);border-radius:var(--r-xl);background:var(--card)}
+.dotv2 .focus+.focus{margin-top:12px}
+.dotv2 .focus .meta{display:flex;align-items:center;gap:10px;color:var(--ink3);font-size:13px}
+.dotv2 .focus .meta b{font-weight:600}
+.dotv2 .focus.is-wait .meta b{color:var(--wait)}.dotv2 .focus.is-stuck .meta b{color:var(--stuck)}
+.dotv2 .focus .meta time{margin-left:auto}
+.dotv2 .focus h3{margin-top:12px;font:400 25px/1.45 var(--serif)}
+.dotv2 .focus .what{margin-top:8px;color:var(--ink2);font-size:15px;line-height:25px;max-width:36em}
+.dotv2 .acts{display:flex;align-items:center;gap:6px;margin-top:20px}
+.dotv2 .btn{display:inline-flex;align-items:center;height:36px;padding:0 16px;border-radius:18px;font-size:13.5px;white-space:nowrap;transition:background .15s,transform .2s var(--ease)}
+.dotv2 .btn.primary{background:var(--primary);color:var(--on-primary);font-weight:600}
+.dotv2 .btn.primary:hover{transform:translateY(-1px)}
+.dotv2 .btn.line2{border:1px solid var(--line2)}
+.dotv2 .btn.quiet{color:var(--ink3);padding:0 10px}
+.dotv2 .btn.sm{height:30px;padding:0 12px;font-size:12.5px;border-radius:15px}
+.dotv2 .btn:not(.primary):hover{background:var(--hover)}
+.dotv2 .acts .sp{flex:1}
+.dotv2 .rows{margin-top:10px}
+.dotv2 .row{display:grid;grid-template-columns:20px 84px minmax(0,1fr) auto;align-items:center;gap:0 12px;padding:15px 4px 15px 8px;border-bottom:1px solid var(--line)}
+.dotv2 .row b{font-weight:600;font-size:13.5px}
+.dotv2 .row p{color:var(--ink2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.dotv2 .row .tail{display:flex;align-items:center;gap:4px;color:var(--ink3);font-size:12.5px}
+.dotv2 .row .tail time{margin-right:8px}
+.dotv2 .empty{padding:26px 0;color:var(--ink3)}
+.dotv2 .promise li{display:grid;grid-template-columns:52px minmax(0,1fr);gap:2px 12px;padding:13px 0;border-bottom:1px solid var(--line)}
+.dotv2 .promise time{color:var(--ink3);font-size:12.5px;line-height:22px}
+.dotv2 .promise b{font-weight:500;font-size:14px}
+.dotv2 .promise .link{grid-column:2;display:flex;align-items:center;gap:8px;color:var(--ink3);font-size:12.5px;line-height:19px}
+.dotv2 .ulink{color:var(--ink);text-decoration:underline;text-underline-offset:3px;text-decoration-color:var(--line2)}
+.dotv2 .next{margin-top:26px;color:var(--ink3);font-size:12.5px;line-height:20px}
+.dotv2 .sample-card{margin:6px 0 18px;padding:16px 18px;border:1px dashed var(--line2);border-radius:var(--r-xl);color:var(--ink2);font-size:13.5px}
+
+@media(max-width:900px){
+  .dotv2 .stage{padding:28px 20px 72px}
+  .dotv2 .hero{grid-template-columns:1fr;gap:26px}
+  .dotv2 .line{font-size:29px}
+  .dotv2 .cols{grid-template-columns:1fr;gap:34px}
+  .dotv2 .matrix{grid-template-columns:repeat(10,16px);gap:20px 22px}
+  .dotv2 .field{flex-wrap:wrap}
+  .dotv2 .rest{margin-left:0;align-items:flex-start}
+}
+
+/* 390 host width: the host panel leaves about 313 px of content. Keep every
+   child on a zero-min-width track, wrap the sentence clauses, and fit the dot
+   matrix and the composer without horizontal clipping. Desktop above 600 px is
+   intentionally untouched. */
+@media(max-width:600px){
+  .dotv2 .stage{padding:24px 20px 64px}
+  .dotv2 .hero{grid-template-columns:minmax(0,1fr);gap:22px;min-width:0}
+  .dotv2 .hero>*{min-width:0}
+  .dotv2 .cols{grid-template-columns:minmax(0,1fr)}
+  .dotv2 .cols>*{min-width:0}
+  .dotv2 .line{font-size:27px;line-height:1.5;overflow-wrap:anywhere}
+  .dotv2 .line .cl{white-space:normal}
+  .dotv2 .matrix{grid-template-columns:repeat(7,16px);gap:18px 18px;padding-right:0;max-width:100%}
+  .dotv2 .ask{width:100%;min-width:0;padding-left:18px;gap:8px}
+  .dotv2 .starters{gap:6px}
+  .dotv2 .field{gap:4px;margin-top:32px;padding:18px 0}
+  .dotv2 .cell{padding:5px 6px}
+  .dotv2 .acts,.dotv2 .focus .meta,.dotv2 .promise .link{flex-wrap:wrap}
+  .dotv2 .acts .sp{display:none}
+  .dotv2 .row{grid-template-columns:20px minmax(0,84px) minmax(0,1fr)}
+  .dotv2 .row .tail{grid-column:2/-1;flex-wrap:wrap;margin-top:6px}
+  .dotv2 :is(.focus h3,.focus .what,.row p,.promise b,.cell b){overflow-wrap:anywhere}
+}
+
+/* Floating entry: a dot that opens a small Today, never an auto-popping dialog. */
+.dotv2-float{position:fixed;right:24px;bottom:24px;z-index:40;font:13px/20px var(--dsw-font-family,-apple-system,BlinkMacSystemFont,"PingFang SC",sans-serif);color:var(--dsw-alias-label-primary)}
+.dotv2-float__dot{display:flex;align-items:center;gap:8px;height:42px;padding:0 16px;border-radius:21px;border:1px solid var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-layer-2);box-shadow:0 8px 24px rgba(0,0,0,.12);cursor:pointer}
+.dotv2-float__dot .d{width:10px;height:10px}
+.dotv2-float__panel{position:absolute;right:0;bottom:54px;width:340px;max-width:calc(100vw - 32px);padding:18px;border:1px solid var(--dsw-alias-border-l2);border-radius:var(--dsw-radius-xl);background:var(--dsw-alias-bg-layer-2);box-shadow:0 16px 48px rgba(0,0,0,.18)}
+.dotv2-float__panel p{margin:0 0 10px;color:var(--dsw-alias-label-secondary);font-size:12.5px}
+.dotv2-float__panel b{display:block;margin-bottom:8px;font:400 17px/1.4 "Songti SC","STSong",serif}
+.dotv2-float__panel .ask{display:flex;gap:8px;margin-top:12px}
+.dotv2-float__panel input{flex:1;min-width:0;height:36px;padding:0 12px;border:1px solid var(--dsw-alias-border-l2);border-radius:18px;background:transparent;color:inherit;font:inherit}
+.dotv2-float__acts{display:flex;gap:8px;margin-top:12px;font-size:12.5px}
+.dotv2-float__acts button{color:var(--dsw-alias-label-secondary);text-decoration:underline;text-underline-offset:3px}
+.dotv2-toast{position:fixed;left:50%;bottom:28px;transform:translateX(-50%);z-index:60;display:flex;align-items:center;gap:14px;padding:10px 16px;border-radius:20px;background:var(--dsw-alias-bg-layer-3);border:1px solid var(--dsw-alias-border-l2);color:var(--dsw-alias-label-primary);font-size:13px;box-shadow:0 8px 24px rgba(0,0,0,.14)}
+.dotv2-toast button{color:var(--dsw-alias-label-secondary);text-decoration:underline;text-underline-offset:3px}
+
+/* —— Right conversation rail (DESIGN.md 2.2 conversation) —— */
+.pc_dot.pc_dot_has_dock .pc_dot_inner{padding-right:456px}
+.dotv2-dock{position:fixed;top:0;right:0;bottom:0;z-index:30;display:flex;flex-direction:column;width:min(400px,100vw);background:var(--dsw-alias-bg-layer-2);border-left:1px solid var(--dsw-alias-border-l2);box-shadow:-24px 0 60px -34px color-mix(in srgb,var(--dsw-alias-label-primary) 38%,transparent)}
+.dotv2-dock__head{display:flex;align-items:center;gap:10px;padding:16px 18px 12px;border-bottom:1px solid var(--dsw-alias-border-l4);font-weight:600}
+.dotv2-dock__head>span{flex:1;min-width:0}
+.dotv2-dock__close,.dotv2-dock__link{display:inline-flex;align-items:center;justify-content:center;min-width:32px;min-height:32px;border-radius:50%;color:var(--dsw-alias-label-tertiary);font-size:15px;text-decoration:none}
+.dotv2-dock__link{text-decoration:underline;text-underline-offset:3px;border-radius:6px;min-width:0;padding:0 4px;font-size:12.5px}
+.dotv2-dock__close:hover,.dotv2-dock__link:hover{background:var(--dsw-alias-interactive-bg-hover)}
+.dotv2-dock__body{display:flex;flex:1;min-height:0;flex-direction:column;overflow:hidden}
+.dotv2-dock__body>.pc_dot_conversation{flex:1;height:auto;min-height:0;max-height:none;margin:0;border:0;border-radius:0;background:transparent}
+.dotv2-dock__body>.pc_dot_conversation>div{min-height:0}
+.dotv2-dock__empty,.dotv2-dock__problem{padding:16px 18px;margin:0;color:var(--dsw-alias-label-secondary);font-size:13px;line-height:1.7}
+.dotv2-dock__problem{color:var(--dsw-alias-state-warn-primary)}
+.dotv2-dock__retained{flex:none;padding:10px 18px;border-top:1px solid var(--dsw-alias-border-l3);background:var(--dsw-alias-bg-layer-3);font-size:12px;line-height:1.6}
+.dotv2-dock__retained pre{max-height:120px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;font:inherit;margin:6px 0}
+.dotv2-dock__retained button{min-height:32px;padding:4px 10px;border:1px solid var(--dsw-alias-border-l3);border-radius:6px;background:transparent;color:var(--dsw-alias-label-primary)}
+.dotv2-dock__foot{flex:none;padding:10px 18px 14px;border-top:1px solid var(--dsw-alias-border-l4);color:var(--dsw-alias-label-tertiary);font-size:11.5px;line-height:1.55}
+
+/* —— Global floating Today (DESIGN.md 2.2 floating entry) —— */
+.dotv2-overlay{position:fixed;right:max(20px,env(safe-area-inset-right,0px));bottom:max(20px,env(safe-area-inset-bottom,0px));z-index:45;display:flex;flex-direction:column;align-items:flex-end;gap:10px;font:13px/20px var(--dsw-font-family,-apple-system,BlinkMacSystemFont,"PingFang SC",sans-serif);color:var(--dsw-alias-label-primary)}
+.dotv2-overlay__dot{display:inline-flex;align-items:center;gap:8px;min-height:38px;padding:0 14px;border-radius:19px;border:1px solid var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-layer-2);box-shadow:0 8px 24px color-mix(in srgb,var(--dsw-alias-label-primary) 16%,transparent);cursor:pointer;font:inherit;color:inherit}
+.dotv2-overlay__dot .d{width:10px;height:10px}
+.dotv2-overlay__panel{width:360px;max-width:calc(100vw - 32px);padding:18px 18px 14px;border:1px solid var(--dsw-alias-border-l2);border-radius:var(--dsw-radius-xl);background:var(--dsw-alias-bg-layer-2);box-shadow:0 18px 54px color-mix(in srgb,var(--dsw-alias-label-primary) 22%,transparent)}
+.dotv2-overlay__line{margin:0 0 12px;font:400 19px/1.55 "Songti SC","STSong","Noto Serif SC",serif}
+.dotv2-overlay__top b{display:block;margin-bottom:4px;font-size:15px}
+.dotv2-overlay__top p{margin:0 0 9px;color:var(--dsw-alias-label-secondary);font-size:12.5px;line-height:1.6}
+.dotv2-overlay__top .acts{display:flex;gap:8px}
+.dotv2-overlay .btn{display:inline-flex;align-items:center;height:30px;padding:0 12px;border-radius:15px;border:1px solid transparent;font-size:12.5px;white-space:nowrap;cursor:pointer}
+.dotv2-overlay .btn.primary{background:var(--dsw-alias-button-primary-fill);color:var(--dsw-alias-label-primary-inverted);font-weight:600}
+.dotv2-overlay .btn.quiet{color:var(--dsw-alias-label-tertiary);padding:0 8px}
+.dotv2-overlay .btn:hover{filter:brightness(.97)}
+.dotv2-overlay__calm{margin:0;color:var(--dsw-alias-label-secondary);font-size:12.5px;line-height:1.65}
+.dotv2-overlay__where{margin:10px 0 0;color:var(--dsw-alias-label-tertiary);font-size:12px}
+.dotv2-overlay__ack{margin:10px 0 0;color:var(--dsw-alias-label-secondary);font-size:12px;line-height:1.55}
+.dotv2-overlay__error{margin:10px 0 0;color:var(--dsw-alias-state-error-primary);font-size:12px;line-height:1.55}
+.dotv2-overlay .ask{display:flex;gap:8px;margin-top:12px}
+.dotv2-overlay .ask input{flex:1;min-width:0;height:36px;padding:0 12px;border:1px solid var(--dsw-alias-border-l2);border-radius:18px;background:transparent;color:inherit;font:inherit}
+.dotv2-overlay .ask .send{width:36px;height:36px;border-radius:50%;border:1px solid var(--dsw-alias-border-l2);background:var(--dsw-alias-button-primary-fill);color:var(--dsw-alias-label-primary-inverted);font-size:16px;cursor:pointer}
+.dotv2-overlay__acts{display:flex;gap:14px;margin-top:12px;font-size:12.5px}
+.dotv2-overlay__acts button{color:var(--dsw-alias-label-secondary);text-decoration:underline;text-underline-offset:3px;background:none;border:0;padding:0;cursor:pointer;font:inherit}
+@media(max-width:900px){.pc_dot.pc_dot_has_dock .pc_dot_inner{padding-right:32px}.dotv2-dock{width:min(400px,100vw)}}
+@media(max-width:700px){.pc_dot.pc_dot_has_dock .pc_dot_inner{padding-right:16px}.dotv2-overlay{right:12px;bottom:16px}.dotv2-overlay__panel{width:calc(100vw - 24px)}}
+@media(prefers-reduced-motion:reduce){.dotv2-overlay__panel,.dotv2-dock{animation:none!important;transition:none!important}}
+
+/* Today-first header: tabs are the first layer, actions sit on the same row. */
+.pc_dot_tabs{width:auto;margin:0 0 24px}
+.pc_dot_tabs_spacer{flex:1 1 auto}
+.pc_dot_tabs_actions{display:flex;align-items:center;gap:8px;flex:none}
+.pc_dot_tabs_actions button{min-height:36px;padding:4px 12px}
+
+/* The first-use WeChat band is mounted inside .dotv2 Today. It reuses the
+   legacy .pc_dot classes, so pair the stock host tokens explicitly instead of
+   inheriting the old light home-card colors (which fail contrast in dark). */
+.dotv2 .pc_dot_inline_wechat{background:var(--card);border-color:var(--line);color:var(--ink)}
+.dotv2 .pc_dot_inline_wechat .pc_dot_pair_copy{padding:22px}
+.dotv2 .pc_dot_inline_wechat .pc_dot_pair_copy h2{color:var(--ink)}
+.dotv2 .pc_dot_inline_wechat .pc_dot_pair_copy>p{color:var(--ink2)}
+.dotv2 .pc_dot_inline_wechat .pc_dot_pair_copy>p.pc_dot_muted{color:var(--ink2)}
+.dotv2 .pc_dot_inline_wechat .pc_dot_pair_copy button{min-height:44px;padding:7px 12px;border:1px solid var(--line);border-radius:6px;background:var(--card);color:var(--run)}
+.dotv2 .pc_dot_inline_wechat .pc_dot_inline_code{background:var(--bg);border-left-color:var(--line);color:var(--ink)}
+.dotv2 .pc_dot_inline_wechat .pc_dot_inline_code p{color:var(--ink2)}
+.dotv2 .pc_dot_inline_wechat .pc_dot_inline_code button{min-height:44px;padding:7px 10px;border:1px solid var(--line);border-radius:6px;background:var(--card);color:var(--ink)}
+.dotv2 .pc_dot_inline_wechat .pc_dot_inline_code img{background:#fff}
+@media(max-width:760px){.dotv2 .pc_dot_inline_wechat .pc_dot_pair_copy{padding:16px}}
+@media(max-width:400px){.dotv2 .pc_dot_inline_wechat .pc_dot_pair_copy{padding:14px 12px}}

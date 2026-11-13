@@ -177,8 +177,8 @@ export function createCoordinator({ctx,service,owner,liveAgents,taskResults,read
     if((trusted?[trusted.sessionId]:project.sessionIds).some(id=>ctx.get('agents')?.get?.(id)))return blocked(`「${project.label}」的已知会话当前位于另一个目录或属于子任务，尚未提交；请先核对目标会话。`);
     const ids=trusted?[trusted.sessionId]:[...new Set(project.sessionIds)];
     if(ids.length>1)return{status:'ambiguous',accepted:false,text:`「${project.label}」有多个历史会话，暂时无法唯一确定要恢复哪一个。请先选定对应会话，我再继续。`};
-    const agents=ctx.get('agents');const presets=ctx.get('agentPresets');
-    if(typeof presets?.mount!=='function'||typeof agents?.[ids.length?'resume':'create']!=='function'||(ids.length&&!ctx.get('sessionPersistence')))return blocked(`「${project.label}」尚未载入，宿主缺少安全恢复所需的原生会话配置。请先在电脑上打开这个项目；尚未提交任务。`);
+    const agents=ctx.get('agents');const presets=ctx.get('agentPresets');const sessionController=ctx.get('sessionController',false);
+    if(typeof presets?.mount!=='function'||typeof agents?.[ids.length?'resume':'get']!=='function'||(ids.length&&!ctx.get('sessionPersistence'))||(!ids.length&&typeof sessionController?.create!=='function'&&typeof agents?.create!=='function'))return blocked(`「${project.label}」尚未载入，宿主缺少安全恢复所需的原生会话配置。请先在电脑上打开这个项目；尚未提交任务。`);
     await safeProjectRoot(project.root);signal.throwIfAborted();
     let handle;let retained=false;
     const release=async()=>{if(handle){handles.delete(handle);await handle.dispose().catch(()=>{});}};
@@ -192,9 +192,19 @@ export function createCoordinator({ctx,service,owner,liveAgents,taskResults,read
         await setupAgent(agentCtx,restored);
       };
       if(!await preAdmission(meta))throw new Error('原 Owner 请求或项目授权已变化');
-      handle=ids.length
-        ?await agents.resume({resumeSessionId:ids[0],setup,signal})
-        :await agents.create({sessionId:`session-${randomUUID()}`,meta:{cwd:project.root,...(presets.defaultId?{agentPreset:presets.defaultId}:{})},setup,signal});
+      if(ids.length)handle=await agents.resume({resumeSessionId:ids[0],setup,signal});
+      else if(typeof sessionController?.create!=='function')handle=await agents.create({sessionId:`session-${randomUUID()}`,meta:{cwd:project.root,...(presets.defaultId?{agentPreset:presets.defaultId}:{})},setup,signal});
+      else{
+        const sessionId=`session-${randomUUID()}`;
+        const created=await sessionController.create({sessionId,cwd:project.root,agentPreset:'standard'});
+        const createdId=typeof created?.sessionId==='string'?created.sessionId:typeof created?.id==='string'?created.id:sessionId;
+        let createdAgent=created?.agent??null;
+        if(!createdAgent&&typeof sessionController.resolveAgent==='function')createdAgent=(await sessionController.resolveAgent(createdId))?.agent??null;
+        if(!createdAgent)createdAgent=agents.get?.(createdId)??null;
+        if(!createdAgent)throw new Error('标准会话创建后没有返回可用会话');
+        // The host owns this session lifecycle; unloading Dot does not dispose it.
+        handle={agent:createdAgent,dispose:async()=>{}};
+      }
       handles.add(handle);signal.throwIfAborted();
       if(!handle?.agent||String(handle.agent.id)!==String(ids[0]??handle.agent.id)||effectiveCwd(ctx,handle.agent)!==project.root||handle.agent.session?.header?.origin==='subagent')throw new Error('恢复后的会话目录或身份与目标项目不一致');
       if(!await trustedRoute(project,agent,trusted,signal,meta))throw new Error('原微信绑定或项目目标已变化，未提交任务');

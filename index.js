@@ -27,6 +27,9 @@ import {buildDoctorReport} from './src/doctor.js';
 import {markPrivateRead,privateEgressBlocked,clearPrivateReads,PRIVATE_EGRESS_BLOCKED_TEXT} from './src/egress-guard.js';
 import {createPersonalReviewControl,registerPersonalReviewControl} from './src/personal-review-control.js';
 import {createPersonalReviewService,personalReviewRowSchema} from './src/personal-review.js';
+import {createDigestModel,dailyDigestRowSchema,projectDigestLedger} from './src/daily-digest.js';
+import {createDigestOwnerChannel,digestCallerIsOwner,sameDigestOwner} from './src/digest-owner.js';
+import {createDailyDigest} from './src/daily-digest-service.js';
 import {createReviewWorkbenchReader} from './src/review-workbench-projection.js';
 import {createPersonalReviewModel} from './src/personal-review-model.js';
 import {createPersonalReviewCollector,redactReviewText} from './src/personal-review-collect.js';
@@ -50,6 +53,11 @@ import {secureGoogleAuth} from './src/google-secure-auth.js';
 import {createContextAccountAuth} from './src/context-account-auth.js';
 import {createContextTransport} from './src/context-transport.js';
 import {createPersonalContext,contextRowSchema,CONTEXT_SOURCES,contextErrorText} from './src/context-service.js';
+import {createDotSources,dotSourcesRowSchema,legacyDigest,decisionKey} from './src/dot-sources.js';
+import {createDotSourceReader} from './src/dot-source-reader.js';
+import {createTodayController,registerTodayRoutes} from './src/today-route.js';
+import {createTodayHost} from './src/today-host.js';
+import {createTodayProjection} from './src/today-projection.js';
 import {SOURCE_INFO} from './src/context-contracts.js';
 import {createFamilyOwnerDelegation,familyDelegationBinding} from './src/family-owner-delegation.js';
 import {createFamilyContextAdapter} from './src/family-context-adapter.js';
@@ -58,6 +66,7 @@ import {parseFamilyReminder} from './src/family-reminder.js';
 import {deriveFamilyPlan,familyPlanAction} from './src/family-plan.js';
 import {createFamilyReadAdapter} from './src/family-read-adapter.js';
 import {createContextRoute,registerContextRoute} from './src/context-route.js';
+import {createDigestRoute,registerDigestRoute} from './src/digest-route.js';
 import {createFamilyWorkbenchConnection} from './src/family-workbench-route.js';
 import {bindingRevision} from './src/workbench-scope.js';
 import {createWorkbench,registerWorkbenchRoute,registerDesktopConversationRoute} from './src/workbench.js';
@@ -66,6 +75,8 @@ import {createProjectCatalog} from './src/project-catalog.js';
 import {createProjectCatalogController,registerProjectCatalogRoute} from './src/project-catalog-route.js';
 import {createWorkspaceAccess,workspaceAccessRowSchema} from './src/workspace-access.js';
 import {createWorkspaceAccessController,registerWorkspaceAccessRoute} from './src/workspace-access-route.js';
+import {createSessionLedger,sessionLedgerRowSchema,grantForCwd,ledgerEligible,ledgerText} from './src/session-ledger.js';
+import {registerActivityRoute} from './src/activity-route.js';
 import {createGoalBoard,goalBoardRowSchema} from './src/goal-board-service.js';
 import {createGoalBoardCollector} from './src/goal-board-collect.js';
 import {createGoalBoardModel} from './src/goal-board-model.js';
@@ -99,6 +110,7 @@ const projectUpdatesDomainSpec=defineDomain({name:'project_companion_updates',ve
 const pulseLedgerDomainSpec=defineDomain({name:'project_companion_pulse',version:1,tables:{state:domainTable(pulseLedgerRowSchema)}});
 const contextLoopDomainSpec=defineDomain({name:'project_companion_context_loop',version:1,tables:{state:domainTable(contextLoopRowSchema)}});
 const contextDomainSpec=defineDomain({name:'project_companion_context',version:1,tables:{state:domainTable(contextRowSchema)}});
+const dotSourcesDomainSpec=defineDomain({name:'project_companion_dot_sources',version:1,tables:{state:domainTable(dotSourcesRowSchema)}});
 const familyDelegationRow=z.union([
   z.object({id:z.literal('profile'),version:z.literal(1),disabled:z.literal(true)}).strict(),
   z.object({id:z.literal('profile'),version:z.literal(1),familySessionId:identity,bindingRevision:z.string().regex(/^[a-f0-9]{64}$/),originSessionId:identity,originBindingKey:z.string().regex(/^[a-f0-9]{64}$/),leaseFingerprint:z.string().regex(/^[a-f0-9]{64}$/),grantRevision:z.string().regex(/^[a-f0-9]{64}$/).optional()}).strict(),
@@ -106,8 +118,10 @@ const familyDelegationRow=z.union([
 const familyDelegationDomainSpec=defineDomain({name:'project_companion_family_delegate',version:1,tables:{state:domainTable(familyDelegationRow)}});
 const newsDomainSpec=defineDomain({name:'project_companion_news',version:1,tables:{state:domainTable(newsRowSchema)}});
 const personalReviewDomainSpec=defineDomain({name:'project_companion_personal_review',version:1,tables:{state:domainTable(personalReviewRowSchema)}});
+const dailyDigestDomainSpec=defineDomain({name:'project_companion_daily_digest',version:1,tables:{state:domainTable(dailyDigestRowSchema)}});
 const onboardingDomainSpec=defineDomain({name:'project_companion_onboarding',version:1,tables:{state:domainTable(onboardingRow)}});
 const workspaceAccessDomainSpec=defineDomain({name:'project_companion_workspace_access',version:1,tables:{state:domainTable(workspaceAccessRowSchema)}});
+const sessionLedgerDomainSpec=defineDomain({name:'project_companion_sessions',version:1,tables:{state:domainTable(sessionLedgerRowSchema)}});
 const goalBoardDomainSpec=defineDomain({name:'project_companion_goals',version:1,tables:{state:domainTable(goalBoardRowSchema)}});
 
 function owner(ctx,agent){
@@ -144,8 +158,12 @@ export async function installCompanion(ctx,options={}){
   const newsTable=newsDomain.table('state');
   const personalReviewDomain=await ctx.storageDomain.open(personalReviewDomainSpec);
   const personalReviewTable=personalReviewDomain.table('state');
+  const dailyDigestDomain=await ctx.storageDomain.open(dailyDigestDomainSpec);
+  const dailyDigestTable=dailyDigestDomain.table('state');
   const contextDomain=await ctx.storageDomain.open(contextDomainSpec);
   const contextTable=contextDomain.table('state');
+  const dotSourcesDomain=await ctx.storageDomain.open(dotSourcesDomainSpec);
+  const dotSourcesTable=dotSourcesDomain.table('state');
   const familyDomain=await ctx.storageDomain.open(familyDelegationDomainSpec);
   const familyTable=familyDomain.table('state');
   const projectUpdatesDomain=await ctx.storageDomain.open(projectUpdatesDomainSpec);
@@ -156,6 +174,8 @@ export async function installCompanion(ctx,options={}){
   const contextLoopTable=contextLoopDomain.table('state');
   const workspaceAccessDomain=await ctx.storageDomain.open(workspaceAccessDomainSpec);
   const workspaceAccessTable=workspaceAccessDomain.table('state');
+  const sessionLedgerDomain=await ctx.storageDomain.open(sessionLedgerDomainSpec);
+  const sessionLedgerTable=sessionLedgerDomain.table('state');
   const goalBoardDomain=await ctx.storageDomain.open(goalBoardDomainSpec);
   const goalBoardTable=goalBoardDomain.table('state');
   let timer;
@@ -163,7 +183,7 @@ export async function installCompanion(ctx,options={}){
   let disposed=false;
   const coordinates=new Set();
   let lastRuntimeError='';
-  let projectPulse,pulseLedger,memory,followup,onboarding,welcomeGuard,contextRoute,workbench,workbenchActions,projectUpdates,projectUpdateModel,contextLoop,context,familyDelegate,familyContext,personalReview,personalReviewModel;
+  let projectPulse,pulseLedger,memory,followup,onboarding,welcomeGuard,contextRoute,digestRoute,workbench,workbenchActions,projectUpdates,projectUpdateModel,contextLoop,context,familyDelegate,familyContext,personalReview,personalReviewModel,dailyDigest,digestModel;
   // 污点标记只活在本进程内存里；这次装载从干净状态开始，不继承上一次运行的标记。
   clearPrivateReads();
   const lifecycle=new AbortController();
@@ -229,6 +249,77 @@ export async function installCompanion(ctx,options={}){
   // Desktop Owner metadata is independent of WeChat. New grants are empty;
   // opening the plugin never scans files, historical sessions or account data.
   const workspaceAccess=createWorkspaceAccess({store:workspaceAccessTable,catalog:projectCatalog,isClosed:()=>disposed,...(options.clock?{clock:options.clock}:{})});
+  // The session ledger deliberately sits outside the watched-project list. It
+  // starts empty, records only workspace-authorized project sessions, and is
+  // fed by host events before the old project recorder filters anything.
+  const sessionLedger=createSessionLedger({
+    store:{get:key=>sessionLedgerTable.get(key),put:(key,value)=>sessionLedgerTable.put(key,sessionLedgerRowSchema.parse(value))},
+    ...(options.clock?{clock:options.clock}:{}),isClosed:()=>disposed,
+  });
+  const ledgerGrantFor=async cwd=>{
+    try{return grantForCwd(cwd,(await workspaceAccess.capture()).grants);}
+    catch{return null;}
+  };
+  const configValue=value=>value&&typeof value.get==='function'?value.get():value;
+  const ledgerDesktopSession=()=>{
+    // Only an explicitly confirmed desktop selection is owner foreground.
+    try{
+      const config=options.context?.config;
+      const desktop=configValue(config?.desktopConversationSessionId);
+      if(typeof desktop==='string'&&configValue(config?.desktopConversationSelectionVersion)===1)return desktop.trim();
+    }catch{}
+    return '';
+  };
+  const ledgerForeground=new Set();
+  const refreshLedgerForeground=async()=>{
+    const next=new Set();
+    try{const setup=await readSetup();if(setup?.state==='bound'&&typeof setup.sessionId==='string'&&setup.sessionId)next.add(setup.sessionId);}catch{}
+    const desktop=ledgerDesktopSession();if(desktop)next.add(desktop);
+    ledgerForeground.clear();for(const id of next)ledgerForeground.add(id);
+    return next;
+  };
+  let ledgerForegroundAt=0;
+  const refreshLedgerForegroundSoon=async()=>{if(Date.now()-ledgerForegroundAt<60000)return;ledgerForegroundAt=Date.now();await refreshLedgerForeground();};
+  void refreshLedgerForegroundSoon();
+  // The cached set only excludes foreground events from collection.
+  const ledgerIsForeground=async sessionId=>ledgerDesktopSession()===sessionId||(await refreshLedgerForeground()).has(sessionId);
+  let ledgerConnection={at:0,value:'unknown'};
+  const readLedgerConnection=async()=>{
+    if(Date.now()-ledgerConnection.at<30000)return ledgerConnection.value;
+    let value='unknown';
+    try{const setup=await readSetup();value=setup?.state==='bound'?'bound':setup?.state==='missing'?'none':'unknown';}catch{}
+    ledgerConnection={at:Date.now(),value};return value;
+  };
+  // A projection always captures current grants; a failed capture is an
+  // unavailable ledger, never permission to reuse the last good snapshot.
+  // Dispatch links are joined inside the projection and revalidated after that
+  // await; a revocation or source identity change invalidates the response.
+  // Construction is lazy because the source reader is created further down.
+  let todayProjection=null;
+  const ledgerProjection=ownerSessionId=>{
+    if(!todayProjection)todayProjection=createTodayProjection({
+      sessionLedger,dotSourceReader,workspaceAccess,links:dotSources,
+      readConnection:readLedgerConnection,ownerForeground:ledgerIsForeground,
+    });
+    return todayProjection(ownerSessionId);
+  };
+  const sessionTitle=(session)=>{
+    try{const title=ctx.get('sessionProjections')?.snapshot?.(session,['title'])?.values?.title;return typeof title==='string'?title.replace(/[\u0000-\u001f\u007f]/g,' ').trim().slice(0,300):'';}catch{return '';}
+  };
+  let ledgerEventTail=Promise.resolve();
+  const ledgerEvent=(sessionId,subject,event)=>{
+    // Preserve host event order even when each authorization requires I/O.
+    const pending=ledgerEventTail.then(async()=>{
+      if(disposed||!ledgerEligible(sessionId,{foreground:ledgerForeground}))return;
+      await refreshLedgerForegroundSoon();
+      if(!ledgerEligible(sessionId,{foreground:ledgerForeground}))return;
+      const cwd=effectiveCwd(ctx,subject);if(!cwd)return;
+      const grant=await ledgerGrantFor(cwd);if(!grant||disposed)return;
+      await sessionLedger.apply({sessionId,root:grant.root,projectLabel:String(grant.label??grant.root.split('/').at(-1)??'项目').slice(0,120),title:sessionTitle(subject?.session??subject),...event});
+    });
+    ledgerEventTail=pending.catch(()=>{});
+    return pending;
+  };
   const goalBoardHost=createGoalBoardHost({ctx,access:workspaceAccess,isClosed:()=>disposed,signal:lifecycle.signal});
   const goalBoardModel=createGoalBoardModel(ctx);
   const goalBoard=createGoalBoard({store:goalBoardTable,access:workspaceAccess,collect:createGoalBoardCollector({access:workspaceAccess,listSessions:goalBoardHost.listSessions,readSession:goalBoardHost.readSession}),model:goalBoardModel,isClosed:()=>disposed,...(options.clock?{clock:options.clock}:{})});
@@ -360,11 +451,86 @@ export async function installCompanion(ctx,options={}){
     const route=await readNativeRoute(sessionId);
     return route?.kind==='unbound'?{kind:'unbound'}:{kind:'unknown'};
   };
+  // Dot-owned source switches (DESIGN.md 3.15). The legacy context domain is
+  // only read once, here, to seed the switches; it is never written again.
+  let contextApi=null;
+  const dotSources=createDotSources({
+    store:{get:key=>dotSourcesTable.get(key),put:(key,value)=>dotSourcesTable.put(key,dotSourcesRowSchema.parse(value))},
+    legacyReader:async()=>{
+      const legacy=await contextTable.get('profile');
+      const rows=Array.isArray(legacy?.sources)?legacy.sources:[];
+      return {sources:rows,digest:legacyDigest(rows)};
+    },
+    ...(options.clock?{clock:options.clock}:{}),isClosed:()=>disposed,
+  });
+  let cachedSetupSession=null;
+  const dotForegroundSession=async sessionId=>{
+    if(typeof sessionId!=='string'||!sessionId)return false;
+    try{const setup=await readSetup();cachedSetupSession=setup?.state==='bound'&&typeof setup.sessionId==='string'?setup.sessionId:null;if(cachedSetupSession===sessionId)return true;}catch{cachedSetupSession=null;}
+    try{return ledgerDesktopSession()===sessionId;}catch{return false;}
+  };
+  const dotForegroundSessionSync=sessionId=>{
+    if(typeof sessionId!=='string'||!sessionId)return false;
+    try{if(cachedSetupSession===sessionId)return true;}catch{}
+    try{return ledgerDesktopSession()===sessionId;}catch{return false;}
+  };
   context=createPersonalContext({
-    store:{get:key=>contextTable.get(key),put:(key,value)=>contextTable.put(key,contextRowSchema.parse(value))},
+    // M2: the legacy context domain is physically read-only. Migration reads it
+    // once through dotSources.legacyReader; nothing may write it.
+    store:{get:key=>contextTable.get(key),put:async()=>{throw Object.assign(new Error('legacy context store is read-only'),{code:'LEGACY_CONTEXT_READ_ONLY'});}},
+    dotSources,foregroundSession:dotForegroundSession,foregroundSessionSync:dotForegroundSessionSync,
     onInvalidate:()=>{contextLoop?.suspend();personalReview?.suspend();},transport:contextTransport,readConfig,readBinding:contextBinding,credentialState:source=>source==='calendar'?calendarCredentials():useSuite(source)?googleSuiteAuth.credentialState(source):null,
     canRun:async()=>!disposed&&!lifecycle.signal.aborted&&!await service.isPaused(),
     ...(options.clock?{clock:options.clock}:{}),...(options.hostTimeZone?{hostTimeZone:options.hostTimeZone}:{}),
+  });
+  contextApi=context;
+  const dotSourceReader=createDotSourceReader({
+    sources:dotSources,read:(source,request)=>context.readDot(source,request),
+    decisions:()=>dotSources.activeDecisions(),
+    authorized:source=>{try{const row=dotSources.stateOf(source);const c=context.credentialFingerprint(source);return row?.enabled===true&&c?.configured===true&&row.credentialKey===c.key;}catch{return false;}},
+    identity:source=>{const row=dotSources.stateOf(source);const c=context.credentialFingerprint(source);return `${c?.key??'none'}:${row?.generation??0}:${row?.credentialKey??'none'}`;},
+    ...(options.clock?{clock:options.clock}:{}),...(options.hostTimeZone?{hostTimeZone:options.hostTimeZone}:{}),
+    isClosed:()=>disposed,
+  });
+  if(typeof ctx.effect==='function')ctx.effect(()=>()=>{dotSourceReader.stop();});
+  const todayForeground=async()=>{
+    try{const setup=await readSetup();if(setup?.state==='bound'&&typeof setup.sessionId==='string'&&setup.sessionId)return setup.sessionId;}catch{}
+    return ledgerDesktopSession()||null;
+  };
+  const sessionControllerOf=()=>{try{return ctx.get('sessionController',false);}catch{return null;}};
+  // Official front-door contract (0.2.2-rc.1): live agents registry for busy,
+  // sessionController.prompt with queue/steer for both idle and running.
+  const todayHost=createTodayHost({ctx});
+  const hostSessionBusy=sessionId=>todayHost.busy(sessionId);
+  const promptSession=(sessionId,text,options={})=>todayHost.prompt(sessionId,text,options);
+  const createDotSession=async({root,text,sessionId:proposedSessionId}={})=>{
+    const controller=sessionControllerOf();
+    if(typeof controller?.create!=='function')throw Object.assign(new Error('host create unsupported'),{code:'HOST_CREATE_UNSUPPORTED'});
+    const proposed=typeof proposedSessionId==='string'&&proposedSessionId?proposedSessionId:`session-${randomUUID()}`;
+    const created=await controller.create({sessionId:proposed,cwd:root,agentPreset:'standard'});
+    const sessionId=typeof created?.sessionId==='string'?created.sessionId:proposed;
+    try{
+      await promptSession(sessionId,text);
+    }catch(error){
+      // The host owns the created session even when delivery failed. Report
+      // the accurate id so the caller keeps the dispatch claim and never
+      // creates a second session for the same promise.
+      throw Object.assign(error instanceof Error?error:new Error('prompt failed'),{createdSessionId:sessionId});
+    }
+    return sessionId;
+  };
+  const todayController=createTodayController({
+    ledger:sessionLedger,reader:dotSourceReader,foregroundSession:todayForeground,promptSession,createSession:createDotSession,
+    links:dotSources,
+    diagnose:(source,name)=>context.diagnoseDot(source,name),
+    foregroundBusy:async sessionId=>{
+      const host=await hostSessionBusy(sessionId);
+      if(host!==null)return host;
+      try{const state=await sessionLedger.internal();const row=state.sessions.find(item=>item.sessionId===sessionId);return row?.state==='doing';}catch{return false;}
+    },
+    authorizeRoot:async root=>{try{const captured=await workspaceAccess.capture();const target=resolve(root);return (captured.grants??[]).some(grant=>resolve(grant.root)===target);}catch{return false;}},
+    defaultRoot:async()=>{const captured=await workspaceAccess.capture();return captured.grants?.[0]?.root??null;},
+    ...(options.clock?{clock:options.clock}:{}),isClosed:()=>disposed,
   });
   familyDelegate=createFamilyOwnerDelegation({store:{get:key=>familyTable.get(key),put:(key,value)=>familyTable.put(key,familyDelegationRow.parse(value))},getBridge:getFamilyBridge,readGrantedLeases:async()=>context.delegationLeases(),readGrantedLeasesSync:()=>context.delegationLeases(),readLegacySetup:readSetup});
   familyContext=createFamilyContextAdapter({delegation:familyDelegate,context});
@@ -387,21 +553,24 @@ export async function installCompanion(ctx,options={}){
     lifecycle.abort();
     mobileRelease?.();
     goalBoard.close();goalBoardModel.close();workspaceAccess.close();
+    await sessionLedger.close();
     await goalBoard.waitForIdle().catch(()=>{});
     workbench?.close();workbenchActions?.close();recoveryGuard.close();const familyClosing=familyDelegate.close();
     const newsClosing=news.close();newsModel.close?.();
     const personalReviewClosing=personalReview?.close();personalReviewModel?.close?.();
+    const digestClosing=dailyDigest?.close();digestModel?.close?.();
     const contextClosing=context.close();contextRoute?.close();
     const contextTransportClosing=contextTransport.close();const googleAuthClosing=googleAuth.close();
     projectUpdateModel?.close();const updatesClosing=projectUpdates?.close();const loopClosing=contextLoop?.close();
-    const externalClosing=Promise.allSettled([loopClosing,updatesClosing,newsClosing,personalReviewClosing,contextClosing,contextTransportClosing,googleAuthClosing,familyClosing,googleCalendarAuth.close(),googleSuiteAuth.close(),flomoAuth.close(),didaAuth.close(),googleTokenVault?.close()]);
+    const externalClosing=Promise.allSettled([loopClosing,updatesClosing,newsClosing,personalReviewClosing,digestClosing,contextClosing,contextTransportClosing,googleAuthClosing,familyClosing,googleCalendarAuth.close(),googleSuiteAuth.close(),flomoAuth.close(),didaAuth.close(),googleTokenVault?.close()]);
     if(timer!==undefined){timers.clearInterval(timer);timer=undefined;}
     await Promise.allSettled([...coordinates]);
-    await Promise.allSettled([memory?.close(),followup?.close(),onboarding?.close(),welcomeGuard?.close()]);
+    dotSourceReader.stop();
+    await Promise.allSettled([memory?.close(),followup?.close(),onboarding?.close(),welcomeGuard?.close(),dotSources.close()]);
     // A failed news store must not prevent cleanup of unrelated services.
     await externalClosing;
     try{await taskResults.close();}
-    finally{try{await service.ready();}finally{await Promise.allSettled([taskDomain.close(),onboardingDomain.close(),newsDomain.close(),personalReviewDomain.close(),contextDomain.close(),familyDomain.close(),projectUpdatesDomain.close(),contextLoopDomain.close(),workspaceAccessDomain.close(),goalBoardDomain.close(),domain.close()]);}}
+    finally{try{await service.ready();}finally{await Promise.allSettled([taskDomain.close(),onboardingDomain.close(),newsDomain.close(),personalReviewDomain.close(),contextDomain.close(),dotSourcesDomain.close(),familyDomain.close(),projectUpdatesDomain.close(),contextLoopDomain.close(),workspaceAccessDomain.close(),sessionLedgerDomain.close(),goalBoardDomain.close(),domain.close()]);}}
   });
   // Cordis emits disposal before waiting for an asynchronous apply to settle.
   // Abort startup at that boundary; normal effect cleanup alone runs too late.
@@ -417,6 +586,7 @@ export async function installCompanion(ctx,options={}){
     }
   }
   await service.ready();await taskResults.ready();await news.ready();await context.ready();await familyDelegate.ready();
+  dotSourceReader.start();
   const noteError=error=>{lastRuntimeError=String(error?.message??error).slice(0,200);};
   const authorizeRoot=async root=>(await service.coordinationTarget(root))?.root===root;
   const familyRead=createFamilyReadAdapter({getBridge:getFamilyBridge,isCurrent:scope=>familyDelegate.current(scope),authorizeRoot,recheck:scope=>familyDelegate.recheck(scope)});
@@ -503,6 +673,9 @@ export async function installCompanion(ctx,options={}){
     canRun:async()=>!disposed&&!lifecycle.signal.aborted&&!await service.isPaused(),canRunSync:()=>!disposed&&!lifecycle.signal.aborted&&!service.isPausedSync(),
     readExecutions:caller=>taskResults.reviewOutcomes(caller.sessionId),
     collect:input=>reviewContext(input.caller,()=>collectReview(input)),summarize:input=>personalReviewModel.summarize(input),
+    // The daily digest owns the daily slot while it is enabled. The old plan,
+    // items and subscription stay untouched; only the old daily send is muted.
+    suppressDaily:()=>dailyDigest?.enabled()===true,
     ...(options.clock?{clock:options.clock}:{}),
     async send(item){
       if(disposed||lifecycle.signal.aborted||item.signal?.aborted||typeof item.authorize!=='function'||item.authorize()!==true||!await item.authorizeAsync())return{status:'failed'};
@@ -517,6 +690,53 @@ export async function installCompanion(ctx,options={}){
     },
   });
   await personalReview.ready();await pulseLedger.ready();
+  const hostZone=()=>{try{const v=options.hostTimeZone;const z=typeof v==='function'?v():v;return typeof z==='string'&&z?z:Intl.DateTimeFormat().resolvedOptions().timeZone||'Asia/Shanghai';}catch{return'Asia/Shanghai';}};
+  const digestSchedule=async()=>{
+    try{const row=await personalReviewTable.get('profile');const s=row?.subscription?.schedule;return{dailyTime:typeof s?.dailyTime==='string'?s.dailyTime:'09:00',timeZone:typeof s?.timeZone==='string'&&s.timeZone?s.timeZone:hostZone()};}catch{return{dailyTime:'09:00',timeZone:hostZone()};}
+  };
+  const digestLedger=async()=>{
+    try{
+      // Snapshot the ledger, then re-read the grant before projecting: a
+      // revocation during the read must not leak project labels to the model.
+      const rows=(await sessionLedger.internal())?.sessions??[];
+      const current=await workspaceAccess.capture();
+      const roots=(current.grants??[]).map(grant=>resolve(grant.root));
+      return projectDigestLedger(rows,roots);
+    }catch{return[];}
+  };
+  // The legacy setup row identifies the candidate session and its old
+  // user/bot fingerprint. The live guarded bridge separately exposes the
+  // channel-bound fingerprint used for delivery. The channel freezes both
+  // before a run reads and rechecks the same session/identities before send.
+  const digestChannel=createDigestOwnerChannel({
+    readSetup,
+    readBridge:standaloneBridge,
+    readBinding:standaloneBinding,
+    isClosed:()=>disposed||lifecycle.signal.aborted,
+  });
+  const resolveDigestOwner=()=>digestChannel.resolve();
+  const sendDailyDigest=args=>digestChannel.send(args);
+  const digestOwner=async execution=>{
+    const sessionId=String(execution?.agent?.id??'');
+    const family=Boolean(sessionId)&&(sessionId.startsWith('family_')||familyDelegate.matchesSession(sessionId));
+    let desktop='';try{desktop=ledgerDesktopSession();}catch{}
+    const owner=await resolveDigestOwner();
+    // Family is rejected first inside the helper, before desktop/WeChat.
+    return digestCallerIsOwner({sessionId,desktopId:desktop,owner,family});
+  };
+  digestModel=createDigestModel(ctx,{...(options.clock?{clock:options.clock}:{})});
+  dailyDigest=createDailyDigest({
+    store:{get:key=>dailyDigestTable.get(key),put:(key,value)=>dailyDigestTable.put(key,dailyDigestRowSchema.parse(value))},
+    readSource:(source,request)=>context.readDot(source,request),
+    readLedger:digestLedger,schedule:digestSchedule,readOwner:resolveDigestOwner,sameOwner:sameDigestOwner,
+    summarize:input=>digestModel.summarize(input),
+    send:sendDailyDigest,enabled:options.dailyDigest?.enabled!==false,
+    ...(options.clock?{clock:options.clock}:{}),hostTimeZone:hostZone,
+    isClosed:()=>disposed,
+    canRun:async()=>!disposed&&!lifecycle.signal.aborted&&!await service.isPaused(),
+  });
+  await dailyDigest.ready();
+  digestRoute=createDigestRoute({digest:dailyDigest,readConnection:readSetup,readOwner:resolveDigestOwner,canRun:async()=>!disposed&&!lifecycle.signal.aborted&&!await service.isPaused(),isClosed:()=>disposed});
 
   const familyRoute={
     getScope:sessionId=>familyDelegate.scopeFor(sessionId),
@@ -704,9 +924,10 @@ export async function installCompanion(ctx,options={}){
   const projectCatalogController=createProjectCatalogController({catalog:projectCatalog,readConnection:readWorkbenchConnection,isPaused:()=>service.isPaused(),isPausedSync:()=>disposed||service.isPausedSync(),isClosed:()=>disposed});
   if(typeof ctx.inject==='function')ctx.inject(['connection'],scope=>{if(!disposed)registerProjectCatalogRoute(scope,projectCatalogController);});
   if(typeof ctx.inject==='function')ctx.inject(['connection'],scope=>{if(!disposed){registerWorkspaceAccessRoute(scope,workspaceAccessController);registerGoalBoardRoute(scope,goalBoardController);}});
-  if(typeof ctx.inject==='function')ctx.inject(['connection'],scope=>{if(!disposed)registerWorkbenchActionsRoute(scope,workbenchActions);});
+  if(typeof ctx.inject==='function')ctx.inject(['connection'],scope=>{if(!disposed){registerActivityRoute(scope,{snapshot:async()=>{void dotSourceReader.refreshIfStale();return ledgerProjection();},isClosed:()=>disposed});registerTodayRoutes(scope,{controller:todayController,isClosed:()=>disposed});}});  if(typeof ctx.inject==='function')ctx.inject(['connection'],scope=>{if(!disposed)registerWorkbenchActionsRoute(scope,workbenchActions);});
   if(typeof ctx.inject==='function')ctx.inject(['connection'],scope=>{if(!disposed){registerWorkbenchRoute(scope,workbench);registerDesktopConversationRoute(scope,workbench);}});
   if(typeof ctx.inject==='function')ctx.inject(['connection'],scope=>{if(!disposed)registerContextRoute(scope,contextRoute);});
+  if(typeof ctx.inject==='function')ctx.inject(['connection'],scope=>{if(!disposed)registerDigestRoute(scope,digestRoute);});
   if(typeof ctx.inject==='function')ctx.inject(['connection'],scope=>{if(!disposed)registerOnboardingRoute(scope,onboarding);});
 
   async function familyPlanFor(scope,args){
@@ -832,8 +1053,11 @@ export async function installCompanion(ctx,options={}){
   }
   function syncTimer(){
     if(disposed)return;
-    if((service.needsTimer()||taskResults.needsTimer()||news.needsTimer()||personalReview.needsTimer()||pulseLedger.needsTimer()||familyRecoveryPending)&&timer===undefined){timer=timers.setInterval(async()=>{try{await service.tick();await taskResults.tick();await news.tick();await personalReview.tick();if(pulseLedger.needsTimer()&&!service.isPausedSync())await pulseLedger.tick({capture:root=>projectPulse.capture(root),notify:item=>sendOwnerNotice(item)});if(familyRecoveryPending)await recoverFamilyPlans();}catch(error){noteError(error);}finally{syncTimer();}},15000);timer?.unref?.();}
-    else if(!service.needsTimer()&&!taskResults.needsTimer()&&!news.needsTimer()&&!personalReview.needsTimer()&&!pulseLedger.needsTimer()&&!familyRecoveryPending&&timer!==undefined){timers.clearInterval(timer);timer=undefined;}
+    // The digest is an owner-channel feature. A passive host without the
+    // guarded WeChat bridge must stay timer-free; a bound owner can send.
+    const digestTimerNeeded=()=>Boolean(standaloneBridge())&&dailyDigest.needsTimer();
+    if((service.needsTimer()||taskResults.needsTimer()||news.needsTimer()||personalReview.needsTimer()||digestTimerNeeded()||pulseLedger.needsTimer()||familyRecoveryPending)&&timer===undefined){timer=timers.setInterval(async()=>{try{await service.tick();await taskResults.tick();await news.tick();try{await dailyDigest.tick();}catch(error){noteError(error);}await personalReview.tick();if(pulseLedger.needsTimer()&&!service.isPausedSync())await pulseLedger.tick({capture:root=>projectPulse.capture(root),notify:item=>sendOwnerNotice(item)});if(familyRecoveryPending)await recoverFamilyPlans();}catch(error){noteError(error);}finally{syncTimer();}},15000);timer?.unref?.();}
+    else if(!service.needsTimer()&&!taskResults.needsTimer()&&!news.needsTimer()&&!personalReview.needsTimer()&&!digestTimerNeeded()&&!pulseLedger.needsTimer()&&!familyRecoveryPending&&timer!==undefined){timers.clearInterval(timer);timer=undefined;}
   }
   async function recoverFamilyPlans(){
     if(disposed||familyRecoveryRunning)return;
@@ -957,14 +1181,29 @@ export async function installCompanion(ctx,options={}){
     };
     if(input.action==='digest'&&input.project!==undefined&&!await resolveDigestTarget(input.project))return{status:'blocked',accepted:false,text:'没找到这个名字的已关注项目或已授权工作区。请先在工作区选择里允许这个项目，再加入关注；本次没有读取任何内容。'};
     const familyScope=familyContext.activeScope();
+    const caller=owner(ctx,agent);
+    if(input.action==='digest'&&input.project===undefined&&!familyScope&&await ledgerIsForeground(caller.sessionId)){
+      try{
+        const projection=await ledgerProjection(caller.sessionId);
+        if(projection)return{status:'ok',accepted:true,text:ledgerText(projection),ledger:projection};
+      }
+      catch{return{status:'blocked',accepted:false,text:'会话账本暂时不可用：当前工作区授权读不出来，本次没有使用旧缓存。请稍后再看。'};}
+    }
     const result=await service.act(owner(ctx,agent),familyScope&&['configure_daily','remind'].includes(input.action)?{...input,expectedBinding:familyBinding(familyScope)}:input);
-    if(input.action==='status'){
+    if(input.action==='status'&&input.project===undefined){
       result.followups=[];
       for(const project of await service.watchedProjects()){
         try{const plan=await followup.status({root:project.root});if(plan.enabled)result.followups.push({projectLabel:project.label,everyMinutes:plan.everyMinutes,paused:result.paused,blocked:plan.blocked??null});}
         catch{result.followups.push({projectLabel:project.label,unknown:true});}
       }
       if(result.followups.length){const summary=`主动跟进：${result.followups.map(plan=>`${plan.projectLabel} ${plan.unknown?'状态未知':plan.paused?'已暂停':plan.blocked?'等待恢复绑定':`每${plan.everyMinutes}分钟只读检查`}`).join('；')}`;result.text=`${result.text.slice(0,3199-summary.length)}\n${summary}`;}
+      if(!familyScope&&await ledgerIsForeground(caller.sessionId)){
+        try{
+          const projection=await ledgerProjection(caller.sessionId);
+          if(projection){result.ledger=projection;result.text=`${result.text}\n${ledgerText(projection)}`.slice(0,4000);}
+        }
+        catch{result.ledger=null;}
+      }
     }
     if(input.action==='digest'){
       let projects;
@@ -1181,9 +1420,9 @@ export async function installCompanion(ctx,options={}){
   }));
   ctx.tools.register(defineTool({
     name:'project_companion',
-    description:'项目与交办。两类入口优先用：【看】action:look + view：progress=进展与卡点｜change=相比上次的变化（本人明确问了才传 userRequested:true）｜status=总状态｜health=本机自检（doctor，只读本机状态，不发消息）｜task=交办到哪了｜once=一次检查｜followup=周期跟进。【管】action:manage + op：watch/unwatch=关注或取消｜memory/remember/correct_memory/forget_memory=项目记忆｜pause/resume=暂停或恢复自动跟进｜daily/cancel_daily=每日汇报｜followup/cancel_followup=周期跟进配置｜pulse=所有关注项目有变化才提醒（动作名 pulse_projects，可带 everyMinutes；enabled:false 关闭）。【做】保持独立动作：coordinate=明确要求执行或继续；remind=提醒；personal_context 读外部资料；personal_review 做回顾；ai_digest 做资讯。【兼容】旧动作名仍可用，不删是为了不破坏已安装：list、digest、project_update、status、doctor、task_status、once_status、cancel_once、followup_status、check_once、configure_daily、cancel_daily、configure_followup、cancel_followup、link_github、context_brief、context_status、context_handoff、context_check、context_forget，提醒取消用 cancel_reminder。新调用优先用 look/manage。',
+    description:'项目与交办。两类入口优先用：【看】action:look + view：progress=进展与卡点｜change=相比上次的变化（本人明确问了才传 userRequested:true）｜status=总状态｜health=本机自检（doctor，只读本机状态，不发消息）｜task=交办到哪了｜once=一次检查｜followup=周期跟进｜digest=每日整理最近一份与下一次时间（内部动作 digest_view）。【管】action:manage + op：watch/unwatch=关注或取消｜memory/remember/correct_memory/forget_memory=项目记忆｜pause/resume=暂停或恢复自动跟进｜daily/cancel_daily=每日汇报｜followup/cancel_followup=周期跟进配置｜pulse=所有关注项目有变化才提醒（动作名 pulse_projects，可带 everyMinutes；enabled:false 关闭）。【做】保持独立动作：coordinate=明确要求执行或继续；remind=提醒；personal_context 读外部资料；personal_review 做回顾；ai_digest 做资讯。每日整理手动跑一次用 digest_run（仅本人前台或已绑定主人会话）；只测量 Gmail 读取状态用 digest_probe（只回计数，不发消息）。【兼容】旧动作名仍可用，不删是为了不破坏已安装：list、digest、project_update、status、doctor、task_status、once_status、cancel_once、followup_status、check_once、configure_daily、cancel_daily、configure_followup、cancel_followup、link_github、context_brief、context_status、context_handoff、context_check、context_forget，提醒取消用 cancel_reminder。新调用优先用 look/manage。',
     parameters:{
-      action:{type:'string',required:true,enum:['look','manage','doctor','watch','unwatch','list','digest','project_update','context_brief','context_status','context_handoff','context_check','context_forget','memory','remember','correct_memory','forget_memory','check_once','once_status','cancel_once','configure_followup','cancel_followup','followup_status','configure_daily','cancel_daily','pause','resume','remind','cancel_reminder','link_github','status','coordinate','task_status','pulse_projects']},
+      action:{type:'string',required:true,enum:['look','manage','doctor','watch','unwatch','list','digest','digest_view','digest_run','digest_probe','project_update','context_brief','context_status','context_handoff','context_check','context_forget','memory','remember','correct_memory','forget_memory','check_once','once_status','cancel_once','configure_followup','cancel_followup','followup_status','configure_daily','cancel_daily','pause','resume','remind','cancel_reminder','link_github','status','coordinate','task_status','pulse_projects']},
       view:{type:'string',enum:LOOK_VIEWS,description:'look 的视角。'+SURFACE_COPY.look},
       op:{type:'string',enum:MANAGE_OPS,description:'manage 的动作。'+SURFACE_COPY.manage},
       reviewItemId:{type:'string',description:'coordinate可选：仅当本人任务全文明确引用个人回顾「事项原题」时，从prepare结果映射稳定itemId。目标须在该事项原回顾项目范围内；不自行添加源正文或宣称已处理。'},
@@ -1254,6 +1493,13 @@ export async function installCompanion(ctx,options={}){
       try{return await withFamily(execution,args,async admittedArgs=>{args=admittedArgs;try{
         // 自检只读本机状态；不发消息、不读取外部账号、不改计划。
         if(args.action==='doctor')return{status:'ok',view:'health',text:await doctorScan(execution.agent)};
+        // 每日整理：正文只对本人前台或仍绑定的主人会话开放；手动发送走已鉴权界面动作，不信任模型参数。
+        if(args.action==='digest_run')return{status:'blocked',accepted:false,code:'DIGEST_MANUAL_UI_ONLY',text:'手动整理要从 Dot 已鉴权的界面动作触发；本次没有读取或发送。'};
+        if(args.action==='digest_view'||args.action==='digest_probe'){
+          if(!await digestOwner(execution))return{status:'blocked',accepted:false,code:'DIGEST_OWNER_ONLY',text:'每日整理只在本人当前前台或已绑定的主人会话里可用；普通会话不能读回或触发。'};
+          if(args.action==='digest_view')return dailyDigest.view();
+          return await dailyDigest.probe();
+        }
         if(args.action.startsWith('context_')){
           try{
             const {project,caller}=await selectedProject(execution.agent,args);
@@ -1445,6 +1691,13 @@ export async function installCompanion(ctx,options={}){
   });
   ctx.on('session/event',(session,event)=>{
     if(disposed||!session?.id||!event)return;
+    // Ledger first: the watched-project recorder below drops every event whose
+    // root is not followed, and the ledger's scope is workspace authorization.
+    const ledgerAt=Number.isFinite(event.time)?new Date(event.time).toISOString():new Date().toISOString();
+    if(event.type==='turn/end'&&typeof event.data?.reason?.kind==='string')track(()=>ledgerEvent(String(session.id),session,{kind:'turn-end',at:ledgerAt,reason:{kind:event.data.reason.kind,message:event.data.reason.message??event.data.reason.error?.message??''}}));
+    else if(event.type==='approval/asked')track(()=>ledgerEvent(String(session.id),session,{kind:'approval-asked',at:ledgerAt,toolName:event.data?.toolName,reasonText:event.data?.reason,approvalId:event.data?.id,callId:event.data?.callId}));
+    else if(event.type==='approval/decided')track(()=>ledgerEvent(String(session.id),session,{kind:'approval-decided',at:ledgerAt,approvalId:event.data?.id}));
+    else if(event.type==='assistant/message')track(()=>ledgerEvent(String(session.id),session,{kind:'assistant',at:ledgerAt,text:resultTexts(event.data?.message?.content)}));
     if(event.type==='assistant/message'&&Number.isInteger(event.data?.turn))track(()=>taskResults.observe({sessionId:String(session.id),type:'assistant',turn:event.data.turn,text:resultTexts(event.data.message?.content),interrupted:event.data.interrupted===true}));
     else if(event.type==='turn/end'&&Number.isInteger(event.data?.turn)&&typeof event.data?.reason?.kind==='string')track(async()=>{await taskResults.observe({sessionId:String(session.id),type:event.type,turn:event.data.turn,reason:{kind:event.data.reason.kind}});await personalReview.reconcileJobs();});
     const root=effectiveCwd(ctx,session);
@@ -1456,12 +1709,24 @@ export async function installCompanion(ctx,options={}){
     else return;
     if(text?.text)void service.record({root:resolve(root),sessionId:String(session.id),id:String(event.seq),kind,text:text.text,truncated:text.truncated,at:new Date(event.time).toISOString()}).catch(noteError);
   });
+  ctx.on('agent/status',payload=>{
+    if(disposed||payload?.status!=='running'||typeof payload.agent?.id!=='string')return;
+    track(()=>ledgerEvent(String(payload.agent.id),payload.agent,{kind:'start',at:new Date().toISOString()}));
+  });
   ctx.on('agent/error',payload=>{
     const agent=payload?.agent;
     const root=effectiveCwd(ctx,agent);if(!root)return;
     void service.record({root,sessionId:String(agent.id),id:`error-${payload.turn??''}-${payload.step??''}`,kind:'error',text:'项目会话执行发生错误，请在原会话核对。'}).catch(noteError);
   });
   syncTimer();
+  // The guarded WeChat bridge is a separate service and may be provided after
+  // this plugin (real RC2 startup order). Recompute on mount, replacement and
+  // removal; without this injection the digest timer would never arm.
+  if(typeof ctx.inject==='function')ctx.inject(['dotWechatGuarded'],()=>{
+    if(disposed)return;
+    syncTimer();
+    return()=>{if(!disposed)queueMicrotask(()=>{if(!disposed)syncTimer();});};
+  });
   // Resume only previously configured plans of currently watched roots.
   // No plan is created merely by installation or project discovery.
   for(const project of await service.watchedProjects()){
@@ -1469,7 +1734,7 @@ export async function installCompanion(ctx,options={}){
   }
   await recoverFamilyPlans();
   if(typeof ctx.inject==='function')ctx.inject(['familyDotBridge'],()=>{if(!disposed)void recoverFamilyPlans();});
-  return{service,taskResults,memory,followup,onboarding,news,personalReview,context,contextLoop,projectUpdates,googleCalendarAuth,googleSuiteAuth,flomoAuth,didaAuth,workbench,workbenchActions,familyRoute,projectCatalog,projectCatalogController,workspaceAccess,goalBoard,goalBoardController,registeredProjectTarget:service.registeredProjectTarget,authorizeRegisteredCoordinationSync:service.authorizeRegisteredCoordinationSync};
+  return{service,taskResults,memory,followup,onboarding,news,personalReview,dailyDigest,context,contextLoop,projectUpdates,googleCalendarAuth,googleSuiteAuth,flomoAuth,didaAuth,workbench,workbenchActions,familyRoute,projectCatalog,projectCatalogController,workspaceAccess,goalBoard,goalBoardController,dotSources,dotSourceReader,registeredProjectTarget:service.registeredProjectTarget,authorizeRegisteredCoordinationSync:service.authorizeRegisteredCoordinationSync};
 }
 
 export async function apply(ctx,config){

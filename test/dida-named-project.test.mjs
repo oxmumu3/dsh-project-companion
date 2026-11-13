@@ -44,7 +44,7 @@ test('revoking while list metadata is pending prevents the second GET',async()=>
 });
 test('named operation rejects extra keys, oversized names and cross-list tasks without exposing any result',async()=>{
  let calls=0;const adapter=createDidaRest({getToken:async()=> 'synthetic',fetch:async()=>{calls++;return Response.json(calls===1?[{id:'p2',name:'工作'}]:{project:{id:'p2'},tasks:[task('a','other')]});}});
- for(const args of [{...named,project_id:'p1'},{...named,limit:11},{...named,project_name:'x'.repeat(181)}])await assert.rejects(adapter.call('dida','get_named_project_with_undone_tasks',args,gates));
+ for(const args of [{...named,project_id:'p1'},{...named,limit:201},{...named,project_name:'x'.repeat(181)}])await assert.rejects(adapter.call('dida','get_named_project_with_undone_tasks',args,gates));
  assert.equal(calls,0);await assert.rejects(adapter.call('dida','get_named_project_with_undone_tasks',named,gates),e=>e.code==='CONTEXT_PROTOCOL_INVALID');assert.equal(calls,2);await adapter.close();
 });
 test('the actual personal-context service passes only selected bounded tasks and citations to a brief caller',async()=>{

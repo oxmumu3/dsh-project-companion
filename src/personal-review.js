@@ -65,10 +65,10 @@ function race(fn, signal, message) {
   });
 }
 
-export function createPersonalReviewService({ store, readBinding, readBindingSync, authorization, authorizationSync, canRun = async () => true, canRunSync, readAvailability=async()=> 'current', collect, summarize, send, readExecutions = async () => [], clock = () => new Date() } = {}) {
+export function createPersonalReviewService({ store, readBinding, readBindingSync, authorization, authorizationSync, canRun = async () => true, canRunSync, readAvailability=async()=> 'current', collect, summarize, send, suppressDaily = null, readExecutions = async () => [], clock = () => new Date() } = {}) {
   for (const [name, dependency] of Object.entries({ get: store?.get, put: store?.put, readBinding, authorization, canRun, collect, summarize, send })) if (typeof dependency !== 'function') throw new Error(`Missing personal review dependency: ${name}`);
   let state, queue = Promise.resolve(), generation = 0, closed = false, storageFailed = false, lastGeneration=null;
-  for (const dependency of [authorizationSync, readBindingSync, canRunSync,readAvailability]) if (dependency !== undefined && typeof dependency !== 'function') throw new Error('Invalid personal review synchronous guard');
+  for (const dependency of [authorizationSync, readBindingSync, canRunSync,readAvailability,suppressDaily]) if (dependency !== undefined && dependency !== null && typeof dependency !== 'function') throw new Error('Invalid personal review synchronous guard');
   const controllers = new Map(), serial = fn => { const result = queue.then(fn); queue = result.catch(() => {}); return result; };
   const now = () => { const value = clock(); if (!(value instanceof Date) || !Number.isFinite(value.getTime())) throw new Error('个人回顾时钟无效'); return value; };
   function requestSync(input = {}) { if (input.signal?.aborted || input.authorizeSync && input.authorizeSync() !== true) throw personalReviewFailure(null,{code:'REVIEW_REQUEST_EXPIRED'}); }
@@ -453,6 +453,12 @@ export function createPersonalReviewService({ store, readBinding, readBindingSyn
         const policy=kind==='attention'?attentionDue({now:now(),timeZone:plan.schedule.timeZone,attention:plan.attention,createdAt:plan.attention?.createdAt??plan.createdAt,occurrences:state.occurrences,...plan.schedule}):null;
         const due=policy?policy.occurrence:latestOccurrence(now(),plan.schedule,kind);
         if(!due||due.epoch<Date.parse(plan.createdAt)||state.occurrences.includes(due.id))continue;
+        // The new daily digest owns the daily slot while it is enabled. The old
+        // subscription, items and history stay untouched; only this send pauses.
+        if(kind==='daily'&&typeof suppressDaily==='function'){
+          let muted=false;try{muted=await suppressDaily()===true;}catch{muted=false;}
+          if(muted){if(!state.occurrences.includes(due.id)){state.occurrences.push(due.id);await save();}continue;}
+        }
         if(kind==='attention'&&usedAttention(plan)>=(plan.attention?.maxMessagesPerDay??0))continue;
         const daily=kind==='weekly'?latestOccurrence(now(),plan.schedule,'daily'):null;
         const coClaim=daily?.epoch===due.epoch?[daily.id]:[];

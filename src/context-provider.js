@@ -10,9 +10,18 @@ export function createContextProvider({calendar,suite,dida,mcp,useSuite=()=>fals
   if(source==='dida'&&useDidaRest()){if(!dida)throw new Error('滴答读取接口未就绪。');return dida;}
   return suite&&['gmail','drive','docs','sheets','slides'].includes(source)&&useSuite(source)?suite:mcp;
  };
+ const DIAGNOSE={calendar:['updated_min'],gmail:['history']};
  return{
   catalog:(source,settings)=>provider(source).catalog(source,settings),
   call:(source,name,args,settings)=>provider(source).call(source,name,args,settings),
+  diagnose:(source,name,settings={})=>{
+   // Only the fixed one-shot diagnostics: no provider is given a general
+   // diagnostic surface, and unsupported pairs fail closed.
+   if(!Object.hasOwn(DIAGNOSE,source)||!DIAGNOSE[source].includes(name))throw Object.assign(new Error('CONTEXT_UNSUPPORTED_OPERATION'),{code:'CONTEXT_UNSUPPORTED_OPERATION'});
+   const impl=provider(source);
+   if(typeof impl.diagnose!=='function')throw Object.assign(new Error('CONTEXT_UNSUPPORTED_OPERATION'),{code:'CONTEXT_UNSUPPORTED_OPERATION'});
+   return impl.diagnose(name,settings);
+  },
   async close(){await Promise.allSettled([calendar.close?.(),suite?.close?.(),dida?.close?.(),mcp.close?.()]);},
  };
 }

@@ -1,20 +1,21 @@
 {
   "name": "@oxmumu3/dsh-project-companion",
-  "version": "0.35.1",
+  "version": "0.35.2",
   "description": "DSH Dot: WeChat personal agent, project memory and proactive follow-up for DeepSeek Harness",
   "author": "牛村木木山",
   "license": "MIT",
   "type": "module",
   "engines": {
     "node": ">=22.13",
-    "dsh": "0.2.0-rc.2 || 0.2.1-rc.2 || 0.2.1-rc.3 || 0.2.1-rc.4 || 0.2.1-rc.5 || 0.2.2-rc.1"
+    "dsh": "0.2.0-rc.2 || 0.2.1-rc.2 || 0.2.1-rc.3 || 0.2.1-rc.4 || 0.2.1-rc.5 || 0.2.2-rc.1 || 0.2.2-rc.2 || 0.2.2-rc.3"
   },
   "exports": {
     ".": "./index.js",
     "./package.json": "./package.json",
-    "./client": "./src/client.js"
+    "./client": "./dist/client.js"
   },
   "files": [
+    "dist/",
     "index.js",
     "src/",
     "cordis.patch.yml",
@@ -56,32 +57,36 @@
     "scripts/validate-state.mjs",
     "docs/mobile-control.md",
     "src/project-pulse.js",
-    "docs/dual-agent.md"
+    "docs/dual-agent.md",
+    "!src/_*",
+    "!src/*.bak*"
   ],
   "scripts": {
     "test": "node --max-old-space-size=128 --test --test-concurrency=1 test/*.test.mjs",
     "demo": "node --max-old-space-size=128 scripts/demo.mjs",
     "report:prompt": "node scripts/prompt-report.mjs",
     "verify": "node --max-old-space-size=256 --test --test-concurrency=1 test/*.test.mjs && node scripts/prompt-report.mjs",
-    "report:routing": "node scripts/routing-report.mjs"
+    "report:routing": "node scripts/routing-report.mjs",
+    "build": "node scripts/build.mjs"
   },
   "dependencies": {
     "zod": "4.6.7"
   },
   "devDependencies": {
     "@deepseek-ai/cordis": "4.0.5",
-    "@deepseek-ai/dsh-system-prompt": "0.2.1-rc.3",
     "@deepseek-ai/dsh-storage": "0.2.1-rc.3",
     "@deepseek-ai/dsh-storage-json": "0.2.1-rc.3",
-    "@deepseek-ai/schemastery": "3.18.4"
+    "@deepseek-ai/dsh-system-prompt": "0.2.1-rc.3",
+    "@deepseek-ai/schemastery": "3.18.4",
+    "esbuild": "^0.25.12"
   },
   "peerDependencies": {
-    "@deepseek-ai/dsh-tools": "0.2.0-rc.2 || 0.2.1-rc.2 || 0.2.1-rc.3 || 0.2.1-rc.4 || 0.2.1-rc.5 || 0.2.2-rc.1",
-    "@deepseek-ai/dsh-commands": "0.2.0-rc.2 || 0.2.1-rc.2 || 0.2.1-rc.3 || 0.2.1-rc.4 || 0.2.1-rc.5 || 0.2.2-rc.1",
-    "@deepseek-ai/dsh-storage-domain": "0.2.0-rc.2 || 0.2.1-rc.2 || 0.2.1-rc.3 || 0.2.1-rc.4 || 0.2.1-rc.5 || 0.2.2-rc.1",
-    "@deepseek-ai/dsh-session": "0.2.0-rc.2 || 0.2.1-rc.2 || 0.2.1-rc.3 || 0.2.1-rc.4 || 0.2.1-rc.5 || 0.2.2-rc.1",
-    "@deepseek-ai/dsh-llm": "0.2.0-rc.2 || 0.2.1-rc.2 || 0.2.1-rc.3 || 0.2.1-rc.4 || 0.2.1-rc.5 || 0.2.2-rc.1",
-    "@deepseek-ai/dsh-agent": "0.2.0-rc.2 || 0.2.1-rc.2 || 0.2.1-rc.3 || 0.2.1-rc.4 || 0.2.1-rc.5 || 0.2.2-rc.1",
+    "@deepseek-ai/dsh-agent": "0.2.0-rc.2 || 0.2.1-rc.2 || 0.2.1-rc.3 || 0.2.1-rc.4 || 0.2.1-rc.5 || 0.2.2-rc.1 || 0.2.2-rc.2 || 0.2.2-rc.3",
+    "@deepseek-ai/dsh-commands": "0.2.0-rc.2 || 0.2.1-rc.2 || 0.2.1-rc.3 || 0.2.1-rc.4 || 0.2.1-rc.5 || 0.2.2-rc.1 || 0.2.2-rc.2 || 0.2.2-rc.3",
+    "@deepseek-ai/dsh-llm": "0.2.0-rc.2 || 0.2.1-rc.2 || 0.2.1-rc.3 || 0.2.1-rc.4 || 0.2.1-rc.5 || 0.2.2-rc.1 || 0.2.2-rc.2 || 0.2.2-rc.3",
+    "@deepseek-ai/dsh-session": "0.2.0-rc.2 || 0.2.1-rc.2 || 0.2.1-rc.3 || 0.2.1-rc.4 || 0.2.1-rc.5 || 0.2.2-rc.1 || 0.2.2-rc.2 || 0.2.2-rc.3",
+    "@deepseek-ai/dsh-storage-domain": "0.2.0-rc.2 || 0.2.1-rc.2 || 0.2.1-rc.3 || 0.2.1-rc.4 || 0.2.1-rc.5 || 0.2.2-rc.1 || 0.2.2-rc.2 || 0.2.2-rc.3",
+    "@deepseek-ai/dsh-tools": "0.2.0-rc.2 || 0.2.1-rc.2 || 0.2.1-rc.3 || 0.2.1-rc.4 || 0.2.1-rc.5 || 0.2.2-rc.1 || 0.2.2-rc.2 || 0.2.2-rc.3",
     "@deepseek-ai/schemastery": "3.18.4 || 3.18.5 || 3.19.0"
   },
   "dsh": {

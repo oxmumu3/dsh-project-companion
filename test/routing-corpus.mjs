@@ -43,4 +43,5 @@ export const CORPUS = [
   ['检查有结果了吗', 'look', 'once'],
   ['跟进还在跑吗', 'look', 'followup'],
   ['现在整体状态怎么样', 'look', 'status'],
+  ['今天的邮件和待办整理呢', 'look', 'digest'],
 ];

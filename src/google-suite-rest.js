@@ -5,6 +5,7 @@ import {validateContextCall} from './context-contracts.js';
 import {withAuthDiagnostic} from './auth-diagnostics.js';
 
 const MAX_BYTES=1024*1024,MAX_TOTAL_BYTES=2*MAX_BYTES,MAX_TEXT=16000,REQUEST_MS=20000;
+const GMAIL_HISTORY_PAGE_SIZE = 500;
 const CONTROL=/[\u0000-\u001f\u007f]/u;
 const CODES=new Set(['CONTEXT_ARGUMENTS_INVALID','CONTEXT_CANCELLED','CONTEXT_AUTH_REQUIRED','CONTEXT_ABORTED','CONTEXT_TIMEOUT','CONTEXT_CLOSED','CONTEXT_HTTP_ERROR','CONTEXT_REDIRECT','CONTEXT_PROTOCOL_INVALID','CONTEXT_RESPONSE_TOO_LARGE','CONTEXT_CREDENTIALS_CHANGED']);
 const plain=v=>v!==null&&typeof v==='object'&&!Array.isArray(v);
@@ -61,7 +62,7 @@ function recentDriveQuery(query){
  return Number.isFinite(from)&&Number.isFinite(to)&&new Date(from).toISOString()===m[1]&&new Date(to).toISOString()===m[2]&&to>from&&to-from<=7*86400000;
 }
 const CATALOGS={
- gmail:[tool('search_threads',{query:{...str,maxLength:500},pageSize:page,includeTrash:fixed(false),view:fixed('THREAD_VIEW_METADATA_ONLY')}),tool('get_message',{messageId:ident,messageFormat:fixed('FULL_CONTENT')})],
+ gmail:[tool('search_threads',{query:{...str,maxLength:500},pageSize:{type:'integer',minimum:1,maximum:30},includeTrash:fixed(false),view:fixed('THREAD_VIEW_METADATA_ONLY')}),tool('get_message',{messageId:ident,messageFormat:fixed('FULL_CONTENT')})],
  drive:[tool('search_files',{query:{...str,maxLength:1100},pageSize:page,excludeContentSnippets:fixed(true)}),tool('read_file_content',{fileId:ident,includeComments:fixed(false)})],
  docs:[tool('read_doc',{documentId:ident,commentsIncluded:fixed(false)})],
  sheets:[tool('get_values',{spreadsheetId:ident,range:{...str,maxLength:180}})],
@@ -132,6 +133,25 @@ function message(raw,expected,full,coverage){
  if(!texts.length)coverage.truncated=true;
  row.plaintextBody=clipped(texts.length?texts.join('\n'):row.snippet,MAX_TEXT,coverage);
  row.content_truncated=coverage.truncated;return row;
+}
+function projectGmailHistory(value) {
+ if (!plain(value) || Object.hasOwn(value, 'error')) return null;
+ // Gmail may omit empty fields from a partial response.
+ const {history = [], nextPageToken = ''} = value;
+ if (!Array.isArray(history) || history.length > GMAIL_HISTORY_PAGE_SIZE || typeof nextPageToken !== 'string') return null;
+ const ids = new Set();
+ for (const record of history) {
+  if (!plain(record)) return null;
+  const {messagesAdded = []} = record;
+  if (!Array.isArray(messagesAdded)) return null;
+  for (const addition of messagesAdded) {
+   if (!plain(addition) || !plain(addition.message)) return null;
+   const {id} = addition.message;
+   if (typeof id !== 'string' || !id) return null;
+   ids.add(id);
+  }
+ }
+ return {count: ids.size, hasMore: Boolean(nextPageToken)};
 }
 async function readBody(response,signal,budget,kind='json',operation='unknown'){
  const cancel=()=>{try{void response?.body?.cancel().catch(()=>{});}catch{}};
@@ -238,6 +258,34 @@ export function createGoogleSuiteRest({getToken,fetch:fetchImpl=globalThis.fetch
     }else fail('CONTEXT_ARGUMENTS_INVALID');
     await authorized(settings,signal);cancelled(settings);
     return{value:{...value,truncated:coverage.truncated},fetchedAt:new Date(clock()).toISOString()};
+   });
+  },
+  async diagnose(name,settings={}){
+   if(name!=='history')fail('CONTEXT_UNSUPPORTED_OPERATION');
+   return operate(settings,async signal=>{
+    await authorized(settings,signal);cancelled(settings);
+    let bearer;try{bearer=await wait(Promise.resolve().then(()=>{signal.throwIfAborted();cancelled(settings);return getToken?.('gmail',{signal,authorizeMutation:()=>authorized(settings,signal)});}),signal);}catch(e){if(CODES.has(e?.code))throw error(e.code);throw error('CONTEXT_AUTH_REQUIRED');}
+    if(typeof bearer!=='string'||!bearer.length||bearer.length>8192||/\s/u.test(bearer)||CONTROL.test(bearer))fail('CONTEXT_AUTH_REQUIRED');
+    const fetchJson=async path=>{
+     await authorized(settings,signal);signal.throwIfAborted();cancelled(settings);
+     let response;try{response=await wait(Promise.resolve(fetchImpl(`https://gmail.googleapis.com${path}`,{method:'GET',redirect:'manual',headers:{authorization:`Bearer ${bearer}`,accept:'application/json'},signal})),signal);}catch(e){if(CODES.has(e?.code))throw error(e.code);fail('CONTEXT_HTTP_ERROR');}
+     let value=null;try{value=await response.json();}catch{value=null;}
+     return{status:response.status,value};
+    };
+    // Field projection keeps only the cursor and the IDs needed for counting.
+    const profile=await fetchJson('/gmail/v1/users/me/profile?fields=historyId');
+    const historyId=typeof profile.value?.historyId==='string'&&profile.value.historyId.length>0;
+    let historyStatus = null;
+    let page = null;
+    if(historyId){
+     const history=await fetchJson(`/gmail/v1/users/me/history?startHistoryId=${encodeURIComponent(profile.value.historyId)}&historyTypes=messageAdded&maxResults=${GMAIL_HISTORY_PAGE_SIZE}&fields=history(messagesAdded(message(id))),nextPageToken`);
+     historyStatus = history.status;
+     if (historyStatus === 200) page = projectGmailHistory(history.value);
+    }
+    return {
+     value: {historyId, profileStatus: profile.status, historyList: page !== null, historyStatus, count: page?.count ?? 0, hasMore: page?.hasMore ?? false},
+     fetchedAt: new Date(clock()).toISOString(),
+    };
    });
   },
   async close(){closed=true;for(const controller of active)controller.abort('suite-close');},

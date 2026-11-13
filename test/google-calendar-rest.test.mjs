@@ -21,14 +21,14 @@ test('bounded primary calendar uses fixed GET mapping and keeps coverage',async(
  const r=await t.call('calendar','list_events',args,gates);
  assert.equal(request.url.origin,'https://www.googleapis.com');assert.equal(request.url.pathname,'/calendar/v3/calendars/primary/events');
  assert.equal(request.url.searchParams.get('timeMin'),args.startTime);assert.equal(request.url.searchParams.get('timeMax'),args.endTime);assert.equal(request.url.searchParams.get('maxResults'),'5');assert.equal(request.url.searchParams.get('singleEvents'),'true');assert.equal(request.url.searchParams.get('showDeleted'),'false');assert.ok(request.url.searchParams.get('fields').includes('nextPageToken'));assert.equal(request.options.method,'GET');assert.equal(request.options.redirect,'manual');assert.equal(request.options.headers.authorization,'Bearer synthetic-bearer');assert.equal(request.options.body,undefined);
- assert.deepEqual(r.coverage,{source:'calendar',calendarId:'primary',from:args.startTime,to:args.endTime,returned:1,hasMore:false});assert.equal(r.fetchedAt,fixed.toISOString());assert.equal(r.value.items[0].start.timeZone,'America/Mexico_City');assert.equal(r.value.items[0].description,undefined);assert.equal(r.value.items[0].attendees,undefined);assert.equal(r.value.truncated,false);await t.close();
+ assert.deepEqual(r.coverage,{source:'calendar',calendarId:'primary',from:args.startTime,to:args.endTime,returned:1,hasMore:false,pages:1,hasNextSyncToken:false});assert.equal(r.fetchedAt,fixed.toISOString());assert.equal(r.value.items[0].start.timeZone,'America/Mexico_City');assert.equal(r.value.items[0].description,undefined);assert.equal(r.value.items[0].attendees,undefined);assert.equal(r.value.truncated,false);await t.close();
 });
 
-test('all-day dates and exclusive end survive; pagination is visible without following it',async()=>{
+test('all-day dates and exclusive end survive; internal pagination follows the window',async()=>{
  let calls=0;
- const t=createGoogleCalendarRest({getToken:async()=> 'x',fetch:async()=>{calls++;return response({nextPageToken:'opaque-private-page-token',items:[{id:'all-day',summary:'Holiday',start:{date:'2026-10-20'},end:{date:'2026-10-21'},htmlLink:'https://evil.example.test/?secret=private'}]});},clock:()=>fixed});
+ const t=createGoogleCalendarRest({getToken:async()=> 'x',fetch:async()=>{calls++;return calls===1?response({nextPageToken:'opaque-private-page-token',items:[{id:'all-day',summary:'Holiday',start:{date:'2026-10-20'},end:{date:'2026-10-21'},htmlLink:'https://evil.example.test/?secret=private'}]}):response({items:[{id:'second-day',summary:'Day two',start:{date:'2026-10-21'},end:{date:'2026-10-22'}}]});},clock:()=>fixed});
  const r=await t.call('calendar','list_events',args,gates);
- assert.deepEqual(r.value.items[0].start,{date:'2026-10-20'});assert.deepEqual(r.value.items[0].end,{date:'2026-10-21'});assert.equal(r.value.items[0].htmlLink,undefined);assert.equal(r.value.truncated,true);assert.equal(r.coverage.hasMore,true);assert.equal(JSON.stringify(r).includes('opaque-private-page-token'),false);assert.equal(calls,1);await t.close();
+ assert.deepEqual(r.value.items[0].start,{date:'2026-10-20'});assert.deepEqual(r.value.items[0].end,{date:'2026-10-21'});assert.equal(r.value.items[0].htmlLink,undefined);assert.equal(r.value.items.length,2);assert.equal(r.value.truncated,false);assert.equal(r.coverage.hasMore,false);assert.equal(JSON.stringify(r).includes('opaque-private-page-token'),false);assert.equal(calls,2);await t.close();
 });
 
 test('all-day events retain their source calendar timezone without invented timed starts',async()=>{
@@ -48,7 +48,7 @@ test('malformed calendar dates and mixed timed/all-day pairs are rejected',async
 
 test('unsupported calendar or input is rejected before tokens or HTTP',async()=>{
  let tokens=0,http=0;const t=createGoogleCalendarRest({getToken:async()=>{tokens++;return'x';},fetch:async()=>{http++;return response({items:[]});}});
- for(const input of [{...args,calendarId:'other'},{...args,pageSize:11},{...args,pageSize:0},{...args,endTime:'2026-11-01T00:00:00Z'},{...args,endTime:args.startTime},{...args,startTime:'2026-10-20'},{...args,orderBy:'updated'},{...args,query:'extra'}])await assert.rejects(t.call('calendar','list_events',input,gates),fails('CONTEXT_ARGUMENTS_INVALID'));
+ for(const input of [{...args,calendarId:'other'},{...args,pageSize:101},{...args,pageSize:0},{...args,endTime:'2026-11-01T00:00:00Z'},{...args,endTime:args.startTime},{...args,startTime:'2026-10-20'},{...args,orderBy:'updated'},{...args,query:'extra'}])await assert.rejects(t.call('calendar','list_events',input,gates),fails('CONTEXT_ARGUMENTS_INVALID'));
  await assert.rejects(t.call('gmail','list_events',args,gates));await assert.rejects(t.call('calendar','delete_events',args,gates));assert.equal(tokens,0);assert.equal(http,0);await t.close();
 });
 

@@ -17,9 +17,9 @@ import {createScope,scopeTarget} from '@deepseek-ai/dsh-scope';
 import {executeHostTool} from '../src/host-tool-call.js';
 
 test('host integration runs against the selected verified official SDK packages',()=>{
-  const sdk=process.env.DSH_TEST_SDK_VERSION??'0.2.0-rc.2';
-  const cordis=sdk==='0.2.2-rc.1'?'4.1.0':sdk.startsWith('0.2.1-')?'4.0.5':'4.0.4';
-  assert.ok(['0.2.0-rc.2','0.2.1-rc.2','0.2.1-rc.3','0.2.1-rc.4','0.2.1-rc.5','0.2.2-rc.1'].includes(sdk),'unsupported test SDK version');
+  const sdk=process.env.DSH_TEST_SDK_VERSION??'0.2.1-rc.3';
+  const cordis=sdk.startsWith('0.2.2-rc.')?'4.1.0':sdk.startsWith('0.2.1-')?'4.0.5':'4.0.4';
+  assert.ok(['0.2.0-rc.2','0.2.1-rc.2','0.2.1-rc.3','0.2.1-rc.4','0.2.1-rc.5','0.2.2-rc.1','0.2.2-rc.2','0.2.2-rc.3'].includes(sdk),'unsupported test SDK version');
   const require=createRequire(import.meta.url);
   assert.equal(require('@deepseek-ai/cordis/package.json').version,cordis);
   for(const name of ['agent','tools','commands','storage-domain','session','llm','system-prompt','storage','storage-json'])assert.equal(require(`@deepseek-ai/dsh-${name}/package.json`).version,sdk,name);
@@ -54,7 +54,7 @@ async function openHost(t, options={}){
   const session=ctx.sessions.create(SessionId('synthetic-owner'),{meta:{cwd:workspace}});
   const owner={id:session.id,session,ctx,status:'idle',followup:message=>accepted.push(message)};live.set(owner.id,owner);
   const disableWeChat=ctx.tools.register(defineTool({name:'send_wechat',description:'Synthetic queue only; no real network',parameters:{text:{type:'string',required:true}},output:{schema:{type:'object',additionalProperties:true},render:(_args,value)=>[{type:'text',text:JSON.stringify(value)}]},execute:(_args,execution)=>{sent.push(execution);return options.sendResponse?.(execution)??{ok:true,message:'queued synthetic message; not real WeChat'};}}));
-  const lifecycle=await ctx.plugin({name:'synthetic-companion-mount',inject:['tools','commands','storageDomain','sessions','systemPrompt'],async apply(scope){adapter=await installCompanion(scope,{clock:()=>now,hostTimeZone:()=>options.hostTimeZone??'America/Mexico_City',...(options.family?{family:options.family}:{}),...(options.readBinding?{readBinding:options.readBinding}:{}),...(options.readSetup?{readSetup:options.readSetup}:{}),...(options.readNativeRoute?{readNativeRoute:options.readNativeRoute}:{}),...(options.news?{news:options.news}:{}),...(options.projectUpdates?{projectUpdates:options.projectUpdates}:{}),...(options.projectPulse?{projectPulse:options.projectPulse}:{}),...(options.pulseLedger?{pulseLedger:options.pulseLedger}:{}),...(options.personalReview?{personalReview:options.personalReview}:{}),...(options.context?{context:options.context}:{}),timers:{setInterval:(fn,ms)=>{intervalMs=ms;timer=fn;timerStarts++;return {unref(){}};},clearInterval:()=>{timer=undefined;timerStops++;}}});}});
+  const lifecycle=await ctx.plugin({name:'synthetic-companion-mount',inject:['tools','commands','storageDomain','sessions','systemPrompt'],async apply(scope){adapter=await installCompanion(scope,{clock:()=>now,hostTimeZone:()=>options.hostTimeZone??'America/Mexico_City',...(options.family?{family:options.family}:{}),...(options.readBinding?{readBinding:options.readBinding}:{}),...(options.readSetup?{readSetup:options.readSetup}:{}),...(options.readNativeRoute?{readNativeRoute:options.readNativeRoute}:{}),...(options.news?{news:options.news}:{}),...(options.projectUpdates?{projectUpdates:options.projectUpdates}:{}),...(options.projectPulse?{projectPulse:options.projectPulse}:{}),...(options.pulseLedger?{pulseLedger:options.pulseLedger}:{}),...(options.personalReview?{personalReview:options.personalReview}:{}),...(options.dailyDigest?{dailyDigest:options.dailyDigest}:{}),...(options.context?{context:options.context}:{}),timers:{setInterval:(fn,ms)=>{intervalMs=ms;timer=fn;timerStarts++;return {unref(){}};},clearInterval:()=>{timer=undefined;timerStops++;}}});}});
   let count=0;const signal=()=>new AbortController().signal;
   const nativeTool=async(args,agent=owner,callId=`synthetic-call-${++count}`)=>{const r=await executeHostTool(ctx.tools,{callId,name:'project_companion',arguments:args,agent,signal:signal()});assert.equal(r.isError,false,JSON.stringify(r));return r;};
   const tool=async(...args)=>(await nativeTool(...args)).value;
@@ -94,6 +94,113 @@ function addLive(h,id,cwd,{status='idle',origin}={}){
   const agent={id:session.id,session,ctx:h.ctx,status,followup:message=>{h.accepted.push(message);agent.status='running';}};
   h.live.set(id,agent);return agent;
 }
+
+async function openLedgerHost(t,options={}){
+  const routes=new Map();
+  const h=await openHost(t,{
+    connection:{fetch:{register:route=>{routes.set(route.path,route);return()=>routes.delete(route.path);}}},
+    readSetup:async()=>({state:'missing'}),
+    ...options,
+  });
+  const workspace={id:'ledger-fixture',path:h.owner.session.header.cwd,title:'Synthetic ledger workspace',sessionIds:[]};
+  h.known.push(workspace);
+  const setGrant=async enabled=>{
+    const page=await h.adapter.workspaceAccess.list();
+    return h.adapter.workspaceAccess.save({expectedRevision:page.revision,expectedCatalogRevision:page.catalogRevision,workspaceIds:enabled?[page.items[0].id]:[]});
+  };
+  const activity=async()=>{
+    const path='/api/project_companion/activity';
+    const response=await routes.get(path).fetch(new Request(`http://synthetic.invalid${path}`));
+    return {status:response.status,value:await response.json()};
+  };
+  const finish=(id,message)=>{
+    const agent=addLive(h,id,workspace.path);
+    h.ctx.emit('session/event',agent.session,{type:'turn/end',time:Date.now(),data:{reason:{kind:'error',message}}});
+  };
+  await setGrant(true);
+  finish('ledger-authorized-history','Synthetic authorized history');
+  let baseline;
+  const deadline=performance.now()+2000;
+  do{
+    baseline=await activity();
+    if(baseline.value.counts?.total===1)break;
+    await new Promise(resolve=>setTimeout(resolve,5));
+  }while(performance.now()<deadline);
+  assert.equal(baseline.value.counts?.total,1,'authorized control event must reach the real ledger');
+  return {...h,workspace,setGrant,activity,finish,baseline:baseline.value};
+}
+
+test('M1 ledger stops collecting immediately after workspace authorization is revoked',async t=>{
+  const now=Date.now();
+  t.mock.method(Date,'now',()=>now);
+  const h=await openLedgerHost(t);
+  await h.setGrant(false);
+  h.finish('ledger-after-revoke','Synthetic event after revocation');
+  assert.equal((await h.activity()).value.counts.total,0);
+  await h.setGrant(true);
+  const restored=(await h.activity()).value;
+  assert.equal(restored.revision,h.baseline.revision,'revoked event must not change the persisted ledger');
+  assert.deepEqual(restored.sessions,h.baseline.sessions,'legal regrant restores only authorized history');
+});
+
+test('M1 ledger skips collection when current workspace authorization capture fails',async t=>{
+  let now=Date.now();
+  t.mock.method(Date,'now',()=>now);
+  const h=await openLedgerHost(t);
+  now+=2500;
+  h.known.pop();
+  h.finish('ledger-after-capture-failure','Synthetic event while the authorization catalog is unavailable');
+  assert.equal((await h.activity()).status,503);
+  await new Promise(resolve=>setImmediate(resolve));
+  h.known.push(h.workspace);
+  const restored=(await h.activity()).value;
+  assert.equal(restored.revision,h.baseline.revision,'a failed capture must not authorize a persisted event');
+  assert.deepEqual(restored.sessions,h.baseline.sessions);
+});
+
+test('M1 ledger global look follows the current confirmed desktop selection',async t=>{
+  let desktop='synthetic-owner',version=1;
+  const h=await openLedgerHost(t,{context:{config:{desktopConversationSessionId:{get:()=>desktop},desktopConversationSelectionVersion:{get:()=>version}}}});
+  const next=addLive(h,'ledger-new-desktop',h.workspace.path);
+  const look={action:'look',view:'progress'};
+  assert.equal((await h.tool(look)).ledger.counts.total,1);
+
+  const capture=h.adapter.workspaceAccess.capture;
+  const captured=Promise.withResolvers(),resume=Promise.withResolvers();
+  h.adapter.workspaceAccess.capture=async()=>{
+    const snapshot=await capture();
+    captured.resolve();
+    await resume.promise;
+    return snapshot;
+  };
+  const inFlight=h.tool(look);
+  await captured.promise;
+  desktop=String(next.id);
+  h.adapter.workspaceAccess.capture=capture;
+  resume.resolve();
+  assert.equal((await inFlight).ledger,undefined,'a desktop switch while the projection is read must also withhold it');
+  assert.equal((await h.tool(look)).ledger,undefined,'old desktop must immediately lose global look');
+  assert.equal((await h.tool(look,next)).ledger.counts.total,1);
+  version=0;
+  assert.equal((await h.tool({action:'look',view:'status'},next)).ledger,undefined,'unconfirmed pointer cannot retain global status');
+});
+
+test('M1 ledger global look follows the current WeChat setup and fails closed when unreadable',async t=>{
+  let sessionId='synthetic-owner',available=true;
+  const h=await openLedgerHost(t,{readSetup:async()=>{
+    if(!available)throw new Error('Synthetic setup read failure');
+    return {state:'bound',sessionId,bindingKey:'a'.repeat(64)};
+  }});
+  const next=addLive(h,'ledger-new-wechat',h.workspace.path);
+  const look={action:'look',view:'progress'};
+  assert.equal((await h.tool(look)).ledger.counts.total,1);
+  sessionId=String(next.id);
+  assert.equal((await h.tool(look)).ledger,undefined,'old WeChat session must immediately lose global look');
+  assert.equal((await h.tool(look,next)).ledger.counts.total,1);
+  available=false;
+  assert.equal((await h.tool(look,next)).ledger,undefined,'setup failure cannot reuse a previous binding');
+});
+
 test('logical board domains start empty and desktop scope works before WeChat pairing',async t=>{
  const routes=[];const h=await openHost(t,{connection:{fetch:{register:r=>{routes.push(r);return()=>{};}}},readSetup:async()=>({state:'unbound'})});
  h.known.push({id:'logical-fixture',path:h.root,title:'测试工作区',sessionIds:[]});
@@ -1048,12 +1155,66 @@ test('explicit project_update is sourced, repeat-quiet and passive in the real h
 
 test('standalone guarded WeChat owner can configure and send an existing-scope review without Family',async t=>{
  const sends=[],key='e'.repeat(64),bridge={binding:id=>id==='synthetic-owner'?{bound:true,bindingKey:key}:null,routeStatus:()=> 'current',send:async input=>{assert.equal(input.expectedBinding,key);assert.equal(input.authorize(),true);sends.push(input);return{status:'accepted'};}};
- const h=await openHost(t,{guardedBridge:bridge,readSetup:async()=>({state:'bound',sessionId:'synthetic-owner',bindingKey:'a'.repeat(64)}),personalReview:{collect:async()=>({evidence:[{id:'p1',source:'project',title:'合成进度',text:'存在合成风险',at:'2026-10-18T15:00:00.000Z'}],coverage:[{source:'project',status:'ok',count:1}]}),model:{summarize:async()=>({items:[{key:'risk',kind:'risk',title:'合成风险',summary:'存在风险',why:'需要核对',action:'核对',unknown:'',evidenceIds:['p1'],priority:'high',confidence:'source'}]})}}});
+ const h=await openHost(t,{guardedBridge:bridge,dailyDigest:{enabled:false},readSetup:async()=>({state:'bound',sessionId:'synthetic-owner',bindingKey:'a'.repeat(64)}),personalReview:{collect:async()=>({evidence:[{id:'p1',source:'project',title:'合成进度',text:'存在合成风险',at:'2026-10-18T15:00:00.000Z'}],coverage:[{source:'project',status:'ok',count:1}]}),model:{summarize:async()=>({items:[{key:'risk',kind:'risk',title:'合成风险',summary:'存在风险',why:'需要核对',action:'核对',unknown:'',evidenceIds:['p1'],priority:'high',confidence:'source'}]})}}});
  const root=h.owner.session.header.cwd;await h.tool({action:'watch'});
  const invoke=async args=>(await executeHostTool(h.ctx.tools,{name:'personal_review',callId:'call-'+args.action,arguments:args,agent:h.owner,signal:new AbortController().signal})).value;
  const configured=await invoke({action:'configure',sources:[],projects:[root],schedule:{dailyTime:'10:00',timeZone:'America/Mexico_City'},userRequested:true});assert.notEqual(configured.status,'blocked',JSON.stringify(configured));
  h.time('2026-10-18T16:00:00Z');await h.tick();assert.equal(sends.length,1);assert.equal(h.sent.length,0,'legacy first-peer fallback must never be called');
 });
+
+test('an enabled daily digest silences the old daily review on the same day',async t=>{
+ const sends=[],key='e'.repeat(64),bridge={binding:id=>id==='synthetic-owner'?{bound:true,bindingKey:key}:null,routeStatus:()=> 'current',send:async input=>{sends.push(input);return{status:'accepted'}}};
+ const h=await openHost(t,{guardedBridge:bridge,readSetup:async()=>({state:'bound',sessionId:'synthetic-owner',bindingKey:'a'.repeat(64)}),personalReview:{collect:async()=>({evidence:[{id:'p1',source:'project',title:'合成进度',text:'存在合成风险',at:'2026-10-18T15:00:00.000Z'}],coverage:[{source:'project',status:'ok',count:1}]}),model:{summarize:async()=>({items:[{key:'risk',kind:'risk',title:'合成风险',summary:'存在风险',why:'需要核对',action:'核对',unknown:'',evidenceIds:['p1'],priority:'high',confidence:'source'}]})}}});
+ const root=h.owner.session.header.cwd;await h.tool({action:'watch'});
+ const invoke=async args=>(await executeHostTool(h.ctx.tools,{name:'personal_review',callId:'call-'+args.action,arguments:args,agent:h.owner,signal:new AbortController().signal})).value;
+ const configured=await invoke({action:'configure',sources:[],projects:[root],schedule:{dailyTime:'10:00',timeZone:'America/Mexico_City'},userRequested:true});assert.notEqual(configured.status,'blocked',JSON.stringify(configured));
+ h.time('2026-10-18T16:00:00Z');await h.tick();
+ assert.equal(sends.filter(input=>String(input.requestId).startsWith('personal-')).length,0,'old daily review must stay muted while the digest is enabled');
+});
+
+test('digest tool: bound owner can read status, ordinary session cannot, manual send stays on the UI route', async t => {
+ const setupKey='a'.repeat(64), liveKey='b'.repeat(64), bridge={binding:id=>id==='synthetic-owner'?{bound:true,bindingKey:liveKey}:null,routeStatus:()=> 'current',send:async()=>({status:'accepted'})};
+ const h=await openHost(t,{guardedBridge:bridge,readSetup:async()=>({state:'bound',sessionId:'synthetic-owner',bindingKey:setupKey})});
+ const ownerView=await h.tool({action:'look',view:'digest'});
+ assert.equal(ownerView.status,'ok');
+ assert.equal(ownerView.view,'digest');
+ const manual=await h.tool({action:'digest_run'});
+ assert.equal(manual.code,'DIGEST_MANUAL_UI_ONLY');
+ const otherSession=h.ctx.sessions.create(SessionId('ordinary-digest-session'),{meta:{cwd:h.root}});
+ const other={id:String(otherSession.id),session:otherSession,ctx:h.ctx,status:'idle'};
+ h.live.set(other.id,other);
+ const denied=await h.tool({action:'look',view:'digest'},other);
+ assert.equal(denied.code,'DIGEST_OWNER_ONLY');
+});
+test('stale setup with no live binding cannot read or probe the digest', async t => {
+ const setup={state:'bound',sessionId:'synthetic-owner',bindingKey:'d'.repeat(64)};
+ const bridge={binding:()=>null,routeStatus:()=> 'unknown',send:async()=>({status:'accepted'})};
+ const h=await openHost(t,{guardedBridge:bridge,readSetup:async()=>setup});
+ const look=await h.tool({action:'look',view:'digest'});
+ assert.equal(look.code,'DIGEST_OWNER_ONLY');
+ const probe=await h.tool({action:'digest_probe'});
+ assert.equal(probe.code,'DIGEST_OWNER_ONLY');
+});
+
+test('desktop digest authority accepts the selected desktop session without a WeChat binding', async t => {
+ const h=await openHost(t,{readSetup:async()=>({state:'bound',sessionId:'wechat-owner',bindingKey:'d'.repeat(64)}),context:{config:{desktopConversationSessionId:'synthetic-owner',desktopConversationSelectionVersion:1}}});
+ const look=await h.tool({action:'look',view:'digest'});
+ assert.equal(look.status,'ok');
+ assert.equal(look.view,'digest');
+ const probe=await h.tool({action:'digest_probe'});
+ assert.notEqual(probe.code,'DIGEST_OWNER_ONLY');
+});
+
+test('a currently bound WeChat owner can both read and probe the digest', async t => {
+ const key='e'.repeat(64);
+ const bridge={binding:id=>id==='synthetic-owner'?{bound:true,bindingKey:key}:null,routeStatus:()=> 'current',send:async()=>({status:'accepted'})};
+ const h=await openHost(t,{guardedBridge:bridge,readSetup:async()=>({state:'bound',sessionId:'synthetic-owner',bindingKey:key})});
+ const look=await h.tool({action:'look',view:'digest'});
+ assert.equal(look.status,'ok');
+ const probe=await h.tool({action:'digest_probe'});
+ assert.notEqual(probe.code,'DIGEST_OWNER_ONLY');
+});
+
 for(const change of ['collection','model','dispatch'])test(`standalone grant/binding change at ${change} never reaches transport`,async t=>{
  let key='e'.repeat(64),transports=0;const bridge={binding:id=>id==='synthetic-owner'?{bound:true,bindingKey:key}:null,routeStatus:()=> 'current',send:async input=>{if(change==='dispatch')key='f'.repeat(64);if(input.authorize()&&input.expectedBinding===key)transports++;return{status:'blocked'};}};
  const evidence={id:'p1',source:'project',title:'合成进度',text:'存在合成风险',at:'2026-10-18T15:00:00.000Z'},candidate={key:'risk',kind:'risk',title:'合成风险',summary:'存在风险',why:'需要核对',action:'核对',unknown:'',evidenceIds:['p1'],priority:'high',confidence:'source'};
@@ -1177,4 +1338,23 @@ test('没绑微信的会话不会凭空回执',async t=>{
  h.ctx.emit('agent/inbox/claimed',{agent:live,message:{id:'g-1',source:{kind:'user'},content:[]},turn:1});
  await new Promise(resolve=>setTimeout(resolve,30));
  assert.equal(sends.length,0);
+});
+
+
+test('a guarded bridge mounted after the companion arms one timer and removal clears it', async t => {
+ const bridge={binding:()=>({bound:false}),routeStatus:()=> 'unknown',send:async()=>({status:'blocked'})};
+ const h=await openHost(t,{readSetup:async()=>({state:'unbound'})});
+ assert.equal(h.timers().active,false,'no bridge must stay timer-free');
+ const stop=h.ctx.provide('dotWechatGuarded',bridge);
+ await new Promise(resolve=>setTimeout(resolve,30));
+ assert.equal(h.timers().active,true,'late bridge must arm the shared timer');
+ const firstStarts=h.timers().starts;
+ stop();
+ await new Promise(resolve=>setTimeout(resolve,30));
+ assert.equal(h.timers().active,false,'removal must clear the bridge-only timer');
+ const stop2=h.ctx.provide('dotWechatGuarded',bridge);
+ await new Promise(resolve=>setTimeout(resolve,30));
+ assert.equal(h.timers().active,true,'re-mount must re-arm');
+ assert.equal(h.timers().starts,firstStarts+1,'only one shared interval per mount');
+ stop2();
 });
