@@ -71,6 +71,14 @@ export const dailyDigestRowSchema = z.object({
   history: z.array(digestRecordSchema).max(30),
 }).strict();
 
+/** The digest keeps only the legacy clock time; its zone is always the host's
+ * current zone. The old review's stored zone is deliberately ignored here. */
+export function digestSchedule(schedule, hostZone) {
+  const dailyTime = typeof schedule?.dailyTime === 'string' && /^([01]\d|2[0-3]):[0-5]\d$/.test(schedule.dailyTime) ? schedule.dailyTime : '09:00';
+  const timeZone = typeof hostZone === 'string' && hostZone ? hostZone : 'Asia/Shanghai';
+  return {dailyTime, timeZone};
+}
+
 export const emptyDailyDigestRow = () => ({
   id: 'profile', version: 1, enabled: true,
   lastOccurrence: null, lastDay: null, lastAttemptAt: null, lastDigestAt: null, lastGmailAt: null, gmailSince: null, lastSentAt: null,
@@ -116,7 +124,7 @@ const lower = value => clean(value).toLowerCase();
 
 const BULK_LOCAL = /^(?:no[.-]?reply|do[.-]?not[.-]?reply|notifications?|notify|newsletter|marketing|promotions?|promo|bounce|mailer|digest|edm)$/i;
 const BULK_DOMAIN = /(?:^|\.)(?:mailchimp\.com|sendgrid\.net|sendinblue\.com|klaviyo\.com|constantcontact\.com|hubspot(email)?\.com|substack\.com|beehiiv\.com|mailerlite\.com|customer\.io|intercom-mail\.com|salesforce\.com)$/i;
-const BULK_SUBJECT = /(退订|取消订阅|促销|优惠|折扣|限时|大促|新品|直播|秒杀|中奖|优惠券|newsletter|unsubscribe|% ?off|special offer|webinar|weekly digest|roundup)/i;
+const BULK_SUBJECT = /(退订|取消订阅|newsletter|unsubscribe|weekly digest|roundup|webinar)/i;
 
 export function isBulkMail(row) {
   const from = lower(row?.from);
@@ -201,7 +209,7 @@ export const DIGEST_SYSTEM = `你是用户的中文每日整理助理。输入 J
 - progress: 一句话的新进展；没有就空字符串。
 - otherSays: 这件事的依据是否只有发信人自己的说法（没有其他来源核实）时为 true。
 - missing: 信里没写清楚、会影响判断的关键信息；没有就空字符串。
-- searchedMissing: 如果为了这件事实在邮件和日历里找过某个东西（例如会议链接）但没找到，写这个东西；没找过就空字符串。不要写“没找到”以外的地点。
+- searchedMissing: 如果为了这件事实在邮件摘要和日历标题里找过某个东西（例如会议链接）但没看到，写这个东西；没找过就空字符串。只凭摘要和标题，不要推断正文或地点。
 - linkTo: 如果输入里的某条待办或日程就是同一件事，填 {source:"dida"|"calendar", id:"输入里的 id", same:"same"|"unsure"}；不确定就用 unsure；没有就省略。
 - evidence: 至少一个本次输入里的 id，{mailId?, taskId?, eventId?}。mailId 来自 mails，taskId 来自 promises，eventId 来自 calendar。不能造 id，不能引用其他项的 id。
 规则：时间照输入原文引，不换算时区、不写星期几；不要输出 URL、Markdown、代码围栏或解释；不要复述整段邮件；没有证据支持宁可不提。只输出 JSON：{"items":[...]}。`;
@@ -269,7 +277,7 @@ export function renderDigest({items, mails = [], promises = [], events = [], cou
     if (cleanModelText(item.progress)) lines.push(`   ${cleanModelText(item.progress)}`);
     if (item.otherSays) lines.push('   这是对方的说法，没有核实。');
     if (cleanModelText(item.missing)) lines.push(`   缺：${cleanModelText(item.missing)}`);
-    if (cleanModelText(item.searchedMissing)) lines.push(`   邮件和日历里没找到${cleanModelText(item.searchedMissing)}，也可能是从别处发的。`);
+    if (cleanModelText(item.searchedMissing)) lines.push(`   这封信的摘要和日历标题里没看到${cleanModelText(item.searchedMissing)}，可能在正文里，也可能是从别处发的。`);
     let hasLink = false;
     const mail = item.evidence.mailId ? mailById.get(item.evidence.mailId) : null;
     if (mail) {

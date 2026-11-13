@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   MAIL_LIMIT, filterMails, mailQuery, validateDigestOutput, renderDigest, localDay, latestOccurrence,
-  projectDigestLedger, digestCallerAllowed,
+  projectDigestLedger, digestCallerAllowed, digestSchedule, isBulkMail, DIGEST_SYSTEM,
 } from '../src/daily-digest.js';
 import {createDailyDigest} from '../src/daily-digest-service.js';
 
@@ -67,7 +67,8 @@ test('program renderer writes caveats, real links, counts, remainder and candida
   assert.match(text, /今天的邮件与待办，有 2 件值得看/);
   assert.match(text, /这是对方的说法，没有核实。/);
   assert.match(text, /缺：金额没写币种/);
-  assert.match(text, /邮件和日历里没找到会议链接，也可能是从别处发的。/);
+  assert.match(text, /这封信的摘要和日历标题里没看到会议链接，可能在正文里，也可能是从别处发的。/);
+  assert.match(DIGEST_SYSTEM, /searchedMissing:.*摘要和日历标题里找过/);
   assert.match(text, /https:\/\/mail\.google\.com\/mail\/u\/0\/#all\/t1/);
   assert.match(text, /https:\/\/dida365\.com\/webapp\/#p\/p1\/tasks\/task1/);
   assert.match(text, /读了 1 个邮箱（最近 24 小时的 33 封，过了规则筛 30 封）、滴答 4 个清单、未来 7 天的日历。/);
@@ -615,4 +616,25 @@ test('an unknown transport result records uncertain, never sent, and does not re
   assert.equal(second.status, 'already');
   assert.equal(sends, 1);
   await digest.close();
+});
+
+
+test('the legacy review supplies the clock time, but the digest always uses the host zone for occurrence and local day', () => {
+  const schedule = digestSchedule({dailyTime: '09:00', timeZone: 'America/Mexico_City'}, 'Asia/Shanghai');
+  assert.deepEqual(schedule, {dailyTime: '09:00', timeZone: 'Asia/Shanghai'});
+  assert.equal(localDay('2026-11-12T16:30:00.000Z', schedule.timeZone), '2026-11-13');
+  assert.equal(latestOccurrence(new Date('2026-11-12T01:00:00.000Z'), schedule.dailyTime, schedule.timeZone).epoch, Date.parse('2026-11-12T01:00:00.000Z'));
+  assert.deepEqual(digestSchedule(null, 'Asia/Shanghai'), {dailyTime: '09:00', timeZone: 'Asia/Shanghai'});
+});
+
+test('ordinary senders keep business words; only unsubscribe/subscription subjects are bulk', () => {
+  const words = ['促销', '优惠', '折扣', '限时', '大促', '新品', '直播', '秒杀', '优惠券', '% off', 'special offer'];
+  for (const word of words) {
+    assert.equal(isBulkMail({from: 'Alice <alice@example.test>', subject: `关于${word}的项目进展`}), false, word);
+  }
+  for (const subject of ['退订本邮件', '取消订阅', 'unsubscribe now', 'Weekly Newsletter', 'weekly digest', 'roundup', 'webinar invite']) {
+    assert.equal(isBulkMail({from: 'Alice <alice@example.test>', subject}), true, subject);
+  }
+  assert.equal(isBulkMail({from: 'newsletter@brand.example', subject: '项目进展'}), true, 'sender local-part still blocks');
+  assert.equal(isBulkMail({from: 'Alice <alice@example.test>', subject: '推广：新品'}), false, 'Gmail category filter owns promotion, not the subject');
 });

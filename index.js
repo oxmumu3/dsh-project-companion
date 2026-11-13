@@ -27,7 +27,7 @@ import {buildDoctorReport} from './src/doctor.js';
 import {markPrivateRead,privateEgressBlocked,clearPrivateReads,PRIVATE_EGRESS_BLOCKED_TEXT} from './src/egress-guard.js';
 import {createPersonalReviewControl,registerPersonalReviewControl} from './src/personal-review-control.js';
 import {createPersonalReviewService,personalReviewRowSchema} from './src/personal-review.js';
-import {createDigestModel,dailyDigestRowSchema,projectDigestLedger} from './src/daily-digest.js';
+import {createDigestModel,dailyDigestRowSchema,digestSchedule as digestScheduleFromReview,projectDigestLedger} from './src/daily-digest.js';
 import {createDigestOwnerChannel,digestCallerIsOwner,sameDigestOwner} from './src/digest-owner.js';
 import {createDailyDigest} from './src/daily-digest-service.js';
 import {createReviewWorkbenchReader} from './src/review-workbench-projection.js';
@@ -692,7 +692,8 @@ export async function installCompanion(ctx,options={}){
   await personalReview.ready();await pulseLedger.ready();
   const hostZone=()=>{try{const v=options.hostTimeZone;const z=typeof v==='function'?v():v;return typeof z==='string'&&z?z:Intl.DateTimeFormat().resolvedOptions().timeZone||'Asia/Shanghai';}catch{return'Asia/Shanghai';}};
   const digestSchedule=async()=>{
-    try{const row=await personalReviewTable.get('profile');const s=row?.subscription?.schedule;return{dailyTime:typeof s?.dailyTime==='string'?s.dailyTime:'09:00',timeZone:typeof s?.timeZone==='string'&&s.timeZone?s.timeZone:hostZone()};}catch{return{dailyTime:'09:00',timeZone:hostZone()};}
+    // The legacy review supplies only the clock time. The digest always follows the host's current zone; the old review keeps its own stored zone.
+    try{const row=await personalReviewTable.get('profile');return digestScheduleFromReview(row?.subscription?.schedule,hostZone());}catch{return digestScheduleFromReview(null,hostZone());}
   };
   const digestLedger=async()=>{
     try{

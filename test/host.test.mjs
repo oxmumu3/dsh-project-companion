@@ -1358,3 +1358,17 @@ test('a guarded bridge mounted after the companion arms one timer and removal cl
  assert.equal(h.timers().starts,firstStarts+1,'only one shared interval per mount');
  stop2();
 });
+
+test('real installCompanion digest schedule uses host zone while keeping the legacy review clock', async t => {
+ const key='a'.repeat(64),bridge={binding:id=>id==='synthetic-owner'?{bound:true,bindingKey:key}:null,routeStatus:()=> 'current',send:async()=>({status:'accepted'})};
+ const h=await openHost(t,{hostTimeZone:'Asia/Shanghai',guardedBridge:bridge,readSetup:async()=>({state:'bound',sessionId:'synthetic-owner',bindingKey:key}),personalReview:{collect:async()=>({evidence:[],coverage:[]}),model:{summarize:async()=>({items:[]})}}});
+ const root=h.owner.session.header.cwd;await h.tool({action:'watch'});
+ const invoke=async args=>(await executeHostTool(h.ctx.tools,{name:'personal_review',callId:'call-'+args.action,arguments:args,agent:h.owner,signal:new AbortController().signal})).value;
+ const configured=await invoke({action:'configure',sources:[],projects:[root],schedule:{dailyTime:'09:00',timeZone:'America/Mexico_City'},userRequested:true});assert.notEqual(configured.status,'blocked',JSON.stringify(configured));
+ const view=await h.adapter.dailyDigest.view();
+ assert.equal(view.schedule.dailyTime,'09:00');
+ assert.equal(view.schedule.timeZone,'Asia/Shanghai','legacy Mexico zone must not drive the digest');
+ h.time('2026-10-19T01:00:00.000Z');
+ assert.equal((await h.adapter.dailyDigest.view()).nextRunAt,'2026-10-20T01:00:00.000Z');
+ await h.tick();
+});
