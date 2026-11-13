@@ -13,6 +13,10 @@ export async function planSdk(args) {
   const metadata = JSON.parse(await readFile(join(source, 'package.json')));
   const sdk = validateCompatibility(metadata, args[1]);
   const dependencies = { ...metadata.dependencies, ...metadata.devDependencies };
+  const lock = JSON.parse(await readFile(join(source, 'package-lock.json')));
+  const esbuildVersion = lock.packages?.['node_modules/esbuild']?.version;
+  if (!/^\d+\.\d+\.\d+$/.test(esbuildVersion ?? '')) throw Error('Missing locked esbuild version');
+  dependencies.esbuild = esbuildVersion;
   dependencies['@deepseek-ai/cordis'] = sdk.startsWith('0.2.2-rc.') ? '4.1.0' : sdk === '0.2.0-rc.2' ? '4.0.4' : '4.0.5';
   dependencies['@deepseek-ai/schemastery'] = sdk.startsWith('0.2.2-rc.') ? '3.19.0' : sdk === '0.2.0-rc.2' ? '3.18.4' : '3.18.5';
   for (const name of Object.keys(dependencies)) if (name.startsWith('@deepseek-ai/dsh-')) dependencies[name] = sdk;
@@ -50,11 +54,12 @@ async function main() {
     const actual = JSON.parse(await readFile(join(carrier, 'node_modules', name, 'package.json'))).version;
     if (actual !== version) throw Error('Resolved SDK drift: ' + name);
   }
-  await cp(source, stage, { recursive: true, filter: filename => !['.git', 'node_modules', 'ci-results'].includes(relative(source, filename).split(/[\\/]/)[0]) });
+  await cp(source, stage, { recursive: true, filter: filename => !['.git', 'node_modules', 'ci-results', 'dist'].includes(relative(source, filename).split(/[\\/]/)[0]) });
   await symlink(join(carrier, 'node_modules'), join(stage, 'node_modules'), 'junction');
   const runtime = { ...env, DOT_GUARDED_BRIDGE_ROOT: join(stage, 'vendor/dsh-wechat'), DSH_WECHAT_BRIDGE_ROOT: join(stage, 'vendor/dsh-wechat'), NODE_OPTIONS: '--max-old-space-size=128 --import=' + pathToFileURL(join(stage, 'scripts/ci-network.mjs')).href };
   const network = await verifySandbox({ cwd: stage, env: runtime });
   await writeFile(join(output, 'network-selftest.json'), JSON.stringify(network, null, 2) + '\n');
+  await run(process.execPath, ['scripts/build.mjs'], stage, runtime, 'client-build.log', 30000);
   const tests = ["test/host-tool-call.test.mjs", "test/official-channels.test.mjs", "test/host.test.mjs", "test/native-draft.test.mjs", "test/workbench-ui.test.mjs", "test/onboarding-ui.test.mjs", "test/context-client.test.mjs", "test/news-model.test.mjs", "test/compatibility-contract.test.mjs", "test/ci-sandbox.test.mjs", "test/embedded-wechat-pairing.test.mjs", "test/embedded-wechat-auth.test.mjs", "test/bundled-wechat.test.mjs", "test/bundled-wechat-storage.test.mjs", "test/wechat-route.test.mjs", "test/wechat-recovery.test.mjs"];
   const suite = await run(process.execPath, ['--max-old-space-size=128', '--test', '--test-reporter=tap', '--test-concurrency=1', ...tests], stage, runtime, 'suite.tap', 240000);
   const counts = Object.fromEntries([...suite.stdout.matchAll(/^# (tests|pass|fail|skipped|cancelled) (\d+)$/gm)].map(([,key,value]) => [key, Number(value)]));
