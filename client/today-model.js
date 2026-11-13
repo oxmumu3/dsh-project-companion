@@ -11,6 +11,24 @@ const RANK = {needs_you: 0, stuck: 0, doing: 1, done: 2};
 const CN = n => n <= 10 ? '零一两三四五六七八九十'[n] : String(n);
 const clean = value => typeof value === 'string' ? value.replace(/[\u0000-\u001f\u007f]/g, ' ').trim() : '';
 
+/** Human time for Today. The projection stores ISO instants; the page never
+ *  shows an ISO string. Relative minutes are exact, not rounded up. */
+export function atText(value, now = new Date()) {
+  const stamp = Date.parse(value);
+  if (!Number.isFinite(stamp)) return '';
+  const diff = now.getTime() - stamp;
+  if (diff >= 0 && diff < 60_000) return '刚刚';
+  if (diff >= 0 && diff < 3_600_000) return `${Math.max(1, Math.floor(diff / 60_000))} 分钟前`;
+  const date = new Date(stamp);
+  const dayKey = d => new Intl.DateTimeFormat('en-CA', {year: 'numeric', month: '2-digit', day: '2-digit'}).format(d);
+  const days = Math.round((Date.parse(dayKey(now)) - Date.parse(dayKey(date))) / 86_400_000);
+  const time = new Intl.DateTimeFormat('zh-CN', {hour: '2-digit', minute: '2-digit', hourCycle: 'h23'}).format(date);
+  if (days === 0) return `今天 ${time}`;
+  if (days === 1) return `昨天 ${time}`;
+  if (days > 1 && days < 7) return `${new Intl.DateTimeFormat('zh-CN', {weekday: 'short'}).format(date)} ${time}`;
+  return new Intl.DateTimeFormat('zh-CN', {month: 'numeric', day: 'numeric'}).format(date);
+}
+
 export function groupSessions(sessions = []) {
   const rows = Array.isArray(sessions) ? sessions.filter(row => row && typeof row.projectId === 'string') : [];
   const byState = {wait: [], stuck: [], run: [], done: []};
@@ -44,18 +62,22 @@ export function projectDots(projects = [], sessions = [], blind = false) {
 
 function headlineFor({counts, state, sessions, projects, away}) {
   const parts = [];
-  if (counts.done) parts.push(`${CN(counts.done)} 件做完了`);
-  if (counts.wait) parts.push(`${CN(counts.wait)} 件在等你`);
-  if (counts.stuck) parts.push(`${CN(counts.stuck)} 件卡住了`);
-  const runTail = counts.run ? `${parts.length ? '还有' : '现在有'} ${CN(counts.run)} 件在跑` : '';
+  if (counts.done) parts.push(`${CN(counts.done)}件做完了`);
+  if (counts.wait) parts.push(`${CN(counts.wait)}件在等你`);
+  if (counts.stuck) parts.push(`${CN(counts.stuck)}件卡住了`);
+  const runTail = counts.run ? `${parts.length ? '还有' : '有'}${CN(counts.run)}件在跑` : '';
   if (state === 'blind') return {lead: zh.today.leadBlind, lines: [], tail: '', text: zh.today.headlineBlind};
-  if (state === 'empty') return {lead: '', lines: [zh.today.headlineEmpty], tail: '', text: zh.today.headlineEmpty};
-  if (!parts.length) return {lead: '', lines: [runTail ? `${runTail}，` : '', zh.today.headlineRunOnly].filter(Boolean), tail: '', text: runTail ? `${runTail}，${zh.today.headlineRunOnly}` : zh.today.headlineRunOnly};
+  if (state === 'empty') return {lead: '', lines: [zh.today.headlineEmpty], tail: '', text: `${zh.today.headlineEmpty}${zh.today.firstHint}`};
+  const lead = away ? zh.today.leadAway : zh.today.leadNow;
+  if (!parts.length) {
+    const tail = runTail ? `${runTail}。${zh.today.headlineRunOnly}` : zh.today.headlineRunOnly;
+    return {lead: runTail ? lead : '', lines: [], tail, text: `${runTail ? lead : ''}${tail}`};
+  }
   return {
-    lead: away ? zh.today.leadAway : zh.today.leadNow,
+    lead,
     lines: parts,
     tail: runTail ? `${runTail}。` : '',
-    text: [away ? zh.today.leadAway : zh.today.leadNow, ...parts, runTail ? `${runTail}。` : ''].filter(Boolean).join(''),
+    text: `${lead}${parts.join('，')}${runTail ? `，${runTail}` : ''}。`,
   };
 }
 
@@ -87,7 +109,7 @@ export function buildToday(activity, {now = new Date(), sample = false} = {}) {
     state: row.state,
     title: clean(row.title) || clean(row.what) || zh.today.untitledItem,
     what: clean(row.what),
-    at: row.at ?? null,
+    at: atText(row.at, now),
     short: clean(row.short),
     // Production does not inject an approval decision service today. The
     // waiting card therefore opens the original session directly; the approve
@@ -106,7 +128,7 @@ export function buildToday(activity, {now = new Date(), sample = false} = {}) {
     let group = doneGroups.find(item => item.projectId === row.projectId);
     if (!group) { group = {projectId: row.projectId, name, count: 0, latest: null}; doneGroups.push(group); }
     group.count += 1;
-    if (!group.latest) group.latest = {what: clean(row.what) || clean(row.title), at: row.at ?? null};
+    if (!group.latest) group.latest = {what: clean(row.what) || clean(row.title), at: atText(row.at, now)};
   }
   doneGroups.sort((a, b) => b.count - a.count);
 

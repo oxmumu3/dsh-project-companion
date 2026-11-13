@@ -31,10 +31,7 @@ test('the sentence is built from counts, never from a model', () => {
   const model = buildToday(activity());
   assert.equal(model.state, 'needs');
   assert.equal(model.counts.wait, 1);
-  assert.ok(model.headline.text.includes('两 件做完了'), model.headline.text);
-  assert.ok(model.headline.text.includes('一 件在等你'));
-  assert.ok(model.headline.text.includes('一 件卡住了'));
-  assert.ok(model.headline.text.includes('两 件在跑'));
+  assert.equal(model.headline.text, '到现在为止，两件做完了，一件在等你，一件卡住了，还有两件在跑。');
 });
 
 test('needs-you and stuck items become two big cards and the rest become rows', () => {

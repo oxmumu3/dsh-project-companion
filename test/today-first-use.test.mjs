@@ -182,3 +182,13 @@ test('Today first-use band uses host theme tokens and does not reintroduce light
   assert.ok(rules.some(rule => /\.pc_dot_inline_code button\{[^}]*background:var\(--card\)/.test(rule)), 'button must use host card');
   assert.ok(!rules.some(rule => !rule.includes('img') && /rgb\(255|#edf2fc|#fff/.test(rule)), 'no old light-card colors in the band');
 });
+
+test('Today headline joins its counts with Chinese punctuation and no stray spaces', async t => {
+  await loadView(t);
+  const model = buildToday(activity({counts: {done: 2, wait: 1, stuck: 0, run: 2, total: 5}}));
+  assert.equal(model.headline.text, '到现在为止，两件做完了，一件在等你，还有两件在跑。');
+  const tree = render(model);
+  const line = all(tree, node => node.props?.className === 'line')[0];
+  const textOf = node => typeof node === 'string' ? node : node && typeof node === 'object' ? (node.children ?? []).map(textOf).join('') : '';
+  assert.equal(textOf(line).replace(/\s+/g, ''), '到现在为止，两件做完了，一件在等你，还有两件在跑。');
+});

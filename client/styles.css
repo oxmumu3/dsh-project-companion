@@ -4,7 +4,7 @@
 .dotv2{
   --ink:var(--dsw-alias-label-primary);
   --ink2:var(--dsw-alias-label-secondary);
-  --ink3:var(--dsw-alias-label-tertiary);
+  --ink3:var(--dsw-alias-label-secondary);
   --ink4:var(--dsw-alias-label-caption);
   --bg:var(--dsw-alias-bg-base);
   --card:var(--dsw-alias-bg-layer-2);
@@ -76,7 +76,7 @@
 .dotv2 .cell{position:relative;display:flex;flex-direction:column;align-items:flex-start;gap:9px;flex:0 1 148px;min-width:0;padding:6px 10px 6px 8px;border-radius:var(--r-sm)}
 .dotv2 .cell:hover{background:var(--hover)}
 .dotv2 .cell .d{margin:3px 0 0 1px}
-.dotv2 .cell b{display:block;font-weight:600;font-size:13.5px;line-height:20px}
+.dotv2 .cell b{display:-webkit-box;overflow:hidden;-webkit-box-orient:vertical;-webkit-line-clamp:2;font-weight:600;font-size:13.5px;line-height:20px;overflow-wrap:anywhere}
 .dotv2 .cell>div{min-width:0;max-width:100%}
 .dotv2 .cell span{display:block;color:var(--ink3);font-size:12.5px;line-height:18px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .dotv2 .cell.is-wait span{color:var(--wait)}.dotv2 .cell.is-stuck span{color:var(--stuck)}
@@ -89,7 +89,7 @@
 .dotv2 h2 small{font-weight:400;color:var(--ink3);font-size:12.5px}
 .dotv2 .focus{padding:24px 26px 20px;border:1px solid var(--line2);border-radius:var(--r-xl);background:var(--card)}
 .dotv2 .focus+.focus{margin-top:12px}
-.dotv2 .focus .meta{display:flex;align-items:center;gap:10px;color:var(--ink3);font-size:13px}
+.dotv2 .focus .meta{display:flex;align-items:center;flex-wrap:wrap;gap:4px 10px;color:var(--ink3);font-size:13px}
 .dotv2 .focus .meta b{font-weight:600}
 .dotv2 .focus.is-wait .meta b{color:var(--wait)}.dotv2 .focus.is-stuck .meta b{color:var(--stuck)}
 .dotv2 .focus .meta time{margin-left:auto}
@@ -105,8 +105,8 @@
 .dotv2 .btn:not(.primary):hover{background:var(--hover)}
 .dotv2 .acts .sp{flex:1}
 .dotv2 .rows{margin-top:10px}
-.dotv2 .row{display:grid;grid-template-columns:20px 84px minmax(0,1fr) auto;align-items:center;gap:0 12px;padding:15px 4px 15px 8px;border-bottom:1px solid var(--line)}
-.dotv2 .row b{font-weight:600;font-size:13.5px}
+.dotv2 .row{display:grid;grid-template-columns:20px minmax(0,150px) minmax(0,1fr) auto;align-items:center;gap:0 12px;padding:15px 4px 15px 8px;border-bottom:1px solid var(--line)}
+.dotv2 .row b{display:-webkit-box;min-width:0;overflow:hidden;-webkit-box-orient:vertical;-webkit-line-clamp:2;font-weight:600;font-size:13.5px;overflow-wrap:anywhere}
 .dotv2 .row p{color:var(--ink2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .dotv2 .row .tail{display:flex;align-items:center;gap:4px;color:var(--ink3);font-size:12.5px}
 .dotv2 .row .tail time{margin-right:8px}
@@ -118,6 +118,9 @@
 .dotv2 .ulink{color:var(--ink);text-decoration:underline;text-underline-offset:3px;text-decoration-color:var(--line2)}
 .dotv2 .next{margin-top:26px;color:var(--ink3);font-size:12.5px;line-height:20px}
 .dotv2 .sample-card{margin:6px 0 18px;padding:16px 18px;border:1px dashed var(--line2);border-radius:var(--r-xl);color:var(--ink2);font-size:13.5px}
+
+.dotv2 :is(.cell b,.row b,.focus h3,.focus .meta span,.promise b,.promise .link span){overflow-wrap:anywhere;word-break:break-word}
+.dotv2 .promise .link{flex-wrap:wrap}
 
 @media(max-width:900px){
   .dotv2 .stage{padding:28px 20px 72px}

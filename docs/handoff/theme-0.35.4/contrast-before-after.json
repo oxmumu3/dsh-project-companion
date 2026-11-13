@@ -1,0 +1,30 @@
+{
+  "source": "Chromium-rendered synthetic matrix from the same CSS, not official Electron",
+  "before": {
+    "googleTitleDark": 1.05,
+    "googleStatusDark": 1.05,
+    "gmailStatusDark": 1.05,
+    "googleDisclosureDark": 1.23,
+    "googleLoginDark": 2.33,
+    "googleLoginLight": 4.23,
+    "todaySecondaryLight": 3.71,
+    "dotShellDark": "rgb(246, 245, 240)",
+    "googleCardDark": "rgb(44, 44, 46)",
+    "matrixButton": {"width": 28, "height": 44, "border": "1px 1px", "padding": "13px 9px"}
+  },
+  "after": {
+    "googleTitleLight": 18.9,
+    "googleTitleDark": 13.34,
+    "googleDisclosureLight": 16.97,
+    "googleDisclosureDark": 10.39,
+    "gmailStatusLight": 18.9,
+    "gmailStatusDark": 13.34,
+    "googleLoginLight": 5.43,
+    "googleLoginDark": 5.96,
+    "todaySecondaryLight": 5.8,
+    "todaySecondaryDark": 12.11,
+    "dotShellDark": "rgb(21, 21, 23)",
+    "googleCardDark": "rgb(44, 44, 46)",
+    "matrixButton": {"width": 18, "height": 18, "border": "0px 0px", "padding": "0px 0px"}
+  }
+}
