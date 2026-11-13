@@ -1173,7 +1173,7 @@ function createDotGoalBoardViews(React) {
         React.useEffect(()=>{const store=storeRef.current;store.start();return()=>store.stop();},[]);
         React.useEffect(()=>{const store=storeRef.current;store.setActive(open);if(open)void store.refreshNow();},[open]);
         // The cold, collapsed launcher has not checked the host yet.
-        const model = open || snapshot.phase === 'ready' ? buildToday(snapshot.activity) : null;
+        const model = open || snapshot.phase === 'ready' ? buildToday(snapshot.activity, {loading: snapshot.phase === 'loading'}) : null;
         const openDot=()=>{publishWorkbenchSurface({openPageToken:Date.now()});try{ctx.layout?.selectPanel?.(dotPanel);}catch{}};
         const expand=()=>{openDot();publishWorkbenchSurface({dockRequest:Date.now()});};
         const toggle=next=>{
@@ -1252,7 +1252,7 @@ function createDotGoalBoardViews(React) {
         // Real activity must be reachable, empty, truly unbound and use the
         // existing bridge path; a transient Workbench waiting state is not enough.
         const liveToday=todaySnapshot.phase==='ready'?todaySnapshot.activity:null;
-        const liveEmpty=Boolean(liveToday&&liveToday.reachable!==false&&(liveToday.counts?.total??0)===0&&!(liveToday.promises?.length));
+        const liveEmpty=Boolean(liveToday&&liveToday.reachable!==false&&!['idle','reading','failed'].includes(liveToday.sourcesPhase)&&(liveToday.counts?.total??0)===0&&!(liveToday.promises?.length));
         const todayWechatModeValue=todayWechatMode(liveToday?.connection, snapshot?.connection, {empty:liveEmpty, reachable:liveToday?.reachable!==false});
         const todayWechatSetup=todayWechatModeValue!==null;
         const todayGateRef=React.useRef('');
@@ -1589,7 +1589,7 @@ function createDotGoalBoardViews(React) {
         const projectsPage=h('div',null,h(ProjectBoard,{controller:logicalProjects,workspaceController:workspaceScope}),h('details',{className:'pc_goal_legacy'},h('summary',null,'工作区目录与原有关注记录'),h('p',{className:'pc_dot_muted'},'这里保留旧关注、固定说明和安排。工作区是资料入口，目标项目在上方组织。'),legacyProjectsPage));
         // Today page: one projection, polled only while visible, with the same
         // card actions as the floating entry.
-        const todayModel=buildToday(liveEmpty&&!sampleCleared?sampleActivity():liveToday,{sample:liveEmpty&&!sampleCleared});
+        const todayModel=buildToday(liveEmpty&&!sampleCleared?sampleActivity():liveToday,{sample:liveEmpty&&!sampleCleared,loading:todaySnapshot.phase==='loading'});
         const todayAct=async(action,payload={})=>{
           const key=payload.cardId?`${payload.projectId}:${payload.cardId}`:'';
           if(key&&['approve','retry'].includes(action))setPendingCards(previous=>new Set(previous).add(key));

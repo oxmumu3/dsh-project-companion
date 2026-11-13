@@ -99,7 +99,7 @@ export function createDotSourceReader({
   identity = null,
 } = {}) {
   if (!sources?.rowOf || typeof read !== 'function') throw new Error('Dot source reader needs source rows and a read function');
-  let cache = {promises: [], sources: [], revision: 0, lastAttemptAt: null, lastSuccessAt: null};
+  let cache = {promises: [], sources: [], revision: 0, lastAttemptAt: null, lastSuccessAt: null, phase: 'idle', readError: null};
   let lastAttempt = 0;
   let lastGood = new Map();
   let cachedIdentity = new Map();
@@ -242,6 +242,7 @@ export function createDotSourceReader({
 
   async function refreshOnce() {
     if (stopped || isClosed()) return cache;
+    cache = {...cache, phase: 'reading'};
     const rows = await enabledRows();
     const enabledSet = new Set(rows.map(row => row.source));
     // Turning a switch off removes its cached rows immediately; they must not
@@ -315,6 +316,8 @@ export function createDotSourceReader({
       sources: sourceList,
       lastAttemptAt: new Date(clock()).toISOString(),
       lastSuccessAt: Object.values(states).some(row => row.state === 'ok') ? new Date(clock()).toISOString() : cache.lastSuccessAt,
+      phase: 'ready',
+      readError: null,
     };
     lastAttempt = clock().getTime();
     return cache;
@@ -322,7 +325,24 @@ export function createDotSourceReader({
 
   function refresh() {
     if (inflight) return inflight;
-    inflight = refreshOnce().finally(() => { inflight = null; });
+    inflight = refreshOnce()
+      .catch(error => {
+        // A whole-read failure is not an empty result. Keep the last good rows
+        // but tell the projection it is an error, so Today never claims
+        // "all handled" while the sources are unknown.
+        const code = typeof error?.code === 'string' ? error.code : 'CONTEXT_UNAVAILABLE';
+        cache = {
+          ...cache,
+          phase: 'failed',
+          readError: code,
+          lastAttemptAt: new Date(clock()).toISOString(),
+        };
+        // Back off like any other read attempt; otherwise every activity poll
+        // would restart a whole-read failure.
+        lastAttempt = clock().getTime();
+        throw error;
+      })
+      .finally(() => { inflight = null; });
     return inflight;
   }
 
@@ -360,7 +380,11 @@ export function createDotSourceReader({
         promises = promises.filter(row => allowed.has(row.source));
         sources = sources.filter(row => allowed.has(row.id));
       }
-      return {promises, sources, revision: cache.revision, lastAttemptAt: cache.lastAttemptAt, lastSuccessAt: cache.lastSuccessAt};
+      return {
+        promises, sources, revision: cache.revision,
+        lastAttemptAt: cache.lastAttemptAt, lastSuccessAt: cache.lastSuccessAt,
+        phase: cache.phase, readError: cache.readError,
+      };
     },
     async refreshNow() { return refresh(); },
     refreshIfStale() {
@@ -379,7 +403,7 @@ export function createDotSourceReader({
       timer = null;
       lastGood = new Map();
       cachedIdentity = new Map();
-      cache = {promises: [], sources: [], revision: cache.revision + 1, lastAttemptAt: cache.lastAttemptAt, lastSuccessAt: null};
+      cache = {promises: [], sources: [], revision: cache.revision + 1, lastAttemptAt: cache.lastAttemptAt, lastSuccessAt: null, phase: 'idle', readError: null};
     },
   };
 }

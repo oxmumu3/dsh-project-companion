@@ -115,6 +115,10 @@
 .dotv2 .promise time{color:var(--ink3);font-size:12.5px;line-height:22px}
 .dotv2 .promise b{font-weight:500;font-size:14px}
 .dotv2 .promise .link{grid-column:2;display:flex;align-items:center;gap:8px;color:var(--ink3);font-size:12.5px;line-height:19px}
+/* Waiting, read failure and a confirmed empty list are one whole row, never a
+   value squeezed into the 52 px date column. */
+.dotv2 .promise li.is-state{grid-template-columns:minmax(0,1fr);padding:16px 0}
+.dotv2 .promise li.is-state>span{color:var(--ink3);font-size:13px;line-height:22px;overflow-wrap:anywhere}
 .dotv2 .ulink{color:var(--ink);text-decoration:underline;text-underline-offset:3px;text-decoration-color:var(--line2)}
 .dotv2 .next{margin-top:26px;color:var(--ink3);font-size:12.5px;line-height:20px}
 .dotv2 .sample-card{margin:6px 0 18px;padding:16px 18px;border:1px dashed var(--line2);border-radius:var(--r-xl);color:var(--ink2);font-size:13.5px}

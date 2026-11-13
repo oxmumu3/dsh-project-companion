@@ -78,6 +78,7 @@ export function createTodayView(React) {
 
   function TodayPage({model, onAct, onSay, onOpenProject, onOpenSession, onClearSample, pending, wechatMode = null, inlineConnection = null, inlineConnectionError = '', qrFailed = false, onRefreshInline, onOpenSettings, onQrError}) {
     const empty = model.state === 'empty';
+    const flush = empty || model.state === 'loading';
     const [draft, setDraft] = React.useState('');
     const inputRef = React.useRef(null);
     const focusComposer = () => (globalThis.requestAnimationFrame ?? (fn => queueMicrotask(fn)))(() => inputRef.current?.focus?.());
@@ -103,7 +104,7 @@ export function createTodayView(React) {
       moreActive > 0 ? zh.today.moreActive(moreActive) : '',
       model.field.quiet > 0 ? zh.today.quietLine(model.field.quiet) : '',
     ].filter(Boolean).join('，');
-    const field = h('section', {className: `field ${empty ? 'is-empty' : ''}`, 'aria-label': '今天有动静的项目'},
+    const field = h('section', {className: `field ${flush ? 'is-empty' : ''}`, 'aria-label': '今天有动静的项目'},
       ...model.field.active.slice(0, 6).map(row => h('button', {key: row.id, className: `cell is-${row.state}`, type: 'button', onClick: () => onOpenProject?.(row.id)},
         h(Dot, {state: row.state}),
         h('div', null, h('b', null, row.name), h('span', null, row.count > 1 ? `${row.count} 件` : row.state === 'done' ? '做完了' : row.state === 'needs_you' ? '等你' : row.state === 'stuck' ? '卡住了' : '正在做')))),
@@ -112,8 +113,13 @@ export function createTodayView(React) {
     const needChildren = [
       h('h2', {key: 'title'}, model.blind ? zh.today.blindTitle : zh.today.needTitle, !model.blind && model.urgent.length ? h('small', null, `${model.urgent.length} 件`) : null),
     ];
-    if (model.blind) needChildren.push(h('p', {key: 'blind', className: 'empty'}, zh.today.blindBody));
-    else if (model.urgent.length === 0 && model.doneGroups.length === 0) needChildren.push(h('p', {key: 'empty', className: 'empty'}, zh.today.emptyNeed));
+    if (model.state === 'loading') needChildren.push(h('p', {key: 'loading', className: 'empty', role: 'status'}, zh.today.needLoading));
+    else if (model.blind) needChildren.push(h('p', {key: 'blind', className: 'empty'}, zh.today.blindBody));
+    else if (model.urgent.length === 0 && model.doneGroups.length === 0) {
+      // A failed promise read is not a successful "all handled". The left
+      // column says the same thing as the rail instead of contradicting it.
+      needChildren.push(h('p', {key: 'empty', className: 'empty'}, model.promisesState === 'error' ? zh.today.promisesUnread : zh.today.emptyNeed));
+    }
     if (model.sample) needChildren.push(h('div', {key: 'sample', className: 'sample-card'}, h('p', null, zh.today.sampleMark)));
     for (const item of model.needCards) needChildren.push(h(NeedCard, {key: item.projectId + item.state, item, onAct, pending}));
     if (model.needRows.length) {
@@ -135,6 +141,13 @@ export function createTodayView(React) {
     if (model.doneMore) needChildren.push(h('p', {key: 'more', className: 'next'}, zh.today.doneMore(model.doneMore)));
     const need = h('section', {'aria-label': '需要你'}, ...needChildren);
 
+    const promiseState = model.promisesState ?? (model.promises.length ? 'ready' : model.blind ? 'blind' : 'empty');
+    const promiseMessage = {
+      loading: zh.today.promisesLoading,
+      error: zh.today.promisesUnread,
+      blind: zh.today.blindBody,
+      empty: zh.today.emptyNeed,
+    }[promiseState];
     const promiseItems = model.promises.length
       ? model.promises.map(row => h('li', {key: row.id},
         h('time', null, row.whenText),
@@ -145,15 +158,16 @@ export function createTodayView(React) {
           row.handledBy ? h('button', {className: 'ulink', type: 'button', onClick: () => onOpenSession?.(row.handledBy.sessionId)}, '看它做到哪了') : null,
           row.related && row.related.cardId ? h('button', {className: 'ulink', type: 'button', onClick: () => onAct?.('open', {projectId: row.related.projectId, cardId: row.related.cardId})}, '看看最近的会话') : null,
           row.dispatch ? h('button', {className: 'ulink', type: 'button', onClick: () => onAct?.('dispatch', {promiseId: row.id})}, zh.today.dispatch) : null)))
-      : [h('li', {key: 'none'}, h('span', null, model.blind ? zh.today.blindBody : zh.today.emptyNeed))];
+      : [h('li', {key: 'state', className: `is-state is-${promiseState}`, ...(promiseState === 'loading' ? {role: 'status', 'aria-live': 'polite'} : {})},
+        h('span', null, promiseMessage))];
     const promiseWarnings = model.sourceProblems.map(row => h('p', {className: 'next', key: row.id, role: 'status'}, zh.today.sourceFix[row.id] ?? `${row.name}要重新连接`));
     const promisePartials = (model.sourcePartials ?? []).map(row => h('p', {className: 'next', key: `partial:${row.id}`, role: 'status'}, row.note));
     const aside = h('aside', {'aria-label': zh.today.promisesTitle},
       h('h2', null, zh.today.promisesTitle, h('small', null, zh.today.promisesSub)),
-      h('ul', {className: 'promise'}, ...promiseItems),
+      h('ul', {className: 'promise', 'data-promise-state': promiseState}, ...promiseItems),
       ...promiseWarnings, ...promisePartials);
 
-    const stage = h('div', {className: 'stage'}, hero, field, h('div', {className: `cols ${empty ? 'is-flush' : ''}`}, need, aside));
+    const stage = h('div', {className: 'stage'}, hero, field, h('div', {className: `cols ${flush ? 'is-flush' : ''}`}, need, aside));
     return h('div', {className: 'dotv2', 'data-today-state': model.state}, stage);
   }
 

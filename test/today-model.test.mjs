@@ -53,15 +53,18 @@ test('done work groups one row per project and keeps the newest first', () => {
   assert.match(model.doneGroups[0].latest.what, /最近一件|更早一件/);
 });
 
-test('the four visible states plus first use and blind are distinct', () => {
+test('the visible states plus waiting, first use and blind are distinct', () => {
   const needs = buildToday(activity());
   const onlyRunning = buildToday(activity({sessions: [session('p3', 'doing')], counts: {done: 0, wait: 0, stuck: 0, run: 1, total: 1}}));
   const empty = buildToday(activity({sessions: [], counts: {done: 0, wait: 0, stuck: 0, run: 0, total: 0}, promises: []}));
+  const loading = buildToday(null, {loading: true});
   const blind = buildToday({reachable: false});
   const first = buildToday(activity({sample: true}));
-  assert.deepEqual([needs.state, onlyRunning.state, empty.state, blind.state, first.state], ['needs', 'running', 'empty', 'blind', 'first']);
-  for (const state of [needs.state, onlyRunning.state, empty.state, blind.state, first.state]) assert.ok(TODAY_STATES.includes(state));
+  assert.deepEqual([needs.state, onlyRunning.state, empty.state, loading.state, blind.state, first.state], ['needs', 'running', 'empty', 'loading', 'blind', 'first']);
+  for (const state of [needs.state, onlyRunning.state, empty.state, loading.state, blind.state, first.state]) assert.ok(TODAY_STATES.includes(state));
   assert.match(blind.headline.text, /看不到/);
+  assert.match(loading.headline.text, /正在读取/);
+  assert.equal(loading.promisesState, 'loading');
   assert.equal(onlyRunning.headline.text.includes('在跑'), true);
 });
 

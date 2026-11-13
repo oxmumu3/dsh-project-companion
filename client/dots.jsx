@@ -10,6 +10,9 @@ export function createDots(React, {zh}) {
     if (model.state === 'blind') {
       return h('h1', {className: 'line'}, zh.today.headlineBlind);
     }
+    if (model.state === 'loading') {
+      return h('h1', {className: 'line'}, h('span', {className: 'lead'}, zh.today.headlineLoading));
+    }
     if (model.state === 'empty') {
       return h('h1', {className: 'line'}, h('span', {className: 'lead'}, zh.today.headlineEmpty), zh.today.firstHint);
     }

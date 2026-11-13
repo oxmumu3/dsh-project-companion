@@ -67,6 +67,7 @@ function headlineFor({counts, state, sessions, projects, away}) {
   if (counts.stuck) parts.push(`${CN(counts.stuck)}件卡住了`);
   const runTail = counts.run ? `${parts.length ? '还有' : '有'}${CN(counts.run)}件在跑` : '';
   if (state === 'blind') return {lead: zh.today.leadBlind, lines: [], tail: '', text: zh.today.headlineBlind};
+  if (state === 'loading') return {lead: '', lines: [zh.today.headlineLoading], tail: '', text: zh.today.headlineLoading};
   if (state === 'empty') return {lead: '', lines: [zh.today.headlineEmpty], tail: '', text: `${zh.today.headlineEmpty}${zh.today.firstHint}`};
   const lead = away ? zh.today.leadAway : zh.today.leadNow;
   if (!parts.length) {
@@ -81,12 +82,21 @@ function headlineFor({counts, state, sessions, projects, away}) {
   };
 }
 
-export function buildToday(activity, {now = new Date(), sample = false} = {}) {
+export function buildToday(activity, {now = new Date(), sample = false, loading = false} = {}) {
   const value = activity && typeof activity === 'object' ? activity : null;
-  const blind = !value || value.reachable === false;
-  const sessions = blind ? [] : Array.isArray(value.sessions) ? value.sessions : [];
-  const projects = blind ? [] : Array.isArray(value.projects) ? value.projects : [];
+  const requestedLoading = loading === true;
+  const blind = !requestedLoading && (!value || value.reachable === false);
+  const sessions = blind ? [] : Array.isArray(value?.sessions) ? value.sessions : [];
+  const projects = blind ? [] : Array.isArray(value?.projects) ? value.projects : [];
   const rawCounts = value?.counts && typeof value.counts === 'object' ? value.counts : {};
+  // The activity request starts the provider read without waiting for it. A
+  // phase of idle/reading means the promise list is not known yet; it is never
+  // a successful empty list. Missing phases come from older projections and
+  // behave as ready.
+  const rawPhase = value?.sourcesPhase;
+  const sourcesPhase = requestedLoading || rawPhase === 'idle' || rawPhase === 'reading'
+    ? 'reading'
+    : rawPhase === 'failed' ? 'failed' : 'ready';
   const grouped = groupSessions(sessions);
   const counts = {
     done: Number.isSafeInteger(rawCounts.done) ? rawCounts.done : grouped.done.length,
@@ -97,7 +107,19 @@ export function buildToday(activity, {now = new Date(), sample = false} = {}) {
   };
   const promises = Array.isArray(value?.promises) ? value.promises.filter(row => row && typeof row.id === 'string' && typeof row.what === 'string') : [];
   const sourceRows = Array.isArray(value?.sources) ? value.sources : [];
-  const state = blind ? 'blind' : sample || value?.sample === true ? 'first' : counts.total === 0 && !promises.length ? 'empty' : counts.wait + counts.stuck > 0 ? 'needs' : counts.run > 0 ? 'running' : counts.done > 0 ? 'done' : 'calm';
+  const sourceProblems = sourceRows
+    .filter(row => row && row.state && row.state !== 'ok')
+    .slice(0, 3)
+    .map(row => ({id: String(row.id), state: row.state, name: zh.sources[row.id] ?? String(row.id)}));
+  // No sessions and a source still reading is also a waiting page: the
+  // promise list may still add the only thing that matters today.
+  const waiting = sourcesPhase === 'reading' && counts.total === 0 && promises.length === 0;
+  const state = requestedLoading ? 'loading'
+    : blind ? 'blind'
+      : sample || value?.sample === true ? 'first'
+        : waiting ? 'loading'
+          : counts.total === 0 && !promises.length ? 'empty'
+            : counts.wait + counts.stuck > 0 ? 'needs' : counts.run > 0 ? 'running' : counts.done > 0 ? 'done' : 'calm';
   const dots = projectDots(projects, sessions, blind);
   const projectName = id => dots.find(row => row.id === id)?.name ?? zh.today.unnamedProject;
   const projectById = new Map(dots.map(row => [row.id, row]));
@@ -189,19 +211,23 @@ export function buildToday(activity, {now = new Date(), sample = false} = {}) {
       judged: row.judged === true,
     };
   });
-  const problems = sourceRows
-    .filter(row => row && row.state && row.state !== 'ok')
-    .slice(0, 3)
-    .map(row => ({id: String(row.id), state: row.state, name: zh.sources[row.id] ?? String(row.id)}));
+  const problems = sourceProblems;
   const partials = sourceRows
     .filter(row => row && row.state === 'ok' && row.partialReason === 'inbox_window')
     .slice(0, 3)
     .map(row => ({id: String(row.id), note: zh.today.sourcePartial?.[row.id] ?? '部分来源这次没读到'}));
+  // The rail has four distinct states. A loading or failed read is never a
+  // successful empty list, and an empty list is only claimed after a read.
+  const promisesState = promiseRows.length ? 'ready'
+    : blind ? 'blind'
+      : requestedLoading || sourcesPhase === 'reading' ? 'loading'
+        : sourcesPhase === 'failed' || sourceProblems.length ? 'error' : 'empty';
 
   const model = {
     revision: Number.isSafeInteger(value?.revision) ? value.revision : 0,
     state,
     blind,
+    loading: state === 'loading',
     counts,
     dots,
     field: {
@@ -214,6 +240,8 @@ export function buildToday(activity, {now = new Date(), sample = false} = {}) {
     doneGroups: doneGroups.slice(0, 5),
     doneMore: Math.max(0, doneGroups.length - 5),
     promises: promiseRows,
+    promisesState,
+    sourcesPhase,
     sourceProblems: problems,
     sourcePartials: partials,
     connection: value?.connection?.wechat ?? 'unknown',
@@ -225,8 +253,8 @@ export function buildToday(activity, {now = new Date(), sample = false} = {}) {
   return model;
 }
 
-/** Four visible states plus the first-use marker, as the page test asserts. */
-export const TODAY_STATES = ['needs', 'running', 'done', 'calm', 'empty', 'blind', 'first'];
+/** Visible states plus the first-use marker, as the page test asserts. */
+export const TODAY_STATES = ['needs', 'running', 'done', 'calm', 'empty', 'loading', 'blind', 'first'];
 
 /** First-use onboarding uses the stock Today projection and Workbench
  * pairing state. `guide` never starts pairing; `pair` reuses the existing

@@ -41,7 +41,7 @@ export function createTodayOverlay(React) {
           first.what ? h('p', null, first.what) : null,
           h('div', {className: 'acts'},
             h('button', {type: 'button', className: 'btn primary sm', disabled: pending?.has(`${first.projectId}:${first.cardId}`), onClick: () => onAct?.(first.primaryAct, {projectId: first.projectId, cardId: first.cardId})}, first.primary),
-            h('button', {type: 'button', className: 'btn quiet sm', onClick: () => onAct?.('snooze', {projectId: first.projectId, cardId: first.cardId})}, zh.today.later))) : h('p', {className: 'dotv2-overlay__calm'}, model?.blind ? zh.today.blindBody : zh.today.emptyNeed),
+            h('button', {type: 'button', className: 'btn quiet sm', onClick: () => onAct?.('snooze', {projectId: first.projectId, cardId: first.cardId})}, zh.today.later))) : h('p', {className: 'dotv2-overlay__calm'}, model?.state === 'loading' ? zh.today.headlineLoading : model?.blind ? zh.today.blindBody : model?.promisesState === 'error' ? zh.today.promisesUnread : zh.today.emptyNeed),
         sessionLine ? h('p', {className: 'dotv2-overlay__where'}, sessionLine) : null,
         ack ? h('p', {className: 'dotv2-overlay__ack', role: 'status'}, ack) : null,
         error ? h('p', {className: 'dotv2-overlay__error', role: 'alert'}, error) : null,

@@ -26,7 +26,7 @@ export function createFloatView(React) {
           h('p', null, first.what || ''),
           h('div', {className: 'acts'},
             h('button', {className: 'btn primary sm', type: 'button', onClick: () => onAct?.(first.primaryAct, {projectId: first.projectId, cardId: first.cardId})}, first.primary),
-            h('button', {className: 'btn quiet sm', type: 'button', onClick: () => onAct?.('snooze', {projectId: first.projectId, cardId: first.cardId})}, zh.today.later))) : h('p', null, model.blind ? zh.today.blindBody : zh.today.emptyNeed),
+            h('button', {className: 'btn quiet sm', type: 'button', onClick: () => onAct?.('snooze', {projectId: first.projectId, cardId: first.cardId})}, zh.today.later))) : h('p', null, model.state === 'loading' ? zh.today.headlineLoading : model.blind ? zh.today.blindBody : model.promisesState === 'error' ? zh.today.promisesUnread : zh.today.emptyNeed),
         h('form', {className: 'ask', onSubmit: event => { event.preventDefault(); const value = text.trim(); if (!value) return; setText(''); onSay?.(value); }},
           h('input', {value: text, onChange: event => setText(event.target.value), 'aria-label': zh.float.input, placeholder: zh.float.input, maxLength: 4000}),
           h('button', {className: 'btn line2 sm', type: 'submit'}, '发')),

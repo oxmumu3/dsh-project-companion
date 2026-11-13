@@ -15,6 +15,10 @@ const accessKeyOf = activity => {
   const projects = Array.isArray(activity?.projects) ? activity.projects.map(row => row?.id).filter(id => typeof id === 'string').join(',') : '';
   return `${typeof access?.revision === 'string' ? access.revision : ''}|${Number.isSafeInteger(access?.count) ? access.count : ''}|${projects}`;
 };
+// The source phase can move without a data revision (for example, a first read
+// with no enabled source completes with an unchanged empty list). A loading →
+// ready move must still redraw, or the page would stay on "reading" forever.
+const sourcePhaseOf = activity => ['idle', 'reading', 'ready', 'failed'].includes(activity?.sourcesPhase) ? activity.sourcesPhase : '';
 
 export function createTodayStore({fetchImpl = globalThis.fetch, endpoint = '/api/project_companion/activity', intervalMs = 2000, visibility = globalThis.document, timers = globalThis, timeoutMs = 8000, isActive = () => true} = {}) {
   let snapshot = {phase: 'loading', activity: null, revision: null, accessKey: '', error: null, sampleCleared: false};
@@ -43,7 +47,7 @@ export function createTodayStore({fetchImpl = globalThis.fetch, endpoint = '/api
         const next = value && typeof value === 'object' && Number.isSafeInteger(value.revision) ? value : null;
         if (!next) throw Object.assign(new Error('activity invalid'), {code: 'INVALID_PROJECTION'});
         const nextAccess = accessKeyOf(next);
-        const same = snapshot.phase === 'ready' && snapshot.revision === next.revision && snapshot.activity?.reachable === next.reachable && snapshot.accessKey === nextAccess;
+        const same = snapshot.phase === 'ready' && snapshot.revision === next.revision && snapshot.activity?.reachable === next.reachable && snapshot.accessKey === nextAccess && sourcePhaseOf(snapshot.activity) === sourcePhaseOf(next);
         if (same) {
           // Keep the newest payload for the next real diff, but do not emit:
           // an unchanged revision and authorization shape must not redraw.

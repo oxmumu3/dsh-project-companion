@@ -42,7 +42,11 @@ export function createTodayProjection({sessionLedger, dotSourceReader, workspace
         const after = dotSourceReader.snapshot();
         if (after.revision !== dot.revision || sourceKey(after) !== sourceKey(dot)) throw changed('SOURCE_IDENTITY_CHANGED');
         const access = {revision: String(captured.revision ?? ''), count: Array.isArray(captured.grants) ? captured.grants.length : 0};
-        return {...snapshot, revision: snapshot.revision + dot.revision, access, promises, sources: dot.sources};
+        // The source read is started without blocking the request. Carry its
+        // phase so Today can say "still reading" instead of turning an empty
+        // cache into "all handled" while the provider call is still in flight.
+        const sourcesPhase = ['idle', 'reading', 'ready', 'failed'].includes(dot.phase) ? dot.phase : 'ready';
+        return {...snapshot, revision: snapshot.revision + dot.revision, access, promises, sources: dot.sources, sourcesPhase};
       } catch (error) {
         lastError = error;
         if (!CHANGED.has(error?.code)) throw error;
