@@ -98,13 +98,16 @@ export function createTodayView(React) {
         (empty || model.sample) ? h('div', {className: 'starters'}, zh.today.starters.map(text => h('button', {key: text, type: 'button', onClick: () => useStarter(text)}, text))) : null),
       h(Matrix, {model, onOpen: onOpenProject}));
 
+    const moreActive = Math.max(0, model.field.active.length - 6);
+    const summary = [
+      moreActive > 0 ? zh.today.moreActive(moreActive) : '',
+      model.field.quiet > 0 ? zh.today.quietLine(model.field.quiet) : '',
+    ].filter(Boolean).join('，');
     const field = h('section', {className: `field ${empty ? 'is-empty' : ''}`, 'aria-label': '今天有动静的项目'},
       ...model.field.active.slice(0, 6).map(row => h('button', {key: row.id, className: `cell is-${row.state}`, type: 'button', onClick: () => onOpenProject?.(row.id)},
         h(Dot, {state: row.state}),
         h('div', null, h('b', null, row.name), h('span', null, row.count > 1 ? `${row.count} 件` : row.state === 'done' ? '做完了' : row.state === 'needs_you' ? '等你' : row.state === 'stuck' ? '卡住了' : '正在做')))),
-      h('div', {className: 'rest'}, h('p', null,
-        model.field.active.length > 6 ? h('span', null, zh.today.moreActive(model.field.active.length - 6), '，') : null,
-        h('span', null, zh.today.quietLine(model.field.quiet)))));
+      summary ? h('div', {className: 'rest'}, h('p', null, summary)) : null);
 
     const needChildren = [
       h('h2', {key: 'title'}, model.blind ? zh.today.blindTitle : zh.today.needTitle, !model.blind && model.urgent.length ? h('small', null, `${model.urgent.length} 件`) : null),

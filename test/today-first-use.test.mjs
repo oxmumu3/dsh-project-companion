@@ -192,3 +192,19 @@ test('Today headline joins its counts with Chinese punctuation and no stray spac
   const textOf = node => typeof node === 'string' ? node : node && typeof node === 'object' ? (node.children ?? []).map(textOf).join('') : '';
   assert.equal(textOf(line).replace(/\s+/g, ''), '到现在为止，两件做完了，一件在等你，还有两件在跑。');
 });
+
+test('Today omits empty project totals and reports the actual overflow counts', async t => {
+  await loadView(t);
+  const sample = buildToday(sampleActivity(), {sample: true});
+  const summary = field => {
+    const tree = render({...sample, field});
+    const parts = all(tree, node => node.props?.className === 'rest');
+    return parts.map(node => node.children[0].children[0]);
+  };
+  const active = sample.field.active;
+  const many = Array.from({length: 8}, (_, i) => ({id: 'p'+i, name: '项目 '+i, state: 'doing', count: 1}));
+  assert.deepEqual(summary({active, quiet: 0}), []);
+  assert.deepEqual(summary({active, quiet: 2}), ['另外 2 个今天没有动静']);
+  assert.deepEqual(summary({active: many, quiet: 0}), ['另外 2 个也有动静']);
+  assert.deepEqual(summary({active: many, quiet: 3}), ['另外 2 个也有动静，另外 3 个今天没有动静']);
+});
