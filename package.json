@@ -67,8 +67,7 @@
     "report:prompt": "node scripts/prompt-report.mjs",
     "verify": "node --max-old-space-size=256 --test --test-concurrency=1 test/*.test.mjs && node scripts/prompt-report.mjs",
     "report:routing": "node scripts/routing-report.mjs",
-    "build": "node scripts/build.mjs",
-    "prepack": "npm run build"
+    "build": "node scripts/build.mjs"
   },
   "dependencies": {
     "zod": "4.6.7"
