@@ -1,4 +1,4 @@
-# 安装 DSH Dot 0.35.2
+# 安装 DSH Dot 0.35.5
 
 ## 在创造模式中安装／更新
 
@@ -8,7 +8,7 @@
 请安装或更新并启用 DSH Dot。先检查现有插件，避免重复添加和降级。从 npm 官方源实时查询 @oxmumu3/dsh-project-companion 的 latest，按查到的精确版本安装或更新，不直接采用本机缓存的旧 latest。保留已有微信绑定、账号授权、资料范围、设置和其他插件，不自动读取或新建计划。核对实际版本、启用状态，再打开 DSH Dot。
 ```
 
-新用户也可在「插件 → 添加插件」填写 `@oxmumu3/dsh-project-companion`（或精确版本 `@oxmumu3/dsh-project-companion@0.35.2`），安装后启用。它是一个标准插件包，已内置独立微信组件。已有未带 namespace 的历史安装应沿原包名更新；不要将两个名称当成同一个插件重复添加。
+新用户也可在「插件 → 添加插件」填写 `@oxmumu3/dsh-project-companion`（或精确版本 `@oxmumu3/dsh-project-companion@0.35.5`），安装后启用。它是一个标准插件包，已内置独立微信组件。已有未带 namespace 的历史安装应沿原包名更新；不要将两个名称当成同一个插件重复添加。
 
 牛村木木山制作的 DeepSeek Harness 社区插件，非 DeepSeek 或 OpenAI 官方产品。本版内置微信组件，只需添加一个标准插件包，不包含 Harness 应用或 Family 家庭助手。
 
@@ -26,7 +26,7 @@
 
 无法联网或想用离线包时，到 [Releases](https://github.com/oxmumu3/dsh-project-companion/releases) 下载对应版本的 `.tgz`，在官方管理器填写下载后的文件实际路径；无需解压、另装微信组件或运行 macOS 脚本。
 
-[本版发布页](https://github.com/oxmumu3/dsh-project-companion/releases/tag/v0.35.2)提供与 npm 同一份安装包及 SHA-256。npm 页面可核对 integrity 与 provenance。社区市场索引单独同步，安装时以实际显示版本为准。
+[本版发布页](https://github.com/oxmumu3/dsh-project-companion/releases/tag/v0.35.5)提供与 npm 同一份安装包及 SHA-256。npm 页面可核对 integrity 与 provenance。社区市场索引单独同步，安装时以实际显示版本为准。
 
 ## 已有用户
 
