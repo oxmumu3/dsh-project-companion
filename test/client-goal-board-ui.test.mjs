@@ -97,13 +97,13 @@ test('adoptPicked resolves workspaceId via access controller across catalogRevis
 
 test('WorkspaceDialog mounts RC3 workspace.picker across directoryFlow, closes picker before dialog on Escape, and hides trigger on RC2',()=>{
  const hRc2=harness(workspaceState()),{WorkspaceDialog:DialogRc2}=create(hRc2.React);
- const rc2View=hRc2.render(DialogRc2,{slots:{factory:()=>null},renderFactorySlot:(name,props)=>hRc2.React.createElement('div',{'data-slot':name,...props})});
+ const rc2View=hRc2.render(DialogRc2,{slots:{snapshot:()=>[],subscribe:()=>()=>{}},renderFactorySlot:(name,props)=>hRc2.React.createElement('div',{'data-slot':name,...props})});
  assert.equal(button(rc2View,'添加本地文件夹…'),undefined);
  assert.equal(nodes(rc2View,n=>n.props['data-slot']==='workspace.picker').length,0);
  hRc2.unmount();
 
  const h=harness(workspaceState()),{WorkspaceDialog}=create(h.React);
- const slots={factory:name=>name==='workspace.picker'?()=>null:null,subscribeFactory:()=>()=>{}};
+ const slots={snapshot:root=>root==='factory:workspace.picker'?[{type:'factory',name:'workspace.picker'}]:[],subscribe:()=>()=>{}};
  const renderFactorySlot=(name,props)=>h.React.createElement('div',{'data-slot':name,...props});
  const props={slots,renderFactorySlot};
  let view=h.render(WorkspaceDialog,props);
