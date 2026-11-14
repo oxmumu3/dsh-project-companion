@@ -4,7 +4,7 @@ export function createWorkspaceAccessController({access,isClosed=()=>false}={}){
  return{async action(input){
   if(isClosed())fail('WORKSPACE_ACCESS_UNAVAILABLE');
   if(!record(input)||!['list','save'].includes(input.action))fail('WORKSPACE_ACCESS_ARGUMENT');
-  const keys=input.action==='list'?['action','query','offset','limit','expectedCatalogRevision']:['action','expectedRevision','expectedCatalogRevision','workspaceIds'];
+  const keys=input.action==='list'?['action','query','offset','limit','expectedCatalogRevision','pickedWorkspaceId']:['action','expectedRevision','expectedCatalogRevision','workspaceIds'];
   if(Object.keys(input).some(k=>!keys.includes(k)))fail('WORKSPACE_ACCESS_ARGUMENT');
   const{action,...args}=input;return access[action](args);
  }};

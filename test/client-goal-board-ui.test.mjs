@@ -1,9 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
+import {createProjectCatalog} from '../src/project-catalog.js';
+import {createWorkspaceAccess} from '../src/workspace-access.js';
+import {createWorkspaceAccessController} from '../src/workspace-access-route.js';
 const module=await import('../src/client-goal-board.js').catch(()=>({}));
-const {createDotGoalBoardViews:create}=module;
-function harness(state){let values=[],cursor=0,pending=[];const React={createElement:(type,props,...children)=>({type,props:props??{},children:children.flat(Infinity).filter(v=>v!==null&&v!==false&&v!==undefined)}),useState:initial=>{const i=cursor++;if(!(i in values))values[i]=typeof initial==='function'?initial():initial;return[values[i],v=>{values[i]=typeof v==='function'?v(values[i]):v;}];},useRef:initial=>{const i=cursor++;if(!(i in values))values[i]={current:initial};return values[i];},useEffect:(fn,deps)=>{const i=cursor++,old=values[i];if(!old||deps.some((v,j)=>v!==old.deps[j])){old?.cleanup?.();values[i]={deps};pending.push(()=>values[i].cleanup=fn());}}};const listeners=new Set(),calls=[];const controller={getSnapshot:()=>state,subscribe:fn=>{listeners.add(fn);return()=>listeners.delete(fn);},refresh:()=>calls.push('refresh'),open:()=>calls.push('open'),cancel:()=>calls.push('cancel'),load:arg=>calls.push(['load',arg]),toggle:id=>calls.push(['toggle',id]),selectVisible:()=>calls.push('selectVisible'),selectAll:()=>calls.push('selectAll'),clearSelection:()=>calls.push('clearSelection'),save:()=>calls.push('save'),dismiss:()=>calls.push('dismiss'),recognize:()=>calls.push('recognize'),organize:()=>calls.push('organize'),mutate:(...args)=>calls.push(['mutate',...args])};return{React,controller,calls,render:(Component,props={})=>{cursor=0;return Component({controller,...props});},flush:()=>{const f=pending;pending=[];f.forEach(fn=>fn());},unmount:()=>{values.forEach(v=>v?.cleanup?.());values=[];},setState:value=>{state=value;listeners.forEach(fn=>fn());}};}
+const {createDotGoalBoardViews:create,createWorkspaceScopeController}=module;
+function harness(state){let values=[],cursor=0,pending=[];const React={createElement:(type,props,...children)=>({type,props:props??{},children:children.flat(Infinity).filter(v=>v!==null&&v!==false&&v!==undefined)}),useState:initial=>{const i=cursor++;if(!(i in values))values[i]=typeof initial==='function'?initial():initial;return[values[i],v=>{values[i]=typeof v==='function'?v(values[i]):v;}];},useRef:initial=>{const i=cursor++;if(!(i in values))values[i]={current:initial};return values[i];},useEffect:(fn,deps)=>{const i=cursor++,old=values[i];if(!old||deps.some((v,j)=>v!==old.deps[j])){old?.cleanup?.();values[i]={deps};pending.push(()=>values[i].cleanup=fn());}}};const listeners=new Set(),calls=[];const controller={getSnapshot:()=>state,subscribe:fn=>{listeners.add(fn);return()=>listeners.delete(fn);},refresh:()=>calls.push('refresh'),open:()=>calls.push('open'),cancel:()=>calls.push('cancel'),load:arg=>calls.push(['load',arg]),toggle:id=>calls.push(['toggle',id]),adoptPicked:id=>calls.push(['adoptPicked',id]),selectVisible:()=>calls.push('selectVisible'),selectAll:()=>calls.push('selectAll'),clearSelection:()=>calls.push('clearSelection'),save:()=>calls.push('save'),dismiss:()=>calls.push('dismiss'),recognize:()=>calls.push('recognize'),organize:()=>calls.push('organize'),mutate:(...args)=>calls.push(['mutate',...args])};return{React,controller,calls,render:(Component,props={})=>{cursor=0;return Component({controller,...props});},flush:()=>{const f=pending;pending=[];f.forEach(fn=>fn());},unmount:()=>{values.forEach(v=>v?.cleanup?.());values=[];},setState:value=>{state=value;listeners.forEach(fn=>fn());}};}
 function nodes(tree,fn){const out=[];const visit=n=>{if(!n||typeof n!=='object')return;if(fn(n))out.push(n);for(const child of n.children??[])visit(child);};visit(tree);return out;}
 function text(tree){return typeof tree==='string'?tree:(tree?.children??[]).map(text).join(' ');}
 const button=(view,label)=>nodes(view,n=>n.type==='button'&&text(n).includes(label))[0];
@@ -58,4 +61,84 @@ test('saved-scope progress polls only while its visible guide is running and nev
  const interval=globalThis.setInterval,clear=globalThis.clearInterval;let tick,cleared=0,refreshes=0;
  globalThis.setInterval=fn=>{tick=fn;return 17;};globalThis.clearInterval=id=>{if(id===17)cleared++;};
  try{const state=workspaceState();state.open=false;const h=harness(state),{WorkspaceGuide}=create(h.React),organizer={getSnapshot:()=>({status:{scan:{phase:'running',processed:8,total:21,coverage:[]}},busy:false}),subscribe:()=>()=>{},refresh:()=>refreshes++};h.render(WorkspaceGuide,{organizer});h.flush();assert.equal(typeof tick,'function');tick();assert.equal(refreshes,1);assert.equal(h.calls.includes('recognize'),false);h.unmount();assert.equal(cleared,1);}finally{globalThis.setInterval=interval;globalThis.clearInterval=clear;}
+});
+
+test('adoptPicked resolves workspaceId via access controller across catalogRevision bump without auto-saving',async()=>{
+ let rows=[{id:'ws-a',path:'/synthetic/alpha',title:'Alpha',sessionIds:['s1']},{id:'ws-b',path:'/synthetic/beta',title:'Beta',sessionIds:['s2']}],saved;
+ const writes=[],store={get:async()=>saved,put:async(_k,v)=>{saved=structuredClone(v);writes.push(v);}};
+ const catalog=createProjectCatalog({readRegistered:()=>rows});
+ const access=createWorkspaceAccess({store,catalog,clock:()=>new Date('2026-11-14T00:00:00Z')});
+ const route=createWorkspaceAccessController({access});
+ const requests=[];
+ const scope=createWorkspaceScopeController({request:async body=>{requests.push(body);return route.action(body);}});
+ await scope.open();
+ const firstId=scope.getSnapshot().page.items[0].id;
+ scope.toggle(firstId);
+ assert.equal(scope.getSnapshot().delta.added,1);
+ rows=[...rows,{id:'ws-c',path:'/synthetic/gamma',title:'Gamma',sessionIds:[]}];
+ const ok=await scope.adoptPicked('ws-c');
+ assert.equal(ok,true);
+ assert.deepEqual(requests.at(-1),{action:'list',query:'',offset:0,limit:20,pickedWorkspaceId:'ws-c'});
+ assert.equal(requests.some(r=>r.action==='save'),false);
+ assert.equal(writes.length,0);
+ const snap=scope.getSnapshot();
+ assert.equal(snap.stale,false);
+ assert.equal(snap.error,'');
+ assert.ok(snap.selectedIds.includes(firstId));
+ assert.equal(snap.selectedIds.length,2);
+ assert.equal(snap.delta.added,2);
+ assert.equal(snap.page.pickedItem?.label,'Gamma');
+ assert.ok(snap.selectedIds.includes(snap.page.pickedId));
+ assert.deepEqual(snap.summary.selectedIds,[]);
+ assert.equal(await scope.save(),true);
+ assert.equal(writes.length,1);
+ scope.close();
+});
+
+test('WorkspaceDialog mounts RC3 workspace.picker across directoryFlow, closes picker before dialog on Escape, and hides trigger on RC2',()=>{
+ const hRc2=harness(workspaceState()),{WorkspaceDialog:DialogRc2}=create(hRc2.React);
+ const rc2View=hRc2.render(DialogRc2,{slots:{factory:()=>null},renderFactorySlot:(name,props)=>hRc2.React.createElement('div',{'data-slot':name,...props})});
+ assert.equal(button(rc2View,'添加本地文件夹…'),undefined);
+ assert.equal(nodes(rc2View,n=>n.props['data-slot']==='workspace.picker').length,0);
+ hRc2.unmount();
+
+ const h=harness(workspaceState()),{WorkspaceDialog}=create(h.React);
+ const slots={factory:name=>name==='workspace.picker'?()=>null:null,subscribeFactory:()=>()=>{}};
+ const renderFactorySlot=(name,props)=>h.React.createElement('div',{'data-slot':name,...props});
+ const props={slots,renderFactorySlot};
+ let view=h.render(WorkspaceDialog,props);
+ h.flush();
+ const trigger=button(view,'添加本地文件夹…');
+ assert.ok(trigger);
+ let picker=nodes(view,n=>n.props['data-slot']==='workspace.picker')[0];
+ assert.ok(picker);
+ assert.equal(picker.props.open,false);
+
+ trigger.props.onClick();
+ view=h.render(WorkspaceDialog,props);
+ picker=nodes(view,n=>n.props['data-slot']==='workspace.picker')[0];
+ assert.equal(picker.props.open,true);
+
+ const esc=()=>({key:'Escape',defaultPrevented:false,preventDefault(){this.defaultPrevented=true;},stopPropagation(){}});
+ nodes(view,n=>n.props.className==='pc_scope_backdrop')[0].props.onKeyDown(esc());
+ view=h.render(WorkspaceDialog,props);
+ picker=nodes(view,n=>n.props['data-slot']==='workspace.picker')[0];
+ assert.equal(picker.props.open,false);
+ assert.equal(h.calls.includes('cancel'),false);
+
+ nodes(view,n=>n.props.className==='pc_scope_backdrop')[0].props.onKeyDown(esc());
+ assert.equal(h.calls.includes('cancel'),true);
+
+ button(view,'添加本地文件夹…').props.onClick();
+ view=h.render(WorkspaceDialog,props);
+ picker=nodes(view,n=>n.props['data-slot']==='workspace.picker')[0];
+ assert.equal(picker.props.open,true);
+ picker.props.onClose();
+ view=h.render(WorkspaceDialog,props);
+ picker=nodes(view,n=>n.props['data-slot']==='workspace.picker')[0];
+ assert.ok(picker);
+ assert.equal(picker.props.open,false);
+ picker.props.onPick('ws-new');
+ assert.deepEqual(h.calls.filter(c=>Array.isArray(c)&&c[0]==='adoptPicked'),[['adoptPicked','ws-new']]);
+ h.unmount();
 });

@@ -14,17 +14,22 @@ export function createWorkspaceAccess({store,catalog,clock=()=>new Date(),isClos
  const read=async()=>{open();try{const raw=await store.get('profile');open();cached=workspaceAccessRowSchema.parse(raw??empty());return cached;}catch(error){cached=null;if(error?.code)throw error;fail('WORKSPACE_ACCESS_UNAVAILABLE');}};
  const targets=()=>{open();try{return catalog.targets();}catch{fail('WORKSPACE_CATALOG_CHANGED');}};
  const currentRows=state=>{const rows=targets();return{rows,valid:state.grants.filter(g=>rows.some(r=>same(g,r)))};};
- const pageArgs=args=>{if(!record(args)||Object.keys(args).some(k=>!['query','offset','limit','expectedCatalogRevision'].includes(k)))fail('WORKSPACE_ACCESS_ARGUMENT');const {expectedCatalogRevision,...rest}=args;return{...rest,...(expectedCatalogRevision===undefined?{}:{expectedRevision:expectedCatalogRevision})};};
+ const pageArgs=args=>{if(!record(args)||Object.keys(args).some(k=>!['query','offset','limit','expectedCatalogRevision','pickedWorkspaceId'].includes(k)))fail('WORKSPACE_ACCESS_ARGUMENT');const {expectedCatalogRevision,pickedWorkspaceId,...rest}=args;if(pickedWorkspaceId!==undefined&&!identity.safeParse(pickedWorkspaceId).success)fail('WORKSPACE_ACCESS_ARGUMENT');return{...rest,...(expectedCatalogRevision===undefined?{}:{expectedRevision:expectedCatalogRevision})};};
  const publish=()=>{for(const fn of [...listeners]){try{fn();}catch{}}};
  const serial=fn=>{const next=tail.then(fn,fn);tail=next.catch(()=>{});return next;};
  async function list(args={}){
   const input=pageArgs(args),state=await read();let page;
   try{page=await catalog.page(input);}catch(error){fail(error?.code==='CATALOG_CHANGED'?'WORKSPACE_CATALOG_CHANGED':'WORKSPACE_ACCESS_ARGUMENT');}
-  open();const {valid}=currentRows(state),ids=valid.map(g=>g.id),selected=new Set(ids);
+  open();const {rows,valid}=currentRows(state),ids=valid.map(g=>g.id),selected=new Set(ids);
   // A newer save while metadata was awaited cannot be presented as old grants.
   const after=await read();if(after.revision!==state.revision)fail('WORKSPACE_ACCESS_CHANGED');
   try{catalog.assertCurrentRevision(page.revision);}catch{fail('WORKSPACE_CATALOG_CHANGED');}
-  return{version:1,revision:state.revision,catalogRevision:page.revision,total:page.total,matchedTotal:page.matchedTotal,offset:page.offset,limit:page.limit,hasMore:page.hasMore,nextOffset:page.nextOffset,items:page.items.map(({id,label,sessionCount,disambiguator})=>({id,label,sessionCount,selected:selected.has(id),available:true,...(disambiguator?{disambiguator}:{})})),selectedIds:ids,selectedCount:ids.length,unavailableCount:state.grants.length-valid.length};
+  let extra={};
+  if(args.pickedWorkspaceId!==undefined){
+   const picked=rows.find(r=>r.workspaceId===args.pickedWorkspaceId||r.id===args.pickedWorkspaceId)??null;
+   extra={pickedId:picked?.id??null,...(picked?{pickedItem:{id:picked.id,label:picked.label,sessionCount:picked.sessionIds.length,selected:selected.has(picked.id),available:true}}:{})};
+  }
+  return{version:1,revision:state.revision,catalogRevision:page.revision,total:page.total,matchedTotal:page.matchedTotal,offset:page.offset,limit:page.limit,hasMore:page.hasMore,nextOffset:page.nextOffset,items:page.items.map(({id,label,sessionCount,disambiguator})=>({id,label,sessionCount,selected:selected.has(id),available:true,...(disambiguator?{disambiguator}:{})})),selectedIds:ids,selectedCount:ids.length,unavailableCount:state.grants.length-valid.length,...extra};
  }
  async function capture(){const state=await read(),{rows,valid}=currentRows(state);if(valid.length!==state.grants.length)fail('WORKSPACE_CATALOG_CHANGED');return{revision:state.revision,grants:valid.map(g=>{const r=rows.find(r=>same(g,r));return{id:r.id,workspaceId:r.workspaceId,root:r.root,label:r.label,sessionIds:[...r.sessionIds]};})};}
  function authorizeSync(snapshot){
