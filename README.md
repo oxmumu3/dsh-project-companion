@@ -96,8 +96,8 @@ dsh plugin --profile web add @oxmumu3/dsh-project-companion
 
 ## 版本与数据
 
-- 当前版本 **`0.35.0`**：今天页改成单列，一眼知道先做什么；`0.34.0` 微信发消息先回一句再等结果。
-- 兼容官方 Harness `0.2.0-rc.2`、`0.2.1-rc.2` 至 `rc.5`、`0.2.2-rc.1`；清单在 [compatibility.json](compatibility.json)。
+- 当前版本 **`0.36.0`**：升级为 Muse「一屏一焦点 · 去框降噪」私人幕僚工作台（今天 / 脉络 / 记忆 / 连接四视图与底部对话胶囊），支持独立运行与 SuperAgent 协同双模；`0.35.0` 今天页单列化；`0.34.0` 微信消息先回一句再等结果。
+- 兼容官方 Harness `0.2.0-rc.2`、`0.2.1-rc.2` 至 `rc.5`、`0.2.2-rc.1` 至 `rc.3`；清单在 [compatibility.json](compatibility.json)。
 - 数据留在本机 Harness profile 内，不经过第三方服务器；微信组件内置部分保留上游 MIT 许可，见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
 - 已知边界（Google 数据权限审核、flomo MAX、主动关注与手机收件的验收状态）统一写在[验证记录](docs/verification.md)，本页不重复。
 
