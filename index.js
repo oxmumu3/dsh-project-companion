@@ -85,6 +85,9 @@ import {createGoalBoardController,registerGoalBoardRoute} from './src/goal-board
 import {parseFamilyCatalogList} from './src/project-catalog-intent.js';
 import {observeWelcomeOutcome} from './src/onboarding-outcome.js';
 import {installBundledWechat} from './src/bundled-wechat.js';
+import {createPersonalProfile,personalProfileRowSchema} from './src/personal-profile.js';
+import {createSuperAgentBridge} from './src/superagent-bridge.js';
+import {createMuseController,registerMuseRoute} from './src/muse-route.js';
 export {Config};
 
 export const name='project-companion';
@@ -123,6 +126,7 @@ const onboardingDomainSpec=defineDomain({name:'project_companion_onboarding',ver
 const workspaceAccessDomainSpec=defineDomain({name:'project_companion_workspace_access',version:1,tables:{state:domainTable(workspaceAccessRowSchema)}});
 const sessionLedgerDomainSpec=defineDomain({name:'project_companion_sessions',version:1,tables:{state:domainTable(sessionLedgerRowSchema)}});
 const goalBoardDomainSpec=defineDomain({name:'project_companion_goals',version:1,tables:{state:domainTable(goalBoardRowSchema)}});
+const personalProfileDomainSpec=defineDomain({name:'project_companion_personal_profile',version:1,tables:{state:domainTable(personalProfileRowSchema)}});
 
 function owner(ctx,agent){
   const cwd=effectiveCwd(ctx,agent);
@@ -178,6 +182,20 @@ export async function installCompanion(ctx,options={}){
   const sessionLedgerTable=sessionLedgerDomain.table('state');
   const goalBoardDomain=await ctx.storageDomain.open(goalBoardDomainSpec);
   const goalBoardTable=goalBoardDomain.table('state');
+  const personalProfileDomain=await ctx.storageDomain.open(personalProfileDomainSpec);
+  const personalProfileTable=personalProfileDomain.table('state');
+  const personalProfile=createPersonalProfile({
+    store:{get:key=>personalProfileTable.get(key),put:(key,value)=>personalProfileTable.put(key,personalProfileRowSchema.parse(value))},
+    ...(options.clock?{clock:options.clock}:{}),
+    isClosed:()=>disposed,
+    onChange:()=>syncTimer(),
+  });
+  await personalProfile.ready();
+  const superAgentBridge=createSuperAgentBridge({
+    ...(options.dshHome?{dshHome:options.dshHome}:{}),
+    ...(options.clock?{clock:options.clock}:{}),
+    isClosed:()=>disposed,
+  });
   let timer;
   let familyRecoveryPending=false,familyRecoveryRunning=false;
   let disposed=false;
@@ -300,6 +318,9 @@ export async function installCompanion(ctx,options={}){
     if(!todayProjection)todayProjection=createTodayProjection({
       sessionLedger,dotSourceReader,workspaceAccess,links:dotSources,
       readConnection:readLedgerConnection,ownerForeground:ledgerIsForeground,
+      readDigestSummary:()=>dailyDigest?.desktopSummary?.()??null,
+      readSuperAgent:()=>superAgentBridge.readSynergySnapshot(),
+      readPersonalProfile:()=>personalProfile.cachedSnapshot(),
     });
     return todayProjection(ownerSessionId);
   };
@@ -570,7 +591,7 @@ export async function installCompanion(ctx,options={}){
     // A failed news store must not prevent cleanup of unrelated services.
     await externalClosing;
     try{await taskResults.close();}
-    finally{try{await service.ready();}finally{await Promise.allSettled([taskDomain.close(),onboardingDomain.close(),newsDomain.close(),personalReviewDomain.close(),contextDomain.close(),dotSourcesDomain.close(),familyDomain.close(),projectUpdatesDomain.close(),contextLoopDomain.close(),workspaceAccessDomain.close(),sessionLedgerDomain.close(),goalBoardDomain.close(),domain.close()]);}}
+    finally{try{await service.ready();}finally{await Promise.allSettled([taskDomain.close(),onboardingDomain.close(),newsDomain.close(),personalReviewDomain.close(),contextDomain.close(),dotSourcesDomain.close(),familyDomain.close(),projectUpdatesDomain.close(),contextLoopDomain.close(),workspaceAccessDomain.close(),sessionLedgerDomain.close(),goalBoardDomain.close(),personalProfileDomain.close(),domain.close()]);}}
   });
   // Cordis emits disposal before waiting for an asynchronous apply to settle.
   // Abort startup at that boundary; normal effect cleanup alone runs too late.
@@ -735,9 +756,14 @@ export async function installCompanion(ctx,options={}){
     ...(options.clock?{clock:options.clock}:{}),hostTimeZone:hostZone,
     isClosed:()=>disposed,
     canRun:async()=>!disposed&&!lifecycle.signal.aborted&&!await service.isPaused(),
+    onChange:()=>syncTimer(),
   });
   await dailyDigest.ready();
   digestRoute=createDigestRoute({digest:dailyDigest,readConnection:readSetup,readOwner:resolveDigestOwner,canRun:async()=>!disposed&&!lifecycle.signal.aborted&&!await service.isPaused(),isClosed:()=>disposed});
+  const museController=createMuseController({
+    personalProfile,dailyDigest,superAgent:superAgentBridge,
+    onChange:()=>syncTimer(),isClosed:()=>disposed,
+  });
 
   const familyRoute={
     getScope:sessionId=>familyDelegate.scopeFor(sessionId),
@@ -928,7 +954,7 @@ export async function installCompanion(ctx,options={}){
   if(typeof ctx.inject==='function')ctx.inject(['connection'],scope=>{if(!disposed){registerActivityRoute(scope,{snapshot:async()=>{void dotSourceReader.refreshIfStale();return ledgerProjection();},isClosed:()=>disposed});registerTodayRoutes(scope,{controller:todayController,isClosed:()=>disposed});}});  if(typeof ctx.inject==='function')ctx.inject(['connection'],scope=>{if(!disposed)registerWorkbenchActionsRoute(scope,workbenchActions);});
   if(typeof ctx.inject==='function')ctx.inject(['connection'],scope=>{if(!disposed){registerWorkbenchRoute(scope,workbench);registerDesktopConversationRoute(scope,workbench);}});
   if(typeof ctx.inject==='function')ctx.inject(['connection'],scope=>{if(!disposed)registerContextRoute(scope,contextRoute);});
-  if(typeof ctx.inject==='function')ctx.inject(['connection'],scope=>{if(!disposed)registerDigestRoute(scope,digestRoute);});
+  if(typeof ctx.inject==='function')ctx.inject(['connection'],scope=>{if(!disposed){registerDigestRoute(scope,digestRoute);registerMuseRoute(scope,{controller:museController,isClosed:()=>disposed});}});
   if(typeof ctx.inject==='function')ctx.inject(['connection'],scope=>{if(!disposed)registerOnboardingRoute(scope,onboarding);});
 
   async function familyPlanFor(scope,args){
@@ -1641,7 +1667,7 @@ export async function installCompanion(ctx,options={}){
       }
     },
   }));
-  registerGuidance(ctx,options);
+  registerGuidance(ctx,{...options,readProfileText:()=>personalProfile.guidanceSummary()});
   ctx.commands.register({name:'companion',description:'Project briefs, daily schedule and explicit reminders; continue projectId task hands off to an idle live watched session',input:{hint:'watch | list | now | daily HH:mm TZ | daily off | remind ISO title | continue projectId task | pause | status'},async handler({agent,rawInput}){
     try{
       const line=rawInput.trim();
@@ -1735,7 +1761,7 @@ export async function installCompanion(ctx,options={}){
   }
   await recoverFamilyPlans();
   if(typeof ctx.inject==='function')ctx.inject(['familyDotBridge'],()=>{if(!disposed)void recoverFamilyPlans();});
-  return{service,taskResults,memory,followup,onboarding,news,personalReview,dailyDigest,context,contextLoop,projectUpdates,googleCalendarAuth,googleSuiteAuth,flomoAuth,didaAuth,workbench,workbenchActions,familyRoute,projectCatalog,projectCatalogController,workspaceAccess,goalBoard,goalBoardController,dotSources,dotSourceReader,registeredProjectTarget:service.registeredProjectTarget,authorizeRegisteredCoordinationSync:service.authorizeRegisteredCoordinationSync};
+  return{service,taskResults,memory,followup,onboarding,news,personalReview,dailyDigest,personalProfile,superAgentBridge,museController,context,contextLoop,projectUpdates,googleCalendarAuth,googleSuiteAuth,flomoAuth,didaAuth,workbench,workbenchActions,familyRoute,projectCatalog,projectCatalogController,workspaceAccess,goalBoard,goalBoardController,dotSources,dotSourceReader,registeredProjectTarget:service.registeredProjectTarget,authorizeRegisteredCoordinationSync:service.authorizeRegisteredCoordinationSync};
 }
 
 export async function apply(ctx,config){

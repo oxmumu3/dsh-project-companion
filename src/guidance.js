@@ -34,16 +34,18 @@ const RULES = [
   '用户说“取消每日汇报”用 cancel_daily：只关日报和未发送内容，不影响提醒、关注项目或暂停状态。',
 ];
 
-export function registerGuidance(ctx,{clock=()=>new Date(),hostTimeZone=()=>Intl.DateTimeFormat().resolvedOptions().timeZone}={}){
+export function registerGuidance(ctx,{clock=()=>new Date(),hostTimeZone=()=>Intl.DateTimeFormat().resolvedOptions().timeZone,readProfileText=null}={}){
   return ctx.systemPrompt.section({
     name:'project-companion:guidance',order:9000,interpolate:false,
     text:({scope})=>{
       if(!scope||!ctx.tools.get('project_companion',scope))return '';
       const now=clock();const zone=typeof hostTimeZone==='function'?hostTimeZone():hostTimeZone;
       const local=new Intl.DateTimeFormat('zh-CN',{timeZone:zone,dateStyle:'full',timeStyle:'long',hourCycle:'h23'}).format(now);
+      const profileLine=typeof readProfileText==='function'?String(readProfileText()??'').trim():'';
       return [
-        `项目助理：现在 ${now.toISOString()}；电脑时区 ${zone}；当地时间 ${local}。`,
         ...RULES,
+        ...(profileLine?[profileLine]:[]),
+        `项目助理：现在 ${now.toISOString()}；电脑时区 ${zone}；当地时间 ${local}。`,
       ].join('\n');
     },
   });

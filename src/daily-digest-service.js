@@ -19,9 +19,9 @@ const clean = value => typeof value === 'string' ? value.replace(/[\u0000-\u0008
 const iso = value => typeof value === 'string' && Number.isFinite(Date.parse(value)) ? new Date(value).toISOString() : null;
 const textHash = value => createHash('sha256').update(value).digest('hex');
 
-export function createDailyDigest({store, readSource, readLedger = async () => [], readOwner, sameOwner = (left, right) => JSON.stringify(left) === JSON.stringify(right), schedule = async () => ({dailyTime: '09:00', timeZone: 'Asia/Shanghai'}), summarize, send, enabled = true, clock = () => new Date(), hostTimeZone = () => 'Asia/Shanghai', isClosed = () => false, canRun = async () => true} = {}) {
+export function createDailyDigest({store, readSource, readLedger = async () => [], readOwner, sameOwner = (left, right) => JSON.stringify(left) === JSON.stringify(right), schedule = async () => ({dailyTime: '09:00', timeZone: 'Asia/Shanghai'}), summarize, send, enabled = true, clock = () => new Date(), hostTimeZone = () => 'Asia/Shanghai', isClosed = () => false, canRun = async () => true, onChange = null} = {}) {
   for (const [name, dependency] of Object.entries({get: store?.get, put: store?.put, readSource, summarize, send})) if (typeof dependency !== 'function') throw new Error(`Missing daily digest dependency: ${name}`);
-  let state = null, closed = false, queue = Promise.resolve();
+  let state = null, closed = false, queue = Promise.resolve(), localRevision = 0;
   const serial = fn => { const next = queue.then(fn); queue = next.catch(() => {}); return next; };
   const now = () => { const value = clock(); if (!(value instanceof Date) || !Number.isFinite(value.getTime())) throw new Error('每日整理时钟无效'); return value; };
   const load = async () => {
@@ -32,13 +32,31 @@ export function createDailyDigest({store, readSource, readLedger = async () => [
     state = parsed.data;
     return state;
   };
-  const save = async next => { const parsed = dailyDigestRowSchema.parse(next); await store.put('profile', parsed); state = parsed; return parsed; };
+  const save = async next => {
+    const parsed = dailyDigestRowSchema.parse(next);
+    await store.put('profile', parsed);
+    state = parsed;
+    localRevision += 1;
+    try { await onChange?.(); } catch { /* change listeners must not fail persistence */ }
+    return parsed;
+  };
   const closeGuard = () => { if (closed || isClosed()) throw Object.assign(new Error('每日整理已关闭'), {code: 'DIGEST_CLOSED'}); };
   const zone = () => { try { return Intl.DateTimeFormat().resolvedOptions().timeZone || hostTimeZone() || 'Asia/Shanghai'; } catch { return 'Asia/Shanghai'; } };
+  const rhythmFor = row => ({
+    enabled: row?.rhythm ? row.rhythm.enabled : (row?.enabled ?? enabled),
+    dailyTime: row?.rhythm?.dailyTime ?? null,
+    deliveryMode: row?.rhythm?.deliveryMode ?? 'wechat_and_desktop',
+    maxDailyNudges: row?.rhythm?.maxDailyNudges ?? 2,
+    quietDate: row?.rhythm?.quietDate ?? null,
+    updatedAt: row?.rhythm?.updatedAt ?? null,
+  });
   async function plan() {
     let value = {};
     try { value = await schedule() ?? {}; } catch { value = {}; }
-    const dailyTime = /^([01]\d|2[0-3]):[0-5]\d$/.test(value.dailyTime ?? '') ? value.dailyTime : '09:00';
+    const override = state?.rhythm?.dailyTime;
+    const dailyTime = /^([01]\d|2[0-3]):[0-5]\d$/.test(override ?? '')
+      ? override
+      : (/^([01]\d|2[0-3]):[0-5]\d$/.test(value.dailyTime ?? '') ? value.dailyTime : '09:00');
     const timeZone = typeof value.timeZone === 'string' && value.timeZone ? value.timeZone : zone();
     return {dailyTime, timeZone};
   }
@@ -243,7 +261,9 @@ export function createDailyDigest({store, readSource, readLedger = async () => [
         return structuredClone(state);
       });
     },
-    enabled() { return state?.enabled === true; },
+    enabled() {
+      return state?.enabled === true && state?.rhythm?.enabled !== false && state?.rhythm?.deliveryMode !== 'silent_pull';
+    },
     /** Kept for callers that need to know whether today already has a
      *  completed digest; muting the old review uses enabled() per the brief. */
     async ranToday() {
@@ -251,7 +271,89 @@ export function createDailyDigest({store, readSource, readLedger = async () => [
       const {timeZone} = await plan();
       return state.lastDay === localDay(now(), timeZone) && ['sent', 'quiet', 'uncertain', 'blocked'].includes(state.lastStatus);
     },
-    needsTimer() { return !closed && !isClosed() && state?.enabled === true; },
+    needsTimer() {
+      return !closed && !isClosed() && state?.enabled === true && state?.rhythm?.enabled !== false && state?.rhythm?.deliveryMode !== 'silent_pull';
+    },
+    desktopSummary() {
+      const rhythm = rhythmFor(state);
+      const zoneName = zone();
+      const todayDay = localDay(now(), zoneName);
+      const effectiveTime = rhythm.dailyTime || '09:00';
+      const isQuietToday = Boolean(rhythm.quietDate && rhythm.quietDate === todayDay);
+      const effectiveEnabled = (state ? state.enabled === true : enabled) && rhythm.enabled !== false && rhythm.deliveryMode !== 'silent_pull';
+      return {
+        revision: localRevision,
+        enabled: effectiveEnabled,
+        dailyTime: effectiveTime,
+        timeZone: zoneName,
+        deliveryMode: rhythm.deliveryMode,
+        maxDailyNudges: rhythm.maxDailyNudges,
+        quietDate: rhythm.quietDate,
+        isQuietToday,
+        lastStatus: state?.lastStatus ?? null,
+        lastDay: state?.lastDay ?? null,
+        lastDigestAt: state?.lastDigestAt ?? null,
+        lastDigest: state?.lastDigest ? structuredClone(state.lastDigest) : null,
+      };
+    },
+    configureRhythm(input = {}) {
+      closeGuard();
+      return serial(async () => {
+        await load();
+        const currentPlan = await plan();
+        const prev = rhythmFor(state);
+        const dailyTime = input.dailyTime === undefined
+          ? (prev.dailyTime || currentPlan.dailyTime)
+          : (typeof input.dailyTime === 'string' && /^([01]\d|2[0-3]):[0-5]\d$/.test(input.dailyTime) ? input.dailyTime : null);
+        if (!dailyTime) return {ok: false, code: 'INVALID_TIME', error: '请填写 24 小时制 HH:mm（比如 08:30）。'};
+        const deliveryMode = input.deliveryMode === undefined
+          ? prev.deliveryMode
+          : (['wechat_and_desktop', 'desktop_only', 'silent_pull'].includes(input.deliveryMode) ? input.deliveryMode : null);
+        if (!deliveryMode) return {ok: false, code: 'INVALID_DELIVERY_MODE', error: '投递方式只能选桌面+微信、仅桌面，或先保持安静。'};
+        const maxDailyNudges = input.maxDailyNudges === undefined
+          ? prev.maxDailyNudges
+          : (Number.isInteger(input.maxDailyNudges) && input.maxDailyNudges >= 0 && input.maxDailyNudges <= 5 ? input.maxDailyNudges : null);
+        if (maxDailyNudges === null) return {ok: false, code: 'INVALID_NUDGES', error: '每天轻提醒次数需在 0 到 5 之间。'};
+        const nextEnabled = typeof input.enabled === 'boolean' ? input.enabled : prev.enabled;
+        const todayDay = localDay(now(), currentPlan.timeZone);
+        let quietDate = prev.quietDate;
+        if (input.quietToday === true) quietDate = todayDay;
+        else if (input.quietToday === false) quietDate = null;
+        else if (input.quietDate === null) quietDate = null;
+        else if (typeof input.quietDate === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(input.quietDate)) quietDate = input.quietDate;
+        const row = structuredClone(state);
+        row.rhythm = {
+          enabled: Boolean(nextEnabled),
+          dailyTime,
+          deliveryMode,
+          maxDailyNudges,
+          quietDate,
+          updatedAt: now().toISOString(),
+        };
+        row.enabled = row.rhythm.enabled && row.rhythm.deliveryMode !== 'silent_pull';
+        await save(row);
+        const modeText = deliveryMode === 'silent_pull' ? '保持安静（只在打开时自己看）' : deliveryMode === 'desktop_only' ? '只在桌面呈现' : '微信与桌面同步';
+        const quietNote = quietDate === todayDay ? '；今天已暂停自动打扰' : '';
+        return {
+          ok: true,
+          digest: {
+            revision: localRevision,
+            enabled: row.enabled,
+            dailyTime,
+            timeZone: currentPlan.timeZone,
+            deliveryMode,
+            maxDailyNudges,
+            quietDate,
+            isQuietToday: quietDate === todayDay,
+            lastStatus: row.lastStatus,
+            lastDay: row.lastDay,
+            lastDigestAt: row.lastDigestAt,
+            lastDigest: row.lastDigest ? structuredClone(row.lastDigest) : null,
+          },
+          text: `节律已更新：每天 ${dailyTime} · ${modeText}${quietNote}`,
+        };
+      });
+    },
     tick() {
       // The occurrence read/write and the run share the same serial gate as a
       // manual run: a queued manual send can never overwrite the claim and
@@ -259,9 +361,10 @@ export function createDailyDigest({store, readSource, readLedger = async () => [
       return serial(async () => {
         if (closed || isClosed()) return null;
         await load();
-        if (state.enabled !== true) return null;
-        if (!await canRun()) return null;
+        if (state.enabled !== true || state.rhythm?.enabled === false || state.rhythm?.deliveryMode === 'silent_pull') return null;
         const schedule = await plan();
+        if (state.rhythm?.quietDate && state.rhythm.quietDate === localDay(now(), schedule.timeZone)) return null;
+        if (!await canRun()) return null;
         const due = latestOccurrence(now(), schedule.dailyTime, schedule.timeZone);
         if (!due || state.lastOccurrence === due.id) return null;
         if (now().getTime() - due.epoch > GRACE) {

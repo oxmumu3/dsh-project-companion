@@ -1,0 +1,1019 @@
+/* DSH Dot Muse v3.1 — "私人幕僚长 · 一屏一焦点 · 去框降噪" */
+/* Uses only inherited --dot-* / --dsw-alias-* theme tokens (light & dark). */
+
+.pc_dot_muse {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  max-height: 100%;
+  overflow: hidden;
+  background: var(--dot-paper);
+  color: var(--dot-ink);
+  font-family: -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+  font-size: 14px;
+  line-height: 1.65;
+  container-type: inline-size;
+  container-name: muse;
+  -webkit-font-smoothing: antialiased;
+}
+
+.pc_dot_muse *,
+.muse-dialog,
+.muse-dialog * {
+  box-sizing: border-box;
+}
+
+.pc_dot_muse [hidden] {
+  display: none !important;
+}
+
+.pc_dot_muse :is(button, input, select, textarea, summary, a):focus-visible,
+.muse-dialog :is(button, summary):focus-visible {
+  outline: 2px solid var(--dot-blue);
+  outline-offset: 2px;
+}
+
+/* Sticky minimal topbar */
+.muse-topbar {
+  flex: 0 0 auto;
+  z-index: 20;
+  border-bottom: 1px solid var(--dot-line);
+  background: color-mix(in srgb, var(--dot-paper) 92%, transparent);
+  backdrop-filter: blur(12px);
+}
+
+.muse-topbar-inner {
+  max-width: 1080px;
+  margin: 0 auto;
+  padding: 10px 28px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+
+.muse-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.muse-brand-mark {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  border: 1px solid var(--dot-line);
+  background: var(--dot-white);
+  color: var(--dot-blue);
+  flex-shrink: 0;
+}
+
+.muse-brand-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--dot-blue-fill);
+}
+
+.muse-brand-name {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--dot-ink);
+  letter-spacing: -0.01em;
+}
+
+.muse-mode-label {
+  font-size: 12px;
+  color: var(--dot-muted);
+  white-space: nowrap;
+}
+
+.muse-nav {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px;
+  border: 1px solid var(--dot-line);
+  border-radius: 10px;
+  background: var(--dot-card);
+}
+
+.pc_dot_muse .muse-nav-btn {
+  appearance: none;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--dot-muted);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  padding: 5px 14px;
+  min-height: 32px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background-color 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
+
+.pc_dot_muse .muse-nav-btn:hover {
+  color: var(--dot-ink);
+  background: var(--dot-hover);
+}
+
+.pc_dot_muse .muse-nav-btn.active {
+  color: var(--dot-ink);
+  background: var(--dot-white);
+  border-color: var(--dot-line);
+  box-shadow: 0 1px 3px color-mix(in srgb, var(--dot-ink) 6%, transparent);
+}
+
+.muse-topbar-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.pc_dot_muse .muse-ghost-btn {
+  appearance: none;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--dot-muted);
+  font: inherit;
+  font-size: 12px;
+  padding: 6px 10px;
+  min-height: 34px;
+  cursor: pointer;
+  white-space: nowrap;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.pc_dot_muse .muse-ghost-btn:hover:not(:disabled) {
+  color: var(--dot-ink);
+  background: var(--dot-hover);
+}
+
+.pc_dot_muse .muse-ghost-btn:disabled {
+  opacity: 0.48;
+  cursor: default;
+}
+
+.muse-status-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--dot-muted);
+}
+
+.muse-status-dot.ok {
+  background: var(--dot-success);
+}
+
+.muse-status-dot.warn {
+  background: var(--dot-warn);
+}
+
+/* Main scrolling viewport */
+.muse-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-width: thin;
+  padding: 28px 28px 148px;
+}
+
+.muse-stage {
+  max-width: 1080px;
+  margin: 0 auto;
+}
+
+.muse-stage-narrow {
+  max-width: 720px;
+  margin: 0 auto;
+}
+
+/* Greeting & subtle alerts */
+.muse-hero {
+  margin-bottom: 24px;
+}
+
+.muse-kicker {
+  font-size: 12px;
+  color: var(--dot-muted);
+  letter-spacing: 0.02em;
+  margin: 0 0 6px;
+}
+
+.muse-greeting {
+  font-family: 'Songti SC', 'STSong', 'Noto Serif SC', Georgia, serif;
+  font-size: 28px;
+  font-weight: 500;
+  line-height: 1.32;
+  letter-spacing: -0.01em;
+  color: var(--dot-ink);
+  margin: 0;
+}
+
+.muse-subline {
+  margin: 8px 0 0;
+  font-size: 13px;
+  color: var(--dot-muted);
+}
+
+.muse-notice-line {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 10px 14px;
+  margin-bottom: 20px;
+  border-left: 3px solid var(--dot-warn);
+  background: var(--dot-warn-bg);
+  border-radius: 0 8px 8px 0;
+  font-size: 13px;
+  color: var(--dot-ink);
+}
+
+.muse-notice-line.info {
+  border-left-color: var(--dot-blue);
+  background: var(--dot-tint);
+}
+
+/* Today two-column composition */
+.muse-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.55fr) minmax(248px, 0.85fr);
+  gap: 38px;
+  align-items: start;
+}
+
+.muse-col-main,
+.muse-col-rail {
+  min-width: 0;
+}
+
+/* Elevated ONE-FOCUS Card (strictly 1 per Today view) */
+.muse-focus-card {
+  background: var(--dot-white);
+  border: 1px solid var(--dot-line-strong);
+  border-radius: 14px;
+  padding: 24px 26px;
+  box-shadow: 0 4px 16px color-mix(in srgb, var(--dot-ink) 5%, transparent);
+}
+
+.muse-focus-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 12px;
+  color: var(--dot-muted);
+  margin-bottom: 10px;
+}
+
+.muse-focus-source {
+  color: var(--dot-blue);
+  font-weight: 500;
+}
+
+.muse-focus-title {
+  margin: 0 0 8px;
+  font-size: 19px;
+  font-weight: 600;
+  line-height: 1.45;
+  color: var(--dot-ink);
+  overflow-wrap: anywhere;
+}
+
+.muse-focus-body {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.7;
+  color: var(--dot-muted);
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.muse-draft-slip {
+  margin-top: 14px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  border: 1px solid var(--dot-line);
+  background: var(--dot-card);
+  font-size: 13px;
+  line-height: 1.65;
+  color: var(--dot-ink);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.muse-focus-actions {
+  margin-top: 18px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+/* Primary CTA (two-level selectors defeat host resets per plugin lessons) */
+.pc_dot_muse .muse-btn-primary,
+.muse-dialog .muse-btn-primary {
+  appearance: none;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  background: var(--dot-blue-fill);
+  color: var(--dot-on-blue);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  padding: 9px 18px;
+  min-height: 38px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+
+.pc_dot_muse .muse-btn-primary:hover:not(:disabled),
+.muse-dialog .muse-btn-primary:hover:not(:disabled) {
+  filter: brightness(1.06);
+}
+
+.pc_dot_muse .muse-btn-primary:disabled,
+.muse-dialog .muse-btn-primary:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.pc_dot_muse .muse-btn-outline,
+.muse-dialog .muse-btn-outline {
+  appearance: none;
+  border: 1px solid var(--dot-line);
+  border-radius: 9px;
+  background: transparent;
+  color: var(--dot-ink);
+  font: inherit;
+  font-size: 13px;
+  padding: 8px 14px;
+  min-height: 38px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.pc_dot_muse .muse-btn-outline:hover:not(:disabled),
+.muse-dialog .muse-btn-outline:hover:not(:disabled) {
+  background: var(--dot-hover);
+  border-color: var(--dot-line-strong);
+}
+
+.pc_dot_muse .muse-btn-outline:disabled,
+.muse-dialog .muse-btn-outline:disabled {
+  opacity: 0.48;
+  cursor: default;
+}
+
+.pc_dot_muse .muse-btn-link,
+.muse-dialog .muse-btn-link {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: var(--dot-blue);
+  font: inherit;
+  font-size: 12px;
+  padding: 6px 4px;
+  min-height: 32px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.pc_dot_muse .muse-btn-link:hover:not(:disabled),
+.muse-dialog .muse-btn-link:hover:not(:disabled) {
+  text-decoration: underline;
+}
+
+.pc_dot_muse .muse-btn-link.danger {
+  color: var(--dot-error);
+}
+
+.pc_dot_muse .pc_scope_connection button {
+  appearance: none;
+  border: 1px solid var(--dot-line);
+  border-radius: 8px;
+  background: var(--dot-white);
+  color: var(--dot-ink);
+  font: inherit;
+  font-size: 13px;
+  padding: 8px 14px;
+  min-height: 38px;
+  cursor: pointer;
+}
+
+.pc_dot_muse .pc_scope_connection button:hover:not(:disabled) {
+  background: var(--dot-hover);
+}
+
+/* De-boxed hairline sections & folded queue */
+.muse-section {
+  margin-top: 26px;
+  padding-top: 16px;
+  border-top: 1px solid var(--dot-line);
+}
+
+.muse-section-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.muse-section-title {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--dot-muted);
+  letter-spacing: 0.02em;
+}
+
+.muse-section-note {
+  font-size: 12px;
+  color: var(--dot-muted);
+}
+
+.muse-hairline-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px 2px;
+  border-bottom: 1px solid var(--dot-line);
+  overflow-wrap: anywhere;
+}
+
+.muse-hairline-row:last-child {
+  border-bottom: 0;
+}
+
+.muse-hairline-main {
+  min-width: 0;
+  flex: 1;
+}
+
+.muse-hairline-title {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--dot-ink);
+}
+
+.muse-hairline-sub {
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--dot-muted);
+  line-height: 1.55;
+}
+
+.muse-hairline-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.muse-more-disclosure {
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--dot-muted);
+}
+
+.muse-more-disclosure > summary {
+  cursor: pointer;
+  padding: 6px 2px;
+  user-select: none;
+}
+
+/* Right rail — quiet, de-boxed */
+.muse-rail-group {
+  margin-bottom: 26px;
+}
+
+.muse-rail-title {
+  margin: 0 0 12px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--dot-muted);
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--dot-line);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.muse-timeline-item {
+  position: relative;
+  padding: 0 0 14px 14px;
+  margin-left: 4px;
+  border-left: 1px solid var(--dot-line);
+  overflow-wrap: anywhere;
+}
+
+.muse-timeline-item::before {
+  content: '';
+  position: absolute;
+  left: -3.5px;
+  top: 7px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--dot-line-strong);
+}
+
+.muse-timeline-time {
+  font-size: 11px;
+  color: var(--dot-muted);
+}
+
+.muse-timeline-text {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--dot-ink);
+  line-height: 1.5;
+}
+
+.muse-rail-empty {
+  font-size: 12px;
+  color: var(--dot-muted);
+  line-height: 1.65;
+}
+
+/* Threads view (脉络) */
+.muse-filter-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 22px;
+}
+
+.pc_dot_muse .muse-chip {
+  appearance: none;
+  border: 1px solid var(--dot-line);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--dot-muted);
+  font: inherit;
+  font-size: 12px;
+  padding: 5px 13px;
+  min-height: 32px;
+  cursor: pointer;
+}
+
+.pc_dot_muse .muse-chip:hover {
+  color: var(--dot-ink);
+  background: var(--dot-hover);
+}
+
+.pc_dot_muse .muse-chip.active {
+  color: var(--dot-ink);
+  background: var(--dot-white);
+  border-color: var(--dot-line-strong);
+  font-weight: 500;
+}
+
+.muse-thread-item {
+  position: relative;
+  padding: 0 0 22px 20px;
+  margin-left: 6px;
+  border-left: 1px solid var(--dot-line);
+}
+
+.muse-thread-item:last-child {
+  padding-bottom: 4px;
+}
+
+.muse-thread-item::before {
+  content: '';
+  position: absolute;
+  left: -4px;
+  top: 6px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--dot-blue-fill);
+}
+
+.muse-thread-kicker {
+  font-size: 12px;
+  color: var(--dot-muted);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.muse-thread-title {
+  margin: 4px 0 4px;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--dot-ink);
+  overflow-wrap: anywhere;
+}
+
+.muse-thread-body {
+  margin: 0;
+  font-size: 13px;
+  color: var(--dot-muted);
+  line-height: 1.65;
+  overflow-wrap: anywhere;
+}
+
+/* Memory Portrait Sheet (记忆) */
+.muse-portrait-sheet,
+.muse-rhythm-sheet {
+  background: var(--dot-white);
+  border: 1px solid var(--dot-line);
+  border-radius: 14px;
+  padding: 28px 30px;
+}
+
+.muse-sheet-header {
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--dot-line);
+  margin-bottom: 18px;
+}
+
+.muse-sheet-title {
+  margin: 0 0 4px;
+  font-family: 'Songti SC', 'STSong', 'Noto Serif SC', Georgia, serif;
+  font-size: 22px;
+  font-weight: 500;
+  color: var(--dot-ink);
+}
+
+.muse-sheet-sub {
+  margin: 0;
+  font-size: 13px;
+  color: var(--dot-muted);
+}
+
+.muse-note-composer {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-bottom: 18px;
+}
+
+.muse-input {
+  flex: 1 1 240px;
+  min-width: 0;
+  min-height: 38px;
+  border: 1px solid var(--dot-line-strong);
+  border-radius: 9px;
+  padding: 8px 12px;
+  font: inherit;
+  font-size: 13px;
+  color: var(--dot-ink);
+  background: var(--dot-paper);
+}
+
+.muse-trait-group {
+  margin-bottom: 18px;
+}
+
+.muse-trait-group-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--dot-muted);
+  margin: 0 0 6px;
+}
+
+.muse-trait-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 2px;
+  border-bottom: 1px solid var(--dot-line);
+}
+
+.muse-trait-label {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--dot-ink);
+}
+
+.muse-trait-value {
+  font-size: 13px;
+  color: var(--dot-muted);
+}
+
+.muse-preset-row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 8px;
+}
+
+.muse-undo-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 14px;
+  margin-bottom: 16px;
+  border-radius: 9px;
+  border: 1px solid var(--dot-line);
+  background: var(--dot-tint);
+  font-size: 13px;
+  color: var(--dot-ink);
+}
+
+/* Connections Rhythm Mad-lib (连接) */
+.muse-madlib {
+  font-size: 15px;
+  line-height: 2.1;
+  color: var(--dot-ink);
+}
+
+.muse-inline-select {
+  display: inline-block;
+  margin: 0 4px;
+  padding: 2px 8px;
+  min-height: 32px;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--dot-blue);
+  background: var(--dot-tint);
+  border: 1px solid var(--dot-line-strong);
+  border-radius: 7px;
+  cursor: pointer;
+}
+
+.muse-source-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 14px 2px;
+  border-bottom: 1px solid var(--dot-line);
+}
+
+.muse-source-row:last-child {
+  border-bottom: 0;
+}
+
+/* Bottom Command Capsule & Conversation Sheet */
+.muse-capsule-dock {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 30;
+  padding: 18px 24px 16px;
+  pointer-events: none;
+  background: linear-gradient(
+    to top,
+    var(--dot-paper) 56%,
+    color-mix(in srgb, var(--dot-paper) 75%, transparent) 82%,
+    transparent 100%
+  );
+}
+
+.muse-drawer-sheet {
+  pointer-events: auto;
+  max-width: 740px;
+  width: calc(100% - 8px);
+  margin: 0 auto 10px;
+  max-height: min(460px, 60dvh);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--dot-white);
+  border: 1px solid var(--dot-line-strong);
+  border-radius: 16px;
+  box-shadow: 0 12px 36px color-mix(in srgb, var(--dot-ink) 12%, transparent);
+}
+
+.muse-drawer-head {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--dot-line);
+  font-size: 12px;
+  color: var(--dot-muted);
+}
+
+.muse-drawer-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+}
+
+.muse-drawer-body .pc_dot_conversation {
+  border: 0;
+  border-radius: 0;
+  margin-top: 0;
+  min-height: 220px;
+  max-height: none;
+}
+
+.muse-capsule {
+  pointer-events: auto;
+  max-width: 740px;
+  margin: 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--dot-white);
+  border: 1px solid var(--dot-line-strong);
+  border-radius: 999px;
+  padding: 6px 7px 6px 14px;
+  box-shadow: 0 8px 26px color-mix(in srgb, var(--dot-ink) 8%, transparent);
+}
+
+.pc_dot_muse .muse-capsule-toggle {
+  appearance: none;
+  border: 1px solid var(--dot-line);
+  border-radius: 999px;
+  background: var(--dot-card);
+  color: var(--dot-ink);
+  font: inherit;
+  font-size: 12px;
+  padding: 4px 10px;
+  min-height: 30px;
+  cursor: pointer;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.pc_dot_muse .muse-capsule-toggle:hover {
+  background: var(--dot-hover);
+}
+
+.pc_dot_muse .muse-capsule-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  color: var(--dot-ink);
+  font: inherit;
+  font-size: 14px;
+  min-height: 34px;
+  padding: 4px 2px;
+  outline: none;
+}
+
+.pc_dot_muse .muse-capsule-input::placeholder {
+  color: var(--dot-muted);
+}
+
+.pc_dot_muse .muse-capsule-send {
+  appearance: none;
+  border: 0;
+  border-radius: 999px;
+  background: var(--dot-blue-fill);
+  color: var(--dot-on-blue);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  padding: 6px 15px;
+  min-height: 34px;
+  cursor: pointer;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.pc_dot_muse .muse-capsule-send:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+/* Native <dialog closedby="any"> preview */
+.muse-dialog {
+  width: min(560px, calc(100vw - 32px));
+  max-height: min(82dvh, 720px);
+  border: 1px solid var(--dot-line-strong);
+  border-radius: 16px;
+  background: var(--dot-white);
+  color: var(--dot-ink);
+  padding: 0;
+  box-shadow: 0 20px 56px color-mix(in srgb, var(--dot-ink) 18%, transparent);
+  overscroll-behavior: contain;
+  font-family: -apple-system, BlinkMacSystemFont, 'PingFang SC', sans-serif;
+}
+
+.muse-dialog::backdrop {
+  background: color-mix(in srgb, var(--dot-ink) 38%, transparent);
+  backdrop-filter: blur(4px);
+}
+
+.muse-dialog-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 18px 22px 14px;
+  border-bottom: 1px solid var(--dot-line);
+}
+
+.muse-dialog-title {
+  margin: 0;
+  font-family: 'Songti SC', 'STSong', 'Noto Serif SC', Georgia, serif;
+  font-size: 20px;
+  font-weight: 500;
+}
+
+.muse-dialog-body {
+  padding: 18px 22px 22px;
+  font-size: 14px;
+  line-height: 1.75;
+  color: var(--dot-ink);
+  white-space: pre-wrap;
+  overflow-y: auto;
+  max-height: calc(82dvh - 120px);
+}
+
+.muse-dialog-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 22px;
+  border-top: 1px solid var(--dot-line);
+}
+
+/* Responsive container breakpoints for 680px split & 390px narrow */
+@container muse (max-width: 740px) {
+  .muse-topbar-inner {
+    padding: 10px 16px;
+    gap: 10px;
+  }
+
+  .muse-scroll {
+    padding: 20px 16px 140px;
+  }
+
+  .muse-grid {
+    grid-template-columns: 1fr;
+    gap: 26px;
+  }
+
+  .muse-greeting {
+    font-size: 23px;
+  }
+
+  .muse-focus-card,
+  .muse-portrait-sheet,
+  .muse-rhythm-sheet {
+    padding: 20px 18px;
+  }
+
+  .muse-capsule-dock {
+    padding: 12px 12px 12px;
+  }
+}
+
+@container muse (max-width: 440px) {
+  .muse-mode-label {
+    display: none;
+  }
+
+  .muse-nav-btn {
+    padding: 5px 10px;
+    font-size: 12px;
+  }
+
+  .muse-greeting {
+    font-size: 21px;
+  }
+
+  .muse-capsule-toggle {
+    padding: 4px 8px;
+    font-size: 11px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pc_dot_muse * {
+    transition: none !important;
+    scroll-behavior: auto !important;
+  }
+}

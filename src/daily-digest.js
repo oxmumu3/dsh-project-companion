@@ -69,6 +69,14 @@ export const dailyDigestRowSchema = z.object({
   pendingSend: z.object({day: z.string().regex(/^\d{4}-\d\d-\d\d$/), requestId: z.string().min(1).max(200), at: stamp, textHash: z.string().regex(/^[a-f0-9]{64}$/), gmailAt: stamp.nullable().default(null), gmailSince: stamp.nullable().default(null)}).strict().nullable(),
   lastDigest: digestRecordSchema.nullable(),
   history: z.array(digestRecordSchema).max(30),
+  rhythm: z.object({
+    enabled: z.boolean(),
+    dailyTime: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/),
+    deliveryMode: z.enum(['wechat_and_desktop', 'desktop_only', 'silent_pull']),
+    maxDailyNudges: z.number().int().min(0).max(5),
+    quietDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable(),
+    updatedAt: z.string().nullable(),
+  }).strict().optional(),
 }).strict();
 
 /** The digest keeps only the legacy clock time; its zone is always the host's

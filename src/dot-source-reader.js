@@ -99,7 +99,7 @@ export function createDotSourceReader({
   identity = null,
 } = {}) {
   if (!sources?.rowOf || typeof read !== 'function') throw new Error('Dot source reader needs source rows and a read function');
-  let cache = {promises: [], sources: [], revision: 0, lastAttemptAt: null, lastSuccessAt: null, phase: 'idle', readError: null};
+  let cache = {promises: [], events: [], sources: [], revision: 0, lastAttemptAt: null, lastSuccessAt: null, phase: 'idle', readError: null};
   let lastAttempt = 0;
   let lastGood = new Map();
   let cachedIdentity = new Map();
@@ -236,6 +236,9 @@ export function createDotSourceReader({
       sourceItemId: row.id,
       what: row.title || '日程',
       when: iso(row.startAt),
+      endAt: iso(row.endAt),
+      allDay: row.allDay === true,
+      location: typeof row.location === 'string' ? row.location : '',
       status: row.status,
     })), coverage: result.coverage ?? {pages: 1, hasMore: false}};
   }
@@ -294,6 +297,20 @@ export function createDotSourceReader({
     }
     const decisionRows = await decisions();
     const nextPromises = projectPromises({items, states, decisions: decisionRows, now: clock(), timeZone: timeZone()});
+    const nextEvents = items
+      .filter(row => row?.source === 'calendar' && row.status !== 'cancelled')
+      .map(row => ({
+        id: String(row.sourceItemId || `${row.when ?? ''}-${row.what ?? ''}`),
+        source: 'calendar',
+        title: String(row.what || '日程'),
+        startAt: row.when ?? null,
+        endAt: row.endAt ?? null,
+        allDay: row.allDay === true,
+        location: typeof row.location === 'string' ? row.location : '',
+        status: row.status ?? 'confirmed',
+      }))
+      .sort((a, b) => String(a.startAt ?? '').localeCompare(String(b.startAt ?? '')))
+      .slice(0, 20);
     const sourceList = Object.entries(states)
       .filter(([, value]) => value.state !== 'disabled')
       .map(([id, value]) => {
@@ -309,10 +326,13 @@ export function createDotSourceReader({
           ...(stats ? {stats: {requests: stats.requests ?? 0, ...(stats.lists !== undefined ? {lists: stats.lists} : {}), ...(stats.undone !== undefined ? {undone: stats.undone} : {}), ...(stats.inWindow !== undefined ? {inWindow: stats.inWindow} : {}), ...(stats.events !== undefined ? {events: stats.events} : {}), ms: stats.ms ?? 0, truncated: stats.truncated === true}} : {}),
         };
       });
-    const changed = JSON.stringify(nextPromises) !== JSON.stringify(cache.promises) || JSON.stringify(sourceList) !== JSON.stringify(cache.sources);
+    const changed = JSON.stringify(nextPromises) !== JSON.stringify(cache.promises)
+      || JSON.stringify(nextEvents) !== JSON.stringify(cache.events)
+      || JSON.stringify(sourceList) !== JSON.stringify(cache.sources);
     cache = {
       revision: cache.revision + (changed ? 1 : 0),
       promises: nextPromises,
+      events: nextEvents,
       sources: sourceList,
       lastAttemptAt: new Date(clock()).toISOString(),
       lastSuccessAt: Object.values(states).some(row => row.state === 'ok') ? new Date(clock()).toISOString() : cache.lastSuccessAt,
@@ -353,7 +373,7 @@ export function createDotSourceReader({
       // page-open refresh (activity route) or the 15-minute timer does.
       // Authorization is checked on the snapshot itself, not on the next
       // refresh: a closed switch or changed credential must not leak a title.
-      let promises = cache.promises, sources = cache.sources;
+      let promises = cache.promises, events = cache.events ?? [], sources = cache.sources;
       if (typeof identity === 'function') {
         // Each cached source carries the identity that produced it. A mismatch
         // drops that source on the first snapshot after the change, before any
@@ -367,10 +387,11 @@ export function createDotSourceReader({
           lastGood.delete(row.id);
           cachedIdentity.delete(row.id);
           promises = promises.filter(item => item.source !== row.id);
+          if (row.id === 'calendar') events = [];
           sources = sources.filter(item => item.id !== row.id);
           advanced = true;
         }
-        if (advanced) cache = {...cache, revision: cache.revision + 1, promises, sources};
+        if (advanced) cache = {...cache, revision: cache.revision + 1, promises, events, sources};
       }
       if (typeof authorized === 'function') {
         const allowed = new Set();
@@ -378,10 +399,11 @@ export function createDotSourceReader({
           try { if (authorized(row.id) === true) allowed.add(row.id); } catch { /* not authorized */ }
         }
         promises = promises.filter(row => allowed.has(row.source));
+        if (!allowed.has('calendar')) events = [];
         sources = sources.filter(row => allowed.has(row.id));
       }
       return {
-        promises, sources, revision: cache.revision,
+        promises, events, sources, revision: cache.revision,
         lastAttemptAt: cache.lastAttemptAt, lastSuccessAt: cache.lastSuccessAt,
         phase: cache.phase, readError: cache.readError,
       };

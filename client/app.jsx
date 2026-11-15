@@ -9,6 +9,9 @@ import {createTodayStore} from './store.js';
 import {markSampleCleared, sampleActivity} from './sample.js';
 import {zh} from './strings.zh.js';
 import dotCss from './styles.css';
+import museCss from './muse/muse.css';
+import {buildMuseViewModel} from './muse/muse-model.js';
+import {createMuseViews} from './muse/muse-views.jsx';
 
 /** Shared POST for the small Today surface. It never retries: a failed action
  *  shows its reason, and the next 2s projection poll is the read-back. */
@@ -25,11 +28,12 @@ export default function createDotClient(require){
     const {Modal,SettingsForm,SettingsSecretField,SettingsValueField}=require('@deepseek-ai/dsh-client-ui-primitives');
     const h=React.createElement;
     const {TodayPage}=createTodayView(React);
+    const {MuseWorkbench}=createMuseViews(React);
     const {FloatEntry}=createFloatView(React);
     const {Dock}=createDockView(React);
     const {TodayOverlay}=createTodayOverlay(React);
     const {Toast,injectStyles}=createUi(React);
-    injectStyles(globalThis.document,dotCss);
+    injectStyles(globalThis.document,dotCss+museCss);
     const endpoint='/api/project_companion/onboarding';
     const inject=['slots','uiWorkspace','configForms','layout','sessions'];
     const css=`.pc_setup{display:flex;flex-direction:column;gap:18px;padding:0 24px 24px;line-height:1.6}.pc_setup h2,.pc_setup h3,.pc_setup p{margin:0}.pc_setup h2{font-size:21px;font-weight:600}.pc_setup h3{font-size:15px;font-weight:600}.pc_setup .pc_card{border:1px solid var(--dsw-alias-border-l3);border-radius:12px;padding:16px;display:flex;flex-direction:column;gap:10px}.pc_setup .pc_muted{font-size:12px;color:var(--dsw-alias-label-secondary)}.pc_setup .pc_actions{display:flex;gap:10px;flex-wrap:wrap}.pc_setup button{border:1px solid var(--dsw-alias-border-l3);border-radius:8px;background:transparent;color:inherit;font:inherit;font-size:13px;padding:8px 14px;cursor:pointer}.pc_setup button:disabled{opacity:.5;cursor:default}.pc_setup button.pc_primary{background:var(--dot-blue-fill);border-color:transparent;color:var(--dot-on-blue)}.pc_setup button:focus-visible,.pc_setup input:focus-visible{outline:2px solid var(--dot-blue);outline-offset:3px}.pc_setup a{color:var(--dot-blue)}.pc_setup label{display:flex;gap:10px;align-items:flex-start;font-size:14px}.pc_setup input{margin-top:5px}.pc_setup .pc_brief{white-space:pre-wrap;font-size:13px;overflow-wrap:anywhere}.pc_setup .pc_error{color:var(--dsw-alias-state-error-primary);font-size:13px}.pc_setup img{width:200px;height:200px;max-width:100%;align-self:center}.pc_setup .pc_connect_heading{display:flex;justify-content:space-between;align-items:flex-start;gap:16px}.pc_setup .pc_connect_heading h2{margin-bottom:4px}.pc_setup .pc_connect_row{display:flex;justify-content:space-between;align-items:center;gap:16px;padding:16px 0;border-top:1px solid var(--dsw-alias-border-l3)}.pc_setup .pc_connect_row>div{min-width:0}.pc_setup .pc_connect_row button{flex-shrink:0}.pc_setup .pc_connect_status{font-size:12px;margin-top:4px}.pc_setup .pc_connect_badge{font-size:11px;padding:3px 8px;border:1px solid var(--dsw-alias-border-l3);border-radius:20px;white-space:nowrap;color:var(--dot-muted)}.pc_setup .pc_google_connect{background:var(--dsw-alias-bg-layer-2)}.pc_setup .pc_connect_help{font-size:13px;border-top:1px solid var(--dsw-alias-border-l3);padding-top:12px}.pc_setup .pc_connect_help summary{cursor:pointer}.pc_setup [data-google-auth-controls]{display:flex;flex-direction:column;gap:10px}.pc_setup .pc_connect_help p{margin:10px 0}.pc_setup .pc_connect_authorizing,.pc_setup .pc_connect_notice{padding:12px 14px;background:var(--dsw-alias-interactive-bg-hover);border-radius:8px;font-size:13px;overflow-wrap:anywhere}.pc_setup .pc_connect_authorizing a{color:var(--dot-blue);display:inline-block;margin-top:8px}.pc_setup_modal{width:min(620px,100%);max-height:90vh;overflow-y:auto;padding:24px 0 0;background:var(--dot-paper);color:var(--dot-ink)}.pc_setup_modal .pc_setup{padding-top:0}@media(max-width:560px){.pc_setup .pc_connect_heading,.pc_setup .pc_connect_row{align-items:flex-start;flex-direction:column;gap:8px}.pc_setup .pc_connect_row{padding:14px 0}.pc_setup{padding:0 16px 20px}.pc_setup .pc_actions button{flex:1}}`;
@@ -40,10 +44,10 @@ export default function createDotClient(require){
     const dotFont='-apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Segoe UI", sans-serif';
     const dotAppearanceTokens={
       '--dsw-font-family':{light:dotFont,dark:dotFont},
-      '--dsw-alias-bg-base':{light:'#f5f3ee',dark:'#17191c'},
-      '--dsw-alias-bg-layer-1':{light:'#eeece6',dark:'#202328'},
-      '--dsw-alias-bg-layer-2':{light:'#fffdf8',dark:'#272b31'},
-      '--dsw-alias-bg-layer-3':{light:'#ffffff',dark:'#30363d'},
+      '--dsw-alias-bg-base':{light:'#F6F4EF',dark:'#141413'},
+      '--dsw-alias-bg-layer-1':{light:'#eeece6',dark:'#1d1e1d'},
+      '--dsw-alias-bg-layer-2':{light:'#fffdf8',dark:'#242524'},
+      '--dsw-alias-bg-layer-3':{light:'#ffffff',dark:'#2c2e2d'},
       '--dsw-alias-bg-module-platform':{light:'#eeece6',dark:'#202328'},
       '--dsw-alias-label-primary':{light:'#222b35',dark:'#e7ebf0'},
       '--dsw-alias-label-secondary':{light:'#5c6672',dark:'#aab4c1'},
@@ -1053,7 +1057,7 @@ function createDotGoalBoardViews(React) {
       const workbenchEndpoint='/api/project_companion/workbench';
       const catalogEndpoint='/api/project_companion/catalog';
       const dotCss=`
-.pc_dot,.pc_dot_modal,.pc_setup,.pc_setup_modal,.pc_scope_backdrop,.pc_goal_sheet_backdrop,.dot_overlay,.dot_overlay_panel{--dot-paper:var(--dsw-alias-bg-base);--dot-card:var(--dsw-alias-bg-layer-2);--dot-white:var(--dsw-alias-bg-layer-3);--dot-ink:var(--dsw-alias-label-primary);--dot-muted:var(--dsw-alias-label-secondary);--dot-line:var(--dsw-alias-border-l2);--dot-line-strong:var(--dsw-alias-border-l4);--dot-blue:color-mix(in srgb,var(--dsw-alias-state-business-primary) 78%,var(--dsw-alias-label-primary));--dot-blue-fill:color-mix(in srgb,var(--dsw-alias-state-business-primary) 84%,var(--dsw-alias-label-primary));--dot-on-blue:var(--dsw-alias-label-primary-inverted);--dot-hover:var(--dsw-alias-interactive-bg-hover);--dot-tint:color-mix(in srgb,var(--dsw-alias-state-business-primary) 12%,var(--dsw-alias-bg-base));--dot-warn-bg:color-mix(in srgb,var(--dsw-alias-state-warn-primary) 12%,var(--dsw-alias-bg-base));--dot-success:var(--dsw-alias-state-success-primary);--dot-success-ink:color-mix(in srgb,var(--dsw-alias-state-success-primary) 65%,var(--dsw-alias-label-primary));--dot-warn:var(--dsw-alias-state-warn-primary);--dot-error:var(--dsw-alias-state-error-primary);color:var(--dot-ink);font-family:${dotFont};line-height:1.65}
+.pc_dot,.pc_dot_muse,.muse-dialog,.pc_dot_modal,.pc_setup,.pc_setup_modal,.pc_scope_backdrop,.pc_goal_sheet_backdrop,.dot_overlay,.dot_overlay_panel{--dot-paper:var(--dsw-alias-bg-base);--dot-card:var(--dsw-alias-bg-layer-2);--dot-white:var(--dsw-alias-bg-layer-3);--dot-ink:var(--dsw-alias-label-primary);--dot-muted:var(--dsw-alias-label-secondary);--dot-line:var(--dsw-alias-border-l2);--dot-line-strong:var(--dsw-alias-border-l4);--dot-blue:color-mix(in srgb,var(--dsw-alias-state-business-primary) 78%,var(--dsw-alias-label-primary));--dot-blue-fill:color-mix(in srgb,var(--dsw-alias-state-business-primary) 84%,var(--dsw-alias-label-primary));--dot-on-blue:var(--dsw-alias-label-primary-inverted);--dot-hover:var(--dsw-alias-interactive-bg-hover);--dot-tint:color-mix(in srgb,var(--dsw-alias-state-business-primary) 12%,var(--dsw-alias-bg-base));--dot-warn-bg:color-mix(in srgb,var(--dsw-alias-state-warn-primary) 12%,var(--dsw-alias-bg-base));--dot-success:var(--dsw-alias-state-success-primary);--dot-success-ink:color-mix(in srgb,var(--dsw-alias-state-success-primary) 65%,var(--dsw-alias-label-primary));--dot-warn:var(--dsw-alias-state-warn-primary);--dot-error:var(--dsw-alias-state-error-primary);color:var(--dot-ink);font-family:${dotFont};line-height:1.65}
         .pc_dot,.pc_dot_modal{font-size:14px;line-height:1.6}
         .pc_dot{height:100%;overflow:auto;background:var(--dot-paper);font-size:14px}.pc_dot *,.pc_dot_modal *{box-sizing:border-box}.pc_dot [hidden]{display:none!important}.pc_dot_inner{max-width:1180px;margin:auto;padding:25px 32px 38px}.pc_dot h1,.pc_dot h2,.pc_dot h3,.pc_dot p{margin:0}.pc_dot h1{font:500 29px/1.4 'Songti SC','STSong',serif;letter-spacing:.2px}.pc_dot h2{font-size:20px;line-height:1.4;font-weight:600}.pc_dot h3,.pc_dot_drawer h3{font-size:15px;font-weight:600}.pc_dot_eyebrow{font-size:11px;letter-spacing:1.5px;color:var(--dot-muted);font-weight:600;margin-bottom:5px}.pc_dot_muted{font-size:13px;line-height:1.7;color:var(--dot-muted)}
         .pc_dot_header{display:flex;align-items:center;justify-content:space-between;gap:20px}.pc_dot_brand{display:flex;align-items:center;gap:12px}.pc_dot_brand_mark{display:grid;place-items:center;width:40px;height:40px;border:1px solid var(--dot-line);border-radius:50%;color:var(--dot-blue)}.pc_dot_brand h2{font-size:18px}.pc_dot_brand p{font-size:12px;color:var(--dot-muted)}.pc_dot_actions{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
@@ -1266,11 +1270,19 @@ function createDotGoalBoardViews(React) {
         const [catalog,setCatalog]=React.useState(null),[catalogQuery,setCatalogQuery]=React.useState(''),[catalogError,setCatalogError]=React.useState(''),[catalogBusy,setCatalogBusy]=React.useState(false),[catalogPreview,setCatalogPreview]=React.useState(null);
         const [dockOpen,setDockOpen]=React.useState(false),[dockProblem,setDockProblem]=React.useState(''),[dockText,setDockText]=React.useState(''),[undoId,setUndoId]=React.useState('');
         const [pendingCards,setPendingCards]=React.useState(()=>new Set());
+        const [museTab,setMuseTab]=React.useState('today');
+        const [museState,setMuseState]=React.useState(null);
+        const [contextSnap,setContextSnap]=React.useState(null);
+        const [pinnedFocusKey,setPinnedFocusKey]=React.useState(null);
+        const [capsuleDraft,setCapsuleDraft]=React.useState('');
+        const [conversationOpen,setConversationOpen]=React.useState(false);
+        const [briefOpen,setBriefOpen]=React.useState(false);
+        const [undoBanner,setUndoBanner]=React.useState(null);
         const catalogFlight=React.useRef(false),catalogEpoch=React.useRef(0);
         const todayPageRef=React.useRef(page),todayPanelRef=React.useRef(activePanelId===undefined||activePanelId===dotPanel);
         todayPageRef.current=page;todayPanelRef.current=activePanelId===undefined||activePanelId===dotPanel;
         const todayStoreRef=React.useRef(null);
-        if(!todayStoreRef.current)todayStoreRef.current=createTodayStore({isActive:()=>todayPageRef.current==='home'&&todayPanelRef.current});
+        if(!todayStoreRef.current)todayStoreRef.current=createTodayStore({isActive:()=>todayPanelRef.current});
         const todaySnapshot=React.useSyncExternalStore(todayStoreRef.current.subscribe,todayStoreRef.current.getSnapshot);
         const [sampleCleared,setSampleCleared]=React.useState(()=>{try{return globalThis.localStorage?.getItem('dot.sample.cleared')==='1';}catch{return false;}});
         // One gate for the visible Today band and its passive onboarding GET.
@@ -1283,7 +1295,7 @@ function createDotGoalBoardViews(React) {
         const todayGateRef=React.useRef('');
         todayGateRef.current=todayWechatModeValue??'';
         React.useEffect(()=>{const store=todayStoreRef.current;store.start();return()=>store.stop();},[]);
-        React.useEffect(()=>{const store=todayStoreRef.current;if(!store)return;const active=page==='home'&&(activePanelId===undefined||activePanelId===dotPanel);store.setActive(active);if(active)void store.refreshNow();},[page,activePanelId]);
+        React.useEffect(()=>{const store=todayStoreRef.current;if(!store)return;const active=activePanelId===undefined||activePanelId===dotPanel;store.setActive(active);if(active)void store.refreshNow();},[page,activePanelId]);
         const active=React.useRef(false),flight=React.useRef(false),controllers=React.useRef(new Set()),viewEpoch=React.useRef(0),currentSnapshot=React.useRef(null),scopeRef=React.useRef(null),pendingExit=React.useRef(null),followBaseline=React.useRef(''),submitted=React.useRef(false),returnFocus=React.useRef(null);
         const setDraft=value=>{workbenchCache.draft=value;setDraftState(value);};
         const setSelected=value=>{workbenchCache.selected=value;setSelectedState(value);};
@@ -1321,9 +1333,20 @@ function createDotGoalBoardViews(React) {
           }catch(failure){if(active.current&&epoch===catalogEpoch.current&&binding===bindingOf(currentSnapshot.current)){if(failure.code==='CATALOG_CHANGED')setCatalog(null);setCatalogError(failure.code==='CATALOG_CHANGED'?'项目目录已变化，请刷新项目目录后继续。':'这次项目资料未能读取，请核对后重试。没有加入关注或创建计划。');}}
           finally{if(epoch===catalogEpoch.current){catalogFlight.current=false;if(active.current)setCatalogBusy(false);}}
         };
+        const refreshMuseExtras=async()=>{
+          try{
+            const m=await request('/api/project_companion/muse');
+            if(active.current&&m?.ok)setMuseState({profile:m.profile,digest:m.digest,superagent:m.superagent});
+          }catch{}
+          try{
+            const c=await request('/api/project_companion/context');
+            if(active.current&&c?.version===1)setContextSnap(c);
+          }catch{}
+        };
         const refresh=async()=>{
           if(!active.current||flight.current)return;flight.current=true;setBusy(true);setError('');
           try{
+            void refreshMuseExtras();
             const value=await request(workbenchEndpoint);
             if(!value||value.version!==1||!value.availability||!['projects','plans','jobs'].every(k=>typeof value.availability[k]==='boolean')||!value.connection||!Array.isArray(value.projects)||value.projects.length>5||!Array.isArray(value.jobs)||value.jobs.length>10||!Array.isArray(value.reminders)||value.reminders.length>100||!value.projects.every(p=>validId(p?.id)&&typeof p.label==='string'&&Array.isArray(p.sessionIds)&&p.sessionIds.length<=30&&p.sessionIds.every(validId)&&Array.isArray(p.sources)&&p.sources.length<=3&&Array.isArray(p.events)&&p.events.length<=30)||value.connection.state==='bound'&&!validId(value.connection.sessionId))throw new Error('工作台数据暂不可用。');
             if(!active.current)return;
@@ -1340,6 +1363,7 @@ function createDotGoalBoardViews(React) {
           finally{flight.current=false;if(active.current)setBusy(false);}
         };
         React.useEffect(()=>{active.current=true;void refresh();return()=>{active.current=false;viewEpoch.current++;for(const c of controllers.current)c.abort();controllers.current.clear();};},[]);
+        React.useEffect(()=>{if(museTab==='connections')void refreshMuseExtras();},[museTab]);
         // This is a passive view of the bridge's existing pairing state. Unknown
         // or Family bindings never enter the legacy pairing path.
         const readInlineConnection=async()=>{
@@ -1393,14 +1417,14 @@ function createDotGoalBoardViews(React) {
           });
         };
         const openDock=async()=>{
-          setDockOpen(true);setDockProblem('');
+          setConversationOpen(true);setDockOpen(true);setDockProblem('');
           publishWorkbenchSurface({dockOpen:true});
           const target=await ensureDockTarget();
           if(!target)setDockProblem('还没有可用的原生会话。先打开 Dot 会话，再把这句话放进去；原话不会丢。');
           else setDockProblem('');
           return target;
         };
-        const closeDock=()=>{setDockOpen(false);publishWorkbenchSurface({dockOpen:false});returnFocus.current=null;};
+        const closeDock=()=>{setConversationOpen(false);setDockOpen(false);publishWorkbenchSurface({dockOpen:false});returnFocus.current=null;};
         const [surfaceTick,setSurfaceTick]=React.useState(0);
         React.useEffect(()=>{const update=()=>setSurfaceTick(value=>value+1);surfaceListeners.add(update);return()=>surfaceListeners.delete(update);},[]);
         const handledSurface=React.useRef({dock:null,open:null,page:null});
@@ -1426,7 +1450,7 @@ function createDotGoalBoardViews(React) {
             });
           }
           if(surface.openSessionRequest&&handledSurface.current.open!==surface.openSessionRequest.token){handledSurface.current.open=surface.openSessionRequest.token;void navigate(surface.openSessionRequest.sessionId);}
-          if(surface.openPageToken&&handledSurface.current.page!==surface.openPageToken){handledSurface.current.page=surface.openPageToken;changePage('home');try{ctx.layout?.selectPanel?.(dotPanel);}catch{}}
+          if(surface.openPageToken&&handledSurface.current.page!==surface.openPageToken){handledSurface.current.page=surface.openPageToken;setMuseTab('today');changePage('home');try{ctx.layout?.selectPanel?.(dotPanel);}catch{}}
         },[surfaceTick]);
         const projects=snapshot?.projects??[],project=projects.find(p=>p.id===detailProjectId),composerProject=projects.find(p=>p.id===selected),memoryProject=projects.find(p=>p.id===memoryProjectId),jobs=snapshot?.jobs??[],reminders=snapshot?.reminders??[],bound=snapshot?.connection.state==='bound';
         const readOnly=snapshot?.connection?.readOnly===true;
@@ -1638,8 +1662,8 @@ function createDotGoalBoardViews(React) {
           }catch(failure){setError(failure?.message||'这次撤销没有完成。');}
         };
         const todaySay=async text=>{
-          setDockOpen(true);setDockProblem('');publishWorkbenchSurface({dockOpen:true});
-          const targetPromise=ensureDockTarget();
+          setConversationOpen(true);setDockOpen(true);setDockProblem('');publishWorkbenchSurface({dockOpen:true});
+          const target=await ensureDockTarget();
           try{
             const value=await todayPost('/api/project_companion/say',{text});
             if(value?.fallback==='stage_draft'){
@@ -1648,7 +1672,6 @@ function createDotGoalBoardViews(React) {
               // native draft is never cleared (the host returns `preserved`).
               retainDockText(text);
               if(value.foregroundChanged===true){setDockProblem('前台会话已经切换；原话保留在下方，没有投到旧会话。');return;}
-              const target=await targetPromise;
               if(!target){setDockProblem('还没有可用的原生会话；原话保留在下方，不会丢。');return;}
               try{
                 const receipt=await prepareDotDraft(ctx,target.sessionId,text,AbortSignal.timeout(15000),null,undefined,true);
@@ -1669,23 +1692,138 @@ function createDotGoalBoardViews(React) {
             await todayStoreRef.current.refreshNow();
           }catch(failure){retainDockText(text);setError(failure?.message||zh.today.toast.sayFailed);}
         };
-        const clearSample=()=>{setSampleCleared(true);markSampleCleared(globalThis.localStorage);};
-        const todayPage=h('div',{'data-dot-today':true},h(TodayPage,{model:todayModel,onAct:todayAct,onSay:todaySay,onOpenProject:id=>openProject(id),onOpenSession:id=>navigate(id),onClearSample:clearSample,pending:pendingCards,wechatMode:todayWechatModeValue,inlineConnection,inlineConnectionError,qrFailed,onRefreshInline:readInlineConnection,onOpenSettings:()=>changePage('settings'),onQrError:()=>setQrFailed(true)}),h(Toast,{message:notice,actionLabel:undoId?'撤销':undefined,onAction:todayUndo,onClose:()=>{setNotice('');setUndoId('');}}));
-        const memoryPage=h('div',null,h('h1',null,'Dot 记住的事'),h('p',{className:'pc_dot_muted'},'按项目查看背景与约定。每条都保留来源，可由你纠正或忘记；这里不是跨项目的个人画像。'),h('div',{className:'pc_dot_memory_scope'},h('label',{htmlFor:'pc-memory-project'},'适用项目'),h('select',{id:'pc-memory-project','aria-label':'记忆适用项目',value:memoryProjectId,onChange:e=>leaveDrawer(()=>setMemoryProjectId(e.target.value))},...projects.map(p=>h('option',{value:p.id,key:p.id},p.label))),memoryProject?button('查看项目来源',()=>openProject(memoryProject.id,'sources')):null),!availability.projects?h('p',{className:'pc_dot_empty'},'项目范围尚未确认，请刷新。'):!memoryProject?h('p',{className:'pc_dot_empty'},'关注一个项目后，可在这里回看 Dot 记住的背景。'):!availableMemory(memoryProject)?h('p',{className:'pc_dot_empty'},'项目记忆暂不可用，可先查看原始资料。'):rowsFor(memoryProject).length?rowsFor(memoryProject).map(row=>memoryCard(row,memoryProject)):h('p',{className:'pc_dot_empty'},'这个项目还没有记忆。告诉 Dot 一点背景，从你明确说过的事开始。'),memoryProject&&!readOnly?button('告诉 Dot 要记住什么',()=>stageDraft('请记住这个项目的一点背景：',memoryProject.id),{className:'pc_dot_primary'}):null);
-        const recordsPage=h('div',null,h('div',{className:'pc_dot_header'},h('div',null,h('h1',null,'记录'),h('p',{className:'pc_dot_muted'},'最近交给 Dot 的事和它们的回复。可以回看，也可以再做一份。')),button('刷新',refresh)),!availability.jobs?h('p',{className:'pc_dot_empty'},'交办记录尚未确认，请刷新核对。'):recentJobs.length?h('div',{className:'pc_dot_project_cards'},recentJobs.map(job=>h('article',{className:'pc_dot_project_card',key:job.id,'data-dot-record':job.id},h('p',{className:'pc_dot_eyebrow'},`${job.projectLabel||'未关联项目'} · ${states[job.status]??'状态待核对'}`),h('h2',null,job.task),job.createdAt?h('p',{className:'pc_dot_muted'},`交办于 ${date(job.createdAt)}`):null,job.result?.available===true&&typeof job.result.text==='string'?h('p',{className:'pc_dot_excerpt'},job.result.text):null,h('div',{className:'pc_dot_actions'},button('看看这次结果',()=>openTask(job)),readOnly?null:button('再做一份',()=>stageDraft(job.task,job.projectId??''),{className:'pc_dot_text_button'}))))):h('p',{className:'pc_dot_empty'},'还没有交办记录。先把一件事交给 Dot，记录会留在这里，下次可以直接再做一份。'));
+        const focusCapsuleInput=(prefill='')=>{
+          if(typeof prefill==='string'&&prefill)setCapsuleDraft(prefill);
+          setTimeout(()=>{try{document.querySelector('[data-muse-capsule-input]')?.focus?.();}catch{}},0);
+        };
+        const museAct=async(payload={})=>{
+          if(!active.current)return null;
+          setError('');setBusy(true);
+          try{
+            const value=await todayPost('/api/project_companion/muse',payload);
+            if(active.current&&(value?.profile||value?.digest||value?.superagent)){
+              setMuseState({profile:value.profile,digest:value.digest,superagent:value.superagent});
+            }
+            if(!value?.ok){
+              if(active.current)setError(value?.error||'操作没有完成，请刷新核对。');
+              return value;
+            }
+            if(active.current){
+              if(value.undoToken){
+                setUndoBanner({token:value.undoToken,message:value.text||'刚才那条记忆已经更新。',expiresAt:value.undoExpiresAt});
+              }else if(payload.action==='profile_undo'){
+                setUndoBanner(null);
+              }
+              if(value.text)setNotice(value.text);
+            }
+            if(payload.action==='superagent_pending'||payload.action==='rhythm_configure'){
+              await todayStoreRef.current.refreshNow();
+            }
+            return value;
+          }catch(failure){
+            if(active.current)setError(failure?.message||'操作没有完成，请刷新核对。');
+            return null;
+          }finally{
+            if(active.current)setBusy(false);
+          }
+        };
+        const dispatchPromise=async promiseId=>{
+          if(!promiseId)return;
+          setError('');setBusy(true);
+          try{
+            const value=await todayPost('/api/project_companion/promise',{promiseId});
+            if(!value?.ok){
+              if(active.current)setError(value?.error||'这件事暂时没能推出去，请刷新核对。');
+              return;
+            }
+            if(active.current){
+              setNotice(value.text||'已推给前台会话跟进。');
+              setPinnedFocusKey(null);
+            }
+            await todayStoreRef.current.refreshNow();
+            void refreshMuseExtras();
+          }catch(failure){
+            if(active.current)setError(failure?.message||'这件事暂时没能推出去，请刷新核对。');
+          }finally{
+            if(active.current)setBusy(false);
+          }
+        };
+        const handleMuseAction=descriptor=>{
+          if(!descriptor)return;
+          if(descriptor.type==='today_act')void todayAct(descriptor.act,{projectId:descriptor.projectId,cardId:descriptor.cardId});
+          else if(descriptor.type==='dispatch_promise')void dispatchPromise(descriptor.promiseId);
+          else if(descriptor.type==='ask')focusCapsuleInput(descriptor.prompt||'');
+          else if(descriptor.type==='focus_capsule')focusCapsuleInput(descriptor.prefill||'');
+          else if(descriptor.type==='queue_pending')void museAct({action:'superagent_pending',text:descriptor.text,title:descriptor.title,workspacePath:descriptor.workspacePath});
+          else if(descriptor.type==='open_brief')setBriefOpen(true);
+          else if(descriptor.type==='open_workspace_picker')void workspaceScope.open();
+        };
+        const openMuseProject=id=>{
+          if(!id){void workspaceScope.open();return;}
+          if(projects.some(p=>p.id===id)){openProject(id);return;}
+          if(logicalProjects.getSnapshot().status?.projects?.some(p=>p.id===id)){void logicalProjects.open(id);return;}
+          const dot=(liveToday?.dots||[]).find(d=>d.projectId===id&&validId(d.sessionId));
+          if(dot)void navigate(dot.sessionId);
+          else void workspaceScope.open();
+        };
+        const museActivity=liveEmpty&&!sampleCleared
+          ?{...sampleActivity(),sample:true,superagent:liveToday?.superagent??museState?.superagent,profile:liveToday?.profile??museState?.profile,digest:liveToday?.digest??museState?.digest,events:Array.isArray(liveToday?.events)?liveToday.events:[],connection:liveToday?.connection??sampleActivity().connection}
+          :liveToday;
+        const museModel=buildMuseViewModel({
+          activity:museActivity,
+          muse:museState,
+          workbench:snapshot,
+          contextSnapshot:contextSnap,
+          now:new Date(),
+          loading:todaySnapshot.phase==='loading'&&!liveToday,
+          pinnedKey:pinnedFocusKey,
+        });
         const exitReview=closeReview?h('div',{className:'pc_dot_draft_review',role:'group','aria-label':'未保存的修改'},h('h3',null,'这次修改还没保存'),h('p',null,'保留草稿后，下次打开同一项目的这项内容可继续。关闭不会保存正式记录。'),h('div',{className:'pc_dot_actions'},button('继续编辑',()=>chooseExit('continue'),{className:'pc_dot_primary',disabled:false,autoFocus:true}),button('保留草稿并离开',()=>chooseExit('keep'),{disabled:false}),button('放弃修改并离开',()=>chooseExit('discard'),{disabled:false}))):null;
-        return h('div',{className:`pc_dot${dockOpen?' pc_dot_has_dock':''}`,ref:workbenchRoot,onScroll:updateHomeVisibility,'data-dot-workbench':true},h('div',{className:'pc_dot_inner',ref:workbenchInner,'data-dot-workbench-inner':true},h('nav',{className:'pc_dot_tabs','aria-label':'Dot 页面'},...[['home','今天'],['projects','项目'],['memory','记忆'],['settings','连接']].map(([key,label])=>button(label,()=>changePage(key),{'aria-current':page===key?'page':undefined,className:page===key?'active':''})),h('span',{className:'pc_dot_tabs_spacer','aria-hidden':true}),h('div',{className:'pc_dot_tabs_actions'},button(busy?'正在处理…':'刷新',refresh),desktopTarget?button(snapshot?.desktopConversation?'对话记录':'打开 Dot 会话',()=>navigate(desktopTarget.sessionId)):null)),
-          error?h('p',{className:'pc_dot_error',role:'alert'},error):null,notice?h('p',{className:'pc_dot_notice',role:'status'},notice):null,snapshot?.paused?h('p',{className:'pc_dot_notice'},'Dot 当前已暂停主动任务。这里仍可查看已有记录。'):null,
-          page==='home'?todayPage:page==='projects'?projectsPage:snapshot?(page==='memory'?memoryPage:null):!error?h('p',{role:'status'},'正在读取项目总览…'):null,
-          connectionsSeen?h('div',{hidden:page!=='settings'},h(WorkspaceConnection,{controller:workspaceScope}),h('h1',null,'按需连接，按你说的范围读取'),h('p',{className:'pc_dot_muted'},'账号授权、来源启用和实际查询分别发生。先从手头这件事需要的资料开始。'),readOnly?null:button('管理微信与关注项目',()=>setSetup(true)),h(ContextPanel,{compact:true,...(!readOnly?{onFirstValue:prompt=>stageDraft(prompt,'')}:{}),bindingRevision:contextRevision,bound:contextRevision!==null&&bound})):null,
-          h('footer',{className:'pc_dot_footer'},snapshot?.limitations?.length?h('details',null,h('summary',null,'资料范围与状态说明'),h('ul',null,...snapshot.limitations.slice(0,12).map((t,i)=>h('li',{key:i},t)))):null)),
-          h(Dock,{open:dockOpen,target:desktopTarget,onClose:closeDock,onExpand:()=>{if(desktopTarget)void navigate(desktopTarget.sessionId);},problem:dockProblem,retainedText:dockText,onCopyRetained:()=>{try{void navigator.clipboard?.writeText?.(dockText);}catch{}},onClearRetained:()=>setDockText('')},desktopTarget&&embedded&&!nativeSuspended?h(DesktopConversation,{target:desktopTarget,owner:'dock',SessionProvider:props.SessionProvider,renderSlot:props.renderSlot,slotName:'dot.desktop.conversation',onOpenHistory:()=>navigate(desktopTarget.sessionId)}):h('p',{className:'dotv2-dock__empty'},desktopTarget?'原生对话要在完整 Harness 窗口中打开；原话和草稿仍保留。':'还没有可用的原生对话。说一句，Dot 会先建一个桌面会话。')),
-          h(WorkspaceDialog,{controller:workspaceScope,onOrganized:()=>changePage('projects'),renderFactorySlot:props.renderFactorySlot,slots:ctx.slots}),h(ProjectSheet,{controller:logicalProjects,renderConversation:({projectId,target})=>!nativeSuspended&&typeof props.SessionProvider==='function'&&typeof props.renderSlot==='function'?h(DesktopConversation,{target,projectId,owner:'project',SessionProvider:props.SessionProvider,renderSlot:props.renderSlot,slotName:'dot.project.conversation',onOpenHistory:()=>navigate(target.sessionId)}):h('p',{role:'status'},'原生对话组件暂不可用，请恢复 Harness 工作台后重新打开；已有草稿仍保留。')}),
+        return h('div',{className:'pc_dot_muse_shell',ref:workbenchRoot,'data-dot-workbench':true,style:{display:'flex',flexDirection:'column',height:'100%',minHeight:0,width:'100%',position:'relative'}},
+          h(MuseWorkbench,{
+            model:museModel,
+            tab:museTab,
+            onTab:next=>{setMuseTab(next);if(next==='connections')setConnectionsSeen(true);},
+            busy,
+            feedback:error?{kind:'error',text:error}:notice?{kind:'info',text:notice,actionLabel:undoId?'撤销':undefined,onAction:todayUndo}:null,
+            undoBanner,
+            onDismissUndo:()=>setUndoBanner(null),
+            onAction:handleMuseAction,
+            onMuseAct:museAct,
+            onPinFocus:key=>setPinnedFocusKey(key),
+            onAsk:prefill=>focusCapsuleInput(prefill),
+            onOpenProject:openMuseProject,
+            onOpenWorkspacePicker:()=>{void workspaceScope.open();},
+            onOpenSettings:()=>setSetup(true),
+            capsuleDraft,
+            onCapsuleDraft:setCapsuleDraft,
+            conversationOpen,
+            onToggleConversation:next=>{if(next)void openDock();else closeDock();},
+            onSendChat:todaySay,
+            briefOpen,
+            onBriefOpen:setBriefOpen,
+            renderConversation:()=>h('div',{style:{display:'flex',flexDirection:'column',gap:10,height:'100%',minHeight:0}},
+              dockProblem?h('p',{className:'muse-notice-line',role:'status',style:{margin:0}},dockProblem):null,
+              dockText?h('div',{className:'muse-notice-line info',style:{margin:0,justifyContent:'space-between',gap:8}},
+                h('span',{style:{overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},`保留草稿：${dockText}`),
+                h('div',{className:'muse-hairline-actions'},
+                  h('button',{type:'button',className:'muse-btn-link',onClick:()=>{try{void navigator.clipboard?.writeText?.(dockText);}catch{}}},'复制'),
+                  h('button',{type:'button',className:'muse-btn-link',onClick:()=>setDockText('')},'清空'))):null,
+              desktopTarget&&embedded&&!nativeSuspended
+                ?h(DesktopConversation,{target:desktopTarget,owner:'dock',SessionProvider:props.SessionProvider,renderSlot:props.renderSlot,slotName:'dot.desktop.conversation',onOpenHistory:()=>navigate(desktopTarget.sessionId)})
+                :h('p',{className:'muse-rail-empty',style:{padding:16}},desktopTarget?'原生对话要在完整 Harness 窗口中打开；原话和草稿仍保留。':'还没有可用的原生对话。说一句，Dot 会先建一个桌面会话。')),
+            renderConnectionsHost:()=>h('div',{style:{paddingTop:12,display:'flex',flexDirection:'column',gap:14}},
+              h(WorkspaceConnection,{controller:workspaceScope}),
+              !readOnly?h('div',null,h('button',{type:'button',className:'muse-btn-outline',onClick:()=>setSetup(true)},'管理微信扫码与旧版关注项目')):null,
+              h(ContextPanel,{compact:true,...(!readOnly?{onFirstValue:prompt=>focusCapsuleInput(prompt)}:{}),bindingRevision:contextRevision,bound:contextRevision!==null&&bound})),
+          }),
+          h(WorkspaceDialog,{controller:workspaceScope,onOrganized:()=>{setMuseTab('today');void refresh();void todayStoreRef.current.refreshNow();},renderFactorySlot:props.renderFactorySlot,slots:ctx.slots}),
+          h(ProjectSheet,{controller:logicalProjects,renderConversation:({projectId,target})=>!nativeSuspended&&typeof props.SessionProvider==='function'&&typeof props.renderSlot==='function'?h(DesktopConversation,{target,projectId,owner:'project',SessionProvider:props.SessionProvider,renderSlot:props.renderSlot,slotName:'dot.project.conversation',onOpenHistory:()=>navigate(target.sessionId)}):h('p',{role:'status'},'原生对话组件暂不可用，请恢复 Harness 工作台后重新打开；已有草稿仍保留。')}),
           drawer?h(Modal,{open:true,closeLabel:'关闭',title:drawer==='project'?project?.label??'项目详情':drawer==='follow'?'后续怎么跟进':drawer==='memory'?'纠正项目记忆':'本次执行回复',className:'pc_dot_modal',onClose:closeDrawer},h('div',{className:'pc_dot_drawer'},error?h('p',{className:'pc_dot_error',role:'alert'},error):null,closeReview?exitReview:drawer==='project'?projectDetails():drawer==='follow'?followDetails():drawer==='memory'?memoryDetails():taskDetails())):null,
           setup&&!readOnly?h(Modal,{open:true,closeLabel:'关闭',title:'连接微信与选择项目',className:'pc_setup_modal',onClose:()=>{setSetup(false);void refresh();}},h(SetupSection,{renderFactorySlot:props.renderFactorySlot,close:()=>{setSetup(false);void refresh();}})):null);
       }
       if(typeof ctx.layout?.selectPanel==='function'){
-        ctx.effect(()=>{if(typeof document==='undefined')return;const tag=document.createElement('style');tag.dataset.pluginCss='dsh-project-companion/workbench';tag.textContent=dotCss+personalCss;document.head.appendChild(tag);return()=>tag.remove();});
+        ctx.effect(()=>{if(typeof document==='undefined')return;const tag=document.createElement('style');tag.dataset.pluginCss='dsh-project-companion/workbench';tag.textContent=dotCss+personalCss+museCss;document.head.appendChild(tag);return()=>tag.remove();});
         ctx.effect(()=>ctx.slots.inject('main',()=>ctx.slots.register({name:'main',key:dotPanel,children:{'dot.desktop.conversation':{kind:'single',scope:'session'},'dot.project.conversation':{kind:'single',scope:'session'}}},Workbench)));
         ctx.effect(()=>ctx.slots.inject('dot.project.conversation',()=>ctx.slots.register({name:'dot.project.conversation'},DesktopConversationContent)));
         ctx.effect(()=>ctx.slots.inject('dot.desktop.conversation',()=>ctx.slots.register({name:'dot.desktop.conversation'},DesktopConversationContent)));
