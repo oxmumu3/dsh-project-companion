@@ -1336,7 +1336,7 @@ function createDotGoalBoardViews(React) {
         const refreshMuseExtras=async()=>{
           try{
             const m=await request('/api/project_companion/muse');
-            if(active.current&&m?.ok)setMuseState({profile:m.profile,digest:m.digest,superagent:m.superagent});
+            if(active.current&&m?.ok)setMuseState({profile:m.profile,digest:m.digest,superagent:m.superagent,workspaceBrief:m.workspaceBrief??null});
           }catch{}
           try{
             const c=await request('/api/project_companion/context');
@@ -1701,8 +1701,13 @@ function createDotGoalBoardViews(React) {
           setError('');setBusy(true);
           try{
             const value=await todayPost('/api/project_companion/muse',payload);
-            if(active.current&&(value?.profile||value?.digest||value?.superagent)){
-              setMuseState({profile:value.profile,digest:value.digest,superagent:value.superagent});
+            if(active.current&&(value?.profile||value?.digest||value?.superagent||Object.hasOwn(value,'workspaceBrief'))){
+              setMuseState(prev=>({
+                profile:value.profile??prev?.profile??null,
+                digest:value.digest??prev?.digest??null,
+                superagent:value.superagent??prev?.superagent??null,
+                workspaceBrief:Object.hasOwn(value,'workspaceBrief')?value.workspaceBrief:(prev?.workspaceBrief??null),
+              }));
             }
             if(!value?.ok){
               if(active.current)setError(value?.error||'操作没有完成，请刷新核对。');
@@ -1716,7 +1721,7 @@ function createDotGoalBoardViews(React) {
               }
               if(value.text)setNotice(value.text);
             }
-            if(payload.action==='superagent_pending'||payload.action==='rhythm_configure'){
+            if(['superagent_pending','rhythm_configure','workspace_brief_refresh','promise_draft_save','promise_draft_reset'].includes(payload.action)){
               await todayStoreRef.current.refreshNow();
             }
             return value;
@@ -1727,11 +1732,11 @@ function createDotGoalBoardViews(React) {
             if(active.current)setBusy(false);
           }
         };
-        const dispatchPromise=async promiseId=>{
+        const dispatchPromise=async(promiseId,draftText='')=>{
           if(!promiseId)return;
           setError('');setBusy(true);
           try{
-            const value=await todayPost('/api/project_companion/promise',{promiseId});
+            const value=await todayPost('/api/project_companion/promise',{promiseId,...(typeof draftText==='string'&&draftText.trim()?{draftText:draftText.trim()}:{})});
             if(!value?.ok){
               if(active.current)setError(value?.error||'这件事暂时没能推出去，请刷新核对。');
               return;
@@ -1751,10 +1756,11 @@ function createDotGoalBoardViews(React) {
         const handleMuseAction=descriptor=>{
           if(!descriptor)return;
           if(descriptor.type==='today_act')void todayAct(descriptor.act,{projectId:descriptor.projectId,cardId:descriptor.cardId});
-          else if(descriptor.type==='dispatch_promise')void dispatchPromise(descriptor.promiseId);
+          else if(descriptor.type==='dispatch_promise')void dispatchPromise(descriptor.promiseId,descriptor.draftText);
           else if(descriptor.type==='ask')focusCapsuleInput(descriptor.prompt||'');
           else if(descriptor.type==='focus_capsule')focusCapsuleInput(descriptor.prefill||'');
           else if(descriptor.type==='queue_pending')void museAct({action:'superagent_pending',text:descriptor.text,title:descriptor.title,workspacePath:descriptor.workspacePath});
+          else if(descriptor.type==='refresh_workspace_brief')void museAct({action:'workspace_brief_refresh'});
           else if(descriptor.type==='open_brief')setBriefOpen(true);
           else if(descriptor.type==='open_workspace_picker')void workspaceScope.open();
         };
@@ -1766,8 +1772,9 @@ function createDotGoalBoardViews(React) {
           if(dot)void navigate(dot.sessionId);
           else void workspaceScope.open();
         };
-        const museActivity=liveEmpty&&!sampleCleared
-          ?{...sampleActivity(),sample:true,superagent:liveToday?.superagent??museState?.superagent,profile:liveToday?.profile??museState?.profile,digest:liveToday?.digest??museState?.digest,events:Array.isArray(liveToday?.events)?liveToday.events:[],connection:liveToday?.connection??sampleActivity().connection}
+        const museSample=liveEmpty&&!sampleCleared&&(liveToday?.access?.count??0)===0&&!liveToday?.workspaceBrief?.workspaces?.length&&!museState?.workspaceBrief?.workspaces?.length&&!liveToday?.digest?.lastDigest?.text&&!(liveToday?.superagent?.milestones?.length);
+        const museActivity=museSample
+          ?{...sampleActivity(),sample:true,superagent:liveToday?.superagent??museState?.superagent,profile:liveToday?.profile??museState?.profile,digest:liveToday?.digest??museState?.digest,workspaceBrief:null,events:Array.isArray(liveToday?.events)?liveToday.events:[],connection:liveToday?.connection??sampleActivity().connection}
           :liveToday;
         const museModel=buildMuseViewModel({
           activity:museActivity,
@@ -1789,6 +1796,7 @@ function createDotGoalBoardViews(React) {
             undoBanner,
             onDismissUndo:()=>setUndoBanner(null),
             onAction:handleMuseAction,
+            onSaveDraft:(focusItem,nextText)=>museAct({action:'promise_draft_save',promiseId:focusItem.promiseId,text:nextText,what:focusItem.title}),
             onMuseAct:museAct,
             onPinFocus:key=>setPinnedFocusKey(key),
             onAsk:prefill=>focusCapsuleInput(prefill),
@@ -1817,7 +1825,7 @@ function createDotGoalBoardViews(React) {
               !readOnly?h('div',null,h('button',{type:'button',className:'muse-btn-outline',onClick:()=>setSetup(true)},'管理微信扫码与旧版关注项目')):null,
               h(ContextPanel,{compact:true,...(!readOnly?{onFirstValue:prompt=>focusCapsuleInput(prompt)}:{}),bindingRevision:contextRevision,bound:contextRevision!==null&&bound})),
           }),
-          h(WorkspaceDialog,{controller:workspaceScope,onOrganized:()=>{setMuseTab('today');void refresh();void todayStoreRef.current.refreshNow();},renderFactorySlot:props.renderFactorySlot,slots:ctx.slots}),
+          h(WorkspaceDialog,{controller:workspaceScope,onOrganized:()=>{try{globalThis.localStorage?.setItem('dot.sample.cleared','1');}catch{}setSampleCleared(true);setMuseTab('today');void museAct({action:'workspace_brief_refresh'});void refresh();void todayStoreRef.current.refreshNow();},renderFactorySlot:props.renderFactorySlot,slots:ctx.slots}),
           h(ProjectSheet,{controller:logicalProjects,renderConversation:({projectId,target})=>!nativeSuspended&&typeof props.SessionProvider==='function'&&typeof props.renderSlot==='function'?h(DesktopConversation,{target,projectId,owner:'project',SessionProvider:props.SessionProvider,renderSlot:props.renderSlot,slotName:'dot.project.conversation',onOpenHistory:()=>navigate(target.sessionId)}):h('p',{role:'status'},'原生对话组件暂不可用，请恢复 Harness 工作台后重新打开；已有草稿仍保留。')}),
           drawer?h(Modal,{open:true,closeLabel:'关闭',title:drawer==='project'?project?.label??'项目详情':drawer==='follow'?'后续怎么跟进':drawer==='memory'?'纠正项目记忆':'本次执行回复',className:'pc_dot_modal',onClose:closeDrawer},h('div',{className:'pc_dot_drawer'},error?h('p',{className:'pc_dot_error',role:'alert'},error):null,closeReview?exitReview:drawer==='project'?projectDetails():drawer==='follow'?followDetails():drawer==='memory'?memoryDetails():taskDetails())):null,
           setup&&!readOnly?h(Modal,{open:true,closeLabel:'关闭',title:'连接微信与选择项目',className:'pc_setup_modal',onClose:()=>{setSetup(false);void refresh();}},h(SetupSection,{renderFactorySlot:props.renderFactorySlot,close:()=>{setSetup(false);void refresh();}})):null);

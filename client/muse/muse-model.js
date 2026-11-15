@@ -107,6 +107,9 @@ export function buildMuseViewModel({
     lastDigest: digestRaw?.lastDigest ?? null,
   };
 
+  const workspaceBrief = activity?.workspaceBrief ?? muse?.workspaceBrief ?? null;
+  const promiseDrafts = (activity?.promiseDrafts && typeof activity.promiseDrafts === 'object') ? activity.promiseDrafts : {};
+
   const events = (Array.isArray(activity?.events) ? activity.events : []).map(ev => ({
     id: String(ev.id || `${ev.startAt ?? ''}-${ev.title ?? ''}`),
     title: clean(ev.title) || '日程',
@@ -166,6 +169,10 @@ export function buildMuseViewModel({
   for (const row of today.promises) {
     if (!row.dispatch) continue;
     const key = `promise:${row.id}`;
+    const serverDraft = promiseDrafts[row.id];
+    const draftSlip = clean(serverDraft?.text)
+      ? serverDraft.text
+      : `【拟办草稿】围绕「${row.what}」${row.whenText ? `（期限参考：${row.whenText}）` : ''}\n• 推进要点：先梳理相关背景与待确认事项，整理成可直接外发或执行的要点。\n• 表达口径：先给结论与时间节点，由你核对后再推进。`;
     candidates.push({
       key,
       kind: 'promise',
@@ -173,12 +180,16 @@ export function buildMuseViewModel({
       sourceLabel: `${row.from || '来源待办'} · 答应过的事`,
       timeText: row.whenText || '',
       title: row.what,
-      body: row.note || '这件事还没有跟进会话接手，需要的话可以让 Dot 顺手帮你梳理草稿或派进工作区。',
-      primaryLabel: '整理回复或派工',
-      primaryAction: {type: 'dispatch_promise', promiseId: row.id, what: row.what},
-      secondaryLabel: '带去对话聊聊',
-      secondaryAction: {type: 'ask', prompt: `关于这件我答应过的事「${row.what}」，帮我整理下一步建议或回复草稿。`},
-      askPrompt: `帮我准备「${row.what}」的回复草稿或推进计划。`,
+      body: row.note || 'Dot 已顺手替你预拟好这版草稿，你可以直接按这版推进，或点开「改两句」微调。',
+      draftSlip,
+      draftKind: serverDraft?.kind || 'smart',
+      promiseId: row.id,
+      editableDraft: true,
+      primaryLabel: '按这版草稿去办',
+      primaryAction: {type: 'dispatch_promise', promiseId: row.id, what: row.what, draftText: draftSlip},
+      secondaryLabel: '带去对话细聊',
+      secondaryAction: {type: 'ask', prompt: `关于这件我答应过的事「${row.what}」，先参考这版草稿帮我润色或安排下一步：\n${draftSlip}`},
+      askPrompt: `帮我完善「${row.what}」的回复草稿或推进计划。`,
     });
   }
 
@@ -204,6 +215,23 @@ export function buildMuseViewModel({
       secondaryLabel: '顺手追问一句',
       secondaryAction: {type: 'ask', prompt: '结合今天的早报重点，帮我安排最值得先做的 1 件事。'},
       askPrompt: '帮我梳理今天早报里的重点安排。',
+    };
+  } else if (Array.isArray(workspaceBrief?.workspaces) && workspaceBrief.workspaces.length > 0 && !today.sample) {
+    focus = {
+      key: 'first-aha',
+      kind: 'first-aha',
+      sourceLabel: `初见简报 · 已读懂 ${workspaceBrief.workspaceCount || workspaceBrief.workspaces.length} 个工作区`,
+      timeText: workspaceBrief.generatedAt ? atText(workspaceBrief.generatedAt, safeNow) : '刚刚',
+      title: workspaceBrief.title || `刚读懂你勾选的 ${workspaceBrief.workspaceCount || workspaceBrief.workspaces.length} 个工作区`,
+      body: '不用配日历也能直接开工：Dot 已只读扫过这些目录的说明与近期进度摘要，随时可以帮你排今天先推哪件。',
+      draftSlip: workspaceBrief.text,
+      primaryLabel: '让 Dot 排今天优先级',
+      primaryAction: {type: 'ask', prompt: '结合刚读懂的工作区初见简报，帮我排一下今天最值得先推进的 1–2 件事。'},
+      secondaryLabel: '展开完整简报',
+      secondaryAction: {type: 'open_brief'},
+      laterLabel: '重新扫描',
+      laterAction: {type: 'refresh_workspace_brief'},
+      askPrompt: '结合已勾选的工作区摘要，帮我定今天先做什么。',
     };
   } else if (today.dots.length === 0 && today.state === 'empty') {
     focus = {
@@ -258,9 +286,13 @@ export function buildMuseViewModel({
       });
     }
   }
+  const briefWsById = new Map((Array.isArray(workspaceBrief?.workspaces) ? workspaceBrief.workspaces : []).map(ws => [ws.id, ws]));
+  const seenDotIds = new Set();
   for (const dot of today.dots) {
+    seenDotIds.add(dot.id);
     const latestSession = projectSessionMap.get(dot.id);
     const doneGroup = today.doneGroups.find(g => g.projectId === dot.id);
+    const briefWs = briefWsById.get(dot.id);
     const stateLabel = {
       needs_you: '等你拍板',
       stuck: '卡住了',
@@ -276,10 +308,26 @@ export function buildMuseViewModel({
       title: dot.name,
       statusText: dot.count > 1 ? `${stateLabel} · ${dot.count} 条动态` : stateLabel,
       state: dot.state,
-      summary: clean(latestSession?.what || latestSession?.title || doneGroup?.latest?.what) || '已授权由 Dot 跟踪该目录的本地会话动静',
+      summary: clean(latestSession?.what || latestSession?.title || doneGroup?.latest?.what || briefWs?.latestProgress || briefWs?.summary) || '已授权由 Dot 跟踪该目录的本地会话动静',
       timeText: latestSession?.at ? atText(latestSession.at, safeNow) : '',
       askPrompt: `帮我总结一下工作区「${dot.name}」最近做到哪一步了。`,
     });
+  }
+  if (!today.sample && Array.isArray(workspaceBrief?.workspaces)) {
+    for (const ws of workspaceBrief.workspaces) {
+      if (!ws?.id || seenDotIds.has(ws.id)) continue;
+      workspaceRows.push({
+        key: `ws-${ws.id}`,
+        kind: 'workspace',
+        projectId: ws.id,
+        title: ws.label,
+        statusText: ws.statusText || '刚接入',
+        state: 'quiet',
+        summary: ws.latestProgress || ws.summary,
+        timeText: workspaceBrief.generatedAt ? atText(workspaceBrief.generatedAt, safeNow) : '',
+        askPrompt: `帮我看一下工作区「${ws.label}」最近在做什么，今天可以先推哪一步？`,
+      });
+    }
   }
 
   // Unified Threads stream (`脉络`)
@@ -386,10 +434,11 @@ export function buildMuseViewModel({
     weekday: 'long',
   }).format(safeNow);
 
+  const watchedCount = today.dots.length || (today.sample ? 0 : workspaceBrief?.workspaceCount || 0);
   const heroSubline = mode === 'synergy'
-    ? `SuperAgent 协同中 · ${superagent.counts.inReview} 项待验收 / ${superagent.counts.inProgress} 项推进中${today.dots.length ? ` · 关注 ${today.dots.length} 个工作区` : ''}`
-    : today.dots.length
-      ? `独立模式 · 已关注 ${today.dots.length} 个本地工作区，不依赖 SuperAgent 也能汇总项目进展`
+    ? `SuperAgent 协同中 · ${superagent.counts.inReview} 项待验收 / ${superagent.counts.inProgress} 项推进中${watchedCount ? ` · 关注 ${watchedCount} 个工作区` : ''}`
+    : watchedCount
+      ? `独立模式 · 已关注 ${watchedCount} 个本地工作区，不依赖 SuperAgent 也能汇总项目进展`
       : '独立模式 · 授权几个常用文件夹或连接日历后，Dot 会每天替你收拢要点';
 
   return {
@@ -399,6 +448,7 @@ export function buildMuseViewModel({
     profile,
     traitGroups,
     digest,
+    workspaceBrief,
     events,
     focus,
     folded,

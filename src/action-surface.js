@@ -5,8 +5,8 @@
  *  view/op back into the exact legacy action so every existing handler,
  *  guard and test keeps working unchanged. Old action names stay valid.
  */
-export const LOOK_VIEWS = ['progress', 'change', 'status', 'health', 'task', 'once', 'followup', 'digest'];
-export const MANAGE_OPS = ['watch', 'unwatch', 'memory', 'remember', 'correct_memory', 'forget_memory', 'pause', 'resume', 'daily', 'cancel_daily', 'followup', 'cancel_followup', 'pulse'];
+export const LOOK_VIEWS = ['progress', 'change', 'status', 'health', 'task', 'once', 'followup', 'digest', 'profile'];
+export const MANAGE_OPS = ['watch', 'unwatch', 'memory', 'remember', 'correct_memory', 'forget_memory', 'profile_remember', 'profile_forget', 'pause', 'resume', 'daily', 'cancel_daily', 'followup', 'cancel_followup', 'pulse'];
 
 const LOOK = {
   progress: a => ({ action: 'digest', project: a.project, ...(a.detail ? { detail: a.detail } : {}) }),
@@ -17,6 +17,7 @@ const LOOK = {
   once: a => ({ action: 'once_status', ...(a.project ? { project: a.project } : {}) }),
   followup: a => ({ action: 'followup_status', ...(a.project ? { project: a.project } : {}) }),
   digest: () => ({ action: 'digest_view' }),
+  profile: () => ({ action: 'profile_view' }),
 };
 
 const MANAGE = {
@@ -26,6 +27,26 @@ const MANAGE = {
   remember: a => ({ action: 'remember', project: a.project, memoryKind: a.memoryKind, memoryText: a.memoryText, sourceKind: a.sourceKind, ...(a.sourceReference ? { sourceReference: a.sourceReference } : {}), userRequested: a.userRequested === true }),
   correct_memory: a => ({ action: 'correct_memory', project: a.project, memoryId: a.memoryId, memoryText: a.memoryText, userRequested: a.userRequested === true }),
   forget_memory: a => ({ action: 'forget_memory', project: a.project, memoryId: a.memoryId, userRequested: a.userRequested === true }),
+  profile_remember: a => ({
+    action: 'profile_remember',
+    ...(a.traitCategory ? { traitCategory: a.traitCategory } : {}),
+    ...(a.traitLabel ? { traitLabel: a.traitLabel } : {}),
+    ...(a.traitValue ? { traitValue: a.traitValue } : {}),
+    ...(a.noteText ? { noteText: a.noteText } : {}),
+    ...(a.noteCategory ? { noteCategory: a.noteCategory } : {}),
+    ...(a.time ? { time: a.time } : {}),
+    userRequested: a.userRequested === true,
+  }),
+  profile_forget: a => ({
+    action: 'profile_forget',
+    ...(a.id ? { id: a.id } : {}),
+    ...(a.traitCategory ? { traitCategory: a.traitCategory } : {}),
+    ...(a.traitLabel ? { traitLabel: a.traitLabel } : {}),
+    ...(a.query ? { query: a.query } : {}),
+    ...(a.noteText ? { noteText: a.noteText } : {}),
+    ...(a.undoToken ? { undoToken: a.undoToken } : {}),
+    userRequested: a.userRequested === true,
+  }),
   pause: () => ({ action: 'pause' }),
   resume: () => ({ action: 'resume' }),
   daily: a => ({ action: 'configure_daily', time: a.time, ...(a.timeZone ? { timeZone: a.timeZone } : {}), ...(a.project ? { project: a.project } : {}) }),
@@ -54,6 +75,6 @@ export function normalizeSurfaceAction(args) {
 
 /** What each composite view/op means, for the tool description and reports. */
 export const SURFACE_COPY = {
-  look: 'progress=进展与卡点｜change=相比上次的变化（需本人明确问了才传 userRequested:true）｜status=助理总状态｜health=本机自检（doctor）｜task=交办到哪了｜once=一次检查的状态｜followup=周期跟进的状态｜digest=每日整理最近一份与下一次时间',
-  manage: 'watch=关注项目｜unwatch=取消关注｜memory=读项目记忆｜remember=记一条｜correct_memory=改一条｜forget_memory=忘一条｜pause=暂停自动跟进｜resume=恢复｜daily=每日汇报时间｜cancel_daily=取消日报｜followup=设置周期跟进（要分钟数）｜cancel_followup=取消周期跟进｜pulse=所有关注项目有变化才提醒，可带 everyMinutes 与 enabled:false 关闭（动作名 pulse_projects）',
+  look: 'progress=进展与卡点｜change=相比上次的变化（需本人明确问了才传 userRequested:true）｜status=助理总状态｜health=本机自检（doctor）｜task=交办到哪了｜once=一次检查的状态｜followup=周期跟进的状态｜digest=每日整理最近一份与下一次时间｜profile=读取本人长期偏好与随记（profile_view）',
+  manage: 'watch=关注项目｜unwatch=取消关注｜memory=读项目记忆｜remember=记一条｜correct_memory=改一条｜forget_memory=忘一条｜profile_remember=顺手记下本人作息/汇报偏好或随记｜profile_forget=撤回或忘掉本人偏好随记｜pause=暂停自动跟进｜resume=恢复｜daily=每日汇报时间｜cancel_daily=取消日报｜followup=设置周期跟进（要分钟数）｜cancel_followup=取消周期跟进｜pulse=所有关注项目有变化才提醒，可带 everyMinutes 与 enabled:false 关闭（动作名 pulse_projects）',
 };

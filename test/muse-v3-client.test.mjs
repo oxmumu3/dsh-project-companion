@@ -277,3 +277,192 @@ test('muse.css uses --dot-* semantic tokens without raw hex/rgb, uses @container
   assert.match(noComments, /\.pc_dot_muse\s+\.muse-btn-primary\b/);
   assert.match(noComments, /\.pc_dot_muse\s+\.muse-nav-btn\b/);
 });
+
+test('buildMuseViewModel & MuseTodayView support Half-Step 1 editable draft slip with Escape cancel and onSaveDraft', async t => {
+  const {createMuseViews} = await loadMuseViews(t);
+
+  const model = buildMuseViewModel({
+    activity: {
+      access: {count: 1, workspaces: [{id: 'ws-1', label: 'Alpha'}]},
+      workspaceBrief: {
+        title: '刚读懂你勾选的 1 个工作区',
+        text: '• Alpha（刚关注的工作区）：核心服务已联调',
+        workspaces: [{id: 'ws-1', label: 'Alpha', summary: '核心服务已联调', statusText: '刚关注的工作区'}],
+      },
+      promises: [
+        {id: 'prom-1', what: '给 Alpha 发本周进度同步', whenText: '今天 18:00', source: 'dida', status: 'open'},
+      ],
+      promiseDrafts: {
+        'prom-1': {
+          promiseId: 'prom-1',
+          text: '【拟办草稿】围绕「给 Alpha 发本周进度同步」先把本周结论发出来。',
+          kind: 'smart',
+        },
+      },
+      sessions: [],
+      events: [],
+    },
+    muse: {
+      superagent: {mode: 'standalone', milestones: []},
+      profile: {traits: [{id: 't1', category: 'tone', label: '汇报方式', value: '先给结论'}], notes: []},
+    },
+  });
+
+  assert.equal(model.focus.kind, 'promise');
+  assert.equal(model.focus.editableDraft, true);
+  assert.match(model.focus.draftSlip, /先把本周结论发出来/);
+  assert.equal(model.focus.primaryAction.type, 'dispatch_promise');
+  assert.equal(model.focus.primaryAction.promiseId, 'prom-1');
+  assert.equal(model.focus.primaryAction.draftText, model.focus.draftSlip);
+
+  // Stateful React test harness preserving component hook slots across re-renders.
+  const hookStore = new Map();
+  const stack = [];
+  const React = {
+    createElement: (type, props, ...children) => ({
+      type,
+      props: props ?? {},
+      children: children.flat(Infinity).filter(c => c !== null && c !== undefined && c !== false && c !== true),
+    }),
+    useState: initial => {
+      const frame = stack.at(-1);
+      const index = frame.cursor++;
+      if (!(index in frame.slots)) frame.slots[index] = typeof initial === 'function' ? initial() : initial;
+      return [
+        frame.slots[index],
+        next => { frame.slots[index] = typeof next === 'function' ? next(frame.slots[index]) : next; },
+      ];
+    },
+    useRef: initial => {
+      const frame = stack.at(-1);
+      const index = frame.cursor++;
+      if (!(index in frame.slots)) frame.slots[index] = {current: initial};
+      return frame.slots[index];
+    },
+    useEffect: () => {},
+    useMemo: fn => fn(),
+  };
+  const expand = (node, keyPath = 'root') => {
+    if (node === null || node === undefined || typeof node === 'boolean') return null;
+    if (typeof node === 'string' || typeof node === 'number') return node;
+    if (Array.isArray(node)) return node.map((item, i) => expand(item, `${keyPath}[${i}]`)).flat(Infinity).filter(x => x !== null);
+    if (typeof node.type === 'function') {
+      const id = `${keyPath}:${node.type.name || 'fn'}`;
+      let slots = hookStore.get(id);
+      if (!slots) { slots = []; hookStore.set(id, slots); }
+      stack.push({cursor: 0, slots});
+      try { return expand(node.type(node.props), id); } finally { stack.pop(); }
+    }
+    return {
+      ...node,
+      children: (node.children ?? []).map((c, i) => expand(c, `${keyPath}.${i}`)).flat(Infinity).filter(x => x !== null),
+    };
+  };
+  const findAll = (tree, pred, acc = []) => {
+    if (!tree || typeof tree !== 'object') return acc;
+    if (Array.isArray(tree)) { for (const x of tree) findAll(x, pred, acc); return acc; }
+    if (pred(tree)) acc.push(tree);
+    for (const c of tree.children ?? []) findAll(c, pred, acc);
+    return acc;
+  };
+  const findProp = (tree, prop) => findAll(tree, n => n.props && prop in n.props && n.props[prop] !== false && n.props[prop] !== undefined);
+
+  const {MuseTodayView} = createMuseViews(React);
+  const savedCalls = [];
+  const renderToday = () => expand(React.createElement(MuseTodayView, {
+    model,
+    busy: false,
+    onAction: async () => {},
+    onSaveDraft: async (focusItem, nextText) => { savedCalls.push({promiseId: focusItem.promiseId, nextText}); },
+    onPinFocus: () => {},
+    onAsk: () => {},
+    onOpenProject: () => {},
+    onOpenWorkspacePicker: () => {},
+    onOpenTab: () => {},
+  }));
+
+  let tree = renderToday();
+  assert.equal(findProp(tree, 'data-muse-draft-slip').length, 1);
+  assert.equal(findProp(tree, 'data-muse-draft-editor').length, 0);
+
+  // Click [改两句] -> editor opens.
+  const editBtn = findProp(tree, 'data-muse-draft-edit')[0];
+  assert.ok(editBtn);
+  editBtn.props.onClick();
+  tree = renderToday();
+  const editor = findProp(tree, 'data-muse-draft-editor')[0];
+  assert.ok(editor);
+
+  // Change text then press Escape -> cancels cleanly without saving.
+  editor.props.onChange({target: {value: '临时改动未保存'}});
+  let prevented = false;
+  editor.props.onKeyDown({key: 'Escape', preventDefault() { prevented = true; }});
+  assert.equal(prevented, true);
+  tree = renderToday();
+  assert.equal(findProp(tree, 'data-muse-draft-editor').length, 0);
+  assert.equal(savedCalls.length, 0);
+
+  // Re-open editor, update draft, and save.
+  findProp(tree, 'data-muse-draft-edit')[0].props.onClick();
+  tree = renderToday();
+  findProp(tree, 'data-muse-draft-editor')[0].props.onChange({target: {value: '正式定稿草稿'}});
+  tree = renderToday();
+  await findProp(tree, 'data-muse-draft-save')[0].props.onClick();
+  tree = renderToday();
+  assert.equal(savedCalls.length, 1);
+  assert.deepEqual(savedCalls[0], {promiseId: 'prom-1', nextText: '正式定稿草稿'});
+  assert.equal(findProp(tree, 'data-muse-draft-editor').length, 0);
+});
+
+test('buildMuseViewModel renders first-aha focus card + workspace brief in MuseBriefDialog + agent note badge in MuseMemoryView', async t => {
+  const {createMuseViews} = await loadMuseViews(t);
+  const {React, expand} = runtime();
+  const collectText = node => {
+    if (node === null || node === undefined || typeof node === 'boolean') return '';
+    if (typeof node === 'string' || typeof node === 'number') return String(node);
+    if (Array.isArray(node)) return node.map(collectText).join(' ');
+    return (node.children ?? []).map(collectText).join(' ');
+  };
+  const {MuseBriefDialog, MuseMemoryView} = createMuseViews(React);
+
+  const model = buildMuseViewModel({
+    activity: {
+      access: {count: 2, workspaces: [{id: 'ws-a', label: 'Alpha'}, {id: 'ws-b', label: 'Beta'}]},
+      workspaceBrief: {
+        title: '刚读懂你勾选的 2 个工作区',
+        text: '• Alpha（刚关注的工作区）：完成支付回调整理\n• Beta（1 件事在推进）：补齐回归脚本',
+        workspaces: [
+          {id: 'ws-a', label: 'Alpha', statusText: '刚关注的工作区', summary: '完成支付回调整理'},
+          {id: 'ws-b', label: 'Beta', statusText: '1 件事在推进', summary: '补齐回归脚本'},
+        ],
+      },
+      sessions: [],
+      events: [],
+      promises: [],
+    },
+    muse: {
+      digest: {lastDigest: null, dailyTime: '09:00', enabled: true, isQuietToday: false},
+      superagent: {mode: 'standalone', milestones: []},
+      profile: {
+        traits: [],
+        notes: [{id: 'n-agent', text: '周三下午出差', category: 'schedule', source: 'agent', createdAt: '2026-11-15T01:00:00.000Z'}],
+      },
+    },
+  });
+
+  assert.equal(model.focus.kind, 'first-aha');
+  assert.equal(model.focus.title, '刚读懂你勾选的 2 个工作区');
+  assert.equal(model.workspaceRows.length, 2);
+  assert.equal(model.workspaceRows[0].statusText, '刚关注的工作区');
+  assert.equal(model.workspaceRows[1].summary, '补齐回归脚本');
+
+  const briefTree = expand(React.createElement(MuseBriefDialog, {open: true, model, onClose: () => {}, onAsk: () => {}}));
+  const briefText = collectText(briefTree);
+  assert.match(briefText, /完成支付回调整理/);
+  assert.match(briefText, /补齐回归脚本/);
+
+  const memTree = expand(React.createElement(MuseMemoryView, {model, busy: false, onMuseAct: async () => {}, onAsk: () => {}}));
+  const memText = collectText(memTree);
+  assert.match(memText, /对话顺手记/);
+  assert.match(memText, /周三下午出差/);
+});

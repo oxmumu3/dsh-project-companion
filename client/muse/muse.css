@@ -318,6 +318,26 @@
   overflow-wrap: anywhere;
 }
 
+.muse-draft-slip-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.muse-draft-editor-wrap {
+  display: flex;
+  flex-direction: column;
+}
+
+.muse-draft-textarea {
+  width: 100%;
+  resize: vertical;
+  min-height: 86px;
+  line-height: 1.6;
+}
+
 .muse-focus-actions {
   margin-top: 18px;
   display: flex;

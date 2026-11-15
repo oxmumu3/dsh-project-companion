@@ -9,6 +9,8 @@ import {createDailyDigest} from '../src/daily-digest-service.js';
 import {createMuseController, registerMuseRoute} from '../src/muse-route.js';
 import {createDotSourceReader} from '../src/dot-source-reader.js';
 import {createTodayProjection} from '../src/today-projection.js';
+import {createMuseIntelligence} from '../src/muse-intelligence.js';
+import {createTodayController} from '../src/today-route.js';
 
 function memoryKeyValueStore() {
   const map = new Map();
@@ -296,4 +298,288 @@ test('dotSourceReader projects calendar events and todayProjection attaches even
   // Revoking calendar immediately drops events from snapshot.
   calendarAllowed = false;
   assert.deepEqual(reader.snapshot().events, []);
+});
+
+test('createMuseIntelligence synthesizes workspaceBrief, redacts secrets, falls back to package.json, caches by revision, and clears on revocation', async t => {
+  const tmp = await fs.mkdtemp(path.join(os.tmpdir(), 'dot-muse-intel-'));
+  t.after(() => fs.rm(tmp, {recursive: true, force: true}));
+
+  const projA = await fs.realpath(path.join(tmp, 'alpha-project')).catch(async () => {
+    await fs.mkdir(path.join(tmp, 'alpha-project/.agent/memory'), {recursive: true});
+    return fs.realpath(path.join(tmp, 'alpha-project'));
+  });
+  await fs.writeFile(path.join(projA, 'README.md'), '# Alpha Project\n这是一个包含 token sk-secret1234567890abcdef 和 Bearer secret_tok_xyz 的说明文件');
+  await fs.writeFile(path.join(projA, '.agent/memory/progress.md'), '# 进展\n- 刚完成核心联调 Bearer supersecret999\n');
+
+  const projB = path.join(tmp, 'beta-pkg');
+  await fs.mkdir(projB, {recursive: true});
+  const realB = await fs.realpath(projB);
+  await fs.writeFile(path.join(realB, 'package.json'), JSON.stringify({name: 'beta-pkg', description: 'Package fallback description for Beta'}));
+
+  let revision = 1;
+  let authorized = true;
+  let grants = [
+    {id: 'ws-a', root: projA, label: 'Alpha', sessionIds: ['s1']},
+    {id: 'ws-b', root: realB, label: 'Beta', sessionIds: []},
+  ];
+  let readCalls = 0;
+
+  const workspaceAccess = {
+    async capture() {
+      return {revision, grants: authorized ? structuredClone(grants) : []};
+    },
+    authorizeSync(captured) {
+      return authorized && Array.isArray(captured?.grants) && captured.grants.length > 0 && captured.revision === revision;
+    },
+  };
+
+  const {readProjectFiles} = await import('../src/sources.js');
+  const intel = createMuseIntelligence({
+    workspaceAccess,
+    sessionLedger: {internal: async () => ({sessions: [{root: projA, state: 'doing'}]})},
+    readProject: async root => {
+      readCalls += 1;
+      return readProjectFiles(root);
+    },
+  });
+
+  const first = await intel.readWorkspaceBrief();
+  assert.ok(first);
+  assert.equal(first.workspaceCount, 2);
+  assert.equal(first.title, '刚读懂你勾选的 2 个工作区');
+  assert.equal(first.workspaces[0].statusText, '1 件事在推进');
+  assert.equal(first.workspaces[1].summary, 'Package fallback description for Beta');
+  assert.doesNotMatch(first.text, /sk-secret|secret_tok|supersecret/);
+  assert.equal(readCalls, 2);
+
+  // Caching on unchanged access revision avoids re-reading project files.
+  const cached = await intel.readWorkspaceBrief();
+  assert.equal(cached.revision, first.revision);
+  assert.equal(readCalls, 2);
+
+  // Revocation immediately clears cached brief and returns null.
+  authorized = false;
+  revision += 1;
+  assert.equal(await intel.readWorkspaceBrief(), null);
+  assert.equal(intel.peekWorkspaceBrief(), null);
+});
+
+test('muse promise drafts integrate profile tone + workspace brief and feed custom draftText into createTodayController dispatch', async t => {
+  const root = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'dot-draft-dispatch-')));
+  t.after(() => fs.rm(root, {recursive: true, force: true}));
+
+  const intel = createMuseIntelligence({
+    workspaceAccess: {async capture() { return {revision: 1, grants: []}; }, authorizeSync() { return true; }},
+  });
+  const promises = [
+    {id: 'prom-1', what: '给 Alpha 对齐上线节奏', whenText: '今天 18:00', source: 'dida', sourceItemId: 'dida-1', from: 'Alpha'},
+  ];
+  const workspaceBrief = {
+    workspaces: [{id: 'ws-a', label: 'Alpha', summary: 'Alpha 核心模块已联调', latestProgress: '刚完成上线清单确认'}],
+  };
+  const profile = {
+    traits: [{id: 't1', category: 'tone', label: '汇报方式', value: '先给结论与下一步'}],
+  };
+
+  const smart = intel.readPromiseDrafts({promises, workspaceBrief, profile});
+  assert.equal(smart['prom-1'].kind, 'smart');
+  assert.match(smart['prom-1'].text, /Alpha/);
+  assert.match(smart['prom-1'].text, /先给结论与下一步/);
+
+  const saved = intel.savePromiseDraft({
+    promiseId: 'prom-1',
+    text: '修改版草稿：周四 18:00 同步最终结论',
+    currentPromises: promises,
+  });
+  assert.equal(saved.ok, true);
+  assert.equal(intel.readPromiseDrafts({promises, workspaceBrief, profile})['prom-1'].kind, 'edited');
+  assert.equal(intel.getPromiseDraftText('prom-1', promises[0]), '修改版草稿：周四 18:00 同步最终结论');
+
+  const dispatchedPrompts = [];
+  const todayCtrl = createTodayController({
+    ledger: {
+      internal: async () => ({sessions: []}),
+      setState: async () => ({changed: true}),
+    },
+    reader: {snapshot: () => ({promises})},
+    promptSession: async () => ({ok: true}),
+    createSession: async ({text, sessionId}) => {
+      dispatchedPrompts.push({text, sessionId});
+      return sessionId;
+    },
+    readPromiseDraft: (id, row) => intel.getPromiseDraftText(id, row),
+    authorizeRoot: async () => true,
+    defaultRoot: async () => root,
+  });
+
+  const dispatched = await todayCtrl.item({
+    action: 'dispatch',
+    promiseId: 'prom-1',
+    draftText: '最终拍板草稿：请按这版发周报',
+  });
+  assert.equal(dispatched.ok, true);
+  assert.equal(dispatchedPrompts.length, 1);
+  assert.match(dispatchedPrompts[0].text, /最终拍板草稿：请按这版发周报/);
+
+  const reset = intel.resetPromiseDraft({promiseId: 'prom-1'});
+  assert.equal(reset.ok, true);
+  assert.equal(intel.readPromiseDrafts({promises, workspaceBrief, profile})['prom-1'].kind, 'smart');
+});
+
+test('createPersonalProfile.forgetMatch handles NOT_FOUND, AMBIGUOUS, single deletion and undoToken latest', async () => {
+  let nowMs = Date.parse('2026-11-15T02:00:00.000Z');
+  const p = createPersonalProfile({store: memoryKeyValueStore(), clock: () => new Date(nowMs)});
+  await p.ready();
+
+  await p.setTrait({category: 'tone', label: '汇报方式', value: '先给结论'});
+  await p.addNote({text: '周五下午约牙医复查', category: 'schedule', source: 'agent'});
+  await p.addNote({text: '周五上午开月度评审', category: 'schedule', source: 'agent'});
+
+  assert.equal((await p.forgetMatch({query: '完全不存在'})).code, 'NOT_FOUND');
+  const ambiguous = await p.forgetMatch({query: '周五'});
+  assert.equal(ambiguous.ok, false);
+  assert.equal(ambiguous.code, 'AMBIGUOUS');
+  assert.equal(ambiguous.candidates.length, 2);
+
+  const deleted = await p.forgetMatch({query: '牙医'});
+  assert.equal(deleted.ok, true);
+  assert.equal(deleted.profile.notes.length, 1);
+
+  const undone = await p.undo({token: 'latest'});
+  assert.equal(undone.ok, true);
+  assert.equal(undone.profile.notes.length, 2);
+});
+
+test('project_companion apply(ctx) supports profile_remember, profile_forget, look profile, daily rhythm sync, and blocks family sessions', async t => {
+  const {Context} = await import('@deepseek-ai/cordis');
+  const SystemPrompt = (await import('@deepseek-ai/dsh-system-prompt')).default;
+  const ToolRuntime = (await import('@deepseek-ai/dsh-tools')).default;
+  const CommandRuntime = (await import('@deepseek-ai/dsh-commands')).default;
+  const Storage = (await import('@deepseek-ai/dsh-storage')).default;
+  const JsonStorage = await import('@deepseek-ai/dsh-storage-json');
+  const StorageDomain = await import('@deepseek-ai/dsh-storage-domain');
+  const {default: SessionStore, SessionId} = await import('@deepseek-ai/dsh-session');
+  const {installCompanion} = await import('../index.js');
+
+  const root = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'dot-profile-host-')));
+  await fs.writeFile(path.join(root, 'README.md'), '# Host Profile Test\n');
+  const ctx = new Context();
+  for (const [plugin, config] of [
+    [SystemPrompt, {}],
+    [ToolRuntime, {mode: 'native'}],
+    [CommandRuntime, undefined],
+    [Storage, undefined],
+    [JsonStorage, {root: path.join(root, 'storage')}],
+    [StorageDomain, {backend: 'json'}],
+    [SessionStore, undefined],
+  ]) {
+    await ctx.plugin(plugin, config);
+  }
+  const agents = new Map();
+  ctx.provide('agents', {get: id => agents.get(id), list: () => [...agents.values()]});
+  ctx.provide('workingDirectory', {get: session => session.header.cwd});
+  ctx.provide('workspaceRegistry', {list: () => []});
+  ctx.provide('connection', {fetch: {register: () => () => {}}});
+
+  const ownerSession = ctx.sessions.create(SessionId('desktop-owner-1'), {meta: {cwd: root}});
+  const ownerAgent = {id: ownerSession.id, session: ownerSession, ctx, status: 'idle'};
+  agents.set(ownerAgent.id, ownerAgent);
+
+  const familyOwnerSession = ctx.sessions.create(SessionId('family_owner_1'), {meta: {cwd: root}});
+  const familyOwnerAgent = {id: familyOwnerSession.id, session: familyOwnerSession, ctx, status: 'idle'};
+  agents.set(familyOwnerAgent.id, familyOwnerAgent);
+
+  const familyMemberSession = ctx.sessions.create(SessionId('family_member_1'), {meta: {cwd: root}});
+  const familyMemberAgent = {id: familyMemberSession.id, session: familyMemberSession, ctx, status: 'idle'};
+  agents.set(familyMemberAgent.id, familyMemberAgent);
+
+  let adapter;
+  await ctx.plugin({
+    name: 'synthetic-profile-host',
+    inject: ['tools', 'commands', 'storageDomain', 'sessions', 'systemPrompt'],
+    async apply(scope) {
+      adapter = await installCompanion(scope, {
+        clock: () => new Date('2026-11-15T01:00:00.000Z'),
+        family: {enabled: true},
+        readSetup: async () => ({state: 'unbound'}),
+        readBinding: async () => null,
+        readNativeRoute: async () => ({kind: 'unbound'}),
+        context: {readConfig: () => ({}), googlePublisher: null, fetch: async () => { throw new Error('no network'); }},
+        timers: {setInterval: () => ({unref() {}}), clearInterval() {}},
+      });
+    },
+  });
+  t.after(async () => {
+    await ctx.fiber.dispose();
+    await fs.rm(root, {recursive: true, force: true});
+  });
+
+  let callNum = 0;
+  const execTool = async (agent, args) => {
+    const res = await ctx.tools.execute({
+      callId: `prof-${++callNum}`,
+      name: 'project_companion',
+      arguments: args,
+      agent,
+      signal: new AbortController().signal,
+    });
+    assert.equal(res.isError, false, JSON.stringify(res));
+    return res.value;
+  };
+
+  // Owner remembers rhythm trait -> syncs to dailyDigest 07:45.
+  const rhythm = await execTool(ownerAgent, {
+    action: 'manage',
+    op: 'profile_remember',
+    userRequested: true,
+    traitCategory: 'rhythm',
+    traitLabel: '读报时间',
+    traitValue: '每天 07:45 之前',
+  });
+  assert.equal(rhythm.status, 'ok', JSON.stringify(rhythm));
+  assert.equal(adapter.dailyDigest.desktopSummary().dailyTime, '07:45');
+
+  // Owner remembers casual note -> tagged source: 'agent'.
+  const note = await execTool(ownerAgent, {
+    action: 'manage',
+    op: 'profile_remember',
+    userRequested: true,
+    noteText: '周三上午要带身份证',
+    noteCategory: 'habit',
+  });
+  assert.equal(note.status, 'ok', JSON.stringify(note));
+  assert.equal(note.profile.notes[0].source, 'agent');
+
+  // Owner looks at profile view.
+  const looked = await execTool(ownerAgent, {action: 'look', view: 'profile'});
+  assert.equal(looked.status, 'ok');
+  assert.match(looked.text, /读报时间/);
+  assert.match(looked.text, /带身份证/);
+
+  // Owner forgets latest via undoToken: 'latest'.
+  const undone = await execTool(ownerAgent, {
+    action: 'manage',
+    op: 'profile_forget',
+    userRequested: true,
+    undoToken: 'latest',
+  });
+  assert.equal(undone.status, 'ok', JSON.stringify(undone));
+  assert.equal(undone.profile.notes.length, 0);
+
+  // Family owner and family member sessions are both strictly blocked.
+  for (const familyAgent of [familyOwnerAgent, familyMemberAgent]) {
+    const blockedView = await execTool(familyAgent, {action: 'look', view: 'profile'});
+    assert.equal(blockedView.status, 'blocked');
+    assert.equal(blockedView.profile, undefined);
+
+    const blockedWrite = await execTool(familyAgent, {
+      action: 'manage',
+      op: 'profile_remember',
+      userRequested: true,
+      noteText: '不该写入家庭会话',
+    });
+    assert.equal(blockedWrite.status, 'blocked');
+    assert.equal(blockedWrite.accepted ?? false, false);
+  }
+  assert.equal((await adapter.personalProfile.snapshot()).notes.length, 0);
 });

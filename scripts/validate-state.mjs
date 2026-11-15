@@ -26,6 +26,8 @@ const DOMAINS = {
   project_companion_workspace_access: ['workspace-access.js', 'workspaceAccessRowSchema'],
   project_companion_sessions: ['session-ledger.js', 'sessionLedgerRowSchema'],
   project_companion_pulse: ['project-pulse-ledger.js', 'pulseLedgerRowSchema'],
+  project_companion_personal_profile: ['personal-profile.js', 'personalProfileRowSchema'],
+  project_companion_daily_digest: ['daily-digest.js', 'dailyDigestRowSchema'],
 };
 
 if (!existsSync(storages)) {

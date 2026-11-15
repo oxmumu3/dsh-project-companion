@@ -61,9 +61,16 @@ export function createMuseViews(React) {
     }, [open]);
 
     const lastDigest = model.digest?.lastDigest;
+    const workspaceBrief = !model.sample ? model.workspaceBrief : null;
     const previewLines = [];
     if (lastDigest?.text) {
       previewLines.push(lastDigest.text);
+    } else if (workspaceBrief?.text) {
+      previewLines.push(`【工作区初见简报 · 已读懂 ${workspaceBrief.workspaceCount || workspaceBrief.workspaces?.length || 0} 个工作区】`);
+      previewLines.push('');
+      previewLines.push(workspaceBrief.text);
+      previewLines.push('');
+      previewLines.push(`提示：还没有连接外部日历/邮箱前，Dot 也能只读梳理你勾选的工作区；每天 ${model.digest.dailyTime} 定时简报可在「连接」页调整。`);
     } else {
       previewLines.push(`【试看预览 · 预计每天 ${model.digest.dailyTime}（${model.digest.timeZone}）生成】`);
       previewLines.push('');
@@ -100,8 +107,8 @@ export function createMuseViews(React) {
     },
       h('header', {className: 'muse-dialog-head'},
         h('div', null,
-          h('h2', {className: 'muse-dialog-title'}, lastDigest?.text ? '最近一份早报' : '今天的第一份早报 · 试看'),
-          h('p', {className: 'muse-sheet-sub'}, lastDigest?.at ? `整理时间：${lastDigest.at}` : `节律设定：每天 ${model.digest.dailyTime}`)),
+          h('h2', {className: 'muse-dialog-title'}, lastDigest?.text ? '最近一份早报' : workspaceBrief?.text ? '工作区初见简报' : '今天的第一份早报 · 试看'),
+          h('p', {className: 'muse-sheet-sub'}, lastDigest?.at ? `整理时间：${lastDigest.at}` : workspaceBrief?.text ? `已只读梳理 ${workspaceBrief.workspaceCount || workspaceBrief.workspaces?.length || 0} 个工作区` : `节律设定：每天 ${model.digest.dailyTime}`)),
         h('button', {
           type: 'button',
           className: 'muse-btn-outline',
@@ -121,21 +128,108 @@ export function createMuseViews(React) {
         }, '带进对话接着聊')));
   }
 
-  function FocusCard({focus, busy, onAction, onAsk}) {
+  function FocusCard({focus, busy, onAction, onSaveDraft, onAsk}) {
+    const [editingDraft, setEditingDraft] = React.useState(false);
+    const [draftValue, setDraftValue] = React.useState(focus?.draftSlip || '');
+    const [copiedDraft, setCopiedDraft] = React.useState(false);
+
+    React.useEffect(() => {
+      setEditingDraft(false);
+      setDraftValue(focus?.draftSlip || '');
+      setCopiedDraft(false);
+    }, [focus?.key, focus?.draftSlip]);
+
     if (!focus) return null;
+
+    const handlePrimary = () => {
+      if (focus.primaryAction?.type === 'dispatch_promise') {
+        const nextDraft = editingDraft ? draftValue.trim() : (focus.draftSlip || focus.primaryAction.draftText);
+        onAction?.({...focus.primaryAction, ...(nextDraft ? {draftText: nextDraft} : {})}, focus);
+        return;
+      }
+      onAction?.(focus.primaryAction, focus);
+    };
+
     return h('article', {className: 'muse-focus-card', 'data-muse-focus-card': focus.kind},
       h('div', {className: 'muse-focus-meta'},
         h('span', {className: 'muse-focus-source'}, focus.sourceLabel),
         focus.timeText ? h('time', null, focus.timeText) : null),
       h('h2', {className: 'muse-focus-title'}, focus.title),
       focus.body ? h('p', {className: 'muse-focus-body'}, focus.body) : null,
-      focus.draftSlip ? h('div', {className: 'muse-draft-slip'}, focus.draftSlip) : null,
+      focus.draftSlip
+        ? h('div', {className: 'muse-draft-slip', 'data-muse-draft-slip': focus.kind},
+          focus.editableDraft
+            ? h('div', {className: 'muse-draft-slip-head'},
+              h('span', {className: 'muse-section-note'}, focus.draftKind === 'edited' ? '已按你的修改保存' : 'Dot 替你预拟好了草稿'),
+              !editingDraft
+                ? h('div', {className: 'muse-hairline-actions'},
+                  h('button', {
+                    type: 'button',
+                    className: 'muse-btn-link',
+                    'data-muse-draft-edit': true,
+                    disabled: busy,
+                    onClick: () => {
+                      setDraftValue(focus.draftSlip || '');
+                      setEditingDraft(true);
+                    },
+                  }, '改两句'),
+                  h('button', {
+                    type: 'button',
+                    className: 'muse-btn-link',
+                    'data-muse-draft-copy': true,
+                    onClick: () => {
+                      try { void globalThis.navigator?.clipboard?.writeText?.(focus.draftSlip || ''); } catch {}
+                      setCopiedDraft(true);
+                    },
+                  }, copiedDraft ? '已复制' : '复制草稿'))
+                : null)
+            : null,
+          editingDraft && focus.editableDraft
+            ? h('div', {className: 'muse-draft-editor-wrap'},
+              h('textarea', {
+                className: 'muse-input muse-draft-textarea',
+                'data-muse-draft-editor': true,
+                rows: 4,
+                value: draftValue,
+                disabled: busy,
+                onChange: event => setDraftValue(event.target.value),
+                onKeyDown: event => {
+                  if (event.key === 'Escape') {
+                    event.preventDefault?.();
+                    event.stopPropagation?.();
+                    setDraftValue(focus.draftSlip || '');
+                    setEditingDraft(false);
+                  }
+                },
+              }),
+              h('div', {className: 'muse-hairline-actions', style: {marginTop: 8}},
+                h('button', {
+                  type: 'button',
+                  className: 'muse-btn-primary',
+                  'data-muse-draft-save': true,
+                  disabled: busy || !draftValue.trim(),
+                  onClick: async () => {
+                    await onSaveDraft?.(focus, draftValue.trim());
+                    setEditingDraft(false);
+                  },
+                }, '保存这版草稿'),
+                h('button', {
+                  type: 'button',
+                  className: 'muse-btn-outline',
+                  'data-muse-draft-cancel': true,
+                  onClick: () => {
+                    setDraftValue(focus.draftSlip || '');
+                    setEditingDraft(false);
+                  },
+                }, '取消')))
+            : focus.draftSlip)
+        : null,
       h('div', {className: 'muse-focus-actions'},
         h('button', {
           type: 'button',
           className: 'muse-btn-primary',
           disabled: busy,
-          onClick: () => onAction?.(focus.primaryAction, focus),
+          onClick: handlePrimary,
         }, focus.primaryLabel),
         focus.secondaryLabel
           ? h('button', {
@@ -151,7 +245,7 @@ export function createMuseViews(React) {
             className: 'muse-btn-link',
             disabled: busy,
             onClick: () => onAction?.(focus.laterAction, focus),
-          }, '稍后再看')
+          }, focus.laterLabel || '稍后再看')
           : null,
         focus.handledAction
           ? h('button', {
@@ -175,6 +269,7 @@ export function createMuseViews(React) {
     model,
     busy,
     onAction,
+    onSaveDraft,
     onPinFocus,
     onAsk,
     onOpenProject,
@@ -206,7 +301,7 @@ export function createMuseViews(React) {
         : null,
       h('div', {className: 'muse-grid'},
         h('div', {className: 'muse-col-main'},
-          h(FocusCard, {focus: model.focus, busy, onAction, onAsk}),
+          h(FocusCard, {focus: model.focus, busy, onAction, onSaveDraft, onAsk}),
           model.folded.length > 0
             ? h('section', {className: 'muse-section', 'aria-label': '顺手排队的事项'},
               h('div', {className: 'muse-section-head'},
@@ -431,7 +526,7 @@ export function createMuseViews(React) {
             ? model.profile.notes.map(note => h('div', {key: note.id, className: 'muse-hairline-row', 'data-muse-note-id': note.id},
               h('div', {className: 'muse-hairline-main'},
                 h('div', {className: 'muse-hairline-title'}, note.text),
-                h('div', {className: 'muse-hairline-sub'}, `${note.source === 'wechat' ? '来自微信' : '来自桌面'} · 刚才或近期记下`)),
+                h('div', {className: 'muse-hairline-sub'}, `${note.source === 'wechat' ? '微信顺口记' : note.source === 'agent' ? '对话顺手记' : '桌面随记'} · 刚才或近期记下`)),
               h('div', {className: 'muse-hairline-actions'},
                 h('button', {type: 'button', className: 'muse-btn-link', onClick: () => onAsk?.(`基于我记下的「${note.text}」，今天我要准备什么？`)}, '聊聊'),
                 h('button', {
@@ -630,6 +725,7 @@ export function createMuseViews(React) {
     undoBanner = null,
     onDismissUndo,
     onAction,
+    onSaveDraft,
     onMuseAct,
     onPinFocus,
     onAsk,
@@ -672,6 +768,7 @@ export function createMuseViews(React) {
             model,
             busy,
             onAction,
+            onSaveDraft,
             onPinFocus,
             onAsk,
             onOpenProject,

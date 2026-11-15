@@ -15,7 +15,7 @@ const UNDO_TTL_MS = 2 * 60 * 1000;
 const clean = value => typeof value === 'string' ? value.replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, '').trim() : '';
 const cardIdOf = row => createHash('sha256').update(`${row.sessionId}\n${row.revision}\n${row.state}`).digest('hex').slice(0, 32);
 
-export function createTodayController({ledger, reader, foregroundSession = async () => null, foregroundBusy = async () => false, promptSession, createSession, approvals = null, defaultRoot = async () => null, authorizeRoot = async () => true, diagnose = null, links = null, clock = () => new Date(), isClosed = () => false} = {}) {
+export function createTodayController({ledger, reader, foregroundSession = async () => null, foregroundBusy = async () => false, promptSession, createSession, approvals = null, defaultRoot = async () => null, authorizeRoot = async () => true, diagnose = null, links = null, readPromiseDraft = null, clock = () => new Date(), isClosed = () => false} = {}) {
   if (!ledger?.internal || !ledger?.setState || typeof promptSession !== 'function') throw new Error('Today controller needs a ledger and a foreground prompt');
   const now = () => new Date(clock());
   // Undo is deliberately short-lived and server-owned: the page never gets a
@@ -82,7 +82,7 @@ export function createTodayController({ledger, reader, foregroundSession = async
       const action = clean(input.action);
       if (!ACTIONS.has(action)) return {ok: false, error: '不认识这个动作；没有执行。'};
       if (action === 'sample-clear') return {ok: true, text: '示例数据已清空。'};
-      if (action === 'dispatch') return this.promise({promiseId: input.promiseId});
+      if (action === 'dispatch') return this.promise({promiseId: input.promiseId, draftText: input.draftText});
       if (action === 'undo') {
         const token = clean(input.undoId);
         const record = token ? undoTokens.get(token) : null;
@@ -247,7 +247,14 @@ export function createTodayController({ledger, reader, foregroundSession = async
         return {ok: false, stale: true, error: '这条诺言已变化或无法读取；没有派工。'};
       }
       try {
-        const text = `请处理这件已经答应的事：${current.what}。做完告诉我结果和还需要我决定的事。`;
+        const suppliedDraft = typeof input.draftText === 'string' ? clean(input.draftText).slice(0, 1600) : '';
+        const fallbackDraft = !suppliedDraft && typeof readPromiseDraft === 'function'
+          ? clean(readPromiseDraft(promiseId, current)).slice(0, 1600)
+          : '';
+        const attachedDraft = suppliedDraft || fallbackDraft;
+        const text = attachedDraft
+          ? `请处理这件已经答应的事：${current.what}。\n\n参考已准备好的拟办草稿：\n${attachedDraft}\n\n做完告诉我结果和还需要我决定的事。`
+          : `请处理这件已经答应的事：${current.what}。做完告诉我结果和还需要我决定的事。`;
         const sessionId = await createSession({root, text, sessionId: proposedSessionId});
         // Bind the host's actual id first; settle records the completed state.
         if (links?.bindLink && sessionId !== proposedSessionId) {

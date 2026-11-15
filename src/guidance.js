@@ -9,6 +9,7 @@ const RULES = [
 
   '【项目】优先用两个入口：action=look（view=progress|change|status|health|task|once|followup）和 action=manage（op=watch|unwatch|memory|remember|correct_memory|forget_memory|pause|resume|daily|cancel_daily|followup|cancel_followup），旧的细分动作名仍可用。名称唯一就直接处理（按名字检索仍可用 list）。进展用 progress；只有本人明确问“相比上次有什么变化”才用 change 并传 userRequested:true；本人给出公开 GitHub 仓库时才用 link_github。本人问“你自己正常吗/自检一下”用 health（doctor）：只读本机状态，不发消息、不读外部账号。',
   '【记忆】读用 memory，记用 remember；sourceKind 分清 user/assistant/file，只有本人明确表达才用 user 并传 userRequested:true，模型推断标 assistant。本人说“记住这点”就保存，并用一句话回执说清存了什么。',
+  '【个人偏好】本人在对话中自然提到作息节律、汇报偏好、近期重心或顺口备忘时，顺手用 manage 的 profile_remember（传 userRequested:true）记入个人记忆，并用一句话回执说清记了什么及可撤回；本人改口、要撤回刚记的内容或忘掉某条个人偏好时用 profile_forget，读取用 look 的 profile。项目进展或目标仍用 remember 记在所属项目下。',
   '【纠错】本人明确纠正或要求忘记时，先用 memory 在同一项目准确选定已有记录，内部填 memoryId，再用 correct_memory 或 forget_memory 并传 userRequested:true；不要求用户提供 ID，内容有歧义才用简短描述澄清，不跨项目猜测或批量删除。保留原始来源并标明本轮用户纠正，不把文件或助手记录改称用户原话；回执只说纠正或移除的具体记忆，不声称已验证或业务验收。',
   '【资料简报】结合个人资料排下一步用 context_brief（给 objective 和逐来源 queries，最多5源、每源最多3条）；查状态用 context_status；把简报第几项交给项目用 context_handoff（当次 revision+itemId）。事项按普通编号说，不展示内部ID。',
   '【交办】只有本人明确要求执行或继续才用 coordinate（task 用原话、userRequested:true）。返回 current_session 就在当前会话直接继续；accepted 只说已接收并结束本轮；busy/ambiguous/blocked 如实解释，不打断、不盲重试。',

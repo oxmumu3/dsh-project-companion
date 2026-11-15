@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 
 export const PERSONAL_TRAIT_CATEGORIES = ['rhythm', 'tone', 'focus', 'custom'];
-export const PERSONAL_NOTE_CATEGORIES = ['note', 'travel', 'preference', 'context'];
+export const PERSONAL_NOTE_CATEGORIES = ['note', 'travel', 'preference', 'context', 'habit', 'schedule', 'idea'];
 export const PERSONAL_NOTE_SOURCES = ['desktop', 'wechat', 'agent'];
 
 const UNDO_TTL_MS = 120_000;
@@ -90,6 +90,7 @@ export function createPersonalProfile({
   let loaded = false;
   let chain = Promise.resolve();
   const undoTokens = new Map();
+  let lastUndoToken = '';
 
   const nowDate = () => {
     const d = typeof clock === 'function' ? clock() : new Date();
@@ -121,6 +122,7 @@ export function createPersonalProfile({
       traits: previous.traits.map(item => ({ ...item })),
       notes: previous.notes.map(item => ({ ...item })),
     });
+    lastUndoToken = token;
     return token;
   };
 
@@ -300,11 +302,13 @@ export function createPersonalProfile({
       return enqueue(async () => {
         const nowMs = nowDate().getTime();
         pruneUndo(nowMs);
-        const entry = typeof token === 'string' ? undoTokens.get(token) : null;
+        const resolvedToken = (!token || token === 'latest') ? lastUndoToken : token;
+        const entry = typeof resolvedToken === 'string' && resolvedToken ? undoTokens.get(resolvedToken) : null;
         if (!entry) {
           return { ok: false, code: 'UNDO_EXPIRED', error: '这条撤回已经超过 2 分钟或刚用过了。' };
         }
-        undoTokens.delete(token);
+        undoTokens.delete(resolvedToken);
+        if (lastUndoToken === resolvedToken) lastUndoToken = '';
         const current = await ensureLoaded();
         const nowIso = nowDate().toISOString();
         const saved = await commit({
@@ -315,6 +319,81 @@ export function createPersonalProfile({
           updatedAt: nowIso,
         });
         return { ok: true, profile: publicView(saved), text: entry.summary || '已撤回刚才的记忆改动。' };
+      });
+    },
+
+    async forgetMatch({ id, category, label, query } = {}) {
+      if (isClosed()) return { ok: false, code: 'CLOSED', error: '个人记忆服务已关闭，没有修改。' };
+      return enqueue(async () => {
+        const current = await ensureLoaded();
+        const cleanId = cleanText(id, 64);
+        const cleanLabel = cleanText(label, 40);
+        const safeCategory = PERSONAL_TRAIT_CATEGORIES.includes(category) ? category : null;
+        const cleanQuery = cleanText(query, 200).toLowerCase();
+
+        const matches = [];
+        for (const item of current.traits) {
+          if (cleanId && item.id === cleanId) {
+            matches.push({ kind: 'trait', item, summary: `${item.label}：${item.value}` });
+            continue;
+          }
+          if (cleanLabel && item.label === cleanLabel && (!safeCategory || item.category === safeCategory)) {
+            matches.push({ kind: 'trait', item, summary: `${item.label}：${item.value}` });
+            continue;
+          }
+          if (cleanQuery && (`${item.label} ${item.value}`).toLowerCase().includes(cleanQuery)) {
+            matches.push({ kind: 'trait', item, summary: `${item.label}：${item.value}` });
+          }
+        }
+        for (const item of current.notes) {
+          if (cleanId && item.id === cleanId) {
+            matches.push({ kind: 'note', item, summary: item.text.slice(0, 60) });
+            continue;
+          }
+          if (cleanQuery && item.text.toLowerCase().includes(cleanQuery)) {
+            matches.push({ kind: 'note', item, summary: item.text.slice(0, 60) });
+          }
+        }
+
+        if (matches.length === 0) {
+          return { ok: false, code: 'NOT_FOUND', error: '个人记忆里没有找到这条偏好或随记，没有改动。' };
+        }
+        if (matches.length > 1) {
+          const candidates = matches.slice(0, 5).map(m => m.summary);
+          return {
+            ok: false,
+            code: 'AMBIGUOUS',
+            candidates,
+            error: `匹配到多条个人记忆，请说明要忘掉哪一条：${candidates.join(' / ')}`,
+          };
+        }
+
+        const picked = matches[0];
+        const prev = cloneRow(current);
+        const nowIso = nowDate().toISOString();
+        const nextTraits = picked.kind === 'trait'
+          ? current.traits.filter(item => item.id !== picked.item.id)
+          : current.traits;
+        const nextNotes = picked.kind === 'note'
+          ? current.notes.filter(item => item.id !== picked.item.id)
+          : current.notes;
+        const saved = await commit({
+          id: 'profile',
+          revision: current.revision + 1,
+          traits: nextTraits,
+          notes: nextNotes,
+          updatedAt: nowIso,
+        });
+        const undoToken = issueUndo(prev, `恢复已忘掉的个人记忆「${picked.summary}」`);
+        return {
+          ok: true,
+          removedKind: picked.kind,
+          removedId: picked.item.id,
+          removedSummary: picked.summary,
+          profile: publicView(saved),
+          undoToken,
+          text: `已从个人记忆忘掉：${picked.summary}（2 分钟内可说“撤回刚才忘掉的”恢复）`,
+        };
       });
     },
 

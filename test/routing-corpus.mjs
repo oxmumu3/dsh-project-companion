@@ -44,4 +44,7 @@ export const CORPUS = [
   ['跟进还在跑吗', 'look', 'followup'],
   ['现在整体状态怎么样', 'look', 'status'],
   ['今天的邮件和待办整理呢', 'look', 'digest'],
+  ['你都记得我的哪些作息和习惯', 'look', 'profile'],
+  ['记住我喜欢每天早上八点看早报', 'manage', 'profile_remember'],
+  ['刚才那条作息偏好忘掉吧', 'manage', 'profile_forget'],
 ];

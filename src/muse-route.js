@@ -2,6 +2,8 @@ export function createMuseController({
   personalProfile,
   dailyDigest = null,
   superAgent = null,
+  museIntelligence = null,
+  readPromises = () => [],
   onChange = null,
   isClosed = () => false,
 } = {}) {
@@ -12,6 +14,9 @@ export function createMuseController({
     superagent: typeof superAgent?.readSynergySnapshot === 'function'
       ? await superAgent.readSynergySnapshot()
       : { mode: 'standalone', available: false, ledgerRevision: 0, revision: 0, milestones: [], counts: { inReview: 0, blocked: 0, inProgress: 0, todo: 0, pending: 0 }, lastQueued: null },
+    workspaceBrief: typeof museIntelligence?.readWorkspaceBrief === 'function'
+      ? await museIntelligence.readWorkspaceBrief().catch(() => null)
+      : null,
   });
 
   const notify = async () => {
@@ -72,6 +77,39 @@ export function createMuseController({
             workspacePath: input.workspacePath,
             workspaceId: input.workspaceId,
           });
+        }
+      } else if (action === 'workspace_brief_refresh') {
+        if (typeof museIntelligence?.readWorkspaceBrief !== 'function') {
+          result = { ok: false, code: 'UNAVAILABLE', error: '当前工作区简报服务暂不可用。' };
+        } else {
+          const brief = await museIntelligence.readWorkspaceBrief(null, { force: true });
+          result = {
+            ok: true,
+            workspaceBrief: brief,
+            text: brief
+              ? `刚重新读了一遍你勾选的 ${brief.workspaceCount} 个工作区。`
+              : '还没有勾选关注的工作区文件夹。',
+          };
+        }
+      } else if (action === 'promise_draft_save') {
+        if (typeof museIntelligence?.savePromiseDraft !== 'function') {
+          result = { ok: false, code: 'UNAVAILABLE', error: '草稿服务暂不可用。' };
+        } else {
+          const promises = typeof readPromises === 'function' ? readPromises() : [];
+          result = museIntelligence.savePromiseDraft({
+            promiseId: input.promiseId,
+            text: input.text,
+            baseWhat: input.what,
+            baseWhen: input.when,
+            baseFrom: input.from,
+            currentPromises: promises,
+          });
+        }
+      } else if (action === 'promise_draft_reset') {
+        if (typeof museIntelligence?.resetPromiseDraft !== 'function') {
+          result = { ok: false, code: 'UNAVAILABLE', error: '草稿服务暂不可用。' };
+        } else {
+          result = museIntelligence.resetPromiseDraft({ promiseId: input.promiseId });
         }
       } else {
         return { ok: false, code: 'UNKNOWN_ACTION', error: '不支持这项操作，没有改动任何内容。' };

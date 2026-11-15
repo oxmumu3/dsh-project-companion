@@ -88,6 +88,7 @@ import {installBundledWechat} from './src/bundled-wechat.js';
 import {createPersonalProfile,personalProfileRowSchema} from './src/personal-profile.js';
 import {createSuperAgentBridge} from './src/superagent-bridge.js';
 import {createMuseController,registerMuseRoute} from './src/muse-route.js';
+import {createMuseIntelligence} from './src/muse-intelligence.js';
 export {Config};
 
 export const name='project-companion';
@@ -274,6 +275,13 @@ export async function installCompanion(ctx,options={}){
     store:{get:key=>sessionLedgerTable.get(key),put:(key,value)=>sessionLedgerTable.put(key,sessionLedgerRowSchema.parse(value))},
     ...(options.clock?{clock:options.clock}:{}),isClosed:()=>disposed,
   });
+  const museIntelligence=createMuseIntelligence({
+    workspaceAccess,
+    sessionLedger,
+    ...(options.clock?{clock:options.clock}:{}),
+    isClosed:()=>disposed,
+  });
+  const unsubscribeIntelligence=workspaceAccess.subscribe(()=>{museIntelligence.invalidateBrief();});
   const ledgerGrantFor=async cwd=>{
     try{return grantForCwd(cwd,(await workspaceAccess.capture()).grants);}
     catch{return null;}
@@ -321,6 +329,8 @@ export async function installCompanion(ctx,options={}){
       readDigestSummary:()=>dailyDigest?.desktopSummary?.()??null,
       readSuperAgent:()=>superAgentBridge.readSynergySnapshot(),
       readPersonalProfile:()=>personalProfile.cachedSnapshot(),
+      readWorkspaceBrief:captured=>museIntelligence.readWorkspaceBrief(captured),
+      readPromiseDrafts:input=>museIntelligence.readPromiseDrafts(input),
     });
     return todayProjection(ownerSessionId);
   };
@@ -543,6 +553,7 @@ export async function installCompanion(ctx,options={}){
   const todayController=createTodayController({
     ledger:sessionLedger,reader:dotSourceReader,foregroundSession:todayForeground,promptSession,createSession:createDotSession,
     links:dotSources,
+    readPromiseDraft:(id,row)=>museIntelligence.getPromiseDraftText(id,row),
     diagnose:(source,name)=>context.diagnoseDot(source,name),
     foregroundBusy:async sessionId=>{
       const host=await hostSessionBusy(sessionId);
@@ -573,7 +584,7 @@ export async function installCompanion(ctx,options={}){
     disposed=true;
     lifecycle.abort();
     mobileRelease?.();
-    goalBoard.close();goalBoardModel.close();workspaceAccess.close();
+    goalBoard.close();goalBoardModel.close();unsubscribeIntelligence?.();workspaceAccess.close();
     await sessionLedger.close();
     await goalBoard.waitForIdle().catch(()=>{});
     workbench?.close();workbenchActions?.close();recoveryGuard.close();const familyClosing=familyDelegate.close();
@@ -761,7 +772,8 @@ export async function installCompanion(ctx,options={}){
   await dailyDigest.ready();
   digestRoute=createDigestRoute({digest:dailyDigest,readConnection:readSetup,readOwner:resolveDigestOwner,canRun:async()=>!disposed&&!lifecycle.signal.aborted&&!await service.isPaused(),isClosed:()=>disposed});
   const museController=createMuseController({
-    personalProfile,dailyDigest,superAgent:superAgentBridge,
+    personalProfile,dailyDigest,superAgent:superAgentBridge,museIntelligence,
+    readPromises:()=>dotSourceReader?.snapshot?.()?.promises??[],
     onChange:()=>syncTimer(),isClosed:()=>disposed,
   });
 
@@ -1447,11 +1459,17 @@ export async function installCompanion(ctx,options={}){
   }));
   ctx.tools.register(defineTool({
     name:'project_companion',
-    description:'项目与交办。两类入口优先用：【看】action:look + view：progress=进展与卡点｜change=相比上次的变化（本人明确问了才传 userRequested:true）｜status=总状态｜health=本机自检（doctor，只读本机状态，不发消息）｜task=交办到哪了｜once=一次检查｜followup=周期跟进｜digest=每日整理最近一份与下一次时间（内部动作 digest_view）。【管】action:manage + op：watch/unwatch=关注或取消｜memory/remember/correct_memory/forget_memory=项目记忆｜pause/resume=暂停或恢复自动跟进｜daily/cancel_daily=每日汇报｜followup/cancel_followup=周期跟进配置｜pulse=所有关注项目有变化才提醒（动作名 pulse_projects，可带 everyMinutes；enabled:false 关闭）。【做】保持独立动作：coordinate=明确要求执行或继续；remind=提醒；personal_context 读外部资料；personal_review 做回顾；ai_digest 做资讯。每日整理手动跑一次用 digest_run（仅本人前台或已绑定主人会话）；只测量 Gmail 读取状态用 digest_probe（只回计数，不发消息）。【兼容】旧动作名仍可用，不删是为了不破坏已安装：list、digest、project_update、status、doctor、task_status、once_status、cancel_once、followup_status、check_once、configure_daily、cancel_daily、configure_followup、cancel_followup、link_github、context_brief、context_status、context_handoff、context_check、context_forget，提醒取消用 cancel_reminder。新调用优先用 look/manage。',
+    description:'项目与交办。两类入口优先用：【看】action:look + view：progress=进展与卡点｜change=相比上次的变化（本人明确问了才传 userRequested:true）｜status=总状态｜health=本机自检（doctor，只读本机状态，不发消息）｜task=交办到哪了｜once=一次检查｜followup=周期跟进｜digest=每日整理最近一份与下一次时间（内部动作 digest_view）｜profile=本人长期偏好与随记（内部动作 profile_view）。【管】action:manage + op：watch/unwatch=关注或取消｜memory/remember/correct_memory/forget_memory=项目记忆｜profile_remember/profile_forget=顺手记下或撤回忘掉本人作息/汇报偏好/顺口随记｜pause/resume=暂停或恢复自动跟进｜daily/cancel_daily=每日汇报｜followup/cancel_followup=周期跟进配置｜pulse=所有关注项目有变化才提醒（动作名 pulse_projects，可带 everyMinutes；enabled:false 关闭）。【做】保持独立动作：coordinate=明确要求执行或继续；remind=提醒；personal_context 读外部资料；personal_review 做回顾；ai_digest 做资讯。每日整理手动跑一次用 digest_run（仅本人前台或已绑定主人会话）；只测量 Gmail 读取状态用 digest_probe（只回计数，不发消息）。【兼容】旧动作名仍可用，不删是为了不破坏已安装：list、digest、project_update、status、doctor、task_status、once_status、cancel_once、followup_status、check_once、configure_daily、cancel_daily、configure_followup、cancel_followup、link_github、context_brief、context_status、context_handoff、context_check、context_forget，提醒取消用 cancel_reminder。新调用优先用 look/manage。',
     parameters:{
-      action:{type:'string',required:true,enum:['look','manage','doctor','watch','unwatch','list','digest','digest_view','digest_run','digest_probe','project_update','context_brief','context_status','context_handoff','context_check','context_forget','memory','remember','correct_memory','forget_memory','check_once','once_status','cancel_once','configure_followup','cancel_followup','followup_status','configure_daily','cancel_daily','pause','resume','remind','cancel_reminder','link_github','status','coordinate','task_status','pulse_projects']},
+      action:{type:'string',required:true,enum:['look','manage','doctor','watch','unwatch','list','digest','digest_view','digest_run','digest_probe','profile_view','profile_remember','profile_forget','project_update','context_brief','context_status','context_handoff','context_check','context_forget','memory','remember','correct_memory','forget_memory','check_once','once_status','cancel_once','configure_followup','cancel_followup','followup_status','configure_daily','cancel_daily','pause','resume','remind','cancel_reminder','link_github','status','coordinate','task_status','pulse_projects']},
       view:{type:'string',enum:LOOK_VIEWS,description:'look 的视角。'+SURFACE_COPY.look},
       op:{type:'string',enum:MANAGE_OPS,description:'manage 的动作。'+SURFACE_COPY.manage},
+      traitCategory:{type:'string',enum:['rhythm','tone','focus','custom'],description:'profile_remember/profile_forget：个人偏好分类（作息节律、沟通习惯、近期重心、其他）。'},
+      traitLabel:{type:'string',description:'profile_remember/profile_forget：简短偏好名，如“读报时间”“汇报方式”，最多40字。'},
+      traitValue:{type:'string',description:'profile_remember：本人明确表达的偏好内容，最多120字。'},
+      noteText:{type:'string',description:'profile_remember/profile_forget：顺口记下的个人习惯、偏好或备忘，最多500字。'},
+      noteCategory:{type:'string',enum:['note','travel','preference','context','habit','schedule','idea'],description:'profile_remember：随记分类，默认 preference/note。'},
+      undoToken:{type:'string',description:'profile_forget：撤回刚才保存或忘掉的记忆时传 latest 或对应撤回令牌。'},
       reviewItemId:{type:'string',description:'coordinate可选：仅当本人任务全文明确引用个人回顾「事项原题」时，从prepare结果映射稳定itemId。目标须在该事项原回顾项目范围内；不自行添加源正文或宣称已处理。'},
       objective:{type:'string',description:'context_brief：用户明确想推进的目标，最多160字；沿用同一目标时可省略。'},
       queries:{type:'array',items:{type:'object',additionalProperties:false,properties:{source:{type:'string',enum:CONTEXT_SOURCES,required:true},operation:{type:'string',required:true},query:{type:'string'},id:{type:'string'},ids:{type:'array',items:{type:'string'}},projectId:{type:'string'},range:{type:'string'},from:{type:'string'},to:{type:'string'},calendarId:{type:'string'},limit:{type:'number'}}},description:'context_brief：用户明确限定的最多5项来源查询（每个来源一次），每项最多3条。每源独立参数，沿用当前简报范围时省略；不因已连接而扫描全部账号。'},
@@ -1473,7 +1491,7 @@ export async function installCompanion(ctx,options={}){
       id:{type:'string',description:'cancel_reminder的提醒ID，或task_status内部查询某次交办详情的ID；省略task_status的id查询最近交办，不要求用户提供。'},
       repository:{type:'string',description:'User explicitly associated public GitHub owner/repo.'},
       task:{type:'string',description:'coordinate/context_handoff：用户明确要求执行或继续的具体任务，1-2000字；不要由进度查询扩写出任务。'},
-      userRequested:{type:'boolean',description:'context_brief/context_handoff/context_forget仅用户明确要求才为true；project_update仅用户明确查询该项目变化才为true；coordinate仅用户明确要求执行/继续任务才为true；check_once仅用户明确安排一次检查才为true；configure_followup仅用户明确要求并给出频率才为true；remember的user来源仅用户明确表达的目标/决定才为true。查询进度、文件或助手建议不构成授权。'},
+      userRequested:{type:'boolean',description:'context_brief/context_handoff/context_forget仅用户明确要求才为true；project_update仅用户明确查询该项目变化才为true；coordinate仅用户明确要求执行/继续任务才为true；check_once仅用户明确安排一次检查才为true；configure_followup仅用户明确要求并给出频率才为true；remember的user来源及profile_remember/profile_forget仅用户明确表达的目标/偏好/决定才为true。查询进度、文件或助手建议不构成授权。'},
       memoryId:{type:'string',description:'correct_memory/forget_memory：由当前项目memory工具返回的内部记忆ID，不要求用户查ID。'},
       memoryKind:{type:'string',enum:['goal','decision','blocker','next_step','context'],description:'remember：项目目标、决策、阻塞、下一步建议或上下文；不是正式待办状态。'},
       memoryText:{type:'string',description:'remember：有来源的项目记忆，最多2000字；助手判断不得冒充用户决定或已验收事实。'},
@@ -1526,6 +1544,50 @@ export async function installCompanion(ctx,options={}){
           if(!await digestOwner(execution))return{status:'blocked',accepted:false,code:'DIGEST_OWNER_ONLY',text:'每日整理只在本人当前前台或已绑定的主人会话里可用；普通会话不能读回或触发。'};
           if(args.action==='digest_view')return dailyDigest.view();
           return await dailyDigest.probe();
+        }
+        if(['profile_view','profile_remember','profile_forget'].includes(args.action)){
+          const callerId=String(execution?.agent?.id??'');
+          if(!callerId||callerId.startsWith('family_')||familyDelegate.matchesSession(callerId)||familyContext.activeScope()){
+            return{status:'blocked',accepted:false,code:'PROFILE_OWNER_ONLY',text:'个人偏好记忆只在本人直接会话中读写；家庭共享入口不开放。'};
+          }
+          if(args.action==='profile_view'){
+            const profile=await personalProfile.snapshot();
+            const lines=[];
+            if(profile.traits.length)lines.push('【已记住的个人偏好】',...profile.traits.map(t=>`- ${t.label}：${t.value}`));
+            if(profile.notes.length)lines.push('【近期随记】',...profile.notes.slice(0,10).map(n=>`- ${n.text}`));
+            return{status:'ok',view:'profile',profile,text:lines.length?lines.join('\n'):'当前个人记忆里还没有内容；你可以在对话里随时让我记住作息、语气或随手备忘。'};
+          }
+          if(args.userRequested!==true){
+            return{status:'blocked',accepted:false,text:'只有本人在对话中明确表达的习惯、偏好或备忘才记入个人记忆。'};
+          }
+          if(args.action==='profile_remember'){
+            const source=standaloneBinding(callerId)?'wechat':'agent';
+            if(typeof args.traitLabel==='string'&&args.traitLabel.trim()&&typeof args.traitValue==='string'&&args.traitValue.trim()){
+              const res=await personalProfile.setTrait({category:args.traitCategory??'custom',label:args.traitLabel,value:args.traitValue});
+              if(!res.ok)return{status:'blocked',accepted:false,...(res.code?{code:res.code}:{}),text:res.error};
+              let syncNote='';
+              if((args.traitCategory==='rhythm'||/早报|简报|读报/.test(args.traitLabel))&&typeof dailyDigest?.configureRhythm==='function'){
+                const rawTime=typeof args.time==='string'&&args.time.trim()?args.time.trim():args.traitValue;
+                const match=/(?:^|[^\d:])([01]\d|2[0-3]):([0-5]\d)(?=$|[^\d:])/.exec(rawTime);
+                if(match){
+                  const dailyTime=`${match[1]}:${match[2]}`;
+                  const synced=await dailyDigest.configureRhythm({dailyTime}).catch(()=>null);
+                  if(synced?.ok)syncNote=`（已同步每天早报时间 ${dailyTime}）`;
+                }
+              }
+              return{status:'ok',accepted:true,...(res.undoToken?{undoToken:res.undoToken}:{}),profile:res.profile,text:`${res.text}${syncNote}；已写入「记忆」页，2 分钟内对我说“撤回刚才记的”可撤销。`};
+            }
+            const rawNote=typeof args.noteText==='string'&&args.noteText.trim()?args.noteText:typeof args.memoryText==='string'?args.memoryText:'';
+            if(!rawNote.trim())return{status:'blocked',accepted:false,text:'请提供要记入个人记忆的偏好或随记内容。'};
+            const res=await personalProfile.addNote({text:rawNote,category:args.noteCategory??'preference',source});
+            if(!res.ok)return{status:'blocked',accepted:false,...(res.code?{code:res.code}:{}),text:res.error};
+            return{status:'ok',accepted:true,...(res.undoToken?{undoToken:res.undoToken}:{}),profile:res.profile,text:`${res.text}：${res.note.text}（已记入「记忆」页，2 分钟内对我说“撤回刚才记的”可撤销）`};
+          }
+          const res=args.undoToken
+            ?await personalProfile.undo({token:args.undoToken})
+            :await personalProfile.forgetMatch({id:args.id,category:args.traitCategory,label:args.traitLabel,query:args.query||args.noteText});
+          if(!res.ok)return{status:'blocked',accepted:false,...(res.code?{code:res.code}:{}),text:res.error,...(res.candidates?{candidates:res.candidates}:{})};
+          return{status:'ok',accepted:true,...(res.undoToken?{undoToken:res.undoToken}:{}),profile:res.profile,text:res.text};
         }
         if(args.action.startsWith('context_')){
           try{

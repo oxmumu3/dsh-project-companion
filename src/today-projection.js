@@ -15,7 +15,7 @@ const CHANGED = new Set(['WORKSPACE_ACCESS_CHANGED', 'WORKSPACE_CATALOG_CHANGED'
 const changed = code => Object.assign(new Error(code), {code});
 const sourceKey = snapshot => JSON.stringify((Array.isArray(snapshot?.sources) ? snapshot.sources : []).map(row => [row?.id ?? '', row?.state ?? '', row?.lastReadAt ?? '', row?.until ?? '']));
 
-export function createTodayProjection({sessionLedger, dotSourceReader, workspaceAccess, links, readConnection, ownerForeground = async () => true, readDigestSummary = null, readSuperAgent = null, readPersonalProfile = null} = {}) {
+export function createTodayProjection({sessionLedger, dotSourceReader, workspaceAccess, links, readConnection, ownerForeground = async () => true, readDigestSummary = null, readSuperAgent = null, readPersonalProfile = null, readWorkspaceBrief = null, readPromiseDrafts = null} = {}) {
   if (typeof sessionLedger?.snapshot !== 'function' || typeof dotSourceReader?.snapshot !== 'function') throw new Error('Today projection needs a ledger and a source reader');
   if (typeof workspaceAccess?.capture !== 'function' || typeof workspaceAccess?.authorizeSync !== 'function') throw new Error('Today projection needs workspace access');
   return async function todayProjection(ownerSessionId = null) {
@@ -46,12 +46,17 @@ export function createTodayProjection({sessionLedger, dotSourceReader, workspace
         // phase so Today can say "still reading" instead of turning an empty
         // cache into "all handled" while the provider call is still in flight.
         const sourcesPhase = ['idle', 'reading', 'ready', 'failed'].includes(dot.phase) ? dot.phase : 'ready';
-        const [digest, superagent, profile] = await Promise.all([
+        const [digest, superagent, profile, workspaceBrief] = await Promise.all([
           typeof readDigestSummary === 'function' ? Promise.resolve().then(() => readDigestSummary()).catch(() => null) : null,
           typeof readSuperAgent === 'function' ? Promise.resolve().then(() => readSuperAgent()).catch(() => null) : null,
           typeof readPersonalProfile === 'function' ? Promise.resolve().then(() => readPersonalProfile()).catch(() => null) : null,
+          typeof readWorkspaceBrief === 'function' ? Promise.resolve().then(() => readWorkspaceBrief(captured)).catch(() => null) : null,
         ]);
-        const museRevision = (digest?.revision ?? 0) + (superagent?.revision ?? 0) + (profile?.revision ?? 0);
+        if (!workspaceAccess.authorizeSync(captured)) throw changed('WORKSPACE_AUTHORIZATION_CHANGED');
+        const promiseDrafts = typeof readPromiseDrafts === 'function'
+          ? await Promise.resolve().then(() => readPromiseDrafts({promises, workspaceBrief, profile})).catch(() => null)
+          : null;
+        const museRevision = (digest?.revision ?? 0) + (superagent?.revision ?? 0) + (profile?.revision ?? 0) + (workspaceBrief?.revision ?? 0);
         return {
           ...snapshot,
           revision: snapshot.revision + dot.revision + museRevision,
@@ -63,6 +68,8 @@ export function createTodayProjection({sessionLedger, dotSourceReader, workspace
           ...(digest !== null ? {digest} : {}),
           ...(superagent !== null ? {superagent} : {}),
           ...(profile !== null ? {profile} : {}),
+          ...(workspaceBrief !== null ? {workspaceBrief} : {}),
+          ...(promiseDrafts !== null ? {promiseDrafts} : {}),
         };
       } catch (error) {
         lastError = error;
