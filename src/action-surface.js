@@ -23,7 +23,7 @@ const LOOK = {
 const MANAGE = {
   watch: a => ({ action: 'watch', ...(a.project ? { project: a.project } : {}) }),
   unwatch: a => ({ action: 'unwatch', ...(a.project ? { project: a.project } : {}) }),
-  memory: a => ({ action: 'memory', project: a.project }),
+  memory: a => ({ action: 'memory', project: a.project, ...(typeof a.query === 'string' && a.query.trim() ? { query: a.query.trim() } : {}) }),
   remember: a => ({ action: 'remember', project: a.project, memoryKind: a.memoryKind, memoryText: a.memoryText, sourceKind: a.sourceKind, ...(a.sourceReference ? { sourceReference: a.sourceReference } : {}), userRequested: a.userRequested === true }),
   correct_memory: a => ({ action: 'correct_memory', project: a.project, memoryId: a.memoryId, memoryText: a.memoryText, userRequested: a.userRequested === true }),
   forget_memory: a => ({ action: 'forget_memory', project: a.project, memoryId: a.memoryId, userRequested: a.userRequested === true }),

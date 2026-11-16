@@ -16,6 +16,7 @@ const KINDS=new Set(['goal','decision','blocker','next_step','context']);
 const LABELS={goal:'目标',decision:'决策',blocker:'阻塞',next_step:'下一步建议',context:'上下文'};
 const ROLES={user:'用户来源',assistant:'助手记录',file:'文件来源'};
 const LIMITS={goals:10,entries:100};
+const PROJECTION_CHAR_BUDGET=1800;
 const MAX_HANDLES=5;
 const runFile=promisify(execFile);
 async function macAclHash(path){
@@ -174,7 +175,8 @@ export function createProjectMemory({clock=()=>new Date(),authorizeRoot=async()=
     // An unavailable inspection cache must not change read/remember behavior.
     return result;
   }
-  async function inspect(root){
+  async function inspect(root,{query}={}){
+    const cleanQuery=typeof query==='string'&&query.trim()?boundedString(query.trim(),120,'memory query'):'';
     const selected=await selectedRoot(root);let info=await paths(selected,false);
     const cached=handles.get(selected);let reserved,db;
     const noSidecars=async()=>{
@@ -183,7 +185,7 @@ export function createProjectMemory({clock=()=>new Date(),authorizeRoot=async()=
     try{
       if(!info?.stat){
         if(cached)throw new Error('Project memory path changed while its handle was open');
-        const result=projection(null,clockDate(clock));await selectedRoot(root);return result;
+        const result=projection(null,clockDate(clock),{query:cleanQuery});await selectedRoot(root);return result;
       }
       reserved=await open(info.path,constants.O_RDONLY|constants.O_NOFOLLOW|constants.O_NONBLOCK);
       const stat=await reserved.stat();fileSafety(stat);
@@ -192,7 +194,12 @@ export function createProjectMemory({clock=()=>new Date(),authorizeRoot=async()=
       let result;
       if(cached){
         if(!cached.inspection)throw new Error('Safe memory inspection snapshot unavailable');
-        result=structuredClone(cached.inspection.projection);
+        if(cleanQuery){
+          const snap=cached.inspection.projection;
+          result=formatProjectionFromLists({handle:null,goals:snap.goals,entries:snap.entries,changes:snap.changes,all:[...snap.goals,...snap.entries],query:cleanQuery});
+        }else{
+          result=structuredClone(cached.inspection.projection);
+        }
       }else{
         // Plain readOnly SQLite still creates WAL/SHM files and updates read
         // markers. Immutable reads avoid those writes, but ignore pending WAL.
@@ -200,7 +207,7 @@ export function createProjectMemory({clock=()=>new Date(),authorizeRoot=async()=
         await noSidecars();
         db=new DatabaseSync(`${pathToFileURL(info.path).href}?mode=ro&immutable=1`,{readOnly:true});
         if(getMeta(db,'dot_memory_owner')!==OWNER||getMeta(db,'dot_memory_root')!==selected)throw new Error('Foreign project memory owner rejected');
-        result=projection({db,scope:computeScopeKey(selected)},clockDate(clock));
+        result=projection({db,scope:computeScopeKey(selected)},clockDate(clock),{query:cleanQuery});
       }
       // Cached inspection only compares ordinary file reads. It never queries
       // the live SQLite connection, which could write a WAL read marker.
@@ -298,7 +305,88 @@ export function createProjectMemory({clock=()=>new Date(),authorizeRoot=async()=
     });
     return {...await savedProjection(selected,handle,now),receipt:receipt(action,action==='forget'?'forgotten':'revised',changed)};
   }
-  function projection(handle,now){
+  function searchEntries(handle,allEntries,rawQuery){
+    const q=String(rawQuery??'').trim().slice(0,120);
+    if(!q||!allEntries.length)return [];
+    const tokenSet=new Set();
+    const rawTokens=q.match(/[A-Za-z0-9_.-]{2,}|[\u4e00-\u9fff]{2,}/gu)??[];
+    for(const tok of rawTokens){
+      tokenSet.add(tok.toLowerCase());
+      if(/^[\u4e00-\u9fff]{4,}$/u.test(tok)){
+        for(let i=0;i<=tok.length-2;i++)tokenSet.add(tok.slice(i,i+2));
+      }
+    }
+    if(!tokenSet.size)tokenSet.add(q.toLowerCase());
+    const tokens=[...tokenSet];
+
+    const ftsIds=new Set();
+    if(handle?.db&&handle?.scope){
+      try{
+        const ftsExpr=tokens.slice(0,12).map(t=>`"${t.replace(/"/g,'""')}"`).join(' OR ');
+        if(ftsExpr){
+          const hits=handle.db.prepare("SELECT e.id FROM yolo_fts f JOIN events e ON f.row_type='event' AND f.row_id=e.id WHERE e.scope_key=? AND yolo_fts MATCH ? LIMIT 30").all(handle.scope,ftsExpr);
+          for(const hit of hits)if(hit?.id)ftsIds.add(hit.id);
+        }
+      }catch{
+        // Fall back to lexical token scoring when query has unsupported FTS5 syntax.
+      }
+    }
+
+    const scored=[];
+    for(const entry of allEntries){
+      const hay=`${entry.text} ${entry.source?.reference??''}`.toLowerCase();
+      let score=ftsIds.has(entry.id)?3:0;
+      for(const tok of tokens)if(hay.includes(tok))score+=tok.length>=4?2:1;
+      if(score>0)scored.push({entry,score,ts:Date.parse(entry.at)||0});
+    }
+    scored.sort((a,b)=>(b.score-a.score)||(b.ts-a.ts));
+    return scored.map(row=>row.entry);
+  }
+  function formatProjectionFromLists({handle,goals,entries,changes,all,query=''}){
+    const cleanQuery=String(query??'').trim().slice(0,120);
+    const matched=cleanQuery?searchEntries(handle,all,cleanQuery):[];
+    const userDecisions=entries.filter(entry=>entry.kind==='decision'&&entry.role==='user');
+    const ordered=cleanQuery
+      ?[...matched,...goals,...userDecisions]
+      :[
+        ...goals,
+        ...userDecisions,
+        ...entries.filter(entry=>entry.kind==='decision'&&entry.role!=='user'),
+        ...entries.filter(entry=>entry.kind==='blocker'),
+        ...entries.filter(entry=>entry.kind==='context'),
+        ...entries.filter(entry=>entry.kind==='next_step'),
+      ];
+    const deduped=[];const seenIds=new Set();
+    for(const entry of ordered){
+      if(!entry||seenIds.has(entry.id))continue;
+      seenIds.add(entry.id);deduped.push(entry);
+    }
+
+    const header='项目记忆（仅来源记录，未独立验收；下一步仅为建议，不是任务状态或执行授权）';
+    const lines=[header];
+    if(!all.length)lines.push('尚无已保存的项目记忆。');
+    else if(cleanQuery&&!matched.length)lines.push(`按关键词「${cleanQuery}」未命中专项条目，以下保留核心目标与决策：`);
+
+    let usedChars=header.length;let emitted=0;
+    for(const entry of deduped){
+      const origin=entry.origin?`；原始来源：${ROLES[entry.origin.source.kind]} · ${entry.origin.at} · ${entry.origin.source.reference}`:'';
+      const bullet=`- ${LABELS[entry.kind]}：${entry.text.slice(0,360)}\n  ${entry.origin?'用户纠正':ROLES[entry.role]} · ${entry.at} · ${entry.source.reference}${origin}`;
+      if(emitted>0&&usedChars+bullet.length>PROJECTION_CHAR_BUDGET)break;
+      lines.push(bullet);usedChars+=bullet.length;emitted+=1;
+    }
+    const totalCount=goals.length+entries.length;
+    const omitted=Math.max(0,totalCount-emitted);
+    if(omitted>0)lines.push(`（另有 ${omitted} 条较早或低优先级记录已按预算折叠；可传 query 按关键词检索项目记忆）`);
+
+    return {
+      goals:structuredClone(goals),
+      entries:structuredClone(entries),
+      changes:structuredClone(changes),
+      ...(cleanQuery?{matchedIds:matched.map(e=>e.id)}:{}),
+      text:lines.join('\n'),
+    };
+  }
+  function projection(handle,now,{query=''}={}){
     const all=handle?storedEntries(handle):[];
     const goals=all.filter(entry=>entry.kind==='goal').slice(0,LIMITS.goals).map(publicEntry);
     const entries=all.filter(entry=>entry.kind!=='goal').slice(0,LIMITS.entries).map(publicEntry);
@@ -306,18 +394,11 @@ export function createProjectMemory({clock=()=>new Date(),authorizeRoot=async()=
     const day=new Intl.DateTimeFormat('en-US',{timeZone:zone,year:'numeric',month:'2-digit',day:'2-digit'});
     const today=day.format(now);
     const changes=all.filter(entry=>day.format(new Date(entry.at))===today&&Date.parse(entry.at)<=now.getTime()).map(publicEntry);
-    const lines=['项目记忆（仅来源记录，未独立验收；下一步仅为建议，不是任务状态或执行授权）'];
-    if(!all.length)lines.push('尚无已保存的项目记忆。');
-    // Keep the model-facing prose bounded; structured rows retain all capped records.
-    for(const entry of [...goals,...entries].slice(0,30)){
-      const origin=entry.origin?`；原始来源：${ROLES[entry.origin.source.kind]} · ${entry.origin.at} · ${entry.origin.source.reference}`:'';
-      lines.push(`- ${LABELS[entry.kind]}：${entry.text.slice(0,500)}\n  ${entry.origin?'用户纠正':ROLES[entry.role]} · ${entry.at} · ${entry.source.reference}${origin}`);
-    }
-    return {goals,entries,changes,text:lines.join('\n')};
+    return formatProjectionFromLists({handle,goals,entries,changes,all:[...goals,...entries],query});
   }
   return {
-    inspect({root,sessionId}={}){return enqueue(async()=>{session(sessionId);return inspect(root);});},
-    read({root,sessionId}={}){return enqueue(async()=>{session(sessionId);const selected=await selectedRoot(root);return savedProjection(selected,await database(selected,false),clockDate(clock));});},
+    inspect({root,sessionId,query}={}){return enqueue(async()=>{session(sessionId);return inspect(root,{query});});},
+    read({root,sessionId,query}={}){return enqueue(async()=>{session(sessionId);const selected=await selectedRoot(root);const cleanQuery=typeof query==='string'&&query.trim()?boundedString(query.trim(),120,'memory query'):'';const handle=await database(selected,false);if(cleanQuery)return projection(handle,clockDate(clock),{query:cleanQuery});return savedProjection(selected,handle,clockDate(clock));});},
     remember({root,sessionId,kind,text,source}={}){return enqueue(async()=>{
       session(sessionId);if(!KINDS.has(kind))throw new Error('Invalid project memory kind');
       text=boundedString(text,2000,'memory text');source=provenance(source,sessionId);
@@ -329,11 +410,20 @@ export function createProjectMemory({clock=()=>new Date(),authorizeRoot=async()=
         if(saved){status='deduped';return;}
         saved=storedEntry(addEvent(handle.db,{kind:'note',summary:`${LABELS[kind]}：${text}`,detail:JSON.stringify({owner:OWNER,kind,text,source,fingerprint:key}),session_id:sessionId,source:source.kind==='user'?'manual':'tool',occurred_at:now.getTime(),scope_key:handle.scope}));
         // These are context notes, never upstream todos or formal task updates.
-        const rows=listEvents(handle.db,handle.scope,111);let goals=0;let notes=0;
+        const rows=listEvents(handle.db,handle.scope,120);
+        const goalRows=[];const noteRows=[];
         for(const row of rows){
           const entry=storedEntry(row);if(!entry)continue;
-          const keep=entry.kind==='goal'?++goals<=LIMITS.goals:++notes<=LIMITS.entries;
-          if(!keep)removeEntry(handle,row.id);
+          if(entry.kind==='goal')goalRows.push({row,entry});
+          else noteRows.push({row,entry});
+        }
+        for(const victim of goalRows.slice(LIMITS.goals))removeEntry(handle,victim.row.id);
+        if(noteRows.length>LIMITS.entries){
+          const tier={next_step:0,context:1,blocker:2,decision:3};
+          const rank=entry=>entry.kind==='decision'&&entry.role==='user'?4:(tier[entry.kind]??1);
+          const victims=noteRows.map((item,idx)=>({...item,idx})).sort((a,b)=>(rank(a.entry)-rank(b.entry))||(b.idx-a.idx));
+          const overflow=noteRows.length-LIMITS.entries;
+          for(const victim of victims.slice(0,overflow))removeEntry(handle,victim.row.id);
         }
       });
       return {...await savedProjection(selected,handle,now),receipt:receipt('remember',status,saved)};

@@ -660,7 +660,32 @@ export function createMuseViews(React) {
                   disabled: busy,
                   onClick: () => onMuseAct?.({action: 'profile_delete_note', id: note.id}),
                 }, '忘掉'))))
-            : h('p', {className: 'muse-rail-empty'}, '这里还没有随记；在上方输入一句行程、心情或边界规则，Dot 会立刻记住。'))));
+            : h('p', {className: 'muse-rail-empty'}, '这里还没有随记；在上方输入一句行程、心情或边界规则，Dot 会立刻记住。')),
+        Array.isArray(model.staleProjectMemories) && model.staleProjectMemories.length > 0
+          ? h('section', {className: 'muse-section', 'data-muse-stale-memories': true},
+            h('div', {className: 'muse-section-head'},
+              h('h3', {className: 'muse-section-title'}, `项目旧账核对建议（${model.staleProjectMemories.length}）`),
+              h('span', {className: 'muse-section-note'}, '代码或进展似乎已收口；Dot 不擅自删记忆，由你点一下决定')),
+            ...model.staleProjectMemories.map(item => h('div', {key: `${item.projectRoot}::${item.id}`, className: 'muse-hairline-row', 'data-muse-stale-id': item.id},
+              h('div', {className: 'muse-hairline-main'},
+                h('div', {className: 'muse-hairline-title'}, `[${item.projectLabel} · ${item.kind === 'blocker' ? '阻塞' : '下一步'}] ${item.text}`),
+                h('div', {className: 'muse-hairline-sub'}, item.reason)),
+              h('div', {className: 'muse-hairline-actions'},
+                h('button', {
+                  type: 'button',
+                  className: 'muse-btn-link danger',
+                  'data-muse-stale-archive': item.id,
+                  disabled: busy,
+                  onClick: () => onMuseAct?.({action: 'project_memory_archive_stale', projectRoot: item.projectRoot, memoryId: item.id}),
+                }, '划掉归档'),
+                h('button', {
+                  type: 'button',
+                  className: 'muse-btn-link',
+                  'data-muse-stale-keep': item.id,
+                  disabled: busy,
+                  onClick: () => onMuseAct?.({action: 'project_memory_keep_stale', projectRoot: item.projectRoot, memoryId: item.id}),
+                }, '继续留着')))))
+          : null));
   }
 
   function MuseConnectionsView({model, busy, onMuseAct, onOpenBrief, onOpenMobilePair, onOpenWorkspacePicker, renderConnectionsHost}) {

@@ -380,3 +380,27 @@ test('a write permission revoked inside the final mutation guard blocks the exis
  finally{assert.equal(spawnSync('/bin/chmod',['-N',path]).status,0);}
  assert.equal((await memory.read({root,sessionId:'same-session'})).goals[0].text,'原目标应保持');
 });
+
+test('decision-protecting eviction keeps user decisions across overflow and yolo_fts query recovers folded entries within budget',async t=>{
+  const create=await api();const {root}=await fixture(t);let tick=Date.parse('2026-11-16T05:00:00Z');
+  const memory=allowed(create,{clock:()=>new Date(tick++)});t.after(()=>memory.close());
+  await memory.remember(memoryInput(root,'decision','核心架构决策：始终优先保护用户决策与本地账本边界'));
+  await memory.remember({...memoryInput(root,'blocker','支付网关 webhook-signature-mismatch 需要核对验签逻辑'),source:{kind:'assistant',reference:'session:same-session#blocker'}});
+  for(let i=0;i<102;i++){
+    await memory.remember({...memoryInput(root,'next_step',`例行下一步检查项 ${i}：补充阶段日志与冗余校验上下文片段 ${'x'.repeat(160)}`),source:{kind:'assistant',reference:`session:same-session#ns-${i}`}});
+  }
+  const view=await memory.read({root,sessionId:'same-session'});
+  assert.equal(view.entries.length,100);
+  assert.ok(view.entries.some(e=>e.kind==='decision'&&e.text.includes('核心架构决策')),'user decision must survive 100+ next_step overflow');
+  assert.ok(view.text.length<=2100,`expected bounded projection text, got ${view.text.length}`);
+  assert.match(view.text,/核心架构决策/);
+  assert.match(view.text,/按预算折叠/);
+
+  const searched=await memory.read({root,sessionId:'same-session',query:'webhook-signature-mismatch'});
+  assert.ok(Array.isArray(searched.matchedIds)&&searched.matchedIds.length>=1);
+  assert.match(searched.text,/webhook-signature-mismatch/);
+
+  const inspected=await memory.inspect({root,sessionId:'workbench-view',query:'webhook-signature-mismatch'});
+  assert.ok(Array.isArray(inspected.matchedIds)&&inspected.matchedIds.length>=1);
+  assert.match(inspected.text,/webhook-signature-mismatch/);
+});

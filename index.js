@@ -627,6 +627,7 @@ export async function installCompanion(ctx,options={}){
   pulseLedger=options.pulseLedger??createProjectPulseLedger({store:{get:key=>pulseLedgerTable.get(key),put:(key,value)=>pulseLedgerTable.put(key,pulseLedgerRowSchema.parse(value))},...(options.clock?{clock:options.clock}:{})});
   projectPulse=options.projectPulse??createProjectPulse({...(options.clock?{clock:options.clock}:{})});
   memory=createProjectMemory({authorizeRoot,...(options.clock?{clock:options.clock}:{}),...(options.hostTimeZone?{hostTimeZone:options.hostTimeZone}:{})});
+  museIntelligence.attachMemoryInspector(root=>memory.inspect({root,sessionId:'workbench-view'}));
   // Personal review is Owner-wide; it never borrows a synthetic project or a
   // one-project follow-up capability. Persisted runs re-enter the exact grant.
   const reviewSources=['gmail','calendar','drive','flomo','dida'];
@@ -792,6 +793,10 @@ export async function installCompanion(ctx,options={}){
   });
   const museController=createMuseController({
     personalProfile,dailyDigest,superAgent:superAgentBridge,museIntelligence,mobileCompanion,
+    archiveProjectMemory:async({projectRoot,memoryId}={})=>{
+      if(disposed||await service.isPaused())throw new Error('项目助理已暂停或关闭，未修改记忆。');
+      return memory.forget({root:projectRoot,sessionId:'muse-user-archive',id:memoryId,userRequested:true,authorizeMutation:async()=>!disposed&&!(await service.isPaused())&&await authorizeRoot(projectRoot)});
+    },
     readPromises:()=>dotSourceReader?.snapshot?.()?.promises??[],
     onChange:()=>{syncTimer();void mobileCompanion?.notifyChange?.();},isClosed:()=>disposed,
   });
@@ -1053,7 +1058,7 @@ export async function installCompanion(ctx,options={}){
         return JSON.stringify(parsed)===JSON.stringify(trustedPlan)&&familyDelegate.current(fresh);
       }:null;
       const input={root:project.root,sessionId:caller.sessionId,...(trustedPlan?{authorizeMutation,...(['cancel_once','cancel_followup'].includes(args.action)?{authorizeMutationSync:()=>familyDelegate.current(planScope)&&!planScope.signal?.aborted}: {})}: {})};
-      if(args.action==='memory')return{...await memory.read(input),projectLabel:project.label};
+      if(args.action==='memory')return{...await memory.read({...input,...(typeof args.query==='string'&&args.query.trim()?{query:args.query.trim()}:{})}),projectLabel:project.label};
       if(args.action==='correct_memory'||args.action==='forget_memory'){
         const method=args.action==='correct_memory'?'revise':'forget';
         const connection=await readSetup();
@@ -1497,7 +1502,7 @@ export async function installCompanion(ctx,options={}){
       itemId:{type:'string',description:'context_handoff：从当前简报items将用户所指编号或内容映射为itemId，不让用户输入ID。'},
       detail:{type:'string',enum:['summary','analysis'],description:'digest：对单个明确项目分析变化、卡点或验证状态时用analysis，读取原有固定文件的有界材料及时间，不把手机短摘要当作全部资料；summary用于简短展示。'},
       project:{type:'string',description:'用户口述的友好项目名称；内部也接受已知项目ID/精确路径。省略表示当前有效项目目录。不要要求用户查ID。'},
-      query:{type:'string',description:'list：按项目名称搜索全部已登记目录，最多80字。只列目录，不读取项目文件。'},
+      query:{type:'string',description:'list/memory：list按项目名称搜索目录（最多80字）；memory可选按关键词检索项目记忆（最多120字）。'},
       offset:{type:'number',description:'list：上一页nextOffset；默认0，不要求用户提供。'},
       limit:{type:'number',description:'list：每页1–50个，默认20。'},
       catalogRevision:{type:'string',description:'list：沿用上一页catalogRevision，目录变化后重新从首页查询。'},

@@ -466,3 +466,51 @@ test('buildMuseViewModel renders first-aha focus card + workspace brief in MuseB
   assert.match(memText, /对话顺手记/);
   assert.match(memText, /周三下午出差/);
 });
+
+test('MuseMemoryView renders stale project memory review cards and dispatches archive or keep actions', async t => {
+  const {createMuseViews} = await loadMuseViews(t);
+  const {React, expand} = runtime();
+  const findAll = (node, pred, acc = []) => {
+    if (!node || typeof node !== 'object') return acc;
+    if (Array.isArray(node)) { for (const x of node) findAll(x, pred, acc); return acc; }
+    if (pred(node)) acc.push(node);
+    for (const c of node.children ?? []) findAll(c, pred, acc);
+    return acc;
+  };
+  const findProp = (node, prop) => findAll(node, n => n.props && prop in n.props && n.props[prop] !== false && n.props[prop] !== undefined);
+  const {MuseMemoryView} = createMuseViews(React);
+
+  const actions = [];
+  const model = buildMuseViewModel({
+    activity: {sessions: [], events: [], promises: []},
+    muse: {
+      digest: {lastDigest: null, dailyTime: '09:00', enabled: true, isQuietToday: false},
+      superagent: {mode: 'standalone', milestones: []},
+      profile: {traits: [], notes: []},
+      staleProjectMemories: [
+        {
+          id: 'stale-99',
+          projectRoot: '/tmp/alpha',
+          projectLabel: 'Alpha',
+          kind: 'blocker',
+          text: '支付回调验签偶发超时',
+          reason: 'progress.md 已有对应完成记录',
+        },
+      ],
+    },
+  });
+
+  const tree = expand(React.createElement(MuseMemoryView, {
+    model,
+    busy: false,
+    onMuseAct: async payload => { actions.push(payload); },
+    onAsk: () => {},
+  }));
+  assert.equal(findProp(tree, 'data-muse-stale-memories').length, 1);
+  await findProp(tree, 'data-muse-stale-archive')[0].props.onClick();
+  await findProp(tree, 'data-muse-stale-keep')[0].props.onClick();
+  assert.deepEqual(actions, [
+    {action: 'project_memory_archive_stale', projectRoot: '/tmp/alpha', memoryId: 'stale-99'},
+    {action: 'project_memory_keep_stale', projectRoot: '/tmp/alpha', memoryId: 'stale-99'},
+  ]);
+});

@@ -583,3 +583,86 @@ test('project_companion apply(ctx) supports profile_remember, profile_forget, lo
   }
   assert.equal((await adapter.personalProfile.snapshot()).notes.length, 0);
 });
+
+test('museIntelligence detects stale resolved project memories and controller supports archive vs keep dismissal', async () => {
+  const {createMuseIntelligence} = await import('../src/muse-intelligence.js');
+  const {createMuseController} = await import('../src/muse-route.js');
+  const {createPersonalProfile} = await import('../src/personal-profile.js');
+
+  const grants = [{id: 'ws-pay', root: '/tmp/ws-pay', label: 'PayProject', revision: 1, sessionIds: []}];
+  const entries = [
+    {
+      id: 'mem-stale-1',
+      kind: 'blocker',
+      text: '支付回调签名校验异常导致异步通知失败',
+      at: '2026-11-15T08:00:00.000Z',
+    },
+    {
+      id: 'mem-fresh-2',
+      kind: 'blocker',
+      text: '需要评估全新的国际化字体方案',
+      at: '2026-11-16T08:00:00.000Z',
+    },
+  ];
+  let archivedCalls = [];
+
+  const intel = createMuseIntelligence({
+    workspaceAccess: {
+      capture: async () => ({revision: 1, grants}),
+      authorizeSync: () => true,
+    },
+    readProject: async () => [
+      {path: '.agent/memory/progress.md', status: 'ok', text: '- 已完成：修复支付回调签名校验异常，测试全绿\n'},
+    ],
+    inspectProjectMemory: async () => ({goals: [], entries: [...entries]}),
+  });
+
+  const profile = createPersonalProfile();
+  const controller = createMuseController({
+    personalProfile: profile,
+    museIntelligence: intel,
+    archiveProjectMemory: async ({projectRoot, memoryId}) => {
+      archivedCalls.push({projectRoot, memoryId});
+      const idx = entries.findIndex(e => e.id === memoryId);
+      if (idx >= 0) entries.splice(idx, 1);
+    },
+  });
+
+  const snap1 = await controller.snapshot();
+  assert.equal(snap1.staleProjectMemories.length, 1);
+  assert.equal(snap1.staleProjectMemories[0].id, 'mem-stale-1');
+  assert.match(snap1.staleProjectMemories[0].reason, /progress\.md/);
+
+  const keepRes = await controller.act({
+    action: 'project_memory_keep_stale',
+    projectRoot: '/tmp/ws-pay',
+    memoryId: 'mem-stale-1',
+  });
+  assert.equal(keepRes.ok, true);
+  assert.equal(keepRes.staleProjectMemories.length, 0);
+
+  // Fresh intel checks archive path.
+  const intel2 = createMuseIntelligence({
+    workspaceAccess: {capture: async () => ({revision: 2, grants}), authorizeSync: () => true},
+    readProject: async () => [{path: '.agent/memory/progress.md', status: 'ok', text: '- 已收口：支付回调签名校验异常'}],
+    inspectProjectMemory: async () => ({goals: [], entries}),
+  });
+  const controller2 = createMuseController({
+    personalProfile: profile,
+    museIntelligence: intel2,
+    archiveProjectMemory: async ({projectRoot, memoryId}) => {
+      archivedCalls.push({projectRoot, memoryId});
+      const idx = entries.findIndex(e => e.id === memoryId);
+      if (idx >= 0) entries.splice(idx, 1);
+    },
+  });
+  const arcRes = await controller2.act({
+    action: 'project_memory_archive_stale',
+    projectRoot: '/tmp/ws-pay',
+    memoryId: 'mem-stale-1',
+  });
+  assert.equal(arcRes.ok, true);
+  assert.equal(archivedCalls.length, 1);
+  assert.deepEqual(archivedCalls[0], {projectRoot: '/tmp/ws-pay', memoryId: 'mem-stale-1'});
+  assert.equal(arcRes.staleProjectMemories.length, 0);
+});

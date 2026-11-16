@@ -462,6 +462,11 @@ export function buildMuseViewModel({
     traitGroups,
     digest,
     workspaceBrief,
+    staleProjectMemories: Array.isArray(muse?.staleProjectMemories)
+      ? muse.staleProjectMemories
+      : Array.isArray(activity?.staleProjectMemories)
+        ? activity.staleProjectMemories
+        : [],
     mobile,
     events,
     focus,

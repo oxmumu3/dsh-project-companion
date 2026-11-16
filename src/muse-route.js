@@ -4,6 +4,7 @@ export function createMuseController({
   superAgent = null,
   museIntelligence = null,
   mobileCompanion = null,
+  archiveProjectMemory = null,
   readPromises = () => [],
   onChange = null,
   isClosed = () => false,
@@ -18,6 +19,9 @@ export function createMuseController({
     workspaceBrief: typeof museIntelligence?.readWorkspaceBrief === 'function'
       ? await museIntelligence.readWorkspaceBrief().catch(() => null)
       : null,
+    staleProjectMemories: typeof museIntelligence?.readStaleMemorySuggestions === 'function'
+      ? await museIntelligence.readStaleMemorySuggestions().catch(() => [])
+      : [],
     mobile: typeof mobileCompanion?.summary === 'function'
       ? await mobileCompanion.summary().catch(() => null)
       : null,
@@ -121,6 +125,16 @@ export function createMuseController({
         } else {
           result = await mobileCompanion.pairInfo({ rotate: action === 'mobile_pair_rotate' });
         }
+      } else if (action === 'project_memory_archive_stale') {
+        if (typeof archiveProjectMemory !== 'function') {
+          result = { ok: false, code: 'UNAVAILABLE', error: '项目记忆归档服务暂不可用。' };
+        } else {
+          await archiveProjectMemory({ projectRoot: input.projectRoot, memoryId: input.memoryId });
+          result = { ok: true, text: '已从项目记忆划掉这条已收口旧记录。' };
+        }
+      } else if (action === 'project_memory_keep_stale') {
+        museIntelligence?.dismissStaleMemorySuggestion?.({ projectRoot: input.projectRoot, memoryId: input.memoryId });
+        result = { ok: true, text: '已保留这条项目记忆，不再重复提醒。' };
       } else {
         return { ok: false, code: 'UNKNOWN_ACTION', error: '不支持这项操作，没有改动任何内容。' };
       }

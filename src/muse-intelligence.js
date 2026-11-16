@@ -119,12 +119,15 @@ export function createMuseIntelligence({
   workspaceAccess,
   sessionLedger = null,
   readProject = readProjectFiles,
+  inspectProjectMemory = null,
   clock = () => new Date(),
   isClosed = () => false,
 } = {}) {
   let briefRevision = 0;
   let lastContentSignature = '';
   let cachedBrief = null;
+  let memoryInspector = typeof inspectProjectMemory === 'function' ? inspectProjectMemory : null;
+  const dismissedStaleKeys = new Set();
   const customDrafts = new Map();
   const synthesizedDrafts = new Map();
 
@@ -370,6 +373,136 @@ export function createMuseIntelligence({
     cachedBrief = null;
   }
 
+  function attachMemoryInspector(fn) {
+    memoryInspector = typeof fn === 'function' ? fn : null;
+  }
+
+  function dismissStaleMemorySuggestion({ projectRoot, memoryId } = {}) {
+    if (!projectRoot || !memoryId) return;
+    if (dismissedStaleKeys.size >= 200) {
+      dismissedStaleKeys.delete(dismissedStaleKeys.values().next().value);
+    }
+    dismissedStaleKeys.add(`${projectRoot}::${memoryId}`);
+  }
+
+  async function readStaleMemorySuggestions() {
+    if (isClosed() || typeof memoryInspector !== 'function' || typeof workspaceAccess?.capture !== 'function') {
+      return [];
+    }
+    let captured;
+    try {
+      captured = await workspaceAccess.capture();
+    } catch {
+      return [];
+    }
+    const grants = Array.isArray(captured?.grants) ? captured.grants : [];
+    if (!grants.length) return [];
+    if (typeof workspaceAccess?.authorizeSync === 'function' && workspaceAccess.authorizeSync(captured) !== true) {
+      return [];
+    }
+
+    const stopWords = new Set(['项目', '问题', '需要', '目前', '下一步', '建议', '继续', '检查', '处理', '功能', '支持', '完成', '修改', '阻塞', '待办', '进度', '已经']);
+    const extractTokens = raw => {
+      const set = new Set();
+      const chunks = String(raw ?? '').match(/[A-Za-z0-9_.-]{3,}|[\u4e00-\u9fff]{2,}/gu) ?? [];
+      for (const tok of chunks) {
+        if (/^[A-Za-z0-9_.-]+$/.test(tok)) {
+          set.add(tok.toLowerCase());
+          continue;
+        }
+        if (tok.length <= 3) {
+          if (!stopWords.has(tok)) set.add(tok);
+        } else {
+          for (let i = 0; i <= tok.length - 2; i++) {
+            const sub = tok.slice(i, i + 2);
+            if (!stopWords.has(sub)) set.add(sub);
+          }
+        }
+      }
+      return set;
+    };
+    const tokensOverlap = (candTokens, lineText) => {
+      const target = extractTokens(lineText);
+      let hits = 0;
+      for (const tok of candTokens) {
+        if (!target.has(tok)) continue;
+        if (/^[a-z0-9_.-]{4,}$/.test(tok)) return true;
+        hits += 1;
+        if (hits >= 2) return true;
+      }
+      return false;
+    };
+
+    const suggestions = [];
+    for (const grant of grants.slice(0, MAX_SCAN_WORKSPACES)) {
+      if (isClosed() || (typeof workspaceAccess?.authorizeSync === 'function' && workspaceAccess.authorizeSync(captured) !== true)) {
+        return [];
+      }
+      let memView = null;
+      try {
+        memView = await memoryInspector(grant.root);
+      } catch {
+        continue;
+      }
+      const entries = Array.isArray(memView?.entries) ? memView.entries : [];
+      const candidates = entries.filter(e => e?.kind === 'blocker' || e?.kind === 'next_step');
+      if (!candidates.length) continue;
+
+      let progressDoneLines = [];
+      try {
+        const files = await readProject(grant.root);
+        const progressRow = (Array.isArray(files) ? files : []).find(row => row?.path === '.agent/memory/progress.md');
+        if (progressRow?.status === 'ok' && typeof progressRow.text === 'string') {
+          progressDoneLines = progressRow.text
+            .split(/\r?\n/)
+            .filter(line => /已完成|已修复|已收口|已解决|全绿|已上线|通过验收|已实现/u.test(line))
+            .slice(0, 60);
+        }
+      } catch {
+        progressDoneLines = [];
+      }
+
+      const safeLabel = stripControls(cleanGoalSource(grant.label || '本地项目', 80), 80) || '本地项目';
+      const allRecords = [...(Array.isArray(memView?.goals) ? memView.goals : []), ...entries];
+
+      for (const entry of candidates) {
+        const key = `${grant.root}::${entry.id}`;
+        if (dismissedStaleKeys.has(key)) continue;
+        const candTokens = extractTokens(entry.text);
+        if (!candTokens.size) continue;
+        const entryAt = Date.parse(entry.at) || 0;
+
+        let reason = '';
+        const newerResolved = allRecords.find(other => {
+          if (!other || other.id === entry.id) return false;
+          const otherAt = Date.parse(other.at) || 0;
+          if (otherAt <= entryAt) return false;
+          if (!/已解决|已修复|已完成|已收口|不再阻塞|已上线/u.test(other.text)) return false;
+          return tokensOverlap(candTokens, other.text);
+        });
+        if (newerResolved) {
+          reason = '后续项目记忆已记录收口';
+        } else if (progressDoneLines.some(line => tokensOverlap(candTokens, line))) {
+          reason = 'progress.md 已有对应完成记录';
+        }
+
+        if (reason) {
+          suggestions.push({
+            id: entry.id,
+            projectRoot: grant.root,
+            projectLabel: safeLabel,
+            kind: entry.kind,
+            text: stripControls(entry.text, 160),
+            at: entry.at,
+            reason,
+          });
+          if (suggestions.length >= 5) return suggestions;
+        }
+      }
+    }
+    return suggestions;
+  }
+
   return {
     readWorkspaceBrief,
     peekWorkspaceBrief() {
@@ -380,5 +513,8 @@ export function createMuseIntelligence({
     resetPromiseDraft,
     getPromiseDraftText,
     invalidateBrief,
+    attachMemoryInspector,
+    dismissStaleMemorySuggestion,
+    readStaleMemorySuggestions,
   };
 }
