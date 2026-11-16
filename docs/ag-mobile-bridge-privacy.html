@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="AG Mobile Bridge iOS 应用隐私说明：开发者不收集个人数据、离线演示模式、局域网与端到端自托管连接机制。">
+  <title>隐私政策 / Privacy Policy · AG Mobile Bridge</title>
+  <link rel="canonical" href="https://dot.finvo.ai/ag-mobile-bridge-privacy.html">
+  <link rel="stylesheet" href="site.css">
+</head>
+<body>
+  <a class="skip-link" href="#main">跳到正文</a>
+  <header class="site-header wrap">
+    <a class="wordmark" href="ag-mobile-bridge-support.html" aria-label="AG Mobile Bridge">AG <strong>Mobile Bridge</strong></a>
+    <nav aria-label="主导航">
+      <a href="ag-mobile-bridge-support.html">技术支持</a>
+      <a href="#english" lang="en">English</a>
+      <a href="mailto:experts@finvo.ai">联系我们</a>
+    </nav>
+  </header>
+  <main id="main" class="wrap prose">
+    <header class="page-title">
+      <p class="eyebrow">AG MOBILE BRIDGE · iOS &amp; iPadOS</p>
+      <h1>隐私政策</h1>
+      <p>生效与更新日期：2026-11-16 · 适用应用：<strong>AG Mobile Bridge</strong>（Bundle ID：<code>com.linfengli.antigravity.mobile</code>）<br>发行方：<strong>TECHBOOKS LTD</strong> · 隐私与合规联系邮箱：<a href="mailto:experts@finvo.ai">experts@finvo.ai</a></p>
+    </header>
+
+    <section aria-labelledby="summary">
+      <h2 id="summary">核心承诺：开发者不收集任何个人数据</h2>
+      <p><strong>AG Mobile Bridge</strong> 是一款面向开发者的自托管本地守护桥伴侣客户端。<strong>TECHBOOKS LTD 不运营用于存储用户代码、会话内容、配对密钥或个人身份信息的中心化后端服务器</strong>，应用内亦未集成任何第三方广告、统计分析、崩溃上报或跨应用追踪 SDK。我们在 App Store 隐私标签中的声明为：<strong>未从此 App 中收集数据（Data Not Collected）</strong>。</p>
+    </section>
+
+    <section aria-labelledby="modes">
+      <h2 id="modes">数据存储与传输边界</h2>
+      <ul>
+        <li><strong>离线演示模式（Demo Mode）</strong>：点击欢迎页「体验演示模式」即可在不连接任何电脑的情况下使用内置示例工作区与本地模拟回复，全程无任何网络传输。</li>
+        <li><strong>本机安全存储</strong>：当你主动选择配对自己的 Mac 工作站（<code>ag-mobile-bridge</code>）时，配对令牌仅加密保存在你 iPhone / iPad 的系统钥匙串（iOS Keychain）中，最近的会话列表快照仅缓存在设备本地沙盒内，以便冷启动即时浏览。</li>
+        <li><strong>点对点连接与端到端加密发现</strong>：同局域网下应用通过 Apple <code>NWBrowser</code>（Bonjour <code>_agmobile._tcp</code>）直接连接你的 Mac；跨网环境下仅通过基于配对密钥派生的 <code>AES-256-GCM</code> 密文信标发现你本人电脑的临时加密隧道地址，信标不含任何姓名、邮箱、设备标识符或对话正文。应用本身不内置第三方云端大模型密钥，也不会主动向第三方 AI 平台上传你的数据。</li>
+      </ul>
+    </section>
+
+    <section aria-labelledby="permissions">
+      <h2 id="permissions">系统权限用途说明</h2>
+      <ul>
+        <li><strong>相机权限（Camera）</strong>：仅在你点击「扫描终端二维码」配对时在设备端实时识别二维码，图像帧在内存中即时丢弃，绝不保存或上传。</li>
+        <li><strong>本地网络权限（Local Network）</strong>：仅用于在家庭或办公 Wi-Fi 下发现并直连你自己的 Mac 守护桥（<code>_agmobile._tcp</code>）。</li>
+        <li><strong>实时活动（Live Activities）</strong>：仅用于在锁屏与灵动岛展示你当前正在运行的本地任务进度。</li>
+      </ul>
+    </section>
+
+    <section aria-labelledby="control">
+      <h2 id="control">随时解除绑定与彻底清除数据</h2>
+      <p>你可随时在应用右上角「设置 → 解除当前 Mac 配对」一键清除 iOS Keychain 中的配对凭证与全部本地会话快照，或直接卸载应用以移除所有本地沙盒数据。如有任何隐私疑问，请发送邮件至 <a href="mailto:experts@finvo.ai">experts@finvo.ai</a>。</p>
+    </section>
+
+    <section id="english" lang="en" class="english" aria-labelledby="en-title">
+      <p class="eyebrow">ENGLISH</p>
+      <h2 id="en-title">Privacy Policy</h2>
+      <p>Effective Date: 16 November 2026 · Application: <strong>AG Mobile Bridge</strong> (Bundle ID: <code>com.linfengli.antigravity.mobile</code>)<br>Publisher: <strong>TECHBOOKS LTD</strong> · Contact: <a href="mailto:experts@finvo.ai">experts@finvo.ai</a></p>
+
+      <h3>1. No Developer Data Collection</h3>
+      <p><strong>AG Mobile Bridge</strong> is a native iOS/iPadOS companion client for a user-hosted macOS workstation bridge (<code>ag-mobile-bridge</code>). <strong>TECHBOOKS LTD operates no developer backend servers</strong> that receive, store, or process your source code, prompts, pairing tokens, or personal information. The app contains zero third-party analytics, advertising, telemetry, or tracking SDKs.</p>
+
+      <h3>2. On-Device Storage &amp; User-Controlled Connections</h3>
+      <ul>
+        <li><strong>Offline Demo Mode</strong>: Tapping “Try Demo Mode” runs entirely on-device using built-in sample workspaces and simulated local replies without network requests.</li>
+        <li><strong>Local Keychain &amp; Cache</strong>: When you pair with your own Mac, pairing credentials are stored exclusively in the iOS Keychain on your device, and recent session snapshots are cached locally in the app sandbox.</li>
+        <li><strong>Direct LAN &amp; Encrypted Tunnel Routing</strong>: Traffic flows solely between your iOS device and your own Mac over local Wi-Fi or your Mac’s encrypted HTTPS tunnel. Cross-network endpoint discovery uses an <code>AES-256-GCM</code> encrypted beacon keyed by your private pairing token and contains no personal identifiers or conversation content. The iOS app does not embed third-party AI SDKs or transmit your data to developer servers.</li>
+      </ul>
+
+      <h3>3. Device Permissions</h3>
+      <ul>
+        <li><strong>Camera</strong>: Used solely on-device to scan the pairing QR code displayed in your Mac Terminal. Camera frames are never stored or transmitted.</li>
+        <li><strong>Local Network</strong>: Used solely to discover and connect to your own Mac bridge (<code>_agmobile._tcp</code>) on the same Wi-Fi network.</li>
+        <li><strong>Live Activities</strong>: Displays task progress on the Lock Screen and Dynamic Island.</li>
+      </ul>
+
+      <h3>4. Data Deletion &amp; Contact</h3>
+      <p>You can erase all saved pairing credentials and cached session snapshots at any time via <strong>Settings → Unpair Mac</strong> inside the app, or by uninstalling the app. For privacy inquiries, contact TECHBOOKS LTD at <a href="mailto:experts@finvo.ai">experts@finvo.ai</a>.</p>
+    </section>
+  </main>
+  <footer class="site-footer wrap">
+    <div>
+      <a class="wordmark" href="ag-mobile-bridge-support.html">AG <strong>Mobile Bridge</strong></a>
+      <p>Published by TECHBOOKS LTD · Independent developer companion tool.</p>
+    </div>
+    <nav aria-label="页脚导航">
+      <a href="ag-mobile-bridge-support.html">技术支持 / Support</a>
+      <a href="mailto:experts@finvo.ai">experts@finvo.ai</a>
+    </nav>
+  </footer>
+</body>
+</html>

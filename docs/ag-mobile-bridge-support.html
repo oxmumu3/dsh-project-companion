@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="AG Mobile Bridge 技术支持、快速配对指南与常见问题解答。">
+  <title>技术支持 / Support · AG Mobile Bridge</title>
+  <link rel="canonical" href="https://dot.finvo.ai/ag-mobile-bridge-support.html">
+  <link rel="stylesheet" href="site.css">
+</head>
+<body>
+  <a class="skip-link" href="#main">跳到正文</a>
+  <header class="site-header wrap">
+    <a class="wordmark" href="ag-mobile-bridge-support.html" aria-label="AG Mobile Bridge">AG <strong>Mobile Bridge</strong></a>
+    <nav aria-label="主导航">
+      <a href="ag-mobile-bridge-privacy.html">隐私政策</a>
+      <a href="#english" lang="en">English</a>
+      <a href="mailto:experts@finvo.ai">联系支持</a>
+    </nav>
+  </header>
+  <main id="main" class="wrap prose">
+    <header class="page-title">
+      <p class="eyebrow">AG MOBILE BRIDGE · SUPPORT</p>
+      <h1>技术支持与使用指南</h1>
+      <p>适用版本：AG Mobile Bridge iOS / iPadOS 1.0 · 发行方：TECHBOOKS LTD<br>技术支持邮箱：<a href="mailto:experts@finvo.ai">experts@finvo.ai</a>（工作日 24 小时内响应）</p>
+    </header>
+
+    <section aria-labelledby="quickstart">
+      <h2 id="quickstart">快速开始</h2>
+      <ol>
+        <li><strong>免配对离线体验</strong>：首次打开应用可直接点击底部「体验演示模式（Try Demo Mode）」，无需配置电脑即可完整浏览多工作区会话、代码块复制、工具步骤折叠与模拟回复。</li>
+        <li><strong>局域网 6 位码配对</strong>：在你的 Mac 终端启动本地桥接服务（<code>ag-mobile-bridge install-agent</code>），确保 iPhone 与 Mac 处于同一 Wi-Fi，在应用欢迎页选择发现的 Mac 并输入 6 位动态配对码即可完成连接。</li>
+        <li><strong>跨网二维码配对</strong>：在 Mac 终端执行 <code>ag-mobile-bridge pair</code>，使用 iPhone 扫描终端二维码即可同时保存局域网与加密远程通道信息，出门切至蜂窝网络时自动切换。</li>
+      </ol>
+    </section>
+
+    <section aria-labelledby="faq">
+      <h2 id="faq">常见问题排查</h2>
+      <ul>
+        <li><strong>家庭路由器更换了 Mac 的局域网 IP 怎么办？</strong> 应用支持局域网 Bonjour 自动寻址与连接诊断面板（点击离线横幅或设置页中的「连接诊断」），会自动识别新的局域网地址并更新凭证。</li>
+        <li><strong>如何重置或更换连接的电脑？</strong> 打开右上角「设置 → 解除当前 Mac 配对」，即可清空本机保存的密钥与缓存并重新配对。</li>
+      </ul>
+    </section>
+
+    <section id="english" lang="en" class="english" aria-labelledby="en-support">
+      <p class="eyebrow">ENGLISH</p>
+      <h2 id="en-support">Support &amp; Help Center</h2>
+      <p>Application: <strong>AG Mobile Bridge</strong> (<code>com.linfengli.antigravity.mobile</code>) · Publisher: <strong>TECHBOOKS LTD</strong><br>Support Email: <a href="mailto:experts@finvo.ai">experts@finvo.ai</a></p>
+
+      <h3>Getting Started</h3>
+      <ol>
+        <li><strong>Instant Offline Demo Mode</strong>: Tap <strong>Try Demo Mode</strong> on the welcome screen to explore sample workspaces, Markdown code rendering, collapsible tool-call groups, and simulated streaming replies without needing a Mac.</li>
+        <li><strong>Same-Wi-Fi 6-Digit PIN Pairing</strong>: Run <code>ag-mobile-bridge install-agent</code> on your Mac. Select your discovered Mac in the iOS app and enter the 6-digit PIN shown on your Mac.</li>
+        <li><strong>Cross-Network QR Pairing</strong>: Run <code>ag-mobile-bridge pair</code> in your Mac Terminal and scan the QR code from the app to enable automatic Wi-Fi and encrypted remote tunnel failover.</li>
+      </ol>
+
+      <h3>Troubleshooting &amp; Contact</h3>
+      <ul>
+        <li><strong>Connection Diagnostics</strong>: Open <strong>Settings → Route Diagnostics</strong> to inspect each hop (LAN Wi-Fi, Bonjour mDNS, Remote Tunnel, and encrypted beacon status).</li>
+        <li><strong>Reset / Unpair</strong>: Go to <strong>Settings → Unpair Mac</strong> to wipe stored credentials and local snapshots from your device.</li>
+        <li><strong>Need Assistance?</strong> Email us anytime at <a href="mailto:experts@finvo.ai">experts@finvo.ai</a>.</li>
+      </ul>
+    </section>
+  </main>
+  <footer class="site-footer wrap">
+    <div>
+      <a class="wordmark" href="ag-mobile-bridge-support.html">AG <strong>Mobile Bridge</strong></a>
+      <p>© 2026 TECHBOOKS LTD</p>
+    </div>
+    <nav aria-label="页脚导航">
+      <a href="ag-mobile-bridge-privacy.html">隐私政策 / Privacy Policy</a>
+      <a href="mailto:experts@finvo.ai">experts@finvo.ai</a>
+    </nav>
+  </footer>
+</body>
+</html>
