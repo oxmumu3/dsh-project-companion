@@ -3,6 +3,7 @@ export function createMuseController({
   dailyDigest = null,
   superAgent = null,
   museIntelligence = null,
+  mobileCompanion = null,
   readPromises = () => [],
   onChange = null,
   isClosed = () => false,
@@ -16,6 +17,9 @@ export function createMuseController({
       : { mode: 'standalone', available: false, ledgerRevision: 0, revision: 0, milestones: [], counts: { inReview: 0, blocked: 0, inProgress: 0, todo: 0, pending: 0 }, lastQueued: null },
     workspaceBrief: typeof museIntelligence?.readWorkspaceBrief === 'function'
       ? await museIntelligence.readWorkspaceBrief().catch(() => null)
+      : null,
+    mobile: typeof mobileCompanion?.summary === 'function'
+      ? await mobileCompanion.summary().catch(() => null)
       : null,
   });
 
@@ -110,6 +114,12 @@ export function createMuseController({
           result = { ok: false, code: 'UNAVAILABLE', error: '草稿服务暂不可用。' };
         } else {
           result = museIntelligence.resetPromiseDraft({ promiseId: input.promiseId });
+        }
+      } else if (action === 'mobile_pair_info' || action === 'mobile_pair_rotate') {
+        if (typeof mobileCompanion?.pairInfo !== 'function') {
+          result = { ok: false, code: 'UNAVAILABLE', error: '手机连接服务暂不可用。' };
+        } else {
+          result = await mobileCompanion.pairInfo({ rotate: action === 'mobile_pair_rotate' });
         }
       } else {
         return { ok: false, code: 'UNKNOWN_ACTION', error: '不支持这项操作，没有改动任何内容。' };

@@ -89,6 +89,7 @@ import {createPersonalProfile,personalProfileRowSchema} from './src/personal-pro
 import {createSuperAgentBridge} from './src/superagent-bridge.js';
 import {createMuseController,registerMuseRoute} from './src/muse-route.js';
 import {createMuseIntelligence} from './src/muse-intelligence.js';
+import {createMobileCompanion} from './src/mobile-companion.js';
 export {Config};
 
 export const name='project-companion';
@@ -202,7 +203,7 @@ export async function installCompanion(ctx,options={}){
   let disposed=false;
   const coordinates=new Set();
   let lastRuntimeError='';
-  let projectPulse,pulseLedger,memory,followup,onboarding,welcomeGuard,contextRoute,digestRoute,workbench,workbenchActions,projectUpdates,projectUpdateModel,contextLoop,context,familyDelegate,familyContext,personalReview,personalReviewModel,dailyDigest,digestModel;
+  let projectPulse,pulseLedger,memory,followup,onboarding,welcomeGuard,contextRoute,digestRoute,workbench,workbenchActions,projectUpdates,projectUpdateModel,contextLoop,context,familyDelegate,familyContext,personalReview,personalReviewModel,dailyDigest,digestModel,mobileCompanion;
   // 污点标记只活在本进程内存里；这次装载从干净状态开始，不继承上一次运行的标记。
   clearPrivateReads();
   const lifecycle=new AbortController();
@@ -584,6 +585,7 @@ export async function installCompanion(ctx,options={}){
     disposed=true;
     lifecycle.abort();
     mobileRelease?.();
+    await mobileCompanion?.dispose?.().catch(()=>{});
     goalBoard.close();goalBoardModel.close();unsubscribeIntelligence?.();workspaceAccess.close();
     await sessionLedger.close();
     await goalBoard.waitForIdle().catch(()=>{});
@@ -771,10 +773,27 @@ export async function installCompanion(ctx,options={}){
   });
   await dailyDigest.ready();
   digestRoute=createDigestRoute({digest:dailyDigest,readConnection:readSetup,readOwner:resolveDigestOwner,canRun:async()=>!disposed&&!lifecycle.signal.aborted&&!await service.isPaused(),isClosed:()=>disposed});
+  mobileCompanion=createMobileCompanion({
+    ...(options.dshHome?{dshHome:options.dshHome}:{}),
+    ...(options.mobile||{}),
+    syntheticHost:Boolean(options.clock||!ctx.get?.('pluginManager',false)),
+    isClosed:()=>disposed,
+    readLiveState:async()=>({
+      profile:await personalProfile.snapshot(),
+      digest:typeof dailyDigest?.desktopSummary==='function'?dailyDigest.desktopSummary():null,
+      superagent:await superAgentBridge.readSynergySnapshot(),
+      workspaceBrief:await museIntelligence.readWorkspaceBrief().catch(()=>null),
+    }),
+    onAddNote:input=>personalProfile.addNote(input),
+    onSetTrait:input=>personalProfile.setTrait(input),
+    onRemoveTrait:input=>personalProfile.removeTrait(input),
+    onQueuePending:input=>superAgentBridge.enqueuePending(input),
+    onConfigureRhythm:input=>dailyDigest?.configureRhythm?.(input),
+  });
   const museController=createMuseController({
-    personalProfile,dailyDigest,superAgent:superAgentBridge,museIntelligence,
+    personalProfile,dailyDigest,superAgent:superAgentBridge,museIntelligence,mobileCompanion,
     readPromises:()=>dotSourceReader?.snapshot?.()?.promises??[],
-    onChange:()=>syncTimer(),isClosed:()=>disposed,
+    onChange:()=>{syncTimer();void mobileCompanion?.notifyChange?.();},isClosed:()=>disposed,
   });
 
   const familyRoute={
@@ -1823,7 +1842,7 @@ export async function installCompanion(ctx,options={}){
   }
   await recoverFamilyPlans();
   if(typeof ctx.inject==='function')ctx.inject(['familyDotBridge'],()=>{if(!disposed)void recoverFamilyPlans();});
-  return{service,taskResults,memory,followup,onboarding,news,personalReview,dailyDigest,personalProfile,superAgentBridge,museController,context,contextLoop,projectUpdates,googleCalendarAuth,googleSuiteAuth,flomoAuth,didaAuth,workbench,workbenchActions,familyRoute,projectCatalog,projectCatalogController,workspaceAccess,goalBoard,goalBoardController,dotSources,dotSourceReader,registeredProjectTarget:service.registeredProjectTarget,authorizeRegisteredCoordinationSync:service.authorizeRegisteredCoordinationSync};
+  return{service,taskResults,memory,followup,onboarding,news,personalReview,dailyDigest,personalProfile,superAgentBridge,museController,mobileCompanion,context,contextLoop,projectUpdates,googleCalendarAuth,googleSuiteAuth,flomoAuth,didaAuth,workbench,workbenchActions,familyRoute,projectCatalog,projectCatalogController,workspaceAccess,goalBoard,goalBoardController,dotSources,dotSourceReader,registeredProjectTarget:service.registeredProjectTarget,authorizeRegisteredCoordinationSync:service.authorizeRegisteredCoordinationSync};
 }
 
 export async function apply(ctx,config){

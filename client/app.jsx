@@ -1277,6 +1277,9 @@ function createDotGoalBoardViews(React) {
         const [capsuleDraft,setCapsuleDraft]=React.useState('');
         const [conversationOpen,setConversationOpen]=React.useState(false);
         const [briefOpen,setBriefOpen]=React.useState(false);
+        const [mobilePairOpen,setMobilePairOpen]=React.useState(false);
+        const [mobilePairData,setMobilePairData]=React.useState(null);
+        const [mobilePairLoading,setMobilePairLoading]=React.useState(false);
         const [undoBanner,setUndoBanner]=React.useState(null);
         const catalogFlight=React.useRef(false),catalogEpoch=React.useRef(0);
         const todayPageRef=React.useRef(page),todayPanelRef=React.useRef(activePanelId===undefined||activePanelId===dotPanel);
@@ -1336,7 +1339,7 @@ function createDotGoalBoardViews(React) {
         const refreshMuseExtras=async()=>{
           try{
             const m=await request('/api/project_companion/muse');
-            if(active.current&&m?.ok)setMuseState({profile:m.profile,digest:m.digest,superagent:m.superagent,workspaceBrief:m.workspaceBrief??null});
+            if(active.current&&m?.ok)setMuseState({profile:m.profile,digest:m.digest,superagent:m.superagent,workspaceBrief:m.workspaceBrief??null,mobile:m.mobile??null});
           }catch{}
           try{
             const c=await request('/api/project_companion/context');
@@ -1701,12 +1704,13 @@ function createDotGoalBoardViews(React) {
           setError('');setBusy(true);
           try{
             const value=await todayPost('/api/project_companion/muse',payload);
-            if(active.current&&(value?.profile||value?.digest||value?.superagent||Object.hasOwn(value,'workspaceBrief'))){
+            if(active.current&&(value?.profile||value?.digest||value?.superagent||Object.hasOwn(value,'workspaceBrief')||Object.hasOwn(value,'mobile'))){
               setMuseState(prev=>({
                 profile:value.profile??prev?.profile??null,
                 digest:value.digest??prev?.digest??null,
                 superagent:value.superagent??prev?.superagent??null,
                 workspaceBrief:Object.hasOwn(value,'workspaceBrief')?value.workspaceBrief:(prev?.workspaceBrief??null),
+                mobile:Object.hasOwn(value,'mobile')?value.mobile:(prev?.mobile??null),
               }));
             }
             if(!value?.ok){
@@ -1810,6 +1814,30 @@ function createDotGoalBoardViews(React) {
             onSendChat:todaySay,
             briefOpen,
             onBriefOpen:setBriefOpen,
+            mobilePairOpen,
+            mobilePairData,
+            mobilePairLoading,
+            onOpenMobilePair:async next=>{
+              const openNext=next!==false;
+              setMobilePairOpen(openNext);
+              if(!openNext)return;
+              setMobilePairLoading(true);
+              try{
+                const res=await museAct({action:'mobile_pair_info'});
+                if(active.current&&res?.ok&&res.pair)setMobilePairData(res.pair);
+              }finally{
+                if(active.current)setMobilePairLoading(false);
+              }
+            },
+            onRotateMobilePair:async()=>{
+              setMobilePairLoading(true);
+              try{
+                const res=await museAct({action:'mobile_pair_rotate'});
+                if(active.current&&res?.ok&&res.pair)setMobilePairData(res.pair);
+              }finally{
+                if(active.current)setMobilePairLoading(false);
+              }
+            },
             renderConversation:()=>h('div',{style:{display:'flex',flexDirection:'column',gap:10,height:'100%',minHeight:0}},
               dockProblem?h('p',{className:'muse-notice-line',role:'status',style:{margin:0}},dockProblem):null,
               dockText?h('div',{className:'muse-notice-line info',style:{margin:0,justifyContent:'space-between',gap:8}},

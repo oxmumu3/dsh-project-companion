@@ -108,6 +108,19 @@ export function buildMuseViewModel({
   };
 
   const workspaceBrief = activity?.workspaceBrief ?? muse?.workspaceBrief ?? null;
+  const mobileRaw = muse?.mobile ?? activity?.mobile ?? null;
+  const mobile = mobileRaw
+    ? {
+      available: mobileRaw.available !== false,
+      paired: mobileRaw.paired === true,
+      pairedCount: Number(mobileRaw.pairedCount || 0),
+      deviceName: clean(mobileRaw.deviceName) || 'Mac',
+      tunnelReady: mobileRaw.tunnelReady === true,
+      bridgeActive: mobileRaw.bridgeActive === true,
+      lanUrl: clean(mobileRaw.lanUrl) || null,
+      lastPairedAt: mobileRaw.lastPairedAt || null,
+    }
+    : null;
   const promiseDrafts = (activity?.promiseDrafts && typeof activity.promiseDrafts === 'object') ? activity.promiseDrafts : {};
 
   const events = (Array.isArray(activity?.events) ? activity.events : []).map(ev => ({
@@ -449,6 +462,7 @@ export function buildMuseViewModel({
     traitGroups,
     digest,
     workspaceBrief,
+    mobile,
     events,
     focus,
     folded,

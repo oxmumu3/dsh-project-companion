@@ -7,7 +7,7 @@ import {TRAIT_PRESETS} from './muse-model.js';
 export function createMuseViews(React) {
   const h = React.createElement;
 
-  function MuseTopbar({tab, onTab, model, onOpenSettings, onOpenBrief}) {
+  function MuseTopbar({tab, onTab, model, onOpenSettings, onOpenBrief, onOpenMobilePair}) {
     const tabs = [
       {id: 'today', label: '今天'},
       {id: 'threads', label: '脉络'},
@@ -15,6 +15,7 @@ export function createMuseViews(React) {
       {id: 'connections', label: '连接'},
     ];
     const modeLabel = model.mode === 'synergy' ? '协同 · SuperAgent' : '独立模式';
+    const mobilePaired = model.mobile?.paired === true;
     return h('header', {className: 'muse-topbar'},
       h('div', {className: 'muse-topbar-inner'},
         h('div', {className: 'muse-brand'},
@@ -31,6 +32,14 @@ export function createMuseViews(React) {
             onClick: () => onTab?.(item.id),
           }, item.label))),
         h('div', {className: 'muse-topbar-right'},
+          h('button', {
+            type: 'button',
+            className: 'muse-ghost-btn',
+            'data-muse-open-mobile-pair': true,
+            onClick: () => onOpenMobilePair?.(true),
+          },
+            h('span', {className: `muse-status-dot ${mobilePaired ? 'ok' : 'info'}`}),
+            mobilePaired ? 'iPhone 已连' : '连手机'),
           h('button', {
             type: 'button',
             className: 'muse-ghost-btn',
@@ -126,6 +135,121 @@ export function createMuseViews(React) {
             onAsk?.('对照今天早报和手头的安排，帮我定一下先做哪两件？');
           },
         }, '带进对话接着聊')));
+  }
+
+  function MuseMobilePairDialog({open, pair, loading = false, busy = false, onClose, onRotate}) {
+    const dialogRef = React.useRef(null);
+    const [copiedPin, setCopiedPin] = React.useState(false);
+
+    React.useEffect(() => {
+      const el = dialogRef.current;
+      if (!el) return;
+      if (open && !el.open) {
+        if (typeof el.showModal === 'function') el.showModal();
+        else el.setAttribute('open', '');
+      } else if (!open && el.open) {
+        if (typeof el.close === 'function') el.close();
+        else el.removeAttribute('open');
+      }
+      if (!open) setCopiedPin(false);
+    }, [open]);
+
+    const expLabel = React.useMemo(() => {
+      if (!pair?.expiresAt || !Number.isFinite(pair.expiresAt)) return '15 分钟内有效';
+      try {
+        return `${new Intl.DateTimeFormat('zh-CN', {hour: '2-digit', minute: '2-digit', hourCycle: 'h23'}).format(new Date(pair.expiresAt))} 前有效`;
+      } catch {
+        return '15 分钟内有效';
+      }
+    }, [pair?.expiresAt]);
+
+    const handleCopyPin = () => {
+      if (!pair?.pin) return;
+      try {
+        void navigator.clipboard?.writeText?.(pair.pin);
+        setCopiedPin(true);
+        setTimeout(() => setCopiedPin(false), 1800);
+      } catch {
+        // Ignore clipboard errors in restricted contexts
+      }
+    };
+
+    return h('dialog', {
+      ref: dialogRef,
+      className: 'muse-dialog muse-mobile-pair-dialog',
+      closedby: 'any',
+      'data-muse-mobile-dialog': true,
+      onClose: () => onClose?.(),
+      onCancel: event => {
+        event.preventDefault();
+        onClose?.();
+      },
+    },
+      h('header', {className: 'muse-dialog-head'},
+        h('div', null,
+          h('h2', {className: 'muse-dialog-title'}, '把 Dot 装进 iPhone'),
+          h('p', {className: 'muse-sheet-sub'}, pair?.deviceName ? `${pair.deviceName} · 端到端加密直连` : '无需账号 · 同 Wi-Fi 或 5G 即连')),
+        h('button', {
+          type: 'button',
+          className: 'muse-btn-outline',
+          'data-muse-mobile-close': true,
+          onClick: () => onClose?.(),
+        }, '关闭')),
+      h('div', {className: 'muse-dialog-body muse-pair-dialog-body'},
+        loading && !pair
+          ? h('p', {className: 'muse-pair-loading'}, '正在生成 6 位动态配对码与二维码…')
+          : pair
+            ? h('div', {className: 'muse-pair-layout'},
+              h('div', {className: 'muse-pair-qr-col'},
+                h('div', {className: 'muse-pair-qr-box', 'data-muse-mobile-qr': true},
+                  h('svg', {
+                    viewBox: pair.qrViewBox || '0 0 64 64',
+                    className: 'muse-pair-qr-svg',
+                    role: 'img',
+                    'aria-label': 'iPhone DSH Dot 扫码配对二维码',
+                  },
+                    h('rect', {width: '100%', height: '100%', fill: 'white'}),
+                    h('path', {d: pair.qrPathD || '', stroke: 'transparent', fill: '#111111'}))),
+                h('p', {className: 'muse-pair-qr-caption'}, '在手机点「扫码」对准这里')),
+              h('div', {className: 'muse-pair-code-col'},
+                h('div', {className: 'muse-pair-code-meta'},
+                  h('span', {className: 'muse-pair-eyebrow'}, '6 位动态配对码'),
+                  h('span', {className: 'muse-section-note'}, expLabel)),
+                h('div', {
+                  className: 'muse-pair-pin',
+                  'data-muse-mobile-pin': pair.pin,
+                }, pair.pinFormatted || pair.pin),
+                h('div', {className: 'muse-pair-code-actions'},
+                  h('button', {
+                    type: 'button',
+                    className: 'muse-btn-link',
+                    'data-muse-mobile-rotate': true,
+                    disabled: busy || loading,
+                    onClick: () => onRotate?.(),
+                  }, '换一个新码'),
+                  h('button', {
+                    type: 'button',
+                    className: 'muse-btn-link',
+                    onClick: handleCopyPin,
+                  }, copiedPin ? '已复制 6 位码' : '复制 6 位码')),
+                h('div', {className: 'muse-pair-routes'},
+                  h('span', {className: 'muse-pair-route-item'},
+                    h('span', {className: `muse-status-dot ${pair.bridgeActive ? 'ok' : 'info'}`}),
+                    pair.bridgeActive ? '局域网直连已就绪' : '正在准备局域网直连'),
+                  h('span', {className: 'muse-pair-route-item'},
+                    h('span', {className: `muse-status-dot ${pair.tunnelReady ? 'ok' : 'info'}`}),
+                    pair.tunnelReady ? '出门 5G 加密隧道已就绪' : '同 Wi-Fi 下无需公网隧道即可配对')),
+                h('ol', {className: 'muse-pair-steps'},
+                  h('li', null, '在 iPhone 打开 DSH Dot，点「扫码」扫左侧二维码，或手动输入上方 6 位数字。'),
+                  h('li', null, '不用注册账号、不用打开终端；配对后同 Wi-Fi 与出门 5G 会自动无感重连。'))))
+            : h('p', {className: 'muse-pair-loading'}, '暂时没能读取到配对码，请点右侧按钮重试。')),
+      h('footer', {className: 'muse-dialog-foot'},
+        h('span', {className: 'muse-section-note'}, pair?.paired ? `已有 ${pair.pairedCount || 1} 台手机配对过` : '仅在主动确认时开放本机只读投影'),
+        h('button', {
+          type: 'button',
+          className: 'muse-btn-primary',
+          onClick: () => onClose?.(),
+        }, '完成')));
   }
 
   function FocusCard({focus, busy, onAction, onSaveDraft, onAsk}) {
@@ -539,7 +663,7 @@ export function createMuseViews(React) {
             : h('p', {className: 'muse-rail-empty'}, '这里还没有随记；在上方输入一句行程、心情或边界规则，Dot 会立刻记住。'))));
   }
 
-  function MuseConnectionsView({model, busy, onMuseAct, onOpenBrief, onOpenWorkspacePicker, renderConnectionsHost}) {
+  function MuseConnectionsView({model, busy, onMuseAct, onOpenBrief, onOpenMobilePair, onOpenWorkspacePicker, renderConnectionsHost}) {
     const times = ['07:30', '08:00', '08:30', '09:00', '10:00', '12:30', '18:00', '21:00'];
     const deliveryModes = [
       {value: 'wechat_and_desktop', label: '桌面和微信一起提醒'},
@@ -604,6 +728,25 @@ export function createMuseViews(React) {
             className: 'muse-btn-link',
             onClick: () => onOpenWorkspacePicker?.(),
           }, '管理关注工作区'))),
+      h('section', {className: 'muse-section'},
+        h('div', {className: 'muse-section-head'},
+          h('h3', {className: 'muse-section-title'}, 'iPhone 随身端 · DSH Dot iOS（零命令行直连）'),
+          h('span', {className: 'muse-section-note'}, model.mobile?.paired ? '已配对 · 同 Wi-Fi / 5G 自动同步' : '支持扫码或 6 位动态配对码')),
+        h('div', {className: 'muse-source-row muse-mobile-pair-row', 'data-muse-mobile-connection-row': true},
+          h('div', {className: 'muse-hairline-main'},
+            h('div', {className: 'muse-hairline-title'},
+              h('span', {className: `muse-status-dot ${model.mobile?.paired ? 'ok' : 'info'}`, style: {display: 'inline-block', marginRight: 7, verticalAlign: 'middle'}}),
+              model.mobile?.paired ? 'iPhone 随身端已配对' : '把电脑上的 Dot 装进 iPhone'),
+            h('div', {className: 'muse-hairline-sub'}, model.mobile?.paired
+              ? `配对设备数：${model.mobile?.pairedCount || 1} · 可随时查看新的 6 位配对码或扫码绑定新设备`
+              : '不用记终端命令。点右侧按钮获取 6 位配对码或二维码，在 iPhone 打开 DSH Dot 即可连上。')),
+          h('button', {
+            type: 'button',
+            className: 'muse-btn-outline',
+            'data-muse-conn-mobile-pair': true,
+            disabled: busy,
+            onClick: () => onOpenMobilePair?.(true),
+          }, model.mobile?.paired ? '查看 6 位码 / 扫码加设备' : '查看 6 位配对码 / 扫码连接'))),
       h('section', {className: 'muse-section'},
         h('div', {className: 'muse-section-head'},
           h('h3', {className: 'muse-section-title'}, '外部信息与工作台连接（按需只读，不主动全盘扫描）'),
@@ -741,6 +884,11 @@ export function createMuseViews(React) {
     renderConnectionsHost,
     briefOpen = false,
     onBriefOpen,
+    mobilePairOpen = false,
+    mobilePairData = null,
+    mobilePairLoading = false,
+    onOpenMobilePair,
+    onRotateMobilePair,
   }) {
     const scrollRef = React.useRef(null);
     React.useEffect(() => {
@@ -754,6 +902,7 @@ export function createMuseViews(React) {
         model,
         onOpenSettings,
         onOpenBrief: onBriefOpen,
+        onOpenMobilePair,
       }),
       h('main', {ref: scrollRef, className: 'muse-scroll', 'data-muse-scroll': true},
         feedback
@@ -791,6 +940,7 @@ export function createMuseViews(React) {
                 busy,
                 onMuseAct,
                 onOpenBrief: onBriefOpen,
+                onOpenMobilePair,
                 onOpenWorkspacePicker,
                 renderConnectionsHost,
               })),
@@ -811,6 +961,14 @@ export function createMuseViews(React) {
         model,
         onClose: () => onBriefOpen?.(false),
         onAsk,
+      }),
+      h(MuseMobilePairDialog, {
+        open: mobilePairOpen,
+        pair: mobilePairData,
+        loading: mobilePairLoading,
+        busy,
+        onClose: () => onOpenMobilePair?.(false),
+        onRotate: () => onRotateMobilePair?.(),
       }));
   }
 
@@ -823,5 +981,6 @@ export function createMuseViews(React) {
     MuseConnectionsView,
     MuseCapsule,
     MuseBriefDialog,
+    MuseMobilePairDialog,
   };
 }
