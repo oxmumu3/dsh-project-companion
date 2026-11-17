@@ -35,7 +35,7 @@ function fixture(options = {}) {
 test('native Config keeps live credential fields separate from normal Dot appearance', () => {
   requireModules();
   const schema = configModule.Config;
-  assert.deepEqual(Object.keys(schema.dict).sort(), [...Object.keys(initial()),'dotAppearance','familyOwnerDelegation','familyOwnerReminderEnabled','desktopConversationSessionId','desktopConversationSelectionVersion'].sort());
+  assert.deepEqual(Object.keys(schema.dict).sort(), [...Object.keys(initial()),'dotAppearance','googleWorkspaceModelProvider','googleWorkspaceModelId','familyOwnerDelegation','familyOwnerReminderEnabled','desktopConversationSessionId','desktopConversationSelectionVersion'].sort());
   for (const key of Object.keys(initial())) {
     const value=schema.dict[key];
     assert.equal(value.meta.volatile, true);
@@ -44,6 +44,14 @@ test('native Config keeps live credential fields separate from normal Dot appear
   assert.equal(schema.dict.dotAppearance.meta.default,'native');
   assert.notEqual(schema.dict.dotAppearance.meta.role,'secret');
   assert.equal(schema.dict.dotAppearance.meta.volatile,true,'changing only appearance must not restart the running backend');
+  assert.equal(schema.dict.googleWorkspaceModelProvider.meta.default,'');
+  assert.notEqual(schema.dict.googleWorkspaceModelProvider.meta.role,'secret');
+  assert.equal(schema.dict.googleWorkspaceModelProvider.meta.volatile,true);
+  assert.equal(schema.dict.googleWorkspaceModelId.meta.default,'');
+  assert.notEqual(schema.dict.googleWorkspaceModelId.meta.role,'secret');
+  assert.equal(schema.dict.googleWorkspaceModelId.meta.volatile,true);
+  assert.deepEqual(configModule.readGoogleWorkspaceModelConfig({ googleWorkspaceModelProvider: { get: () => ' google ' }, googleWorkspaceModelId: ' gemini-2.5-flash ' }), { googleWorkspaceModelProvider: 'google', googleWorkspaceModelId: 'gemini-2.5-flash' });
+  assert.deepEqual(configModule.readContextConfig({ ...initial(), googleWorkspaceModelProvider: 'google', googleWorkspaceModelId: 'gemini-2.5-flash' }), initial(), 'isolated model settings must stay out of readContextConfig');
   assert.equal(schema.dict.familyOwnerDelegation.meta.default,false,'cross-entry sharing must be opt-in');
   assert.equal(schema.dict.familyOwnerReminderEnabled.meta.default,false,'Family reminder entry must be independently opt-in');
   assert.equal(schema.dict.familyOwnerReminderEnabled.meta.volatile,true);

@@ -8,6 +8,7 @@
  */
 import {z} from 'zod';
 import {runNewsModel,NewsModelError,boundedModelControls} from './news-model.js';
+import {isCompliantGoogleWorkspaceSelection} from './google-data-isolation.js';
 import {canonicalizeTimeZone,makeLocalFormatter,localProjection,resolveLocalInstant} from '../vendor/proactive/lib/domain.js';
 
 export const MAIL_LIMIT = 30;
@@ -361,7 +362,7 @@ export function digestCallerAllowed({sessionId, foregroundSessionId = null, setu
 }
 
 /** One model call, no tools, no transcript. Never retries inside a digest. */
-export function createDigestModel(ctx, {clock = () => new Date(), timeoutMs = 120000} = {}) {
+export function createDigestModel(ctx, {clock = () => new Date(), timeoutMs = 120000, resolveGoogleSelection = null} = {}) {
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0 || timeoutMs > 120000) throw new Error('DIGEST_MODEL_INVALID');
   let closed = false;
   const active = new Set();
@@ -378,8 +379,25 @@ export function createDigestModel(ctx, {clock = () => new Date(), timeoutMs = 12
       signal?.addEventListener('abort', stop, {once: true});
       const timer = setTimeout(stop, timeoutMs);
       try {
+        const includesGoogle = (Array.isArray(material?.mails) && material.mails.length > 0)
+          || (Array.isArray(material?.calendar) && material.calendar.length > 0)
+          || (Array.isArray(material?.promises) && material.promises.some(p => p?.source === 'calendar'))
+          || material?.states?.gmail?.state === 'ok'
+          || material?.states?.calendar?.state === 'ok';
         let llm, selection;
-        try { llm = ctx.get('llm', false); selection = ctx.get('agentDefaultModel', false)?.currentSelection(); } catch { throw new NewsModelError('MODEL_UNAVAILABLE'); }
+        try {
+          llm = ctx.get('llm', false);
+          if (includesGoogle && typeof resolveGoogleSelection === 'function') {
+            selection = await resolveGoogleSelection();
+          } else {
+            selection = ctx.get('agentDefaultModel', false)?.currentSelection();
+            if (includesGoogle && !isCompliantGoogleWorkspaceSelection(selection, {ctx, syntheticHost: true, enforceStrictAllowlist: false}).allowed) {
+              throw new NewsModelError('MODEL_UNAVAILABLE');
+            }
+          }
+        } catch (error) {
+          throw error instanceof NewsModelError ? error : new NewsModelError('MODEL_UNAVAILABLE');
+        }
         controller.signal.throwIfAborted();
         totals.requests += 1;
         const result = await runNewsModel({

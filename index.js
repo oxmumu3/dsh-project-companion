@@ -38,7 +38,8 @@ import {deriveFamilyNewsRequest} from './src/family-news-intent.js';
 import {createProjectUpdateModel,safeValidationDiagnostic,safeModelRunDiagnostic} from './src/project-update-model.js';
 import {createContextLoop,contextLoopRowSchema} from './src/context-loop.js';
 import {createProjectUpdateService,projectUpdateRowSchema} from './src/project-updates.js';
-import {Config,readContextConfig} from './src/context-config.js';
+import {Config,readContextConfig,readGoogleWorkspaceModelConfig} from './src/context-config.js';
+import {createGoogleIsolationGuard,googleIsolationRowSchema,googleSourcesInList,isGoogleWorkspaceSource,isCompliantGoogleWorkspaceSelection,GOOGLE_MODEL_ISOLATION_CODE,GOOGLE_ISOLATION_USER_MESSAGE} from './src/google-data-isolation.js';
 import {createGoogleAuth} from './src/context-google-auth.js';
 import {createGoogleCalendarAuth} from './src/google-calendar-auth.js';
 import {createGoogleSuiteAuth} from './src/google-suite-auth.js';
@@ -129,6 +130,7 @@ const workspaceAccessDomainSpec=defineDomain({name:'project_companion_workspace_
 const sessionLedgerDomainSpec=defineDomain({name:'project_companion_sessions',version:1,tables:{state:domainTable(sessionLedgerRowSchema)}});
 const goalBoardDomainSpec=defineDomain({name:'project_companion_goals',version:1,tables:{state:domainTable(goalBoardRowSchema)}});
 const personalProfileDomainSpec=defineDomain({name:'project_companion_personal_profile',version:1,tables:{state:domainTable(personalProfileRowSchema)}});
+const googleIsolationDomainSpec=defineDomain({name:'project_companion_google_isolation',version:1,tables:{state:domainTable(googleIsolationRowSchema)}});
 
 function owner(ctx,agent){
   const cwd=effectiveCwd(ctx,agent);
@@ -186,6 +188,48 @@ export async function installCompanion(ctx,options={}){
   const goalBoardTable=goalBoardDomain.table('state');
   const personalProfileDomain=await ctx.storageDomain.open(personalProfileDomainSpec);
   const personalProfileTable=personalProfileDomain.table('state');
+  const googleIsolationDomain=await ctx.storageDomain.open(googleIsolationDomainSpec);
+  const googleIsolationTable=googleIsolationDomain.table('state');
+  const hasMockHarness=Boolean(options.clock||options.fetch||options.readSetup||options.readBinding||options.readNativeRoute||options.contextLoop||options.personalReview||options.dailyDigest||options.projectUpdates||options.context?.transport||options.context?.googleAuth||options.context?.googleSuiteAuth||options.context?.vaultFactory||options.context?.suiteTransport||options.context?.calendarTransport);
+  const enforceStrictAllowlist=options.googleIsolation?.enforceStrictAllowlist??!hasMockHarness;
+  const syntheticHost=options.googleIsolation?.syntheticHost??!enforceStrictAllowlist;
+  const googleIsolation=createGoogleIsolationGuard({
+    ctx,
+    store:{get:key=>googleIsolationTable.get(key),put:(key,value)=>googleIsolationTable.put(key,googleIsolationRowSchema.parse(value))},
+    readWorkspaceConfig:()=>readGoogleWorkspaceModelConfig(options.context?.config),
+    ...(options.clock?{clock:options.clock}:{}),
+    syntheticHost,
+    enforceStrictAllowlist,
+  });
+  await googleIsolation.ready();
+  ctx.effect(()=>ctx.on('system-prompt/assemble',(assembly,context,next)=>googleIsolation.observePromptAssembly(assembly,context,next),{prepend:true}));
+  ctx.effect(()=>ctx.on('agent/pre-step',(payload,next)=>googleIsolation.preStepGuard(payload,next)));
+  ctx.effect(()=>ctx.on('agent/request',(payload,next)=>googleIsolation.requestGuard(payload,next),{prepend:true}));
+  const checkAgentGoogleAllowed=agent=>{
+    const selection=googleIsolation.activeSelection(agent);
+    const check=isCompliantGoogleWorkspaceSelection(selection,{ctx,syntheticHost,enforceStrictAllowlist});
+    return check.allowed?{allowed:true,check}:{allowed:false,code:GOOGLE_MODEL_ISOLATION_CODE,message:GOOGLE_ISOLATION_USER_MESSAGE,check};
+  };
+  const projectLoopGoogleSources=async(sessionId,root)=>{
+    try{
+      const parsed=contextLoopRowSchema.safeParse(await contextLoopTable.get('profile'));
+      if(!parsed.success)return[];
+      const matches=parsed.data.loops.filter(loop=>loop.originSessionId===sessionId&&loop.projectRoot===root);
+      return matches.length?googleSourcesInList(matches.flatMap(loop=>loop.queries)):[];
+    }catch{return[];}
+  };
+  const sanitizeToolLedgerProjection=projection=>{
+    if(!projection||typeof projection!=='object')return projection;
+    const promises=Array.isArray(projection.promises)?projection.promises:[];
+    const blockedIds=new Set(promises.filter(p=>isGoogleWorkspaceSource(p?.source)).map(p=>p?.id).filter(Boolean));
+    const next={...projection,promises:promises.filter(p=>!isGoogleWorkspaceSource(p?.source))};
+    if('events' in next)next.events=[];
+    if('digest' in next&&(next.digest?.counts?.mailKept>0||next.digest?.counts?.events>0||Array.isArray(next.digest?.items)))delete next.digest;
+    if(next.promiseDrafts&&typeof next.promiseDrafts==='object'&&!Array.isArray(next.promiseDrafts)&&blockedIds.size>0){
+      next.promiseDrafts=Object.fromEntries(Object.entries(next.promiseDrafts).filter(([id])=>!blockedIds.has(id)));
+    }
+    return next;
+  };
   const personalProfile=createPersonalProfile({
     store:{get:key=>personalProfileTable.get(key),put:(key,value)=>personalProfileTable.put(key,personalProfileRowSchema.parse(value))},
     ...(options.clock?{clock:options.clock}:{}),
@@ -535,12 +579,13 @@ export async function installCompanion(ctx,options={}){
   const todayHost=createTodayHost({ctx});
   const hostSessionBusy=sessionId=>todayHost.busy(sessionId);
   const promptSession=(sessionId,text,options={})=>todayHost.prompt(sessionId,text,options);
-  const createDotSession=async({root,text,sessionId:proposedSessionId}={})=>{
+  const createDotSession=async({root,text,sessionId:proposedSessionId,beforePrompt}={})=>{
     const controller=sessionControllerOf();
     if(typeof controller?.create!=='function')throw Object.assign(new Error('host create unsupported'),{code:'HOST_CREATE_UNSUPPORTED'});
     const proposed=typeof proposedSessionId==='string'&&proposedSessionId?proposedSessionId:`session-${randomUUID()}`;
     const created=await controller.create({sessionId:proposed,cwd:root,agentPreset:'standard'});
     const sessionId=typeof created?.sessionId==='string'?created.sessionId:proposed;
+    await beforePrompt?.(sessionId);
     try{
       await promptSession(sessionId,text);
     }catch(error){
@@ -555,6 +600,8 @@ export async function installCompanion(ctx,options={}){
     ledger:sessionLedger,reader:dotSourceReader,foregroundSession:todayForeground,promptSession,createSession:createDotSession,
     links:dotSources,
     readPromiseDraft:(id,row)=>museIntelligence.getPromiseDraftText(id,row),
+    assertPromiseDispatchAllowed:async()=>checkAgentGoogleAllowed(null),
+    onPromiseSessionTainted:(sid,sources)=>googleIsolation.markSessionTainted(sid,sources),
     diagnose:(source,name)=>context.diagnoseDot(source,name),
     foregroundBusy:async sessionId=>{
       const host=await hostSessionBusy(sessionId);
@@ -600,11 +647,11 @@ export async function installCompanion(ctx,options={}){
     if(timer!==undefined){timers.clearInterval(timer);timer=undefined;}
     await Promise.allSettled([...coordinates]);
     dotSourceReader.stop();
-    await Promise.allSettled([memory?.close(),followup?.close(),onboarding?.close(),welcomeGuard?.close(),dotSources.close()]);
+    await Promise.allSettled([memory?.close(),followup?.close(),onboarding?.close(),welcomeGuard?.close(),dotSources.close(),googleIsolation.close()]);
     // A failed news store must not prevent cleanup of unrelated services.
     await externalClosing;
     try{await taskResults.close();}
-    finally{try{await service.ready();}finally{await Promise.allSettled([taskDomain.close(),onboardingDomain.close(),newsDomain.close(),personalReviewDomain.close(),contextDomain.close(),dotSourcesDomain.close(),familyDomain.close(),projectUpdatesDomain.close(),contextLoopDomain.close(),workspaceAccessDomain.close(),sessionLedgerDomain.close(),goalBoardDomain.close(),personalProfileDomain.close(),domain.close()]);}}
+    finally{try{await service.ready();}finally{await Promise.allSettled([taskDomain.close(),onboardingDomain.close(),newsDomain.close(),personalReviewDomain.close(),contextDomain.close(),dotSourcesDomain.close(),familyDomain.close(),projectUpdatesDomain.close(),contextLoopDomain.close(),workspaceAccessDomain.close(),sessionLedgerDomain.close(),goalBoardDomain.close(),personalProfileDomain.close(),googleIsolationDomain.close(),domain.close()]);}}
   });
   // Cordis emits disposal before waiting for an asynchronous apply to settle.
   // Abort startup at that boundary; normal effect cleanup alone runs too late.
@@ -682,7 +729,7 @@ export async function installCompanion(ctx,options={}){
     readProject:async(caller,root)=>{const result=await service.fixedProjectAnalysis(root,caller);return{...result,sources:result.sources.map(row=>({...row,...(typeof row.text==='string'?{text:reviewClean(row.text)}:{})}))};},
     readMemory:async(caller,root)=>{const result=await memory.inspect({root,sessionId:caller.sessionId});return[...result.goals,...result.entries].map(row=>({...row,text:reviewClean(row.text)}));},
   });
-  personalReviewModel=options.personalReview?.model??createPersonalReviewModel(ctx,{...(options.clock?{clock:options.clock}:{})});
+  personalReviewModel=options.personalReview?.model??createPersonalReviewModel(ctx,{resolveGoogleSelection:()=>googleIsolation.resolveBackgroundSelection(),...(options.clock?{clock:options.clock}:{})});
   async function sendOwnerNotice(item){
     if(disposed||lifecycle.signal.aborted)return{status:'failed'};
     const familyScope=familyDelegate.scopeFor(item.sessionId);
@@ -760,13 +807,14 @@ export async function installCompanion(ctx,options={}){
     // Family is rejected first inside the helper, before desktop/WeChat.
     return digestCallerIsOwner({sessionId,desktopId:desktop,owner,family});
   };
-  digestModel=createDigestModel(ctx,{...(options.clock?{clock:options.clock}:{})});
+  digestModel=createDigestModel(ctx,{resolveGoogleSelection:()=>googleIsolation.resolveBackgroundSelection(),...(options.clock?{clock:options.clock}:{})});
   dailyDigest=createDailyDigest({
     store:{get:key=>dailyDigestTable.get(key),put:(key,value)=>dailyDigestTable.put(key,dailyDigestRowSchema.parse(value))},
     readSource:(source,request)=>context.readDot(source,request),
     readLedger:digestLedger,schedule:digestSchedule,readOwner:resolveDigestOwner,sameOwner:sameDigestOwner,
     summarize:input=>digestModel.summarize(input),
     send:sendDailyDigest,enabled:options.dailyDigest?.enabled!==false,
+    canUseGoogleForModel:()=>googleIsolation.hasCompliantBackgroundModel(),
     ...(options.clock?{clock:options.clock}:{}),hostTimeZone:hostZone,
     isClosed:()=>disposed,
     canRun:async()=>!disposed&&!lifecycle.signal.aborted&&!await service.isPaused(),
@@ -841,7 +889,7 @@ export async function installCompanion(ctx,options={}){
   };
   const readWorkbenchConnection=createFamilyWorkbenchConnection({isEnabled:familyEnabled,readLegacyConnection:readSetup,delegation:familyDelegate,readNativeRoute});
   followup=createProjectFollowup({ctx,invalidateLoop:()=>contextLoop?.suspend(),authorizeRoot,readBinding,readConnection:readWorkbenchConnection,readNativeRoute,familyRoute,pauseState:()=>service.isPaused(),canRun:async({root})=>await authorizeRoot(root)&&!await service.isPaused(),...(options.clock?{clock:options.clock}:{}),...(options.hostTimeZone?{hostTimeZone:options.hostTimeZone}:{}),...(options.followup?.createScheduler?{createScheduler:options.followup.createScheduler}:{})});
-  projectUpdateModel=createProjectUpdateModel(ctx,{...(options.clock?{clock:options.clock}:{})});
+  projectUpdateModel=createProjectUpdateModel(ctx,{resolveGoogleSelection:()=>googleIsolation.resolveBackgroundSelection(),...(options.clock?{clock:options.clock}:{})});
   const updateOwner=(caller)=>{const agent=ctx.get('agents',false)?.get(caller.sessionId);return !disposed&&!lifecycle.signal.aborted&&agent&&String(agent.id)===caller.sessionId&&effectiveCwd(ctx,agent)===caller.cwd;};
   const readUpdateScope=async(caller,root)=>{
       if(!updateOwner(caller)||await service.isPaused())return null;
@@ -879,6 +927,9 @@ export async function installCompanion(ctx,options={}){
       if(!updateOwner(caller))throw new Error('CONTEXT_LOOP_SCOPE_CHANGED');
       const scope=familyContext.activeScope();
       if(scope){
+        if(Array.isArray(meta.googleSources)&&meta.googleSources.length>0){
+          await googleIsolation.assertSessionAllowedForGoogle(ctx.get('agents',false)?.get?.(caller.sessionId)??{id:caller.sessionId},meta.googleSources);
+        }
         const project=await service.coordinationTarget(args.project);
         if(!project||project.root!==args.project)return{status:'blocked',accepted:false};
         const workspace=familyRoute.resolveWorkspace(project.root);if(!workspace)return{status:'blocked',accepted:false,text:'项目注册信息不可确认，本次未派发。'};
@@ -886,7 +937,7 @@ export async function installCompanion(ctx,options={}){
         return familyRead.start({scope,root:project.root,requestId:meta.callId,reference:args.task,authorizeAdmission:meta.authorizeAdmission,authorizeAdmissionSync:meta.authorizeAdmissionSync,authorizeDelivery:()=>workspaceCurrent()&&familyDelegate.current(scope)&&service.canReadProjectUpdate({projectId:project.id,projectRoot:project.root})&&typeof meta.authorizeDelivery==='function'&&meta.authorizeDelivery()});
       }
       const agent=ctx.get('agents',false)?.get(caller.sessionId);
-      const work=coordinate(agent,{...args,action:'coordinate',userRequested:true},meta.signal,{callId:meta.callId,authorizeAdmission:meta.authorizeAdmission,authorizeAdmissionSync:meta.authorizeAdmissionSync});
+      const work=coordinate(agent,{...args,action:'coordinate',userRequested:true},meta.signal,{callId:meta.callId,authorizeAdmission:meta.authorizeAdmission,authorizeAdmissionSync:meta.authorizeAdmissionSync,...(Array.isArray(meta.googleSources)&&meta.googleSources.length?{googleSources:meta.googleSources}:{})});
       coordinates.add(work);try{return await work;}finally{coordinates.delete(work);syncTimer();}
     },
     readJob:async(caller,id)=>{
@@ -1248,7 +1299,7 @@ export async function installCompanion(ctx,options={}){
     if(input.action==='digest'&&input.project===undefined&&!familyScope&&await ledgerIsForeground(caller.sessionId)){
       try{
         const projection=await ledgerProjection(caller.sessionId);
-        if(projection)return{status:'ok',accepted:true,text:ledgerText(projection),ledger:projection};
+        if(projection)return{status:'ok',accepted:true,text:ledgerText(projection),ledger:sanitizeToolLedgerProjection(projection)};
       }
       catch{return{status:'blocked',accepted:false,text:'会话账本暂时不可用：当前工作区授权读不出来，本次没有使用旧缓存。请稍后再看。'};}
     }
@@ -1263,7 +1314,7 @@ export async function installCompanion(ctx,options={}){
       if(!familyScope&&await ledgerIsForeground(caller.sessionId)){
         try{
           const projection=await ledgerProjection(caller.sessionId);
-          if(projection){result.ledger=projection;result.text=`${result.text}\n${ledgerText(projection)}`.slice(0,4000);}
+          if(projection){result.ledger=sanitizeToolLedgerProjection(projection);result.text=`${result.text}\n${ledgerText(projection)}`.slice(0,4000);}
         }
         catch{result.ledger=null;}
       }
@@ -1330,7 +1381,7 @@ export async function installCompanion(ctx,options={}){
     try{if(service.coordinationPausedSync?.()!==false)return false;const rows=ctx.get('workspaceRegistry',false)?.list?.();if(!Array.isArray(rows))return false;const matches=rows.filter(row=>row?.id===scope.workspaceId||row?.path===scope.projectRoot);return matches.length===1&&matches[0].id===scope.workspaceId&&matches[0].path===scope.projectRoot&&Array.isArray(matches[0].sessionIds)&&matches[0].sessionIds.includes(scope.sessionId);}catch{return false;}
   };
   const familyProject=createFamilyProjectAdmission({getBridge:getFamilyBridge,resolveTarget:registeredOwnerTarget,isCurrent:scope=>familyDelegate.current(scope),recheck:scope=>familyDelegate.recheck(scope),isPaused:()=>service.isPaused(),canCoordinate:registeredOwnerCurrent});
-  const coordinate=createCoordinator({ctx,service,owner:agent=>owner(ctx,agent),liveAgents,taskResults,readBinding,lifecycleSignal:lifecycle.signal,authorizeReviewHandoff:(caller,input)=>personalReview.handoff(caller,input)});
+  const coordinate=createCoordinator({ctx,service,owner:agent=>owner(ctx,agent),liveAgents,taskResults,readBinding,lifecycleSignal:lifecycle.signal,authorizeReviewHandoff:(caller,input)=>personalReview.handoff(caller,input),assertTargetAllowed:target=>checkAgentGoogleAllowed(target),onTargetAdmitted:(target,sources)=>googleIsolation.markSessionTainted(String(target.id),sources)});
   async function withFamily(execution,args,run,{allowSourceRenewal=false}={}){
     const sessionId=String(execution?.agent?.id??'');
     if(sessionId.startsWith('family_member_'))throw new Error('家人成员没有 Owner 的 Dot 资料权限。');
@@ -1466,19 +1517,31 @@ export async function installCompanion(ctx,options={}){
         const caller=owner(ctx,execution.agent),familyScope=familyDelegate.scopeFor(caller.sessionId);
         if(['configure','run_now','resume','attention'].includes(input.action)&&!(familyScope?familyDelegate.current(familyScope):standaloneBinding(caller.sessionId)))return{status:'blocked',text:nativeReviewDeliveryNote};
         if(input.projects!==undefined&&(!Array.isArray(input.projects)||input.projects.length>5))throw Error('本版个人回顾最多选择五个项目。');
+        const requestedReviewSources=Array.isArray(input.sources)?input.sources:personalReview.scopeSources();
+        const reviewGoogle=googleSourcesInList(requestedReviewSources);
+        if(['preview','run_now','prepare','status'].includes(input.action)&&reviewGoogle.length>0){
+          await googleIsolation.assertSessionAllowedForGoogle(execution.agent,reviewGoogle);
+        }
         // 刚读过私人资料再往微信推：先由本人确认一次，拦下时不读取、不生成、不建计划。
         if(input.action==='run_now'){
           const blocked=privateEgressBlocked(caller.sessionId,clockNow(),input.confirmPrivateEgress===true);
           if(blocked)return{status:'blocked',text:blocked};
         }
         const value=await personalReview.act(owner(ctx,execution.agent),{...input,...(!familyScope?{confirmedViewToken:undefined}:{}),requestId:input.requestId??execution.callId,signal:execution.signal});
+        if(reviewGoogle.length>0&&['preview','run_now','prepare','status'].includes(input.action)&&value?.status!=='blocked'){
+          const coverageGoogle=googleSourcesInList((value?.coverage??[]).filter(c=>c&&c.status!=='unavailable'));
+          const shouldTaint=['prepare','status'].includes(input.action)
+            ?(Array.isArray(value?.items)?value.items.length>0:Boolean(value?.itemId))?reviewGoogle:[]
+            :(coverageGoogle.length?coverageGoogle:(Array.isArray(value?.items)&&value.items.length>0?reviewGoogle:[]));
+          if(shouldTaint.length>0)googleIsolation.markSessionTainted(caller.sessionId,shouldTaint);
+        }
         if(['preview','run_now'].includes(input.action))markPrivateRead(caller.sessionId,{at:clockNow(),source:`personal_review:${input.action}`});
         if(input.action==='configure'){
           const names=(await service.watchedProjects()).filter(p=>value.projects.includes(p.root)).map(p=>p.label);
           value.text+="\n资料："+(value.sources.map(id=>SOURCE_INFO[id]?.name??id).join('、')||'未选择外部来源')+'。项目：'+(names.join('、')||'未选择项目')+'。\n每日检查过去24小时、每周检查近7天；每源有条数上限，未覆盖部分保留未知。本次只保存订阅，尚未读取或发送。';
         }
         return value;
-      });}catch(error){return error?.code==='FAMILY_REVIEW_SCOPE_UNSUPPORTED'?{status:'blocked',text:error.message}:generationFailure('review',error);}finally{syncTimer();}
+      });}catch(error){return error?.code==='FAMILY_REVIEW_SCOPE_UNSUPPORTED'?{status:'blocked',text:error.message}:error?.code===GOOGLE_MODEL_ISOLATION_CODE?{status:'blocked',code:error.code,text:error.message}:generationFailure('review',error);}finally{syncTimer();}
     },
   }));
   ctx.tools.register(defineTool({
@@ -1534,7 +1597,7 @@ export async function installCompanion(ctx,options={}){
       if(['context_brief','context_check'].includes(args.action)&&value.modelDiagnostic==='MODEL_INVALID_OUTPUT'&&typeof value.validationDiagnostic==='string')content.push({type:'text',text:`内部脱敏格式诊断：${safeValidationDiagnostic(value.validationDiagnostic)}；不包含模型原文或来源标识。`});
       if(['context_brief','context_check'].includes(args.action)&&value.modelRunDiagnostic){const diagnostic=safeModelRunDiagnostic(value.modelRunDiagnostic);if(diagnostic)content.push({type:'text',text:`内部脱敏模型计数：${JSON.stringify(diagnostic)}；仅含请求轮次、预算、推理档位、结束类别及计数，不含来源或模型正文。不要把字符数当作token数量。`});}
       if(args.action==='context_brief'&&Array.isArray(value.readSummary)){
-        const allowedSources=new Set(['gmail','calendar','drive','docs','sheets','slides','dida','flomo','project','memory']),allowedCodes=new Set(['CONTEXT_AUTH_REQUIRED','CONTEXT_INSUFFICIENT_SCOPE','CONTEXT_TIMEOUT','CONTEXT_HTTP_ERROR','CONTEXT_PROTOCOL_INVALID','CONTEXT_SCHEMA_MISMATCH','CONTEXT_SCOPE_VIOLATION','CONTEXT_BINDING_CHANGED','CONTEXT_NOT_ENABLED','CONTEXT_STOPPED','CONTEXT_INVALID_INPUT','CONTEXT_UNSUPPORTED_OPERATION','CONTEXT_UNAVAILABLE']);
+        const allowedSources=new Set(['gmail','calendar','drive','docs','sheets','slides','dida','flomo','project','memory']),allowedCodes=new Set(['CONTEXT_AUTH_REQUIRED','CONTEXT_INSUFFICIENT_SCOPE','CONTEXT_TIMEOUT','CONTEXT_HTTP_ERROR','CONTEXT_PROTOCOL_INVALID','CONTEXT_SCHEMA_MISMATCH','CONTEXT_SCOPE_VIOLATION','CONTEXT_BINDING_CHANGED','CONTEXT_NOT_ENABLED','CONTEXT_STOPPED','CONTEXT_INVALID_INPUT','CONTEXT_UNSUPPORTED_OPERATION','GOOGLE_MODEL_ISOLATION_REQUIRED','CONTEXT_UNAVAILABLE']);
         const rows=value.readSummary.filter(r=>allowedSources.has(r?.source)&&['ok','partial','unavailable'].includes(r?.status)&&(r.count===null||Number.isInteger(r.count)&&r.count>=0&&r.count<=20)&&typeof r.truncated==='boolean'&&(r.code===null||allowedCodes.has(r.code))).slice(0,6).map(r=>({source:r.source,status:r.status,count:r.count,truncated:r.truncated,code:r.code}));
         if(rows.length)content.push({type:'text',text:`内部脱敏读取概况（不含私人内容或来源ID）：${JSON.stringify(rows)}。数量仅限本轮明确范围，不代表账号全部内容。`});
       }
@@ -1566,7 +1629,18 @@ export async function installCompanion(ctx,options={}){
         if(args.action==='digest_run')return{status:'blocked',accepted:false,code:'DIGEST_MANUAL_UI_ONLY',text:'手动整理要从 Dot 已鉴权的界面动作触发；本次没有读取或发送。'};
         if(args.action==='digest_view'||args.action==='digest_probe'){
           if(!await digestOwner(execution))return{status:'blocked',accepted:false,code:'DIGEST_OWNER_ONLY',text:'每日整理只在本人当前前台或已绑定的主人会话里可用；普通会话不能读回或触发。'};
-          if(args.action==='digest_view')return dailyDigest.view();
+          if(args.action==='digest_view'){
+            const view=await dailyDigest.view();
+            const digestCounts=view?.lastDigest?.counts??view?.counts;
+            const digestItems=Array.isArray(view?.items)?view.items:(view?.lastDigest?.items??[]);
+            const hasGoogleDigest=Boolean((digestCounts?.mailKept??0)>0||(digestCounts?.events??0)>0||digestItems.some(it=>it?.evidence?.mailId!==undefined||it?.evidence?.eventId!==undefined||it?.linkTo?.source==='calendar'));
+            if(hasGoogleDigest){
+              const check=checkAgentGoogleAllowed(execution.agent);
+              if(!check.allowed)return{status:'blocked',accepted:false,code:check.code,text:check.message};
+              googleIsolation.markSessionTainted(String(execution.agent.id),['gmail','calendar'].filter((s,i)=>i===0?(digestCounts?.mailKept??0)>0||digestItems.some(it=>it?.evidence?.mailId!==undefined):(digestCounts?.events??0)>0||digestItems.some(it=>it?.evidence?.eventId!==undefined||it?.linkTo?.source==='calendar')));
+            }
+            return view;
+          }
           return await dailyDigest.probe();
         }
         if(['profile_view','profile_remember','profile_forget'].includes(args.action)){
@@ -1617,10 +1691,21 @@ export async function installCompanion(ctx,options={}){
           try{
             const {project,caller}=await selectedProject(execution.agent,args);
             const base={project:project.root,signal:execution.signal};
-            if(args.action==='context_status')return await contextLoop.inspect(caller,{project:project.root});
+            if(args.action==='context_status'){
+              const loopGoogle=await projectLoopGoogleSources(caller.sessionId,project.root);
+              if(loopGoogle.length>0)await googleIsolation.assertSessionAllowedForGoogle(execution.agent,loopGoogle);
+              const inspected=await contextLoop.inspect(caller,{project:project.root});
+              if(loopGoogle.length>0)googleIsolation.markSessionTainted(caller.sessionId,loopGoogle);
+              return inspected;
+            }
             if(args.action==='context_check'){
               if(!args.loopId||followup.activeLoop(execution)!==args.loopId)return{status:'blocked',quiet:false,text:'自动检查只在已安排的这份简报跟进中运行；普通查询请查看或更新当前简报。'};
-              return await contextLoop.check(caller,{...base,loopId:args.loopId});
+              const loopGoogle=await projectLoopGoogleSources(caller.sessionId,project.root);
+              if(loopGoogle.length>0)await googleIsolation.assertSessionAllowedForGoogle(execution.agent,loopGoogle);
+              const checked=await contextLoop.check(caller,{...base,loopId:args.loopId});
+              const taintedGoogle=googleSourcesInList([...(checked?.references?.filter(r=>r?.status==='ok')??[]),...loopGoogle.filter(s=>checked?.coverage?.some(c=>c?.source===s&&!c.unavailable))]);
+              if(taintedGoogle.length>0&&checked?.quiet!==true)googleIsolation.markSessionTainted(caller.sessionId,taintedGoogle);
+              return checked;
             }
             if(args.userRequested!==true)return{status:'blocked',text:'请先明确要整理的目标、来源范围或执行的事项；未读取或派工。'};
             if(args.action==='context_brief'){
@@ -1632,7 +1717,11 @@ export async function installCompanion(ctx,options={}){
                 const rows=parsed.success?parsed.data.loops.filter(loop=>loop.originSessionId===caller.sessionId&&loop.projectRoot===project.root):[];
                 if(rows.length!==1||!familyIntentAllowed('project_companion',{...args,queries:rows[0].queries},familyScope.userText,familyScope.previousUserText,options.clock?.()??new Date()))throw new Error('资料范围未经当前用户确认。');
               }
+              const targetGoogle=args.queries!==undefined?googleSourcesInList(args.queries):await projectLoopGoogleSources(caller.sessionId,project.root);
+              if(targetGoogle.length>0)await googleIsolation.assertSessionAllowedForGoogle(execution.agent,targetGoogle);
               const briefed=await contextLoop.brief(caller,{...base,...(args.objective!==undefined?{objective:args.objective}:{}),...(args.queries!==undefined?{queries:args.queries}:{}),userRequested:true});
+              const readGoogle=googleSourcesInList([...(briefed?.references?.filter(r=>r?.status==='ok')??[]),...targetGoogle.filter(s=>briefed?.coverage?.some(c=>c?.source===s&&!c.unavailable))]);
+              if(readGoogle.length>0)googleIsolation.markSessionTainted(caller.sessionId,readGoogle);
               // 这次调用读到了私人资料来源，登记一次；之后要发微信需本人再确认。
               markPrivateRead(caller.sessionId,{at:clockNow(),source:'context_brief'});
               return briefed;
@@ -1640,6 +1729,8 @@ export async function installCompanion(ctx,options={}){
             if(args.action==='context_handoff'){
               const scope=familyContext.activeScope();
               if(scope){const prior=await contextLoop.inspect(caller,{project:project.root});if(prior.revision!==args.revision||!familySelectedItemAllowed(scope.userText,prior.items,args.itemId))return{status:'blocked',accepted:false,text:'请明确要检查简报中的哪一项；本次没有派发。'};}
+              const loopGoogle=await projectLoopGoogleSources(caller.sessionId,project.root);
+              if(loopGoogle.length>0)await googleIsolation.assertSessionAllowedForGoogle(execution.agent,loopGoogle);
               return await contextLoop.handoff(caller,{...base,revision:args.revision,itemId:args.itemId,task:args.task,...(args.session!==undefined?{session:args.session}:{}),userRequested:true});
             }
             if(args.action==='context_forget'){
@@ -1649,7 +1740,9 @@ export async function installCompanion(ctx,options={}){
               const once=await followup.onceStatus(input);if(once.loopId)await followup.cancelOnce(input);
               return result;
             }
-          }catch(error){const known={LOOP_MODEL_UNAVAILABLE:'简报整理服务暂不可用，本次未生成简报。',LOOP_MODEL_INVALID_OUTPUT:'简报整理结果格式不正确，本次未生成简报。',LOOP_MODEL_INVALID_INPUT:'用于整理的资料格式不符合要求，本次未生成简报。',LOOP_INTENT_REQUIRED:'简报的项目或资料范围尚未确认，本次未生成简报。',LOOP_SCOPE_CHANGED:'项目或当前会话范围已变化，本次未生成简报。',LOOP_AUTH_CHANGED:'资料授权状态已变化，本次未继续生成简报。',LOOP_STORE_UNAVAILABLE:'简报保存暂不可用，本次未生成简报。',LOOP_STOPPED:'本次简报已停止，未继续整理。'};const code=Object.hasOwn(known,error?.code??'')?error.code:'CONTEXT_LOOP_UNAVAILABLE';
+          }catch(error){
+            if(error?.code===GOOGLE_MODEL_ISOLATION_CODE)return{status:'blocked',quiet:false,code:error.code,text:error.message};
+            const known={LOOP_MODEL_UNAVAILABLE:'简报整理服务暂不可用，本次未生成简报。',LOOP_MODEL_INVALID_OUTPUT:'简报整理结果格式不正确，本次未生成简报。',LOOP_MODEL_INVALID_INPUT:'用于整理的资料格式不符合要求，本次未生成简报。',LOOP_INTENT_REQUIRED:'简报的项目或资料范围尚未确认，本次未生成简报。',LOOP_SCOPE_CHANGED:'项目或当前会话范围已变化，本次未生成简报。',LOOP_AUTH_CHANGED:'资料授权状态已变化，本次未继续生成简报。',LOOP_STORE_UNAVAILABLE:'简报保存暂不可用，本次未生成简报。',LOOP_STOPPED:'本次简报已停止，未继续整理。'};const code=Object.hasOwn(known,error?.code??'')?error.code:'CONTEXT_LOOP_UNAVAILABLE';
             const modelDiagnostic=['MODEL_UNAVAILABLE','MODEL_TIMEOUT','MODEL_REQUEST_FAILED','MODEL_INCOMPLETE','MODEL_OUTPUT_LIMIT','MODEL_TOOL_OUTPUT','MODEL_TOKEN_LIMIT','MODEL_INVALID_OUTPUT'].includes(error?.modelDiagnostic)?error.modelDiagnostic:undefined;
             const modelRunDiagnostic=modelDiagnostic?safeModelRunDiagnostic(error?.modelRunDiagnostic):undefined;
             return{status:'blocked',quiet:false,text:known[code]??'本次资料简报操作未完成；具体原因未确认，没有自动重试。',code,
@@ -1741,15 +1834,34 @@ export async function installCompanion(ctx,options={}){
     async execute(args,execution){
       if(disposed)return{status:'blocked',text:'助理正在关闭，未读取资料。'};
       try{
-        const value=await withFamily(execution,args,admittedArgs=>familyContext.act(owner(ctx,execution.agent),{...admittedArgs,signal:execution.signal}),{allowSourceRenewal:true});
+        if(args.action==='query'&&isGoogleWorkspaceSource(args.source))await googleIsolation.assertSessionAllowedForGoogle(execution.agent,[args.source]);
+        if(args.action==='brief'&&Array.isArray(args.sources)){
+          const requestedGoogle=googleSourcesInList(args.sources);
+          if(requestedGoogle.length>0)await googleIsolation.assertSessionAllowedForGoogle(execution.agent,requestedGoogle);
+        }
+        const value=await withFamily(execution,args,async admittedArgs=>{
+          if(admittedArgs.action==='query'&&isGoogleWorkspaceSource(admittedArgs.source))await googleIsolation.assertSessionAllowedForGoogle(execution.agent,[admittedArgs.source]);
+          else if(admittedArgs.action==='brief'&&Array.isArray(admittedArgs.sources)){
+            const admittedGoogle=googleSourcesInList(admittedArgs.sources);
+            if(admittedGoogle.length>0)await googleIsolation.assertSessionAllowedForGoogle(execution.agent,admittedGoogle);
+          }
+          return familyContext.act(owner(ctx,execution.agent),{...admittedArgs,signal:execution.signal});
+        },{allowSourceRenewal:true});
+        const callerId=owner(ctx,execution.agent).sessionId;
+        const queriedSource=value?.source??args.source;
+        if(args.action==='query'&&isGoogleWorkspaceSource(queriedSource)&&value?.status!=='blocked')googleIsolation.markSessionTainted(callerId,[queriedSource]);
+        if(args.action==='brief'&&Array.isArray(value?.results)){
+          const taintSources=googleSourcesInList(value.results.filter(row=>row&&!row.unavailable));
+          if(taintSources.length>0)googleIsolation.markSessionTainted(callerId,taintSources);
+        }
         // 只有真的读过私人来源才登记；connections/connect/disconnect 不算读取。
         const readSomething=args.action==='query'||args.action==='brief'&&Array.isArray(value?.results)&&value.results.some(row=>row&&!row.unavailable);
-        if(readSomething)markPrivateRead(owner(ctx,execution.agent).sessionId,{at:clockNow(),source:args.action==='query'?`personal_context:${args.source??'source'}`:'personal_context:brief'});
+        if(readSomething)markPrivateRead(callerId,{at:clockNow(),source:args.action==='query'?`personal_context:${args.source??'source'}`:'personal_context:brief'});
         return value;
       }
       catch(error){
         const renewalErrors={FAMILY_DELEGATION_SOURCES_NOT_READY:'请先在电脑的 Dot「连接」页重新启用需要使用的来源，再发这句更新授权。本次未更改微信授权，也未读取资料。',FAMILY_DELEGATION_FRESH_REQUEST_REQUIRED:'这条授权消息已过期或时间无法确认，请重新发送本人授权消息。本次未更改微信授权。',FAMILY_DELEGATION_CHANGED:'原 Owner 或绑定状态已改变，不能在微信中恢复这份资料委托。请在电脑检查连接；本次未读取资料。',FAMILY_DELEGATION_LEGACY_CHANGED:'原资料来源的会话或绑定已改变，请在电脑检查连接。本次未更新委托或读取资料。',FAMILY_DELEGATION_CLOSED:'Dot 正在关闭，本次未完成资料授权更新。'};
-        return{status:'blocked',text:renewalErrors[error?.message]??(error?.code==='FAMILY_SCOPE_UNSUPPORTED'?'家庭微信入口支持按明确关键词和条数搜索 Gmail、Drive、flomo，查看未来七天内的日历，以及滴答清单或指定清单的未完成任务。请补充来源、关键词或时间范围；本次未读取。':contextErrorText(error))};
+        return{status:'blocked',...(error?.code===GOOGLE_MODEL_ISOLATION_CODE?{code:error.code}:{}),text:renewalErrors[error?.message]??(error?.code==='FAMILY_SCOPE_UNSUPPORTED'?'家庭微信入口支持按明确关键词和条数搜索 Gmail、Drive、flomo，查看未来七天内的日历，以及滴答清单或指定清单的未完成任务。请补充来源、关键词或时间范围；本次未读取。':contextErrorText(error))};
       }
     },
   }));
@@ -1847,7 +1959,7 @@ export async function installCompanion(ctx,options={}){
   }
   await recoverFamilyPlans();
   if(typeof ctx.inject==='function')ctx.inject(['familyDotBridge'],()=>{if(!disposed)void recoverFamilyPlans();});
-  return{service,taskResults,memory,followup,onboarding,news,personalReview,dailyDigest,personalProfile,superAgentBridge,museController,mobileCompanion,context,contextLoop,projectUpdates,googleCalendarAuth,googleSuiteAuth,flomoAuth,didaAuth,workbench,workbenchActions,familyRoute,projectCatalog,projectCatalogController,workspaceAccess,goalBoard,goalBoardController,dotSources,dotSourceReader,registeredProjectTarget:service.registeredProjectTarget,authorizeRegisteredCoordinationSync:service.authorizeRegisteredCoordinationSync};
+  return{service,taskResults,memory,followup,onboarding,news,personalReview,dailyDigest,personalProfile,superAgentBridge,museController,mobileCompanion,context,contextLoop,projectUpdates,googleIsolation,googleCalendarAuth,googleSuiteAuth,flomoAuth,didaAuth,workbench,workbenchActions,familyRoute,projectCatalog,projectCatalogController,workspaceAccess,goalBoard,goalBoardController,dotSources,dotSourceReader,registeredProjectTarget:service.registeredProjectTarget,authorizeRegisteredCoordinationSync:service.authorizeRegisteredCoordinationSync};
 }
 
 export async function apply(ctx,config){
@@ -1859,5 +1971,5 @@ export async function apply(ctx,config){
   ctx.on('loader/volatile-update',paths=>{
     if(paths.some(path=>path[0]==='familyOwnerDelegation'))void ctx.get('dotWechatComponent',false)?.refresh();
   });
-  await installCompanion(ctx,{context:{config}});
+  await installCompanion(ctx,{context:{config},googleIsolation:{enforceStrictAllowlist:true,syntheticHost:false}});
 }

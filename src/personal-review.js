@@ -297,7 +297,7 @@ export function createPersonalReviewService({ store, readBinding, readBindingSyn
       const run=execution(scope,input.signal,input),revision=item.revision;
       const current=()=>{const latest=state.items.find(row=>row.id===item.id);return authorizeSync(run)&&latest&&itemInScope(latest,displayScope())&&latest.revision===revision&&!['handled','dismissed'].includes(latest.status);};
       try{await guard(run);if(!current())throw Error('回顾事项或授权已变化');}catch(error){run.dispose();throw error;}
-      return{reference:reviewOrigin(item),authorize:async()=>{try{await guard(run);return current();}catch{return false;}},authorizeSync:current,dispose:run.dispose};
+      return{reference:reviewOrigin(item),sources:copy(scope.sources),itemSources:[...new Set((item.evidence??[]).map(e=>e.source).filter(Boolean))],authorize:async()=>{try{await guard(run);return current();}catch{return false;}},authorizeSync:current,dispose:run.dispose};
     });
   }
   async function act(rawCaller, input = {}) {
@@ -431,7 +431,7 @@ export function createPersonalReviewService({ store, readBinding, readBindingSyn
     return{...decision,regularKind,blocked:enabled&&availability!=='current'};
   }
   const reconcileJobs=()=>serial(async()=>{await load();const scope=displayScope();if(!scope||closed)return;const run=execution(scope);try{await reconcileExecutions(run);}finally{run.dispose();}});
-  return { act, handoff, reconcileJobs, snapshot: caller => act(caller, { action: 'status' }), ready: () => serial(load), needsTimer: () => !closed && !storageFailed && Boolean(state?.subscription && !state.subscription.paused), suspend: invalidate,
+  return { act, handoff, reconcileJobs, snapshot: caller => act(caller, { action: 'status' }), scopeSources: () => copy(displayScope()?.sources ?? []), ready: () => serial(load), needsTimer: () => !closed && !storageFailed && Boolean(state?.subscription && !state.subscription.paused), suspend: invalidate,
     tick: () => { const admission = generation; return serial(async () => {
       await load(); if (closed || admission !== generation || !state.subscription || state.subscription.paused) return [];
       const output=[],plan=state.subscription;

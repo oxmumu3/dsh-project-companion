@@ -8,6 +8,7 @@
  */
 import {createHash, randomUUID} from 'node:crypto';
 import {projectPublicId} from './session-ledger.js';
+import {isGoogleWorkspaceSource} from './google-data-isolation.js';
 
 const PROJECT_ID = /^project_[a-f0-9]{24}$/;
 const ACTIONS = new Set(['approve', 'retry', 'snooze', 'handled', 'handled-all', 'dispatch', 'open', 'undo', 'sample-clear']);
@@ -15,7 +16,7 @@ const UNDO_TTL_MS = 2 * 60 * 1000;
 const clean = value => typeof value === 'string' ? value.replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, '').trim() : '';
 const cardIdOf = row => createHash('sha256').update(`${row.sessionId}\n${row.revision}\n${row.state}`).digest('hex').slice(0, 32);
 
-export function createTodayController({ledger, reader, foregroundSession = async () => null, foregroundBusy = async () => false, promptSession, createSession, approvals = null, defaultRoot = async () => null, authorizeRoot = async () => true, diagnose = null, links = null, readPromiseDraft = null, clock = () => new Date(), isClosed = () => false} = {}) {
+export function createTodayController({ledger, reader, foregroundSession = async () => null, foregroundBusy = async () => false, promptSession, createSession, approvals = null, defaultRoot = async () => null, authorizeRoot = async () => true, diagnose = null, links = null, readPromiseDraft = null, assertPromiseDispatchAllowed = null, onPromiseSessionTainted = null, clock = () => new Date(), isClosed = () => false} = {}) {
   if (!ledger?.internal || !ledger?.setState || typeof promptSession !== 'function') throw new Error('Today controller needs a ledger and a foreground prompt');
   const now = () => new Date(clock());
   // Undo is deliberately short-lived and server-owned: the page never gets a
@@ -246,6 +247,13 @@ export function createTodayController({ledger, reader, foregroundSession = async
         if (links?.releaseLink) await links.releaseLink(key, token);
         return {ok: false, stale: true, error: '这条诺言已变化或无法读取；没有派工。'};
       }
+      if (isGoogleWorkspaceSource(current.source) && typeof assertPromiseDispatchAllowed === 'function') {
+        const allowed = await assertPromiseDispatchAllowed(current);
+        if (allowed && allowed.allowed === false) {
+          if (links?.releaseLink) await links.releaseLink(key, token);
+          return {ok: false, error: allowed.message || '当前默认模型不可处理 Google Workspace 资料；未建会话。', code: 'GOOGLE_MODEL_ISOLATION_REQUIRED'};
+        }
+      }
       try {
         const suppliedDraft = typeof input.draftText === 'string' ? clean(input.draftText).slice(0, 1600) : '';
         const fallbackDraft = !suppliedDraft && typeof readPromiseDraft === 'function'
@@ -255,7 +263,13 @@ export function createTodayController({ledger, reader, foregroundSession = async
         const text = attachedDraft
           ? `请处理这件已经答应的事：${current.what}。\n\n参考已准备好的拟办草稿：\n${attachedDraft}\n\n做完告诉我结果和还需要我决定的事。`
           : `请处理这件已经答应的事：${current.what}。做完告诉我结果和还需要我决定的事。`;
-        const sessionId = await createSession({root, text, sessionId: proposedSessionId});
+        const taintCreated = async sid => {
+          if (sid && isGoogleWorkspaceSource(current.source) && typeof onPromiseSessionTainted === 'function') {
+            try { await onPromiseSessionTainted(sid, [current.source]); } catch {}
+          }
+        };
+        const sessionId = await createSession({root, text, sessionId: proposedSessionId, beforePrompt: taintCreated});
+        await taintCreated(sessionId);
         // Bind the host's actual id first; settle records the completed state.
         if (links?.bindLink && sessionId !== proposedSessionId) {
           try { await links.bindLink(key, token, {sessionId, root}); } catch { /* settle can still record the actual ID */ }
@@ -271,6 +285,9 @@ export function createTodayController({ledger, reader, foregroundSession = async
       } catch (error) {
         const createdSessionId = typeof error?.createdSessionId === 'string' ? error.createdSessionId : null;
         if (createdSessionId) {
+          if (isGoogleWorkspaceSource(current.source) && typeof onPromiseSessionTainted === 'function') {
+            try { await onPromiseSessionTainted(createdSessionId, [current.source]); } catch {}
+          }
           // The session exists even though delivery failed. Keep the claim and
           // the accurate id; a second click must not create another session.
           try { await links?.bindLink?.(key, token, {sessionId: createdSessionId, root}); } catch { /* keep claim */ }

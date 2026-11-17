@@ -19,7 +19,7 @@ const clean = value => typeof value === 'string' ? value.replace(/[\u0000-\u0008
 const iso = value => typeof value === 'string' && Number.isFinite(Date.parse(value)) ? new Date(value).toISOString() : null;
 const textHash = value => createHash('sha256').update(value).digest('hex');
 
-export function createDailyDigest({store, readSource, readLedger = async () => [], readOwner, sameOwner = (left, right) => JSON.stringify(left) === JSON.stringify(right), schedule = async () => ({dailyTime: '09:00', timeZone: 'Asia/Shanghai'}), summarize, send, enabled = true, clock = () => new Date(), hostTimeZone = () => 'Asia/Shanghai', isClosed = () => false, canRun = async () => true, onChange = null} = {}) {
+export function createDailyDigest({store, readSource, readLedger = async () => [], readOwner, sameOwner = (left, right) => JSON.stringify(left) === JSON.stringify(right), schedule = async () => ({dailyTime: '09:00', timeZone: 'Asia/Shanghai'}), summarize, send, enabled = true, clock = () => new Date(), hostTimeZone = () => 'Asia/Shanghai', isClosed = () => false, canRun = async () => true, canUseGoogleForModel = async () => true, onChange = null} = {}) {
   for (const [name, dependency] of Object.entries({get: store?.get, put: store?.put, readSource, summarize, send})) if (typeof dependency !== 'function') throw new Error(`Missing daily digest dependency: ${name}`);
   let state = null, closed = false, queue = Promise.resolve(), localRevision = 0;
   const serial = fn => { const next = queue.then(fn); queue = next.catch(() => {}); return next; };
@@ -90,24 +90,31 @@ export function createDailyDigest({store, readSource, readLedger = async () => [
     const since = windowStart({lastDigestAt: state.lastGmailAt ?? state.gmailSince ?? state.lastDigestAt}, at.getTime());
     const counts = {mailboxes: 1, mailRaw: 0, mailKept: 0, mailDropped: 0, mailSkipped: 0, mailTruncated: false, lists: 0, listsFailed: 0, promises: 0, events: 0, since, unreadable: []};
     const states = {};
+    let allowGoogle = true;
+    try { allowGoogle = (await canUseGoogleForModel()) === true; } catch { allowGoogle = false; }
     let mails = [], mailTruncated = false, gmailAt = null;
-    try {
-      const result = await readSource('gmail', {operation: 'search', query: mailQuery(since), limit: MAIL_LIMIT});
-      states.gmail = {state: 'ok', code: null};
-      const filtered = filterMails(result.items ?? [], {now: at.getTime(), since});
-      mails = filtered.kept;
-      counts.mailRaw = (result.items ?? []).length;
-      counts.mailKept = mails.length;
-      counts.mailDropped = filtered.dropped;
-      counts.mailSkipped = filtered.skipped;
-      mailTruncated = result.truncated === true;
-      counts.mailTruncated = mailTruncated;
-      gmailAt = at.toISOString();
-      if (filtered.total > MAIL_LIMIT) counts.mailSkipped = filtered.total - MAIL_LIMIT;
-    } catch (error) {
-      const code = typeof error?.code === 'string' ? error.code : 'CONTEXT_UNAVAILABLE';
-      states.gmail = {state: 'unavailable', code};
+    if (!allowGoogle) {
+      states.gmail = {state: 'unavailable', code: 'GOOGLE_MODEL_ISOLATION_REQUIRED'};
       counts.unreadable.push('gmail');
+    } else {
+      try {
+        const result = await readSource('gmail', {operation: 'search', query: mailQuery(since), limit: MAIL_LIMIT});
+        states.gmail = {state: 'ok', code: null};
+        const filtered = filterMails(result.items ?? [], {now: at.getTime(), since});
+        mails = filtered.kept;
+        counts.mailRaw = (result.items ?? []).length;
+        counts.mailKept = mails.length;
+        counts.mailDropped = filtered.dropped;
+        counts.mailSkipped = filtered.skipped;
+        mailTruncated = result.truncated === true;
+        counts.mailTruncated = mailTruncated;
+        gmailAt = at.toISOString();
+        if (filtered.total > MAIL_LIMIT) counts.mailSkipped = filtered.total - MAIL_LIMIT;
+      } catch (error) {
+        const code = typeof error?.code === 'string' ? error.code : 'CONTEXT_UNAVAILABLE';
+        states.gmail = {state: 'unavailable', code};
+        counts.unreadable.push('gmail');
+      }
     }
     const from = new Date(at.getTime() - 7 * DAY).toISOString(), to = new Date(at.getTime() + 7 * DAY).toISOString();
     const promises = [];
@@ -157,14 +164,19 @@ export function createDailyDigest({store, readSource, readLedger = async () => [
       if (!counts.unreadable.includes('dida')) counts.unreadable.push('dida');
     }
     let events = [];
-    try {
-      const result = await readSource('calendar', {operation: 'upcoming', from: at.toISOString(), to: new Date(at.getTime() + 7 * DAY).toISOString(), limit: 100});
-      events = (result.items ?? []).filter(row => row.status !== 'cancelled');
-      states.calendar = {state: 'ok', code: null};
-    } catch (error) {
-      const code = typeof error?.code === 'string' ? error.code : 'CONTEXT_UNAVAILABLE';
-      states.calendar = {state: 'unavailable', code};
+    if (!allowGoogle) {
+      states.calendar = {state: 'unavailable', code: 'GOOGLE_MODEL_ISOLATION_REQUIRED'};
       counts.unreadable.push('calendar');
+    } else {
+      try {
+        const result = await readSource('calendar', {operation: 'upcoming', from: at.toISOString(), to: new Date(at.getTime() + 7 * DAY).toISOString(), limit: 100});
+        events = (result.items ?? []).filter(row => row.status !== 'cancelled');
+        states.calendar = {state: 'ok', code: null};
+      } catch (error) {
+        const code = typeof error?.code === 'string' ? error.code : 'CONTEXT_UNAVAILABLE';
+        states.calendar = {state: 'unavailable', code};
+        counts.unreadable.push('calendar');
+      }
     }
     counts.promises = promises.length;
     counts.events = events.length;

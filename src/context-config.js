@@ -5,6 +5,8 @@ export const Config = z.object({
   desktopConversationSessionId: z.string().default('').description('继续上次桌面对话，由 Dot 自动保存；清空后可重新开始。').volatile(),
   desktopConversationSelectionVersion: z.union([0,1]).default(0).description('由你明确新建或选择桌面对话后保存；旧指针默认只作为历史候选。').volatile(),
   dotAppearance: z.union(['native','dot']).default('native').description('界面外观：native 保留原生外观，dot 使用可恢复的 Dot 主题').volatile(),
+  googleWorkspaceModelProvider: z.string().default('').description('仅用于处理 Google Workspace 资料的零训练隔离模型提供商（如 google、anthropic、openai、ollama；留空则自动选用已配置的零训练模型，绝不使用 DeepSeek）。').volatile(),
+  googleWorkspaceModelId: z.string().default('').description('仅用于处理 Google Workspace 资料的隔离模型 ID（如 gemini-2.5-flash；留空则自动选用所选提供商的默认模型）。').volatile(),
   familyOwnerDelegation: z.boolean().default(false).description('允许已验证的家庭管家 Owner 使用本人现有 Dot 资料授权；默认关闭').volatile(),
   familyOwnerReminderEnabled: z.boolean().default(false).description('允许家庭管家使用同一提醒账本处理经验证的 Owner 单次提醒；默认关闭').volatile(),
   flomoToken: z.string().default('').role('secret').description('flomo MCP 访问令牌；仅用于你主动开启的只读查询').volatile(),
@@ -30,6 +32,23 @@ export function readContextConfig(config) {
       return [field, value ?? ''];
     }));
   } catch { throw new Error('Context 连接配置无效，请在原生插件设置中检查。'); }
+}
+
+/** Read non-secret Google Workspace isolated model selection fields. */
+export function readGoogleWorkspaceModelConfig(config) {
+  const readField = (field) => {
+    const ref = config?.[field];
+    const value = ref && typeof ref.get === 'function' ? ref.get() : ref;
+    if (value === undefined || value === null) return '';
+    if (typeof value !== 'string') throw new Error('Google Workspace 隔离模型配置无效。');
+    const trimmed = value.trim();
+    if (trimmed.length > 200) throw new Error('Google Workspace 隔离模型配置过长。');
+    return trimmed;
+  };
+  return {
+    googleWorkspaceModelProvider: readField('googleWorkspaceModelProvider'),
+    googleWorkspaceModelId: readField('googleWorkspaceModelId'),
+  };
 }
 
 export default Config;

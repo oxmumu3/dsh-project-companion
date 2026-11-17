@@ -1,6 +1,7 @@
 import {remainingModelOutputBudget,awaitModelGuard as awaitGuard} from './model-generation-controls.js';
 /** Sessionless project summaries through the host's existing model adapter. */
 import { runNewsModel, safeModelCallDiagnostic } from './news-model.js';
+import { isCompliantGoogleWorkspaceSelection } from './google-data-isolation.js';
 
 const SOURCE_ROLES = ['progress_file', 'context_file', 'product_documentation', 'user', 'assistant', 'file', 'coverage'];
 const SOURCE_STATUSES = ['ok', 'missing', 'rejected', 'unavailable'];
@@ -187,12 +188,12 @@ function briefModelControls(controls, info) {
 }
 
 /** No sessions, transcripts, tools, provider changes or new credentials. */
-export function createProjectUpdateModel(ctx, { clock = () => new Date(), timeoutMs = 60000 } = {}) {
+export function createProjectUpdateModel(ctx, { clock = () => new Date(), timeoutMs = 60000, resolveGoogleSelection = null } = {}) {
   if (!Number.isFinite(timeoutMs) || timeoutMs <= 0 || timeoutMs > 60000) fail('MODEL_INVALID_INPUT');
   let closed = false;
   const active = new Set();
   return {
-    async summarize({ project, sources, previous = null, signal, beforeRequest, beforeRequestSync } = {}) {
+    async summarize({ project, sources, includesGoogleSources = false, previous = null, signal, beforeRequest, beforeRequestSync } = {}) {
       if (closed) fail('MODEL_CLOSED');
       if (signal?.aborted) fail('MODEL_ABORTED');
       if (signal !== undefined && (!signal || typeof signal.addEventListener !== 'function' || typeof signal.removeEventListener !== 'function' || typeof signal.aborted !== 'boolean')) fail('MODEL_INVALID_INPUT');
@@ -219,8 +220,26 @@ export function createProjectUpdateModel(ctx, { clock = () => new Date(), timeou
         if (signal?.aborted) stop();
         controller.signal.throwIfAborted();
         let llm, selection;
-        try { llm = ctx.get('llm', false); selection = ctx.get('agentDefaultModel', false)?.currentSelection(); if (record(selection)) selection = { ...selection }; }
-        catch { fail('MODEL_UNAVAILABLE'); }
+        try {
+          llm = ctx.get('llm', false);
+          if (includesGoogleSources === true) {
+            if (typeof resolveGoogleSelection === 'function') {
+              selection = await resolveGoogleSelection();
+            } else {
+              selection = ctx.get('agentDefaultModel', false)?.currentSelection();
+              if (!isCompliantGoogleWorkspaceSelection(selection, { ctx, syntheticHost: true, enforceStrictAllowlist: false }).allowed) {
+                fail('MODEL_UNAVAILABLE');
+              }
+            }
+          } else {
+            selection = ctx.get('agentDefaultModel', false)?.currentSelection();
+          }
+          if (record(selection)) selection = { ...selection };
+          else if (includesGoogleSources === true) fail('MODEL_UNAVAILABLE');
+        } catch (error) {
+          if (error instanceof ProjectUpdateModelError) throw error;
+          fail('MODEL_UNAVAILABLE');
+        }
         const checkRequest = async () => {
           controller.signal.throwIfAborted();
           if (beforeRequest) {

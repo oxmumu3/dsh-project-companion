@@ -2,6 +2,7 @@ import {randomUUID} from 'node:crypto';
 import {isAbsolute,resolve} from 'node:path';
 import {createUserMessage} from '@deepseek-ai/dsh-llm';
 import {safeProjectRoot} from './sources.js';
+import {isGoogleWorkspaceSource} from './google-data-isolation.js';
 
 /** Read the committed official directory projection; header is only a compatibility fallback. */
 export function effectiveCwd(ctx,subject){
@@ -53,7 +54,7 @@ async function setupAgent(agentCtx,agent){
   });
 }
 
-export function createCoordinator({ctx,service,owner,liveAgents,taskResults,readBinding=async()=>null,lifecycleSignal,authorizeReviewHandoff}){
+export function createCoordinator({ctx,service,owner,liveAgents,taskResults,readBinding=async()=>null,lifecycleSignal,authorizeReviewHandoff,assertTargetAllowed=null,onTargetAdmitted=null}){
   const pending=new Map();const handles=new Set();const lifecycle=new AbortController();
   ctx.effect(()=>async()=>{
     lifecycle.abort(new Error('Project companion unloaded'));
@@ -73,10 +74,14 @@ export function createCoordinator({ctx,service,owner,liveAgents,taskResults,read
     signal.throwIfAborted();
     return sameBinding(binding,trusted.binding);
   }
-  async function submit(target,project,task,signal,{cold=false,agent,callId,trusted,authorizeAdmission,authorizeAdmissionSync,authorizeProjectSync,resolveProject,ledgerKey,familyOrigin,reviewOrigin,retainHandle=()=>{}}={}){
+  async function submit(target,project,task,signal,{cold=false,agent,callId,trusted,authorizeAdmission,authorizeAdmissionSync,authorizeProjectSync,resolveProject,ledgerKey,familyOrigin,reviewOrigin,googleSources=[],retainHandle=()=>{}}={}){
     const routing={resolveProject};
     signal.throwIfAborted();
     if(!await trustedRoute(project,agent,trusted,signal,routing))return blocked('上次交办的项目会话或原微信绑定已变化，尚未提交；请重新选定目标会话。');
+    if(googleSources.length&&typeof assertTargetAllowed==='function'){
+      const check=await assertTargetAllowed(target,googleSources);
+      if(check&&check.allowed===false)return blocked(check.message||'目标会话当前使用的模型不可处理 Google Workspace 资料，尚未提交任务。');
+    }
     if(target.status!=='idle')return{status:'busy',accepted:false,text:`「${project.label}」正在处理其他任务。尚未提交，不会打断；等它空闲后再继续。`};
     if(typeof target.followup!=='function')return blocked(`「${project.label}」的会话暂时不能接收任务，请先在电脑上检查该会话。`);
     const message=createUserMessage({content:[{type:'text',text:task}],source:{kind:'user'}});
@@ -119,8 +124,12 @@ export function createCoordinator({ctx,service,owner,liveAgents,taskResults,read
     if(target.status!=='idle'){
       return rejectPrepared({status:'busy',accepted:false,text:`「${project.label}」正在处理其他任务。尚未提交，不会打断；等它空闲后再继续。`});
     }
+    if(googleSources.length&&typeof assertTargetAllowed==='function'){
+      const check=await assertTargetAllowed(target,googleSources);
+      if(check&&check.allowed===false)return rejectPrepared(blocked(check.message||'目标会话当前使用的模型不可处理 Google Workspace 资料，尚未提交任务。'));
+    }
     // No await between the final status check and official synchronous inbox admission.
-    try{retainHandle();target.followup(message);}catch{
+    try{retainHandle();target.followup(message);if(googleSources.length&&typeof onTargetAdmitted==='function'){try{onTargetAdmitted(target,googleSources);}catch{}}}catch{
       return rejectPrepared(uncertainResult('目标会话的接收结果不确定，已停止自动重试；可以查询最近交办状态。'),true);
     }
     if(job){try{await taskResults.admitted(job.id);}catch{return recorded({status:'uncertain',accepted:false,text:'任务已经提交，但接收记录未能确认。不会重复派工，请查询最近交办状态。'});}}
@@ -257,9 +266,15 @@ export function createCoordinator({ctx,service,owner,liveAgents,taskResults,read
             lease=await authorizeReviewHandoff(owner(agent),{...input,project:project.root,signal});
             if(!lease||typeof lease.authorize!=='function'||typeof lease.authorizeSync!=='function'||!await lease.authorize()||lease.authorizeSync()!==true)return blocked('这条回顾事项或资料范围已变化，尚未提交。');
           }
-          const scoped=lease?{...meta,reviewOrigin:lease.reference,
+          const reviewSources=lease?[...new Set([...(lease.sources??[]),...(lease.itemSources??[])].filter(isGoogleWorkspaceSource))]:[];
+          const googleSources=[...new Set([...(Array.isArray(meta.googleSources)?meta.googleSources:[]),...reviewSources].filter(isGoogleWorkspaceSource))];
+          if(googleSources.length&&typeof assertTargetAllowed==='function'){
+            const callerCheck=await assertTargetAllowed(agent,googleSources);
+            if(callerCheck&&callerCheck.allowed===false)return blocked(callerCheck.message||'当前会话使用的模型不可处理 Google Workspace 资料，尚未提交任务。');
+          }
+          const scoped=lease?{...meta,googleSources,reviewOrigin:lease.reference,
             authorizeAdmission:async()=>await lease.authorize()===true&&(meta.authorizeAdmission===undefined||await meta.authorizeAdmission()===true),
-            authorizeAdmissionSync:()=>lease.authorizeSync()===true&&(meta.authorizeAdmissionSync===undefined||meta.authorizeAdmissionSync()===true)}:meta;
+            authorizeAdmissionSync:()=>lease.authorizeSync()===true&&(meta.authorizeAdmissionSync===undefined||meta.authorizeAdmissionSync()===true)}:{...meta,googleSources};
           return await coordinateNow(agent,project.id,input.task.trim(),signal,scoped,input.session?.trim().replace(/\s+/g,' '));
         }finally{lease?.dispose?.();}
       });

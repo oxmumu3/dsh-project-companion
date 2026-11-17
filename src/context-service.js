@@ -6,6 +6,7 @@ import {SOURCE_INFO,buildContextCall,validateContextCall,projectContextResult,pr
 import {contextAccountCredentialState} from './context-account-auth.js';
 import {DIDA_INBOX_PROTOCOL_STAGES} from './dida-rest.js';
 import {dotAuthorization,dotSourceState} from './dot-sources.js';
+import {GOOGLE_ISOLATION_USER_MESSAGE} from './google-data-isolation.js';
 
 export const CONTEXT_SOURCES=['gmail','calendar','drive','docs','sheets','slides','dida','flomo'];
 const identity=z.string().min(1).max(200),hash=z.string().regex(/^[a-f0-9]{64}$/);
@@ -20,7 +21,7 @@ function providerDiagnostics(error,previous){
  const readDiagnostic=safeGoogleReadDiagnostic(previous?.readDiagnostic);if(readDiagnostic)error.readDiagnostic=readDiagnostic;
  return error.code==='CONTEXT_AUTH_REQUIRED'&&previous?.authDiagnostic?withAuthDiagnostic(error,previous.authDiagnostic):error;
 }
-const textFor={CONTEXT_INTENT_REQUIRED:'请明确要连接或读取哪个资料来源。',CONTEXT_NOT_ENABLED:'这个来源尚未在当前对话启用，请先在 Dot 连接页设置。',CONTEXT_AUTH_REQUIRED:'这个来源需要重新授权，请到 Dot 的“连接与设置”登录账号。',CONTEXT_INSUFFICIENT_SCOPE:'服务商要求当前只读授权之外的额外权限，已停止读取。重复登录并授予相同只读权限不能解决；当前未扩大权限。',CONTEXT_BINDING_CHANGED:'原对话、微信绑定或账号配置已变化，请重新启用这个来源。',CONTEXT_STOPPED:'本次资料读取已停止，未继续处理。',CONTEXT_STORE_UNAVAILABLE:'连接偏好暂不可保存，未启用或继续读取。',CONTEXT_UNSUPPORTED_OPERATION:'这个来源不支持本次读取范围；请保留用户限定条件，改用支持的查询方式。',CONTEXT_INVALID_INPUT:'读取参数不完整或超出范围，请核对资源、时间与读取范围。',CONTEXT_SCHEMA_MISMATCH:'来源读取接口的字段与当前版本不兼容，未尝试其他工具。',CONTEXT_SCOPE_VIOLATION:'来源返回的数量或时间范围无法符合请求；已丢弃本次内容，未传给模型或保存。服务商可能已向本机多返回数据。',CONTEXT_UNAVAILABLE:'暂未读到资料，请核对授权、网络及来源支持的读取接口。'};
+const textFor={CONTEXT_INTENT_REQUIRED:'请明确要连接或读取哪个资料来源。',CONTEXT_NOT_ENABLED:'这个来源尚未在当前对话启用，请先在 Dot 连接页设置。',CONTEXT_AUTH_REQUIRED:'这个来源需要重新授权，请到 Dot 的“连接与设置”登录账号。',CONTEXT_INSUFFICIENT_SCOPE:'服务商要求当前只读授权之外的额外权限，已停止读取。重复登录并授予相同只读权限不能解决；当前未扩大权限。',CONTEXT_BINDING_CHANGED:'原对话、微信绑定或账号配置已变化，请重新启用这个来源。',CONTEXT_STOPPED:'本次资料读取已停止，未继续处理。',CONTEXT_STORE_UNAVAILABLE:'连接偏好暂不可保存，未启用或继续读取。',CONTEXT_UNSUPPORTED_OPERATION:'这个来源不支持本次读取范围；请保留用户限定条件，改用支持的查询方式。',CONTEXT_INVALID_INPUT:'读取参数不完整或超出范围，请核对资源、时间与读取范围。',CONTEXT_SCHEMA_MISMATCH:'来源读取接口的字段与当前版本不兼容，未尝试其他工具。',CONTEXT_SCOPE_VIOLATION:'来源返回的数量或时间范围无法符合请求；已丢弃本次内容，未传给模型或保存。服务商可能已向本机多返回数据。',GOOGLE_MODEL_ISOLATION_REQUIRED:GOOGLE_ISOLATION_USER_MESSAGE,CONTEXT_UNAVAILABLE:'暂未读到资料，请核对授权、网络及来源支持的读取接口。'};
 export function contextErrorText(error){return textFor[error?.code]??textFor.CONTEXT_UNAVAILABLE;}
 
 export function createPersonalContext({store,transport,readConfig,readBinding,credentialState,onInvalidate=()=>{},canRun=async()=>true,clock=()=>new Date(),hostTimeZone=()=>Intl.DateTimeFormat().resolvedOptions().timeZone,dotSources=null,foregroundSession=async()=>false,foregroundSessionSync=()=>false}={}){
