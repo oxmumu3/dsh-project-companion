@@ -31,7 +31,7 @@ export const GOOGLE_WORKSPACE_SOURCES = Object.freeze(
 export const GOOGLE_MODEL_ISOLATION_CODE = 'GOOGLE_MODEL_ISOLATION_REQUIRED';
 
 export const GOOGLE_ISOLATION_USER_MESSAGE =
-  '根据 Google Workspace Limited Use 数据保护要求，Gmail、日历与云盘资料（含派生摘要）不会发送给 DeepSeek 官方模型。请将当前会话模型切换为已配置的零训练合规模型（如 Google Gemini API、Anthropic/OpenAI API 或本地 Ollama）后再读取；「今天」页的本机日历展示不受影响。';
+  '根据 Google Workspace Limited Use 数据保护要求，Gmail、日历与云盘资料（含派生摘要）不会发送给 DeepSeek 官方模型。请将当前会话模型切换为已配置的零训练合规模型（如绑定计费项目的 Paid Google Gemini API、Anthropic/OpenAI 商用 API 或本地 Ollama）后再读取；「今天」页的本机日历展示不受影响。';
 
 const GOOGLE_SOURCE_LIST = ['gmail', 'calendar', 'drive', 'docs', 'sheets', 'slides'];
 
@@ -159,10 +159,11 @@ function urlMatchesProviderRules(rawUrl, providerKey) {
  * Inspect host LLM/settings registries to discover any configured or custom
  * `baseURL` / `defaultBaseURL` bound to `provider`. Never reads secret fields.
  */
-export function inspectConfiguredProviderUrls(ctx, provider) {
+export function inspectConfiguredProviderUrls(ctx, provider, model = '') {
   const urls = [];
   if (!ctx || typeof ctx.get !== 'function' || typeof provider !== 'string' || !provider.trim()) return urls;
   const target = provider.trim();
+  const targetModel = typeof model === 'string' ? model.trim() : '';
   const seen = new Set();
   const push = value => {
     if (typeof value === 'string' && value.trim() && !seen.has(value.trim())) {
@@ -180,6 +181,11 @@ export function inspectConfiguredProviderUrls(ctx, provider) {
     if (entry?.provider !== target) continue;
     push(entry.baseURL);
     push(entry.defaultBaseURL);
+    if (Array.isArray(entry.models)) {
+      for (const m of entry.models) {
+        if (!targetModel || m?.id === targetModel) push(m?.baseURL);
+      }
+    }
     if (typeof entry.settingsNs === 'string' && entry.settingsNs) settingsNamespaces.add(entry.settingsNs);
   }
   if (settingsNamespaces.size > 0) {
@@ -188,7 +194,13 @@ export function inspectConfiguredProviderUrls(ctx, provider) {
       if (typeof settings?.describe === 'function') {
         for (const row of settings.describe({ redactSecrets: true }) ?? []) {
           if (!settingsNamespaces.has(row?.ns)) continue;
-          push(row?.value?.providers?.[target]?.baseURL);
+          const pCfg = row?.value?.providers?.[target];
+          push(pCfg?.baseURL);
+          if (Array.isArray(pCfg?.models)) {
+            for (const m of pCfg.models) {
+              if (!targetModel || m?.id === targetModel) push(m?.baseURL);
+            }
+          }
         }
       }
     } catch {}
@@ -224,7 +236,7 @@ export function isCompliantGoogleWorkspaceSelection(
     return { allowed: false, code: GOOGLE_MODEL_ISOLATION_CODE, reason: 'denied_deepseek_endpoint' };
   }
 
-  const configuredUrls = provider ? inspectConfiguredProviderUrls(ctx, provider) : [];
+  const configuredUrls = provider ? inspectConfiguredProviderUrls(ctx, provider, model) : [];
   for (const url of configuredUrls) {
     if (isDeniedDeepSeekUrl(url)) {
       return { allowed: false, code: GOOGLE_MODEL_ISOLATION_CODE, reason: 'denied_deepseek_endpoint' };
@@ -240,15 +252,17 @@ export function isCompliantGoogleWorkspaceSelection(
 
   const key = provider.toLowerCase();
   if (Object.hasOwn(COMPLIANT_PROVIDER_HOSTS, key)) {
-    if (selectionBaseURL && !urlMatchesProviderRules(selectionBaseURL, key)) {
-      return { allowed: false, code: GOOGLE_MODEL_ISOLATION_CODE, reason: 'unverified_endpoint' };
+    const allUrls = [...configuredUrls];
+    if (selectionBaseURL && !allUrls.includes(selectionBaseURL)) allUrls.push(selectionBaseURL);
+    if (enforceStrictAllowlist === true && allUrls.length === 0) {
+      return { allowed: false, code: GOOGLE_MODEL_ISOLATION_CODE, reason: 'missing_verified_endpoint' };
     }
-    for (const url of configuredUrls) {
+    for (const url of allUrls) {
       if (!urlMatchesProviderRules(url, key)) {
         return { allowed: false, code: GOOGLE_MODEL_ISOLATION_CODE, reason: 'unverified_endpoint' };
       }
     }
-    return { allowed: true, provider, model };
+    return { allowed: true, provider, model, verifiedEndpoints: allUrls };
   }
 
   if (syntheticHost === true && enforceStrictAllowlist !== true) {

@@ -24,6 +24,17 @@ test('bounded primary calendar uses fixed GET mapping and keeps coverage',async(
  assert.deepEqual(r.coverage,{source:'calendar',calendarId:'primary',from:args.startTime,to:args.endTime,returned:1,hasMore:false,pages:1,hasNextSyncToken:false});assert.equal(r.fetchedAt,fixed.toISOString());assert.equal(r.value.items[0].start.timeZone,'America/Mexico_City');assert.equal(r.value.items[0].description,undefined);assert.equal(r.value.items[0].attendees,undefined);assert.equal(r.value.truncated,false);await t.close();
 });
 
+test('shared group/colleague calendarId uses encoded calendar path and preserves coverage',async()=>{
+ let request;
+ const sharedId='c_shared_team_demo@group.calendar.google.com';
+ const t=createGoogleCalendarRest({getToken:async()=> 'synthetic-bearer',fetch:async(url,options)=>{request={url:new URL(url),options};return response({summary:'Shared Project Schedule',items:[{id:'ev-shared',summary:'Shared Architecture Review',status:'confirmed',start:{dateTime:'2026-10-20T14:00:00Z'},end:{dateTime:'2026-10-20T14:30:00Z'}}]});},clock:()=>fixed});
+ const r=await t.call('calendar','list_events',{...args,calendarId:sharedId},gates);
+ assert.equal(request.url.pathname,`/calendar/v3/calendars/${encodeURIComponent(sharedId)}/events`);
+ assert.equal(r.coverage.calendarId,sharedId);
+ assert.equal(r.value.items[0].summary,'Shared Architecture Review');
+ await t.close();
+});
+
 test('all-day dates and exclusive end survive; internal pagination follows the window',async()=>{
  let calls=0;
  const t=createGoogleCalendarRest({getToken:async()=> 'x',fetch:async()=>{calls++;return calls===1?response({nextPageToken:'opaque-private-page-token',items:[{id:'all-day',summary:'Holiday',start:{date:'2026-10-20'},end:{date:'2026-10-21'},htmlLink:'https://evil.example.test/?secret=private'}]}):response({items:[{id:'second-day',summary:'Day two',start:{date:'2026-10-21'},end:{date:'2026-10-22'}}]});},clock:()=>fixed});

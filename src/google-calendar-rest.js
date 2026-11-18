@@ -3,7 +3,9 @@ import {canonicalizeTimeZone} from '../vendor/proactive/lib/domain.js';
 import {calendarEventBounds,isCalendarDate} from './calendar-window.js';
 /** Bounded Google Calendar REST reads. This is a bundled contract, not MCP discovery. */
 const ORIGIN='https://www.googleapis.com';
-const PATH='/calendar/v3/calendars/primary/events';
+const SHARED_CALENDAR_ID=/^[A-Za-z0-9._+-]{1,128}@[A-Za-z0-9.-]{1,128}\.[A-Za-z]{2,24}$/u;
+const isAllowedCalendarId=v=>v==='primary'||(typeof v==='string'&&v.length<=256&&!v.includes('..')&&!CONTROL.test(v)&&SHARED_CALENDAR_ID.test(v));
+const calendarEventsPath=calendarId=>`/calendar/v3/calendars/${encodeURIComponent(calendarId)}/events`;
 const MAX_BYTES=1024*1024;
 const REQUEST_MS=20_000;
 const CONTROL=/[\u0000-\u001f\u007f]/u;
@@ -14,9 +16,9 @@ const fail=code=>{throw error(code);};
 const text=(v,n)=>typeof v==='string'?v.replace(/[\u0000-\u001f\u007f]/gu,'').slice(0,n):undefined;
 const isTime=v=>typeof v==='string'&&v.length<=60&&/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d{1,3})?(?:Z|[+-]\d\d:\d\d)$/u.test(v)&&Number.isFinite(Date.parse(v));
 
-const CATALOG=Object.freeze({provenance:'bundled-contract',tools:[{name:'list_events',inputSchema:{type:'object',additionalProperties:false,required:['calendarId','startTime','endTime','orderBy','pageSize'],properties:{calendarId:{type:'string',enum:['primary']},startTime:{type:'string'},endTime:{type:'string'},orderBy:{type:'string',enum:['startTime']},pageSize:{type:'integer',minimum:1,maximum:100}}}}]});
+const CATALOG=Object.freeze({provenance:'bundled-contract',tools:[{name:'list_events',inputSchema:{type:'object',additionalProperties:false,required:['calendarId','startTime','endTime','orderBy','pageSize'],properties:{calendarId:{type:'string',maxLength:256,pattern:'^(?:primary|[A-Za-z0-9._+-]{1,128}@[A-Za-z0-9.-]{1,128}\\.[A-Za-z]{2,24})$'},startTime:{type:'string'},endTime:{type:'string'},orderBy:{type:'string',enum:['startTime']},pageSize:{type:'integer',minimum:1,maximum:100}}}}]});
 function validate(source,name,args){
- if(source!=='calendar'||name!=='list_events'||!plain(args)||Object.keys(args).some(k=>!['calendarId','startTime','endTime','orderBy','pageSize'].includes(k))||args.calendarId!=='primary'||args.orderBy!=='startTime'||!Number.isInteger(args.pageSize)||args.pageSize<1||args.pageSize>100||!isTime(args.startTime)||!isTime(args.endTime))fail('CONTEXT_ARGUMENTS_INVALID');
+ if(source!=='calendar'||name!=='list_events'||!plain(args)||Object.keys(args).some(k=>!['calendarId','startTime','endTime','orderBy','pageSize'].includes(k))||!isAllowedCalendarId(args.calendarId)||args.orderBy!=='startTime'||!Number.isInteger(args.pageSize)||args.pageSize<1||args.pageSize>100||!isTime(args.startTime)||!isTime(args.endTime))fail('CONTEXT_ARGUMENTS_INVALID');
  const duration=Date.parse(args.endTime)-Date.parse(args.startTime);
  if(duration<=0||duration>7*86400000)fail('CONTEXT_ARGUMENTS_INVALID');
  return{...args};
@@ -107,7 +109,7 @@ export function createGoogleCalendarRest({getToken,fetch:fetchImpl=globalThis.fe
     const FETCH_PAGES=5;
     let allItems=[],pageToken=null,hasMore=false,partial=false,hasNextSyncToken=false,calendarTimeZone,requests=0;
     do{
-     const url=new URL(PATH,ORIGIN);for(const [key,value]of Object.entries({timeMin:args.startTime,timeMax:args.endTime,singleEvents:'true',orderBy:'startTime',showDeleted:'false',maxResults:String(args.pageSize),fields:'summary,timeZone,updated,nextPageToken,nextSyncToken,items(id,status,summary,htmlLink,updated,start,end)'}))url.searchParams.set(key,value);
+     const url=new URL(calendarEventsPath(args.calendarId),ORIGIN);for(const [key,value]of Object.entries({timeMin:args.startTime,timeMax:args.endTime,singleEvents:'true',orderBy:'startTime',showDeleted:'false',maxResults:String(args.pageSize),fields:'summary,timeZone,updated,nextPageToken,nextSyncToken,items(id,status,summary,htmlLink,updated,start,end)'}))url.searchParams.set(key,value);
      if(pageToken)url.searchParams.set('pageToken',pageToken);
      cancelled(settings); // No asynchronous boundary between this final gate and fetch admission.
      let reply;try{const pending=Promise.resolve(fetchImpl(url.href,{method:'GET',redirect:'manual',headers:{authorization:`Bearer ${bearer}`,accept:'application/json'},signal}));
@@ -126,7 +128,7 @@ export function createGoogleCalendarRest({getToken,fetch:fetchImpl=globalThis.fe
      requests+=1;
     }while(pageToken&&requests<FETCH_PAGES);
     const items=allItems;
-    return{value:{items,truncated:hasMore||partial},fetchedAt:new Date(clock()).toISOString(),coverage:{source:'calendar',calendarId:'primary',from:args.startTime,to:args.endTime,returned:items.length,hasMore,pages:requests,hasNextSyncToken}};
+    return{value:{items,truncated:hasMore||partial},fetchedAt:new Date(clock()).toISOString(),coverage:{source:'calendar',calendarId:args.calendarId,from:args.startTime,to:args.endTime,returned:items.length,hasMore,pages:requests,hasNextSyncToken}};
    });
   },
   async diagnose(name,settings={}){
@@ -136,7 +138,7 @@ export function createGoogleCalendarRest({getToken,fetch:fetchImpl=globalThis.fe
     let bearer;try{bearer=await wait(Promise.resolve().then(()=>{signal.throwIfAborted();cancelled(settings);return getToken?.({signal,authorizeMutation:()=>authorized(settings,signal)});}),signal);}catch(e){if(e?.code?.startsWith('CONTEXT_'))throw e;fail('CONTEXT_AUTH_REQUIRED');}
     if(typeof bearer!=='string'||!bearer.length||bearer.length>8192||/\s/u.test(bearer)||CONTROL.test(bearer))fail('CONTEXT_AUTH_REQUIRED');
     await authorized(settings,signal);signal.throwIfAborted();
-    const url=new URL(PATH,ORIGIN);
+    const url=new URL(calendarEventsPath('primary'),ORIGIN);
     // Sample one page of changes in the same forward seven-day window Today reads.
     const sampleLimit=1;
     url.searchParams.set('timeMin',new Date(clock().getTime()).toISOString());

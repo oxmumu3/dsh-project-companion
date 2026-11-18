@@ -5,7 +5,7 @@ export const Config = z.object({
   desktopConversationSessionId: z.string().default('').description('继续上次桌面对话，由 Dot 自动保存；清空后可重新开始。').volatile(),
   desktopConversationSelectionVersion: z.union([0,1]).default(0).description('由你明确新建或选择桌面对话后保存；旧指针默认只作为历史候选。').volatile(),
   dotAppearance: z.union(['native','dot']).default('native').description('界面外观：native 保留原生外观，dot 使用可恢复的 Dot 主题').volatile(),
-  googleWorkspaceModelProvider: z.string().default('').description('仅用于处理 Google Workspace 资料的零训练隔离模型提供商（如 google、anthropic、openai、ollama；留空则自动选用已配置的零训练模型，绝不使用 DeepSeek）。').volatile(),
+  googleWorkspaceModelProvider: z.string().default('').description('仅用于处理 Google Workspace 资料的隔离模型提供商（如绑定计费项目的 Paid Google Gemini API google、anthropic、openai、ollama；留空则自动选用已配置且端点已核验的不训练模型，绝不使用 DeepSeek）。').volatile(),
   googleWorkspaceModelId: z.string().default('').description('仅用于处理 Google Workspace 资料的隔离模型 ID（如 gemini-2.5-flash；留空则自动选用所选提供商的默认模型）。').volatile(),
   familyOwnerDelegation: z.boolean().default(false).description('允许已验证的家庭管家 Owner 使用本人现有 Dot 资料授权；默认关闭').volatile(),
   familyOwnerReminderEnabled: z.boolean().default(false).description('允许家庭管家使用同一提醒账本处理经验证的 Owner 单次提醒；默认关闭').volatile(),

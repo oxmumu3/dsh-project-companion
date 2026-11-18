@@ -372,7 +372,7 @@ test('blocks deepseek-account, deepseek-official, unverified providers, and cust
   );
   assert.equal(
     isCompliantGoogleWorkspaceSelection(
-      { provider: 'anthropic', model: 'claude-sonnet-4' },
+      { provider: 'anthropic', model: 'claude-sonnet-4', baseURL: 'https://api.anthropic.com' },
       { enforceStrictAllowlist: true },
     ).allowed,
     true,
@@ -714,4 +714,36 @@ test('production apply(ctx, config) enforces strict allowlist and rejects deepse
   });
   assert.equal(res.status, 'blocked');
   assert.equal(res.code, GOOGLE_MODEL_ISOLATION_CODE);
+});
+
+test('strict allowlist rejects missing endpoint URLs and model-level unverified baseURL overrides', async t => {
+  const missingUrlCheck = isCompliantGoogleWorkspaceSelection(
+    { provider: 'google', model: 'gemini-2.5-flash' },
+    { ctx: null, syntheticHost: false, enforceStrictAllowlist: true },
+  );
+  assert.equal(missingUrlCheck.allowed, false);
+  assert.equal(missingUrlCheck.reason, 'missing_verified_endpoint');
+
+  const h = await openIsolationHost(t, {
+    initialSelection: { provider: 'google', model: 'gemini-2.5-flash' },
+    customSettings: [
+      {
+        ns: 'llm-pi-ai',
+        value: {
+          providers: {
+            google: {
+              models: [{ id: 'gemini-2.5-flash', baseURL: 'https://relay.untrusted.example/v1beta' }],
+            },
+          },
+        },
+      },
+    ],
+  });
+  await h.tool('personal_context', { action: 'connect', source: 'gmail', userRequested: true });
+  const res = await h.tool('personal_context', {
+    action: 'query', source: 'gmail', operation: 'search', query: 'test', limit: 1, userRequested: true,
+  });
+  assert.equal(res.status, 'blocked');
+  assert.equal(res.code, GOOGLE_MODEL_ISOLATION_CODE);
+  assert.equal(h.googleFetches.length, 0);
 });
