@@ -8,6 +8,13 @@ export const LEDGER_STATES = ['doing','needs_you','done','stuck','handled','snoo
 const identity = z.string().min(1).max(200);
 const stamp = z.string().datetime();
 const what = z.string().max(160);
+const activeStates = ['doing','needs_you','done','stuck','snoozed'];
+const checklistItem = z.object({id: identity, text: z.string().min(1).max(500), checked: z.boolean()}).strict();
+export const sessionArtifactSchema = z.discriminatedUnion('kind', [
+  z.object({kind: z.literal('todo'), checklist: z.array(checklistItem).min(1).max(100)
+    .refine(items => new Set(items.map(item => item.id)).size === items.length)}).strict(),
+  z.object({kind: z.literal('doc'), markdown: z.string().max(512 * 1024).refine(text => Boolean(text.trim()))}).strict(),
+]);
 
 export const ledgerSessionSchema = z.object({
   sessionId: identity,
@@ -25,6 +32,8 @@ export const ledgerSessionSchema = z.object({
   seenRevision: z.number().int().nonnegative(),
   pushedRevision: z.number().int().nonnegative(),
   snoozeUntil: stamp.nullable(),
+  archivedFrom: z.enum(activeStates).optional(),
+  artifact: sessionArtifactSchema.optional(),
 }).strict();
 
 export const sessionLedgerRowSchema = z.object({
@@ -81,6 +90,9 @@ export function reduceLedger(input,event){
   const kind=event?.kind;
   if(!['start','assistant','approval-asked','approval-decided','turn-end'].includes(kind))return{state:input,changed:false};
   if(typeof event.sessionId!=='string'||!event.sessionId||typeof event.root!=='string'||!isAbsolute(event.root))return{state:input,changed:false};
+  // An explicit completion stays archived until it is reopened, even if an
+  // earlier host turn produces another event after the user completes it.
+  if(input.sessions.some(row=>row.sessionId===event.sessionId&&row.archivedFrom))return{state:input,changed:false};
   const state=structuredClone(input);
   const root=resolve(event.root);
   projectRow(state,root,String(event.projectLabel??'').slice(0,120),time);
@@ -153,17 +165,21 @@ export function reduceLedger(input,event){
 }
 
 const matchesCard = (row, expected) => !expected ||
-  (row.root === expected.root && row.state === expected.state && row.revision === expected.revision);
+  (row.root === expected.root && row.state === expected.state && row.revision === expected.revision &&
+    (!expected.authorize || expected.authorize() === true));
 
 /** Manual card actions (handled / snoozed) change only the visible state of one
  *  already-recorded session. They never invent a turn or touch the host agent. */
-export function setSessionState(input, sessionId, nextState, at = new Date().toISOString(), expected = null) {
+export function setSessionState(input, sessionId, nextState, at = new Date().toISOString(), expected = null, {archive=false}={}) {
   if (!['handled', 'snoozed'].includes(nextState)) return {state: input, changed: false};
   const state = structuredClone(input);
   const row = state.sessions.find(item => item.sessionId === sessionId);
-  if (!row || !visible(row.state) || !matchesCard(row, expected)) return {state: input, changed: false};
+  if (!row || (!visible(row.state) && !(archive && nextState==='handled' && row.state==='snoozed')) ||
+    !matchesCard(row, expected)) return {state: input, changed: false};
+  if (archive && nextState==='handled') row.archivedFrom=row.state;
   row.state = nextState;
-  row.snoozeUntil = nextState === 'snoozed' ? at : null;
+  if (nextState==='snoozed') row.snoozeUntil=at;
+  else if (!archive) row.snoozeUntil=null;
   row.revision += 1;
   state.revision += 1;
   row.lastEventAt = at;
@@ -173,12 +189,14 @@ export function setSessionState(input, sessionId, nextState, at = new Date().toI
 /** Undo restores the exact visible state the action replaced. Unlike a fresh
  *  ledger transition, this may return a row to needs_you / stuck / done. */
 export function restoreSessionState(input, sessionId, nextState, at = new Date().toISOString(), expected = null) {
-  if (!['doing', 'needs_you', 'stuck', 'done'].includes(nextState)) return {state: input, changed: false};
   const state = structuredClone(input);
   const row = state.sessions.find(item => item.sessionId === sessionId);
   if (!row || !['handled', 'snoozed'].includes(row.state) || !matchesCard(row, expected)) return {state: input, changed: false};
-  row.state = nextState;
-  row.snoozeUntil = null;
+  const restored = nextState ?? row.archivedFrom ?? 'done';
+  if (!activeStates.includes(restored)) return {state: input, changed: false};
+  row.state = restored;
+  delete row.archivedFrom;
+  if (restored!=='snoozed') row.snoozeUntil=null;
   row.revision += 1;
   state.revision += 1;
   row.lastEventAt = at;
@@ -273,11 +291,11 @@ export function createSessionLedger({store,clock=()=>new Date(),isClosed=()=>fal
       if(isClosed())throw new Error('Session ledger closed');
       return serial(async()=>{await load();return structuredClone(state);});
     },
-    async setState(sessionId,nextState,expected=null){
+    async setState(sessionId,nextState,expected=null,options){
       if(isClosed())throw new Error('Session ledger closed');
       return serial(async()=>{
         await load();
-        const next=setSessionState(state,sessionId,nextState,new Date().toISOString(),expected);
+        const next=setSessionState(state,sessionId,nextState,new Date(clock()).toISOString(),expected,options);
         if(!next.changed)return{changed:false,revision:state.revision};
         await save(next.state);
         state=next.state;
@@ -289,11 +307,29 @@ export function createSessionLedger({store,clock=()=>new Date(),isClosed=()=>fal
       if(isClosed())throw new Error('Session ledger closed');
       return serial(async()=>{
         await load();
-        const next=restoreSessionState(state,sessionId,nextState,new Date().toISOString(),expected);
+        const next=restoreSessionState(state,sessionId,nextState,new Date(clock()).toISOString(),expected);
         if(!next.changed)return{changed:false,revision:state.revision};
         await save(next.state);
         state=next.state;
         return{changed:true,revision:state.revision};
+      });
+    },
+    async setArtifact(sessionId, update, expected=null) {
+      if(isClosed())throw new Error('Session ledger closed');
+      return serial(async()=>{
+        await load();
+        const next=structuredClone(state);
+        const row=next.sessions.find(item=>item.sessionId===sessionId);
+        if(!row||row.state==='handled'||!matchesCard(row,expected))return {changed:false,revision:state.revision};
+        const artifact=sessionArtifactSchema.parse(typeof update==='function'?update(row.artifact):update);
+        if(JSON.stringify(row.artifact)===JSON.stringify(artifact))return {changed:false,revision:state.revision};
+        row.artifact=artifact;
+        row.lastEventAt=new Date(clock()).toISOString();
+        row.revision+=1;
+        next.revision+=1;
+        await save(next);
+        state=next;
+        return {changed:true,revision:state.revision};
       });
     },
     async close(){state=null;},

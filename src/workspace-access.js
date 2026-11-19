@@ -3,7 +3,8 @@ import {isAbsolute,resolve} from 'node:path';
 import {z} from 'zod';
 const id=z.string().regex(/^project_[a-f0-9]{24}$/),identity=z.string().min(1).max(4096).refine(s=>!/[\u0000-\u001f\u007f]/.test(s));
 const root=identity.refine(s=>isAbsolute(s)&&resolve(s)===s),stamp=z.string().max(40).refine(s=>Number.isFinite(Date.parse(s)));
-export const workspaceAccessRowSchema=z.object({version:z.literal(1),revision:z.string().min(1).max(100),grants:z.array(z.object({id,workspaceId:identity,root,grantedAt:stamp}).strict()).max(1000),updatedAt:stamp.nullable()}).strict().superRefine((s,c)=>{if(new Set(s.grants.map(g=>g.id)).size!==s.grants.length)c.addIssue({code:'custom',message:'Duplicate workspace grant'});});
+const contextMode=z.enum(['full_local','curated_only']);
+export const workspaceAccessRowSchema=z.object({version:z.literal(1),revision:z.string().min(1).max(100),grants:z.array(z.object({id,workspaceId:identity,root,grantedAt:stamp}).strict()).max(1000),updatedAt:stamp.nullable(),contextMode:contextMode.optional()}).strict().superRefine((s,c)=>{if(new Set(s.grants.map(g=>g.id)).size!==s.grants.length)c.addIssue({code:'custom',message:'Duplicate workspace grant'});});
 const fail=code=>{throw Object.assign(new Error(code),{code});};
 const empty=()=>({version:1,revision:'workspace-access:0',grants:[],updatedAt:null});
 const record=x=>x!==null&&typeof x==='object'&&!Array.isArray(x);
@@ -31,7 +32,7 @@ export function createWorkspaceAccess({store,catalog,clock=()=>new Date(),isClos
   }
   return{version:1,revision:state.revision,catalogRevision:page.revision,total:page.total,matchedTotal:page.matchedTotal,offset:page.offset,limit:page.limit,hasMore:page.hasMore,nextOffset:page.nextOffset,items:page.items.map(({id,label,sessionCount,disambiguator})=>({id,label,sessionCount,selected:selected.has(id),available:true,...(disambiguator?{disambiguator}:{})})),selectedIds:ids,selectedCount:ids.length,unavailableCount:state.grants.length-valid.length,...extra};
  }
- async function capture(){const state=await read(),{rows,valid}=currentRows(state);if(valid.length!==state.grants.length)fail('WORKSPACE_CATALOG_CHANGED');return{revision:state.revision,grants:valid.map(g=>{const r=rows.find(r=>same(g,r));return{id:r.id,workspaceId:r.workspaceId,root:r.root,label:r.label,sessionIds:[...r.sessionIds]};})};}
+ async function capture(){const state=await read(),{rows,valid}=currentRows(state);if(valid.length!==state.grants.length)fail('WORKSPACE_CATALOG_CHANGED');return{revision:state.revision,contextMode:state.contextMode??'full_local',grants:valid.map(g=>{const r=rows.find(r=>same(g,r));return{id:r.id,workspaceId:r.workspaceId,root:r.root,label:r.label,sessionIds:[...r.sessionIds]};})};}
  function authorizeSync(snapshot){
   try{open();if(!record(snapshot)||!cached||snapshot.revision!==cached.revision||!Array.isArray(snapshot.grants)||snapshot.grants.length!==cached.grants.length)return false;const rows=targets();return cached.grants.every(g=>{const p=snapshot.grants.find(p=>same(p,g)),r=rows.find(r=>same(g,r));return p&&r&&Array.isArray(p.sessionIds)&&p.sessionIds.every(id=>r.sessionIds.includes(id));});}catch{return false;}
  }
@@ -44,10 +45,19 @@ export function createWorkspaceAccess({store,catalog,clock=()=>new Date(),isClos
    try{catalog.assertCurrentRevision(args.expectedCatalogRevision);}catch{fail('WORKSPACE_CATALOG_CHANGED');}
    const now=clock().toISOString();const grants=args.workspaceIds.map(projectId=>{let r;try{r=catalog.resolvePublicId({projectId,expectedRevision:args.expectedCatalogRevision});}catch(error){fail(error?.code==='CATALOG_CHANGED'?'WORKSPACE_CATALOG_CHANGED':'WORKSPACE_ACCESS_ARGUMENT');}return{id:r.id,workspaceId:r.workspaceId,root:r.root,grantedAt:state.grants.find(g=>same(g,r))?.grantedAt??now};});
    if(state.grants.length===grants.length&&state.grants.every(g=>grants.some(r=>same(g,r))))return list();
-   open();const next=workspaceAccessRowSchema.parse({version:1,revision:'workspace-access:'+randomUUID(),grants,updatedAt:now});
+   open();const next=workspaceAccessRowSchema.parse({...state,revision:'workspace-access:'+randomUUID(),grants,updatedAt:now});
    // No user file, historical session, model or schedule is touched here.
    try{await store.put('profile',next);}catch{cached=null;publish();fail('WORKSPACE_ACCESS_UNAVAILABLE');}
    cached=next;publish();open();return list();
+  });},
+  setContextMode(mode){return serial(async()=>{
+   open();
+   if(!contextMode.safeParse(mode).success)fail('WORKSPACE_ACCESS_ARGUMENT');
+   const state=await read();
+   if((state.contextMode??'full_local')===mode)return;
+   const next=workspaceAccessRowSchema.parse({...state,contextMode:mode,revision:'workspace-access:'+randomUUID(),updatedAt:clock().toISOString()});
+   try{await store.put('profile',next);}catch{cached=null;publish();fail('WORKSPACE_ACCESS_UNAVAILABLE');}
+   cached=next;publish();open();
   });},
   subscribe(fn){open();if(typeof fn!=='function')fail('WORKSPACE_ACCESS_ARGUMENT');listeners.add(fn);return()=>listeners.delete(fn);},
   close(){closed=true;cached=null;publish();listeners.clear();},

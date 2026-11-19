@@ -55,7 +55,9 @@ import {createContextAccountAuth} from './src/context-account-auth.js';
 import {createContextTransport} from './src/context-transport.js';
 import {createPersonalContext,contextRowSchema,CONTEXT_SOURCES,contextErrorText} from './src/context-service.js';
 import {createDotSources,dotSourcesRowSchema,legacyDigest,decisionKey} from './src/dot-sources.js';
-import {createDotSourceReader} from './src/dot-source-reader.js';
+import {createDotSourceReader,whenText} from './src/dot-source-reader.js';
+import {createDotConnectorLedger} from './src/dot-connector-ledger.js';
+import {createMuseSessionHost,isProjectSessionHeader} from './src/muse-session-host.js';
 import {createTodayController,registerTodayRoutes} from './src/today-route.js';
 import {createTodayHost} from './src/today-host.js';
 import {createTodayProjection} from './src/today-projection.js';
@@ -88,7 +90,7 @@ import {observeWelcomeOutcome} from './src/onboarding-outcome.js';
 import {installBundledWechat} from './src/bundled-wechat.js';
 import {createPersonalProfile,personalProfileRowSchema} from './src/personal-profile.js';
 import {createSuperAgentBridge} from './src/superagent-bridge.js';
-import {createMuseController,registerMuseRoute} from './src/muse-route.js';
+import {buildMuseMemorySnapshot,createMuseController,projectMuseDigest,registerMuseRoute} from './src/muse-route.js';
 import {createMuseIntelligence} from './src/muse-intelligence.js';
 import {createMobileCompanion} from './src/mobile-companion.js';
 export {Config};
@@ -243,6 +245,7 @@ export async function installCompanion(ctx,options={}){
     isClosed:()=>disposed,
   });
   let timer;
+  let mobileNotifyTimer=null;
   let familyRecoveryPending=false,familyRecoveryRunning=false;
   let disposed=false;
   const coordinates=new Set();
@@ -323,10 +326,21 @@ export async function installCompanion(ctx,options={}){
   const museIntelligence=createMuseIntelligence({
     workspaceAccess,
     sessionLedger,
+    readFlomoMemory:async request=>{
+      const caller=await flomoMemoryOwner();
+      if(!caller)throw new Error('请先在桌面连接 flomo。');
+      return context.act(caller,{...request,action:'query',source:'flomo',userRequested:true,signal:lifecycle.signal});
+    },
+    canReadFlomoMemory:async()=>{
+      const caller=await flomoMemoryOwner();
+      if(!caller)return null;
+      const grant=await context.authorization(caller,['flomo']);
+      return JSON.stringify([caller.sessionId,grant]);
+    },
     ...(options.clock?{clock:options.clock}:{}),
     isClosed:()=>disposed,
   });
-  const unsubscribeIntelligence=workspaceAccess.subscribe(()=>{museIntelligence.invalidateBrief();});
+  const unsubscribeIntelligence=workspaceAccess.subscribe(()=>{museIntelligence.invalidateBrief();notifyMobileSoon();});
   const ledgerGrantFor=async cwd=>{
     try{return grantForCwd(cwd,(await workspaceAccess.capture()).grants);}
     catch{return null;}
@@ -387,11 +401,14 @@ export async function installCompanion(ctx,options={}){
     // Preserve host event order even when each authorization requires I/O.
     const pending=ledgerEventTail.then(async()=>{
       if(disposed||!ledgerEligible(sessionId,{foreground:ledgerForeground}))return;
+      const header=(subject?.session??subject)?.header;
+      if(header&&!isProjectSessionHeader(header))return;
       await refreshLedgerForegroundSoon();
       if(!ledgerEligible(sessionId,{foreground:ledgerForeground}))return;
       const cwd=effectiveCwd(ctx,subject);if(!cwd)return;
       const grant=await ledgerGrantFor(cwd);if(!grant||disposed)return;
-      await sessionLedger.apply({sessionId,root:grant.root,projectLabel:String(grant.label??grant.root.split('/').at(-1)??'项目').slice(0,120),title:sessionTitle(subject?.session??subject),...event});
+      const result=await sessionLedger.apply({sessionId,root:grant.root,projectLabel:String(grant.label??grant.root.split('/').at(-1)??'项目').slice(0,120),title:sessionTitle(subject?.session??subject),...event});
+      if(result.changed)notifyMobileSoon();
     });
     ledgerEventTail=pending.catch(()=>{});
     return pending;
@@ -555,7 +572,7 @@ export async function installCompanion(ctx,options={}){
     // once through dotSources.legacyReader; nothing may write it.
     store:{get:key=>contextTable.get(key),put:async()=>{throw Object.assign(new Error('legacy context store is read-only'),{code:'LEGACY_CONTEXT_READ_ONLY'});}},
     dotSources,foregroundSession:dotForegroundSession,foregroundSessionSync:dotForegroundSessionSync,
-    onInvalidate:()=>{contextLoop?.suspend();personalReview?.suspend();},transport:contextTransport,readConfig,readBinding:contextBinding,credentialState:source=>source==='calendar'?calendarCredentials():useSuite(source)?googleSuiteAuth.credentialState(source):null,
+    onInvalidate:()=>{contextLoop?.suspend();personalReview?.suspend();notifyMobileSoon();},transport:contextTransport,readConfig,readBinding:contextBinding,credentialState:source=>source==='calendar'?calendarCredentials():useSuite(source)?googleSuiteAuth.credentialState(source):null,
     canRun:async()=>!disposed&&!lifecycle.signal.aborted&&!await service.isPaused(),
     ...(options.clock?{clock:options.clock}:{}),...(options.hostTimeZone?{hostTimeZone:options.hostTimeZone}:{}),
   });
@@ -572,6 +589,13 @@ export async function installCompanion(ctx,options={}){
   const todayForeground=async()=>{
     try{const setup=await readSetup();if(setup?.state==='bound'&&typeof setup.sessionId==='string'&&setup.sessionId)return setup.sessionId;}catch{}
     return ledgerDesktopSession()||null;
+  };
+  const flomoMemoryOwner=async()=>{
+    if(disposed||await service.isPaused())return null;
+    const sessionId=await todayForeground();
+    const agent=sessionId&&ctx.get('agents',false)?.get?.(sessionId);
+    const cwd=effectiveCwd(ctx,agent);
+    return cwd&&agent.id===sessionId&&await dotForegroundSession(sessionId)?{sessionId,cwd}:null;
   };
   const sessionControllerOf=()=>{try{return ctx.get('sessionController',false);}catch{return null;}};
   // Official front-door contract (0.2.2-rc.1): live agents registry for busy,
@@ -631,6 +655,7 @@ export async function installCompanion(ctx,options={}){
   ctx.effect(()=>async()=>{
     disposed=true;
     lifecycle.abort();
+    clearTimeout(mobileNotifyTimer);
     mobileRelease?.();
     await mobileCompanion?.dispose?.().catch(()=>{});
     goalBoard.close();goalBoardModel.close();unsubscribeIntelligence?.();workspaceAccess.close();
@@ -798,7 +823,10 @@ export async function installCompanion(ctx,options={}){
     isClosed:()=>disposed||lifecycle.signal.aborted,
   });
   const resolveDigestOwner=()=>digestChannel.resolve();
-  const sendDailyDigest=args=>digestChannel.send(args);
+  const sendDailyDigest=async args=>{
+    if((await dotSources.snapshot()).wechatNotificationsEnabled===false)return{status:'blocked',text:'微信简报通知已关闭。'};
+    return digestChannel.send({...args,authorize:()=>dotSources.wechatNotificationsEnabled()});
+  };
   const digestOwner=async execution=>{
     const sessionId=String(execution?.agent?.id??'');
     const family=Boolean(sessionId)&&(sessionId.startsWith('family_')||familyDelegate.matchesSession(sessionId));
@@ -818,21 +846,55 @@ export async function installCompanion(ctx,options={}){
     ...(options.clock?{clock:options.clock}:{}),hostTimeZone:hostZone,
     isClosed:()=>disposed,
     canRun:async()=>!disposed&&!lifecycle.signal.aborted&&!await service.isPaused(),
-    onChange:()=>syncTimer(),
+    onChange:()=>{syncTimer();notifyMobileSoon();},
   });
   await dailyDigest.ready();
   digestRoute=createDigestRoute({digest:dailyDigest,readConnection:readSetup,readOwner:resolveDigestOwner,canRun:async()=>!disposed&&!lifecycle.signal.aborted&&!await service.isPaused(),isClosed:()=>disposed});
+  function notifyMobileSoon(){
+    if(disposed||!mobileCompanion||mobileNotifyTimer)return;
+    mobileNotifyTimer=setTimeout(()=>{
+      mobileNotifyTimer=null;
+      void mobileCompanion.notifyChange().catch(()=>{});
+    },120);
+    mobileNotifyTimer.unref?.();
+  }
+  const canRunMuse=async()=>!disposed&&!lifecycle.signal.aborted&&!await service.isPaused();
+  const museSessionHost=createMuseSessionHost({
+    ctx,ledger:sessionLedger,workspaceAccess,foregroundSession:async()=>ledgerDesktopSession()||null,
+    isForeground:ledgerIsForeground,readForegroundIds:refreshLedgerForeground,canRun:canRunMuse,signal:lifecycle.signal,clock:options.clock,
+    onChange:notifyMobileSoon,waitForLedger:()=>ledgerEventTail,
+  });
+  const connectorLedger=createDotConnectorLedger({
+    dotSources,context,workspaceAccess,readMobile:()=>mobileCompanion?.summary().catch(()=>null),
+    readWechat:async()=>Boolean(await resolveDigestOwner().catch(()=>null)),
+    canEnable:canRunMuse,onChange:notifyMobileSoon,
+  });
+  const readSourceMemoryItems=()=>museIntelligence.readMemoryItems?.()??[];
+  const readMobileSchedule=()=>dotSourceReader.snapshot().events.map(event=>({
+    id:String(event.id),timeLabel:whenText(event.startAt,options.clock?.()??new Date(),hostZone()),
+    title:event.title,subtitle:'',source:'calendar',sourceLabel:'日历',
+    actionLabel:null,actionPrompt:null,statusBadge:null,linkedDossierId:null,
+  }));
   mobileCompanion=createMobileCompanion({
     ...(options.dshHome?{dshHome:options.dshHome}:{}),
     ...(options.mobile||{}),
     syntheticHost:Boolean(options.clock||!ctx.get?.('pluginManager',false)),
     isClosed:()=>disposed,
-    readLiveState:async()=>({
-      profile:await personalProfile.snapshot(),
-      digest:typeof dailyDigest?.desktopSummary==='function'?dailyDigest.desktopSummary():null,
-      superagent:await superAgentBridge.readSynergySnapshot(),
-      workspaceBrief:await museIntelligence.readWorkspaceBrief().catch(()=>null),
-    }),
+    readLiveState:async()=>{
+      const [memorySnapshot,sessions,connectors,workspaceBrief,superagent,messages]=await Promise.all([
+        buildMuseMemorySnapshot({personalProfile,museIntelligence}),
+        museSessionHost.snapshot({includeMessages:true}),connectorLedger.snapshot().catch(()=>null),
+        museIntelligence.readWorkspaceBrief().catch(()=>null),superAgentBridge.readSynergySnapshot(),
+        museSessionHost.readForegroundMessages().catch(()=>undefined),
+      ]);
+      return {...memorySnapshot,...projectMuseDigest(dailyDigest.desktopSummary()),
+        sessions:sessions.dossiers,connectors,workspaceBrief,superagent,messages,scheduleItems:readMobileSchedule()};
+    },
+    readSession:museSessionHost.readSession,readMainMessages:museSessionHost.readForegroundMessages,
+    readConnectors:connectorLedger.snapshot,
+    onToggleConnector:connectorLedger.toggle,onDossierAct:museSessionHost.act,onStreamChat:museSessionHost.streamChat,
+    onMemoryItem:input=>personalProfile.mutateMemoryItem(input,{readSourceItems:readSourceMemoryItems}),
+    onUndoMemory:({undoToken})=>personalProfile.undo({token:undoToken}),
     onAddNote:input=>personalProfile.addNote(input),
     onSetTrait:input=>personalProfile.setTrait(input),
     onRemoveTrait:input=>personalProfile.removeTrait(input),
@@ -841,6 +903,8 @@ export async function installCompanion(ctx,options={}){
   });
   const museController=createMuseController({
     personalProfile,dailyDigest,superAgent:superAgentBridge,museIntelligence,mobileCompanion,
+    readConnections:connectorLedger.snapshot,changeConnector:connectorLedger.toggle,
+    readSessionRows:museSessionHost.snapshot,changeDossier:museSessionHost.desktopAct,undoDossier:museSessionHost.desktopUndo,
     archiveProjectMemory:async({projectRoot,memoryId}={})=>{
       if(disposed||await service.isPaused())throw new Error('项目助理已暂停或关闭，未修改记忆。');
       return memory.forget({root:projectRoot,sessionId:'muse-user-archive',id:memoryId,userRequested:true,authorizeMutation:async()=>!disposed&&!(await service.isPaused())&&await authorizeRoot(projectRoot)});
@@ -848,6 +912,26 @@ export async function installCompanion(ctx,options={}){
     readPromises:()=>dotSourceReader?.snapshot?.()?.promises??[],
     onChange:()=>{syncTimer();void mobileCompanion?.notifyChange?.();},isClosed:()=>disposed,
   });
+  ctx.tools.register(defineTool({
+    name:'dot_session_artifact',
+    description:'读取或更新当前在办会话顶部的唯一产物。多步事项维护一份可勾选清单，交付长文时保存完整 Markdown。同一个会话中可以读取现有产物再原位更新。普通聊天不调用。',
+    parameters:{
+      action:{type:'string',enum:['read','write_todo','write_doc'],required:true},
+      checklist:{type:'array',items:{type:'object',additionalProperties:false,properties:{id:{type:'string',required:true},text:{type:'string',required:true},checked:{type:'boolean',required:true}}}},
+      markdown:{type:'string',description:'文稿全文，保留标题、段落和 Markdown 格式。'},
+    },
+    output:{schema:{type:'object',additionalProperties:true}},
+    async execute(input,{agent,signal}){
+      signal?.throwIfAborted();
+      try{
+        const artifact=input.action==='read'?undefined:input.action==='write_todo'
+          ?{kind:'todo',checklist:input.checklist}
+          :{kind:'doc',markdown:input.markdown};
+        const saved=await museSessionHost.artifactFor(agent,artifact);
+        return saved?{ok:true,artifact:saved}:{ok:false,error:'当前会话无法修改产物。'};
+      }catch{return{ok:false,error:'产物格式有误或会话状态已变化。'};}
+    },
+  }));
 
   const familyRoute={
     getScope:sessionId=>familyDelegate.scopeFor(sessionId),
@@ -1661,7 +1745,7 @@ export async function installCompanion(ctx,options={}){
           if(args.action==='profile_remember'){
             const source=standaloneBinding(callerId)?'wechat':'agent';
             if(typeof args.traitLabel==='string'&&args.traitLabel.trim()&&typeof args.traitValue==='string'&&args.traitValue.trim()){
-              const res=await personalProfile.setTrait({category:args.traitCategory??'custom',label:args.traitLabel,value:args.traitValue});
+              const res=await personalProfile.setTrait({category:args.traitCategory??'custom',label:args.traitLabel,value:args.traitValue,sourceKind:'chat'});
               if(!res.ok)return{status:'blocked',accepted:false,...(res.code?{code:res.code}:{}),text:res.error};
               let syncNote='';
               if((args.traitCategory==='rhythm'||/早报|简报|读报/.test(args.traitLabel))&&typeof dailyDigest?.configureRhythm==='function'){
@@ -1907,7 +1991,7 @@ export async function installCompanion(ctx,options={}){
   ctx.on('agent/inbox/claimed',payload=>{
     if(!payload?.agent?.id||!payload.message?.id||!Number.isInteger(payload.turn))return;
     const sessionId=String(payload.agent.id),messageId=String(payload.message.id);
-    track(async()=>{await quickAck(sessionId,messageId);});
+    if(!museSessionHost.isMobileAdmission(sessionId,messageId))track(async()=>{await quickAck(sessionId,messageId);});
     track(async()=>{await taskResults.claimed({sessionId,messageId,turn:payload.turn,sourceKind:payload.message.source?.kind,sourceCallId:payload.message.source?.callId});await personalReview.reconcileJobs();});
   });
   ctx.on('agent/inbox/discarded',payload=>{
@@ -1916,6 +2000,8 @@ export async function installCompanion(ctx,options={}){
   });
   ctx.on('session/event',(session,event)=>{
     if(disposed||!session?.id||!event)return;
+    if((ledgerForeground.has(session.id)||ledgerDesktopSession()===session.id)&&
+      ['user/message','assistant/message','turn/end'].includes(event.type))notifyMobileSoon();
     // Ledger first: the watched-project recorder below drops every event whose
     // root is not followed, and the ledger's scope is workspace authorization.
     const ledgerAt=Number.isFinite(event.time)?new Date(event.time).toISOString():new Date().toISOString();

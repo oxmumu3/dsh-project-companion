@@ -36,14 +36,15 @@ export const createDigestOwnerChannel = ({readSetup, readBridge, readBinding, is
   };
   return {
     resolve,
-    async send({owner, text, requestId}) {
-      if (isClosed()) return {status: 'blocked'};
+    async send({owner, text, requestId, authorize = () => true}) {
+      const permitted = () => !isClosed() && authorize() === true;
+      if (!permitted()) return {status: 'blocked'};
       const current = await resolve();
-      if (!sameDigestOwner(owner, current)) return {status: 'blocked'};
+      if (!permitted() || !sameDigestOwner(owner, current)) return {status: 'blocked'};
       const bridge = readBridge();
       if (!bridge || typeof bridge.send !== 'function') return {status: 'blocked'};
       try {
-        const result = await bridge.send({sessionId: owner.sessionId, expectedBinding: owner.bindingKey, requestId, text, authorize: () => !isClosed()});
+        const result = await bridge.send({sessionId: owner.sessionId, expectedBinding: owner.bindingKey, requestId, text, authorize: permitted});
         return {status: result?.status === 'accepted' ? 'reported_sent' : result?.status === 'blocked' ? 'blocked' : 'uncertain'};
       } catch { return {status: 'uncertain'}; }
     },

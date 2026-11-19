@@ -1,5 +1,5 @@
 /**
- * Pure presentation model for DSH Dot Muse v3.1 ("私人幕僚长 · 一屏一焦点").
+ * Pure presentation model for the DSH Dot Muse desktop views.
  * Reuses `buildToday` / `atText` from `../today-model.js` to prevent
  * divergence in session/promise semantics, and layers on Calendar timeline,
  * Daily Digest rhythm, Personal Profile memory, and Standalone/Synergy views.
@@ -9,6 +9,82 @@ import {atText, buildToday} from '../today-model.js';
 const clean = value => typeof value === 'string'
   ? value.replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim()
   : '';
+
+const SESSION_STATUS = {
+  wait: {rank: 0, label: '待你拍板'},
+  run: {rank: 1, label: '推进中'},
+  done: {rank: 2, label: '成稿就绪'},
+  quiet: {rank: 3, label: '跟进中'},
+};
+const STATE_STATUS = {needs_you: 'wait', stuck: 'wait', doing: 'run', done: 'done'};
+
+function workspaceTitle(value) {
+  return clean(clean(value).split(/[\\/]+/).filter(Boolean).at(-1)) || '个人事务';
+}
+
+function sessionModel(row, now) {
+  const archived = row.archived === true || row.state === 'handled';
+  const status = archived ? 'done' : Object.hasOwn(SESSION_STATUS, row.status) ? row.status
+    : Object.hasOwn(STATE_STATUS, row.state) ? STATE_STATUS[row.state] : 'quiet';
+  const statusLabel = archived ? '已办妥' : SESSION_STATUS[status].label;
+  const checklist = Array.isArray(row.checklist) ? row.checklist.filter(Boolean) : [];
+  let progressLabel = '';
+  if (row.artifactKind === 'doc') {
+    progressLabel = row.artifactWordCount > 0 ? `完整成稿 · ${row.artifactWordCount} 字` : '完整成稿';
+  } else if (checklist.length) {
+    progressLabel = `${checklist.filter(item => item.checked === true).length}/${checklist.length} 步`;
+  } else if (Number.isFinite(row.progress)) {
+    progressLabel = `${Math.round(row.progress * 100)}%`;
+  }
+  const updatedAt = row.updatedAt ?? row.at ?? null;
+  return {
+    ...row,
+    id: row.id || row.sessionId,
+    title: clean(row.title) || '未命名会话',
+    workspaceTitle: workspaceTitle(row.workspaceTitle || row.projectName || row.workspaceRoot),
+    archived,
+    status,
+    statusLabel,
+    progressLabel,
+    whyHere: clean(row.whyHere || row.summary || row.what),
+    updatedAt,
+    relativeTime: clean(row.relativeTime) || atText(updatedAt, now),
+  };
+}
+
+const byNewest = (a, b) => (Date.parse(b.updatedAt) || 0) - (Date.parse(a.updatedAt) || 0);
+
+function sessionFocusCard(session) {
+  return {
+    key: `dossier:${session.id}`,
+    kind: 'session',
+    session,
+    sourceLabel: `工作区 ${session.workspaceTitle}`,
+    timeText: session.relativeTime,
+    title: session.title,
+    body: session.whyHere,
+  };
+}
+
+const CONNECTOR_GROUPS = [
+  {id: 'mac_base', title: '这台 Mac 与工作区底座', items: [
+    {id: 'mac_bridge', title: 'Mac 守护桥', subtitle: '连接 iPhone 与此 Mac 的工作会话'},
+    {id: 'workspace_grants', title: 'Mac 工作区目录读取范围', subtitle: '仅使用已授权工作区'},
+  ]},
+  {id: 'external_apps', title: '外部信息与效率应用', items: [
+    {id: 'google_suite', title: 'Google 三件套（Gmail · 日历 · Drive）', subtitle: '邮件检索与草稿、日程和云端文档'},
+    {id: 'flomo', title: 'flomo 浮墨笔记', subtitle: '按需查找笔记'},
+    {id: 'dida', title: '滴答清单', subtitle: '查看待办与截止时间'},
+    {id: 'wechat', title: '微信通知', subtitle: '接收早报与需要你拍板的提醒'},
+  ]},
+  {id: 'iphone_system', title: 'iPhone 随身端系统感知与配对状态', items: [
+    {id: 'ios_eventkit', title: '系统日历与提醒事项'},
+    {id: 'ios_health', title: 'Apple Health 睡眠与运动'},
+    {id: 'ios_location', title: '地理位置感知'},
+    {id: 'ios_focus', title: '专注模式联动'},
+    {id: 'ios_voice_vision', title: '语音听写与相机扫描'},
+  ]},
+];
 
 function greetingPrefix(now) {
   const hour = now.getHours();
@@ -73,6 +149,21 @@ export function buildMuseViewModel({
     sample: activity?.sample === true,
     loading,
   });
+  const wireSessions = [muse?.dossiers, activity?.dossiers, muse?.carouselCards, activity?.carouselCards]
+    .find(Array.isArray);
+  const v10 = Boolean(wireSessions);
+  const sessions = (wireSessions ?? [])
+    .filter(row => row?.id || row?.sessionId)
+    .map(row => sessionModel(row, safeNow));
+  const carouselCards = sessions.filter(row => !row.archived)
+    .sort((a, b) => SESSION_STATUS[a.status].rank - SESSION_STATUS[b.status].rank || byNewest(a, b));
+  const archivedSessions = sessions.filter(row => row.archived).sort(byNewest);
+  const groupedSessions = new Map();
+  for (const session of carouselCards) {
+    if (!groupedSessions.has(session.workspaceTitle)) groupedSessions.set(session.workspaceTitle, []);
+    groupedSessions.get(session.workspaceTitle).push(session);
+  }
+  const sessionGroups = Array.from(groupedSessions, ([workspaceTitle, items]) => ({workspaceTitle, items}));
 
   const superagentRaw = activity?.superagent ?? muse?.superagent ?? null;
   const mode = superagentRaw?.mode === 'synergy' ? 'synergy' : 'standalone';
@@ -85,15 +176,17 @@ export function buildMuseViewModel({
     lastQueued: superagentRaw?.lastQueued ?? null,
   };
 
-  const profileRaw = activity?.profile ?? muse?.profile ?? null;
+  const profileRaw = muse?.profile ?? activity?.profile ?? null;
   const profile = {
     revision: profileRaw?.revision ?? 0,
     traits: Array.isArray(profileRaw?.traits) ? profileRaw.traits : [],
     notes: Array.isArray(profileRaw?.notes) ? profileRaw.notes : [],
     updatedAt: profileRaw?.updatedAt ?? null,
   };
+  const memoryItems = [muse?.memoryItems, activity?.memoryItems, profileRaw?.memoryItems].find(Array.isArray);
+  const routines = [muse?.routines, activity?.routines].find(Array.isArray) ?? [];
 
-  const digestRaw = activity?.digest ?? muse?.digest ?? null;
+  const digestRaw = muse?.digest ?? activity?.digest ?? null;
   const digest = {
     enabled: digestRaw?.enabled !== false,
     dailyTime: digestRaw?.dailyTime ?? '09:00',
@@ -117,6 +210,7 @@ export function buildMuseViewModel({
       deviceName: clean(mobileRaw.deviceName) || 'Mac',
       tunnelReady: mobileRaw.tunnelReady === true,
       bridgeActive: mobileRaw.bridgeActive === true,
+      iphoneSystem: Array.isArray(mobileRaw.iphoneSystem) ? mobileRaw.iphoneSystem : [],
       lanUrl: clean(mobileRaw.lanUrl) || null,
       lastPairedAt: mobileRaw.lastPairedAt || null,
     }
@@ -132,9 +226,9 @@ export function buildMuseViewModel({
     allDay: ev.allDay === true,
   }));
 
-  // Build unified focus candidate pool; strictly ONE elevated card stays on top.
-  const candidates = [];
-  for (const item of today.urgent) {
+  // Keep the desktop focus card and rank active sessions in its candidate list.
+  const candidates = carouselCards.map(sessionFocusCard);
+  for (const item of v10 ? [] : today.urgent) {
     const key = `session:${item.projectId}:${item.cardId ?? item.state}`;
     const hasDistinctSecond = Boolean(item.second && item.secondAct);
     candidates.push({
@@ -440,6 +534,36 @@ export function buildMuseViewModel({
       state: readerRow?.state ?? (row?.enabled ? 'ready' : 'off'),
     };
   });
+  const wireConnectors = [muse?.connectors, activity?.connectors].find(Array.isArray);
+  const workspaceList = [muse?.mountedWorkspaces, activity?.mountedWorkspaces, activity?.access?.workspaces].find(Array.isArray) ?? [];
+  const mountedWorkspaces = Array.from(new Set(workspaceList
+    .map(item => typeof item === 'string' ? item : item?.label || item?.title || item?.path)
+    .filter(item => clean(item))
+    .map(workspaceTitle)));
+  const contextMode = muse?.contextMode ?? activity?.contextMode ?? wireConnectors?.find(row => row?.id === 'workspace_grants')?.contextMode;
+  const wechatConnected = activity?.connection?.wechat === 'bound' || workbench?.connection?.state === 'bound';
+  const legacyConnectorStates = {
+    mac_bridge: {enabled: mobile?.bridgeActive === true, connected: mobile?.bridgeActive === true},
+    workspace_grants: {enabled: mountedWorkspaces.length > 0},
+    google_suite: {enabled: connectionSources.some(row => ['gmail', 'calendar', 'drive', 'docs'].includes(row.id) && row.enabled)},
+    flomo: {enabled: connectionSources.some(row => row.id === 'flomo' && row.enabled)},
+    dida: {enabled: connectionSources.some(row => row.id === 'dida' && row.enabled)},
+    wechat: {enabled: wechatConnected, connected: wechatConnected},
+  };
+  const connectorGroups = CONNECTOR_GROUPS.map(group => ({
+    ...group,
+    items: group.items.map(base => {
+      const reported = group.id === 'iphone_system' && mobile?.paired
+        ? mobile.iphoneSystem.find(row => row?.id === base.id && typeof row.enabled === 'boolean')
+        : null;
+      const wire = reported ?? wireConnectors?.find(row => row?.id === base.id);
+      const defaults = wireConnectors ? null : legacyConnectorStates[base.id];
+      return {...base, ...defaults, ...wire, group: group.id, known: Boolean(wire || defaults)};
+    }),
+  }));
+  const connectorItems = connectorGroups.flatMap(group => group.items).filter(row => row.known);
+  const connectorEnabledCount = connectorItems.filter(row => row.enabled === true).length;
+  const connectorTotalCount = connectorItems.length;
 
   const dateText = new Intl.DateTimeFormat('zh-CN', {
     month: 'long',
@@ -459,6 +583,8 @@ export function buildMuseViewModel({
     mode,
     superagent,
     profile,
+    memoryItems,
+    routines,
     traitGroups,
     digest,
     workspaceBrief,
@@ -471,13 +597,27 @@ export function buildMuseViewModel({
     events,
     focus,
     folded,
+    v10,
+    carouselCards,
+    todayFocus: carouselCards[0] ?? null,
+    sessionGroups,
+    archivedSessions,
     workspaceRows,
     threads,
     connectionSources,
+    connectorGroups,
+    connectorEnabledCount,
+    connectorTotalCount,
+    contextMode,
+    mountedWorkspaces,
     dateText,
-    greeting: `${greetingPrefix(safeNow)}，${today.urgent.length > 0 ? '先看这一件事就够了' : mode === 'synergy' && milestones.length > 0 ? '有一条协同进度等你点头' : today.promises.length > 0 ? '把挂心的小事顺手收一收' : '今天节奏正好'}`,
+    greeting: `${greetingPrefix(safeNow)}，${carouselCards.length > 0
+      ? `有 ${carouselCards.length} 件在办`
+      : !v10 && today.urgent.length > 0 ? '先看这一件事就够了'
+        : mode === 'synergy' && milestones.length > 0 ? '有一条协同进度等你点头'
+          : today.promises.length > 0 ? '把挂心的小事顺手收一收' : '今天节奏正好'}`,
     heroSubline,
-    wechatConnected: activity?.connection?.wechat === 'bound' || workbench?.connection?.state === 'bound',
+    wechatConnected,
     sourceProblems: today.sourceProblems,
     sourcePartials: today.sourcePartials,
     sample: today.sample,

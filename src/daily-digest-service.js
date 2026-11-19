@@ -304,6 +304,7 @@ export function createDailyDigest({store, readSource, readLedger = async () => [
         isQuietToday,
         lastStatus: state?.lastStatus ?? null,
         lastDay: state?.lastDay ?? null,
+        lastAttemptAt: state?.lastAttemptAt ?? null,
         lastDigestAt: state?.lastDigestAt ?? null,
         lastDigest: state?.lastDigest ? structuredClone(state.lastDigest) : null,
       };
@@ -359,6 +360,7 @@ export function createDailyDigest({store, readSource, readLedger = async () => [
             isQuietToday: quietDate === todayDay,
             lastStatus: row.lastStatus,
             lastDay: row.lastDay,
+            lastAttemptAt: row.lastAttemptAt,
             lastDigestAt: row.lastDigestAt,
             lastDigest: row.lastDigest ? structuredClone(row.lastDigest) : null,
           },

@@ -514,3 +514,131 @@ test('MuseMemoryView renders stale project memory review cards and dispatches ar
     {action: 'project_memory_keep_stale', projectRoot: '/tmp/alpha', memoryId: 'stale-99'},
   ]);
 });
+
+const v10Snapshot = {
+  dossiers: [
+    {id: 'doc', title: '上线使用手册', workspaceTitle: 'Writing/', status: 'done', artifactKind: 'doc', artifactWordCount: 1650},
+    {id: 'running', title: '跑回归', workspaceTitle: 'Agent', state: 'doing'},
+    {id: 'archived', title: '旧提案', workspaceTitle: 'Finvo/', status: 'done', archived: true},
+    {id: 'wait', title: '确认排期', workspaceTitle: '/work/Agent/', state: 'stuck', checklist: [{id: '1', checked: true}, {id: '2', checked: false}]},
+    {id: 'quiet', title: '收拢素材', workspaceTitle: '', status: 'quiet'},
+  ],
+  memoryItems: [
+    {id: 'm1', text: '报价先用英文', active: true, category: 'preference', provenance: '来自 Finvo 对话', effect: '用于报价邮件'},
+  ],
+  routines: [
+    {id: 'daily-digest', title: '晨报', active: true, scheduleLabel: '每日 09:00', lastReceipt: '今早找到两件待拍板事项'},
+  ],
+  connectors: [
+    {id: 'mac_bridge', group: 'mac_base', connected: true, enabled: true, statusText: '已连接'},
+    {id: 'workspace_grants', group: 'mac_base', enabled: true, canToggle: true},
+    {id: 'google_suite', group: 'external_apps', connected: false, enabled: false, canToggle: true},
+    {id: 'flomo', group: 'external_apps', connected: true, enabled: true, canToggle: true},
+    {id: 'dida', group: 'external_apps', connected: false, enabled: false, canToggle: true},
+    {id: 'wechat', group: 'external_apps', connected: false, enabled: false, canToggle: false},
+  ],
+  contextMode: 'full_local',
+  mountedWorkspaces: ['Agent/', 'Finvo'],
+  mobile: {paired: true, pairedCount: 2},
+};
+
+test('Muse v10 maps the four status states and excludes archived work from Today', () => {
+  const model = buildMuseViewModel({activity: sampleActivity(), muse: v10Snapshot});
+  assert.deepEqual(model.carouselCards.map(card => [card.id, card.workspaceTitle, card.status, card.statusLabel]), [
+    ['wait', 'Agent', 'wait', '待你拍板'],
+    ['running', 'Agent', 'run', '推进中'],
+    ['doc', 'Writing', 'done', '成稿就绪'],
+    ['quiet', '个人事务', 'quiet', '跟进中'],
+  ]);
+  assert.equal(model.todayFocus.id, 'wait');
+  assert.deepEqual(model.sessionGroups.map(group => [group.workspaceTitle, group.items.map(item => item.id)]), [
+    ['Agent', ['wait', 'running']],
+    ['Writing', ['doc']],
+    ['个人事务', ['quiet']],
+  ]);
+  assert.deepEqual(model.archivedSessions.map(item => item.id), ['archived']);
+  assert.equal(buildMuseViewModel({activity: sampleActivity(), muse: {dossiers: []}}).todayFocus, null);
+});
+
+test('Muse v10 shows the active cards, opens native sessions and restores an archived session', async t => {
+  const {createMuseViews} = await loadMuseViews(t);
+  const {React, expand} = runtime();
+  const {MuseWorkbench} = createMuseViews(React);
+  const model = buildMuseViewModel({muse: v10Snapshot});
+  const actions = [];
+  const opened = [];
+  const render = tab => expand(React.createElement(MuseWorkbench, {
+    model, tab, onMuseAct: payload => actions.push(payload), onOpenSession: id => opened.push(id),
+  }));
+  const today = render('today');
+  assert.deepEqual(findAll(today, item => hasClass(item, 'muse-focus-card')).map(item => item.props['data-muse-focus-card']), ['session']);
+  assert.equal(findAll(today, item => item.props['data-muse-session-open'] === 'archived').length, 0);
+  const tree = render('threads');
+  assert.match(allText(tree), /在办/);
+  for (const status of ['wait', 'run', 'done', 'quiet']) {
+    assert.ok(findAll(tree, item => hasClass(item, 'muse-session-dot') && hasClass(item, `is-${status}`)).length);
+  }
+  assert.match(allText(tree), /1\/2 步/);
+  assert.match(allText(tree), /1650 字/);
+  findAll(tree, item => item.props['data-muse-session-open'] === 'wait')[0].props.onClick();
+  findAll(tree, item => item.props['data-muse-session-complete'] === 'wait')[0].props.onClick();
+  const archive = findAll(tree, item => item.props['data-muse-session-archive'])[0];
+  assert.equal(archive.type, 'details');
+  assert.equal(archive.props.open, undefined);
+  assert.match(allText(archive), /查看已办妥与全部历史会话/);
+  findAll(archive, item => item.props['data-muse-session-reopen'] === 'archived')[0].props.onClick();
+  assert.deepEqual(opened, ['wait']);
+  assert.deepEqual(actions, [
+    {action: 'dossier_act', id: 'wait', operation: 'complete'},
+    {action: 'dossier_act', id: 'archived', operation: 'reopen'},
+  ]);
+});
+
+test('Muse v10 renders memory provenance, effects, real routine receipts, and grouped connector state', async t => {
+  const {createMuseViews} = await loadMuseViews(t);
+  const {React, expand} = runtime();
+  const {MuseWorkbench} = createMuseViews(React);
+  const model = buildMuseViewModel({muse: v10Snapshot});
+  const actions = [];
+  const render = tab => expand(React.createElement(MuseWorkbench, {model, tab, onMuseAct: payload => actions.push(payload)}));
+  const memory = render('memory');
+  assert.match(allText(memory), /来自 Finvo 对话.*用于报价邮件/);
+  assert.match(allText(memory), /今早找到两件待拍板事项/);
+  findAll(memory, item => item.props['data-muse-memory-toggle'] === 'm1')[0].props.onClick();
+  findAll(memory, item => item.props['data-muse-note-delete'] === 'm1')[0].props.onClick();
+  const connections = render('connections');
+  assert.deepEqual(findAll(connections, item => item.props['data-muse-connector-group']).map(item => item.props['data-muse-connector-group']), [
+    'mac_base', 'external_apps', 'iphone_system',
+  ]);
+  assert.match(allText(connections), /已开 3\/6 项/);
+  assert.match(allText(connections), /Agent · Finvo/);
+  assert.match(allText(connections), /2 台 iPhone/);
+  const external = findAll(connections, item => item.props['data-muse-connector-group'] === 'external_apps')[0];
+  assert.deepEqual(findAll(external, item => item.props['data-muse-connector']).map(item => item.props['data-muse-connector']), [
+    'google_suite', 'flomo', 'dida', 'wechat',
+  ]);
+  findAll(external, item => item.props['data-muse-connector-toggle'] === 'flomo')[0].props.onClick();
+  assert.deepEqual(actions, [
+    {action: 'memory_item', id: 'm1', active: false},
+    {action: 'memory_item', id: 'm1', remove: true},
+    {action: 'connector_toggle', id: 'flomo', enabled: false},
+  ]);
+});
+
+test('Muse v10 counts only iPhone permissions an actual paired device reported', async t => {
+  const {createMuseViews} = await loadMuseViews(t);
+  const {React, expand} = runtime();
+  const {MuseConnectionsView} = createMuseViews(React);
+  const iphoneSystem = [{id: 'ios_eventkit', enabled: true, statusText: '已同步日历与提醒'}];
+  const render = paired => expand(React.createElement(MuseConnectionsView, {
+    model: buildMuseViewModel({muse: {...v10Snapshot, mobile: {paired, iphoneSystem}}}),
+  }));
+  const paired = render(true);
+  const unpaired = render(false);
+  assert.match(allText(paired), /已开 4\/7 项/);
+  assert.match(allText(paired), /已同步日历与提醒/);
+  assert.match(allText(unpaired), /已开 3\/6 项/);
+  assert.doesNotMatch(allText(unpaired), /已同步日历与提醒/);
+  const health = findAll(paired, item => item.props['data-muse-connector'] === 'ios_health')[0];
+  assert.match(allText(health), /在 iPhone 查看/);
+});

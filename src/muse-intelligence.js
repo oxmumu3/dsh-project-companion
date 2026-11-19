@@ -9,15 +9,23 @@
  *    communication tone and matching workspace context) + stores inline edits.
  */
 import { constants } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { lstat, open, realpath } from 'node:fs/promises';
 import { join } from 'node:path';
 import { cleanGoalSource } from './goal-board-collect.js';
-import { readProjectFiles, safeProjectRoot } from './sources.js';
+import { memoryRelativeTime } from './personal-profile.js';
+import { readProjectFiles, readWorkspaceExperience, safeProjectRoot } from './sources.js';
 
 const MAX_SCAN_WORKSPACES = 6;
 const MAX_PROMISE_DRAFTS = 6;
 const MAX_CUSTOM_DRAFTS = 30;
 const PKG_BYTES = 16 * 1024;
+const MAX_EXPERIENCES_PER_WORKSPACE = 8;
+const MAX_FLOMO_MEMORIES = 5;
+const DAY_MS = 86_400_000;
+const EXPERIENCE_METADATA = new Set(['id', '标识', 'created', 'updatedat', 'last_hit', '更新日期', 'tags', 'hit_count', 'promoted']);
+const EXPERIENCE_EFFECT = new Set(['effect', '效果', '生效', '如何生效']);
+const flomoDay = new Intl.DateTimeFormat('zh-CN', {month: 'numeric', day: 'numeric', timeZone: 'UTC'});
 
 const stripControls = (value, max = 500, { allowNewlines = false } = {}) => {
   const raw = String(value ?? '');
@@ -115,10 +123,90 @@ function matchWorkspaceForPromise(promiseRow, workspaces) {
   return workspaces.length === 1 ? workspaces[0] : null;
 }
 
+function stableMemoryId(source, ...identity) {
+  return `${source}-${createHash('sha256').update(JSON.stringify(identity)).digest('hex').slice(0, 32)}`;
+}
+
+function isoDate(value) {
+  const timestamp = Date.parse(value);
+  return Number.isFinite(timestamp) ? new Date(timestamp).toISOString() : '';
+}
+
+function memoryText(value, max = 500) {
+  return stripControls(cleanGoalSource(value, max * 2)
+    .replace(/<[^>]*>/g, ' ')
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
+    .replace(/\*\*([^*]+)\*\*/g, '$1')
+    .replace(/\x60([^\x60]+)\x60/g, '$1'), max).replace(/[\uD800-\uDBFF]$/u, '');
+}
+
+function projectWorkspaceExperiences(row, grant, now) {
+  if (row?.status !== 'ok' || typeof row.text !== 'string') return [];
+  const fallbackAt = isoDate(row.modifiedAt);
+  if (!fallbackAt) return [];
+  const lines = row.text.replace(/<!--[\s\S]*?(?:-->|$)/g, '').split(/\r?\n/);
+  const headings = [];
+  const fallback = [];
+  let fenced = false;
+  let current = null;
+  for (const raw of lines) {
+    const line = raw.trim();
+    if (/^(?:```|~~~)/u.test(line)) {
+      fenced = !fenced;
+      continue;
+    }
+    if (fenced || !line) continue;
+    const heading = /^#{2,6}\s+(.+)$/u.exec(line);
+    if (heading) {
+      const match = /^(EXP-\d{4}-\d{2}-\d{2}-[A-Za-z0-9_-]+)\s*[·：:\-]?\s*(.*)$/iu.exec(heading[1]);
+      const text = memoryText(match?.[2] || heading[1]);
+      current = !text || /^(?:已确认|待确认|进行中|项目经验|经验记录|待审候选|历史记录)$/u.test(text)
+        ? null
+        : {text, key: match?.[1] ?? text, at: isoDate(match?.[1].slice(4, 14))};
+      if (current) headings.push(current);
+      continue;
+    }
+    const content = line.replace(/^(?:[-*+]\s+|\d+\.\s+)/u, '');
+    const detail = /^\x60?([^:：`]+)\x60?[:：]\s*(.+)$/u.exec(content);
+    if (detail) {
+      const label = detail[1].trim().toLowerCase();
+      if (current && EXPERIENCE_EFFECT.has(label)) current.effect = memoryText(detail[2], 240);
+      if (current && ['id', '标识'].includes(label)) current.key = memoryText(detail[2], 240) || current.key;
+      if (current && ['created', 'updatedat', 'last_hit', '更新日期'].includes(label)) {
+        current.at = isoDate(detail[2]) || current.at;
+      }
+      if (EXPERIENCE_METADATA.has(label) || EXPERIENCE_EFFECT.has(label)) continue;
+    }
+    if (content !== line) {
+      const text = memoryText(content);
+      if (text) fallback.push({text, key: text, at: fallbackAt});
+    }
+  }
+
+  const provenance = `来自 ${memoryText(grant.label, 80) || '工作区'} · .agent/memory/experience.md`;
+  return (headings.length ? headings : fallback).slice(0, MAX_EXPERIENCES_PER_WORKSPACE).map(item => {
+    const updatedAt = item.at || fallbackAt;
+    return {
+      id: stableMemoryId('workspace', grant.id ?? grant.workspaceId, item.key),
+      text: item.text,
+      active: true,
+      category: 'context',
+      sourceKind: 'workspace',
+      provenance,
+      effect: item.effect || '作为工作区经验参考',
+      updatedAt,
+      relativeTime: memoryRelativeTime(updatedAt, now),
+    };
+  });
+}
+
 export function createMuseIntelligence({
   workspaceAccess,
   sessionLedger = null,
   readProject = readProjectFiles,
+  readExperience = readWorkspaceExperience,
+  readFlomoMemory = null,
+  canReadFlomoMemory = null,
   inspectProjectMemory = null,
   clock = () => new Date(),
   isClosed = () => false,
@@ -130,6 +218,8 @@ export function createMuseIntelligence({
   const dismissedStaleKeys = new Set();
   const customDrafts = new Map();
   const synthesizedDrafts = new Map();
+  let flomoCache = null;
+  let flomoRefresh = 0;
 
   const nowDate = () => {
     const d = typeof clock === 'function' ? clock() : new Date();
@@ -191,7 +281,7 @@ export function createMuseIntelligence({
       }
       let files = [];
       try {
-        files = await readProject(grant.root);
+        files = await readProject(grant.root, {curatedOnly: captured.contextMode === 'curated_only'});
       } catch {
         files = [];
       }
@@ -210,7 +300,7 @@ export function createMuseIntelligence({
         : readmeRow?.status === 'ok'
           ? summarizeMarkdownSnippet(readmeRow.text, 120)
           : '';
-      if (!summary) {
+      if (!summary && captured.contextMode !== 'curated_only') {
         summary = await readSafePackageDescription(grant.root);
       }
       if (!summary && latestProgress) {
@@ -272,9 +362,104 @@ export function createMuseIntelligence({
     return structuredClone(cachedBrief);
   }
 
+  function workspaceAuthorized(captured) {
+    return !isClosed() && Boolean(captured) &&
+      (typeof workspaceAccess?.authorizeSync !== 'function' || workspaceAccess.authorizeSync(captured) === true);
+  }
+
+  async function readWorkspaceMemory() {
+    let captured;
+    try {
+      captured = await workspaceAccess?.capture?.();
+      if (!workspaceAuthorized(captured) || !Array.isArray(captured.grants)) return null;
+      const items = [];
+      for (const grant of captured.grants.slice(0, MAX_SCAN_WORKSPACES)) {
+        if (!workspaceAuthorized(captured)) return null;
+        try {
+          const row = await readExperience(grant.root);
+          items.push(...projectWorkspaceExperiences(row, grant, nowDate()));
+        } catch {
+          // One unavailable workspace does not obscure other granted memories.
+        }
+      }
+      await workspaceAccess?.assertCurrent?.(captured);
+      return workspaceAuthorized(captured) ? {captured, items} : null;
+    } catch {
+      return null;
+    }
+  }
+
+  async function flomoAuthorization() {
+    if (isClosed() || typeof canReadFlomoMemory !== 'function') return null;
+    try {
+      const scope = await canReadFlomoMemory();
+      return !isClosed() && typeof scope === 'string' && scope ? scope : null;
+    } catch {
+      return null;
+    }
+  }
+
+  async function refreshFlomoMemory() {
+    if (typeof readFlomoMemory !== 'function') {
+      return {ok: false, code: 'UNAVAILABLE', error: 'flomo 记忆暂不可用。'};
+    }
+    const generation = ++flomoRefresh;
+    const scope = await flomoAuthorization();
+    if (!scope) {
+      return {ok: false, code: 'FLOMO_NOT_ENABLED', error: '请先在「连接」里启用 flomo。'};
+    }
+    const now = nowDate();
+    try {
+      const from = new Date(now.getTime() - 7 * DAY_MS).toISOString();
+      const to = now.toISOString();
+      const result = await readFlomoMemory({operation: 'recent', from, to, limit: MAX_FLOMO_MEMORIES});
+      if (await flomoAuthorization() !== scope || generation !== flomoRefresh) {
+        return {ok: false, code: 'FLOMO_ACCESS_CHANGED', error: 'flomo 连接已变化，请重新读取。'};
+      }
+      if (!Array.isArray(result?.items)) throw new Error('Unexpected flomo result');
+      const items = [];
+      for (const row of result.items.slice(0, MAX_FLOMO_MEMORIES)) {
+        const createdAt = isoDate(row?.createdAt);
+        const text = memoryText(row?.text ?? row?.title);
+        if (typeof row?.id !== 'string' || !row.id || !text || !createdAt || createdAt < from || createdAt > to) continue;
+        const updatedAt = isoDate(row.updatedAt) || createdAt;
+        const day = flomoDay.format(new Date(createdAt));
+        items.push({
+          id: stableMemoryId('flomo', row.id),
+          text,
+          active: true,
+          category: 'note',
+          sourceKind: 'flomo',
+          provenance: `来自 flomo · ${day} 笔记`,
+          effect: '在记忆中保留笔记供查阅',
+          updatedAt,
+        });
+      }
+      flomoCache = {scope, items};
+      return {ok: true, text: items.length ? `已更新 ${items.length} 条 flomo 笔记` : '最近 7 天没有可展示的 flomo 笔记'};
+    } catch {
+      return {ok: false, code: 'FLOMO_READ_FAILED', error: '暂时读不到 flomo 笔记，请稍后重试。'};
+    }
+  }
+
+  async function readMemoryItems() {
+    const workspace = await readWorkspaceMemory();
+    const source = flomoCache;
+    let flomo = [];
+    if (source) {
+      const scope = await flomoAuthorization();
+      if (source === flomoCache) {
+        if (scope !== source.scope) flomoCache = null;
+        else flomo = source.items.map(item => ({...item, relativeTime: memoryRelativeTime(item.updatedAt, nowDate())}));
+      }
+    }
+    const local = workspaceAuthorized(workspace?.captured) ? workspace.items : [];
+    return [...local, ...flomo];
+  }
+
   function readPromiseDrafts({ promises = [], workspaceBrief = null, profile = null } = {}) {
     if (isClosed() || !Array.isArray(promises) || promises.length === 0) return {};
-    const traits = Array.isArray(profile?.traits) ? profile.traits : [];
+    const traits = Array.isArray(profile?.traits) ? profile.traits.filter(item => item.active !== false) : [];
     const toneTrait = traits.find(item => item?.category === 'tone');
     const focusTrait = traits.find(item => item?.category === 'focus');
     const workspaces = Array.isArray(workspaceBrief?.workspaces) ? workspaceBrief.workspaces : [];
@@ -450,7 +635,7 @@ export function createMuseIntelligence({
 
       let progressDoneLines = [];
       try {
-        const files = await readProject(grant.root);
+        const files = await readProject(grant.root, {curatedOnly: captured.contextMode === 'curated_only'});
         const progressRow = (Array.isArray(files) ? files : []).find(row => row?.path === '.agent/memory/progress.md');
         if (progressRow?.status === 'ok' && typeof progressRow.text === 'string') {
           progressDoneLines = progressRow.text
@@ -505,6 +690,8 @@ export function createMuseIntelligence({
 
   return {
     readWorkspaceBrief,
+    readMemoryItems,
+    refreshFlomoMemory,
     peekWorkspaceBrief() {
       return cachedBrief ? structuredClone(cachedBrief) : null;
     },

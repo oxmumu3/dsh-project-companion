@@ -6,12 +6,18 @@ import os from 'node:os';
 import path from 'node:path';
 import { URL } from 'node:url';
 import { promisify } from 'node:util';
+import packageManifest from '../package.json' with { type: 'json' };
 import { qrSvgFor } from '../vendor/dsh-wechat/dist/qr.js';
+import {
+  asArray, cleanWireText, projectCarousel, projectConnectorLedger, projectDossier, projectMemoryItem, projectMessages,
+  projectRoutine, projectSchedule, stringifyWire,
+} from './mobile-wire.js';
 
 const execFileAsync = promisify(execFile);
 
 export const DEFAULT_MOBILE_PORT = 58471;
 export const MOBILE_PIN_TTL_MS = 15 * 60 * 1000;
+const UNDO_TTL_MS = 12_000;
 
 function cleanDeviceName(raw = os.hostname()) {
   const cleaned = String(raw || 'Mac')
@@ -23,11 +29,8 @@ function cleanDeviceName(raw = os.hostname()) {
 
 export function sanitizeForMobile(text, fallback = '') {
   if (typeof text !== 'string') return fallback;
-  let out = text
-    .replace(/\/Users\/[^\s"'`)\]}]+/g, '[本机工作区]')
-    .replace(/分身/g, '协办事项')
+  const out = cleanWireText(text)
     .replace(/[\u{1F300}-\u{1FAFF}]/gu, '')
-    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
   return out || fallback;
@@ -157,7 +160,7 @@ function isLanOrLoopbackRequest(req) {
 }
 
 function sendJson(res, status, payload) {
-  const body = JSON.stringify(payload);
+  const body = stringifyWire(payload);
   res.writeHead(status, {
     'Content-Type': 'application/json; charset=utf-8',
     'Cache-Control': 'no-store',
@@ -187,7 +190,9 @@ function readJsonBody(req, maxBytes = 256 * 1024) {
         return;
       }
       try {
-        resolve(JSON.parse(Buffer.concat(chunks).toString('utf8')));
+        const value = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+        if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Invalid JSON body');
+        resolve(value);
       } catch {
         reject(new Error('Invalid JSON body'));
       }
@@ -282,6 +287,8 @@ export function createMobileCompanion(options = {}) {
       : path.join(resolvedDshHome, 'dot-mobile-bridge')
     : null;
   const configPath = stateDir ? path.join(stateDir, 'config.json') : null;
+  const embeddedStatePath = stateDir ? path.join(stateDir, 'embedded-v10-state.json') : null;
+  const now = options.clock || (() => new Date());
 
   const configuredPort = Number.isInteger(options.port) ? options.port : DEFAULT_MOBILE_PORT;
   const host = options.host || '0.0.0.0';
@@ -295,10 +302,26 @@ export function createMobileCompanion(options = {}) {
   const fetchImpl = options.fetchImpl || globalThis.fetch;
 
   let memoryConfig = null;
+  let embeddedState = { reminders: [], memoryItems: [], messages: [] };
+  if (embeddedStatePath && fs.existsSync(embeddedStatePath)) {
+    const stored = JSON.parse(fs.readFileSync(embeddedStatePath, 'utf8'));
+    embeddedState = {
+      reminders: asArray(stored?.reminders),
+      memoryItems: asArray(stored?.memoryItems),
+      messages: asArray(stored?.messages),
+    };
+  }
+  function writeEmbeddedState(patch) {
+    const next = { ...embeddedState, ...patch };
+    if (embeddedStatePath) atomicWriteJson(embeddedStatePath, next);
+    embeddedState = next;
+  }
+
   const mobileState = {
     dismissedCardIds: new Set(),
     deferredCards: [],
     appleCalendarItems: [],
+    applePermissions: {},
     rhythm: {
       mode: 'normal',
       morningTime: '08:30',
@@ -308,7 +331,6 @@ export function createMobileCompanion(options = {}) {
       healthRhythmEnabled: false,
       focusFilterEnabled: false,
     },
-    messages: [],
     notes: [],
     traits: [],
     dossiers: [],
@@ -324,6 +346,8 @@ export function createMobileCompanion(options = {}) {
   let startingPromise = null;
   const sseClients = new Set();
   const pairAttemptsByKey = new Map();
+  const chatQueues = new Map();
+  const completedChat = new Map();
 
   function loadOrCreateConfig({ rotate = false, deviceHint } = {}) {
     const now = Date.now();
@@ -434,160 +458,129 @@ export function createMobileCompanion(options = {}) {
     return null;
   }
 
+  async function readLiveState() {
+    try {
+      return (await options.readLiveState?.()) ?? {};
+    } catch {
+      return {};
+    }
+  }
+
+  function connectorLedger(live) {
+    return projectConnectorLedger(live.connectors, {
+      bridgeActive: Boolean(embeddedServer || externalHealth?.ok),
+      workspaces: live.workspaceBrief?.workspaces,
+    });
+  }
+
+  async function readConnectorLedger() {
+    if (typeof options.readConnectors === 'function') return connectorLedger({ connectors: await options.readConnectors() });
+    return connectorLedger(await readLiveState());
+  }
+
   async function buildSnapshot() {
     const cfg = loadOrCreateConfig();
-    const live =
-      typeof options.readLiveState === 'function'
-        ? await options.readLiveState().catch(() => null)
-        : null;
-    const nowIso = new Date().toISOString();
-    const hr = new Date().getHours();
-    const greetingPrefix = hr < 11 ? '早安' : hr < 14 ? '午安' : hr < 18 ? '下午好' : '晚上好';
+    const live = await readLiveState();
+    const date = new Date(now());
+    const nowIso = date.toISOString();
+    const hour = date.getHours();
+    const greeting = hour < 11 ? '早安' : hour < 14 ? '午安' : hour < 18 ? '下午好' : '晚上好';
 
-    const saMilestones = Array.isArray(live?.superagent?.milestones) ? live.superagent.milestones : [];
-    const wsList = Array.isArray(live?.workspaceBrief?.workspaces) ? live.workspaceBrief.workspaces : [];
-    const desktopTraits = Array.isArray(live?.profile?.traits) ? live.profile.traits : [];
-    const desktopNotes = Array.isArray(live?.profile?.notes) ? live.profile.notes : [];
-
-    const dossiers = [];
-    for (const m of saMilestones.slice(0, 8)) {
-      const id = sanitizeForMobile(String(m?.id || m?.cardId || `sa-${dossiers.length + 1}`));
-      const st = m?.status === 'in_review' ? 'wait' : m?.status === 'done' ? 'done' : 'run';
-      dossiers.push({
-        id,
-        title: sanitizeForMobile(m?.title || m?.text || '协同事项', '协同事项'),
-        status: st,
-        statusLabel: st === 'wait' ? '等你拍板' : st === 'done' ? '已完成' : '电脑推进中',
-        summary: sanitizeForMobile(m?.summary || m?.note || '由电脑端 Dot 协同推进并整理阶段结论。'),
-        draftText: null,
-        category: 'work',
-        source: 'dot',
-        updatedAt: m?.updatedAt || nowIso,
-        relativeTime: '刚刚',
-        timeline: [],
-      });
+    // Older callers supplied SuperAgent milestones without a native ledger.
+    const sessions = Array.isArray(live.sessions) ? live.sessions : asArray(live.superagent?.milestones).filter((row) => {
+      const id = row?.id || row?.cardId;
+      return !mobileState.dismissedCardIds.has(id) && !mobileState.dismissedCardIds.has(`fc-${id}`);
+    });
+    const uniqueSessions = new Map();
+    for (const row of [...mobileState.dossiers, ...sessions]) {
+      const id = row?.id || row?.cardId;
+      if (typeof id === 'string' && id) uniqueSessions.set(id, { ...row, id });
     }
-    for (const d of mobileState.dossiers) {
-      dossiers.push(d);
-    }
-
-    const candidates = saMilestones
-      .filter((m) => m?.status === 'in_review')
-      .map((m, idx) => ({
-        id: `fc-${sanitizeForMobile(String(m?.id || idx))}`,
-        eyebrow: '电脑协同 · 待你点头',
-        title: sanitizeForMobile(m?.title || m?.text || '有一条协同进展等你确认', '待你确认'),
-        summary: sanitizeForMobile(m?.summary || '电脑上的后台协办已完成阶段整理，等你拍板后继续。'),
-        draftSlip: sanitizeForMobile(m?.draftSlip || '按当前方向继续推进，有结果再通知我。'),
-        primaryActionLabel: '按此推进',
-        secondaryActionLabel: '推迟到下午',
-        dossierId: sanitizeForMobile(String(m?.id || '')),
-        category: 'work',
-        status: 'pending',
-        updatedAt: m?.updatedAt || nowIso,
-      }))
-      .filter((c) => !mobileState.dismissedCardIds.has(c.id));
-
-    const todayFocus = candidates[0] || null;
-    const secondaryQueue = candidates.slice(1).map((c) => ({
-      id: c.id,
-      title: c.title,
-      summary: c.summary,
-      eyebrow: c.eyebrow,
-      dossierId: c.dossierId,
-      category: c.category,
-    }));
-
+    const dossiers = Array.from(uniqueSessions.values(), (row) => projectDossier(row, nowIso));
+    const { carouselCards, todayFocus, secondaryQueue } = projectCarousel(dossiers);
     const counts = {
-      wait: dossiers.filter((d) => d.status === 'wait').length,
-      run: dossiers.filter((d) => d.status === 'run').length,
+      wait: carouselCards.filter((d) => d.status === 'wait').length,
+      run: carouselCards.filter((d) => d.status === 'run').length,
       done: dossiers.filter((d) => d.status === 'done').length,
     };
 
-    const wsNames = wsList
-      .map((w) => sanitizeForMobile(w?.label || w?.name || ''))
-      .filter(Boolean)
-      .slice(0, 4);
-    const effectiveWs = wsNames.length > 0 ? wsNames : ['DeepSeek Harness 工作台'];
+    const desktopTraits = asArray(live.profile?.traits).filter((row) => row?.id);
+    const desktopNotes = asArray(live.profile?.notes).filter((row) => row?.id);
+    const legacyTraits = [...desktopTraits, ...mobileState.traits].map((row) => ({
+      ...row,
+      text: row.value && row.value !== row.label ? `${row.label}：${row.value}` : row.label,
+      category: row.category || 'preference',
+      provenance: row.provenance || '来自长期偏好',
+    }));
+    const legacyNotes = [...mobileState.notes, ...desktopNotes].map((row) => ({
+      ...row,
+      category: row.category || 'note',
+      provenance: row.provenance || (row.source === 'wechat' ? '来自微信随记' : '来自随记'),
+    }));
+    const memoryIndex = new Map();
+    for (const row of [...legacyTraits, ...legacyNotes, ...asArray(live.memoryItems ?? live.profile?.memoryItems), ...embeddedState.memoryItems]) {
+      if (!row?.id || typeof row.text !== 'string') continue;
+      const item = projectMemoryItem(row, nowIso);
+      if (item.text) memoryIndex.set(item.id, item);
+    }
+    const memoryItems = [...memoryIndex.values()].sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt));
+    const traitIds = new Set(legacyTraits.map((row) => String(row.id)));
+    const isTrait = (row) => traitIds.has(row.id) || ['preference', 'boundary', '分寸', '偏好'].includes(row.category);
+    const traits = memoryItems.filter(isTrait).map((row) => ({
+      id: row.id, label: row.text, category: row.category, active: row.active,
+      updatedAt: row.updatedAt, whenToUse: row.effect, source: row.provenance,
+    }));
+    const notes = memoryItems.filter((row) => !isTrait(row)).map((row) => ({
+      id: row.id, text: row.text, source: row.provenance, createdAt: row.updatedAt,
+      relativeTime: row.relativeTime, whenToUse: row.effect, active: row.active,
+    }));
 
-    const traits = [
-      ...desktopTraits.map((t) => ({
-        id: String(t.id),
-        label: sanitizeForMobile(t.value ? `${t.label}：${t.value}` : t.label),
-        category: sanitizeForMobile(t.category || '长期偏好'),
-        active: true,
-        updatedAt: t.updatedAt || nowIso,
-      })),
-      ...mobileState.traits,
-    ].slice(0, 24);
-
-    const notes = [
-      ...mobileState.notes,
-      ...desktopNotes.map((n) => ({
-        id: String(n.id),
-        text: sanitizeForMobile(n.text),
-        source: n.source === 'wechat' ? '微信随记' : '电脑桌面',
-        createdAt: n.createdAt || nowIso,
-        relativeTime: '最近',
-      })),
-    ].slice(0, 30);
-
-    const scheduleItems = [
-      ...mobileState.appleCalendarItems.slice(0, 6),
-      {
-        id: 'sch-morning-brief',
-        timeLabel: live?.digest?.dailyTime || mobileState.rhythm.morningTime,
-        title: '晨间简报 · 今日重点与日程预判',
-        subtitle: '只保留急需拍板的一件事，其余静默排期',
-        source: 'dot',
-      },
-    ];
-
-    const rhythm = {
-      ...mobileState.rhythm,
-      morningTime: live?.digest?.dailyTime || mobileState.rhythm.morningTime,
-    };
+    const scheduleItems = [...mobileState.appleCalendarItems, ...asArray(live.scheduleItems)].filter(Boolean).map(projectSchedule);
+    const routines = asArray(live.routines).filter(Boolean).map(projectRoutine);
+    const rhythm = { ...mobileState.rhythm, morningTime: live.digest?.dailyTime || mobileState.rhythm.morningTime };
+    const ledger = live.connectors || typeof options.readConnectors !== 'function'
+      ? connectorLedger(live)
+      : await readConnectorLedger().catch(() => connectorLedger(live));
+    const workspaces = ledger.mountedWorkspaces;
+    const pending = carouselCards.find((row) => row.status === 'wait');
 
     return {
       generatedAt: nowIso,
       deviceName: sanitizeForMobile(cfg.deviceName, 'Mac'),
       dshDetected: true,
-      greetingTitle: `${greetingPrefix}，今天幕僚台很清净`,
-      rhythmBanner: todayFocus
-        ? `后台 ${counts.run} 件事平稳推进中，眼下只有 1 件事等你拍板。`
-        : '今天急需你拍板的事项已全部清零，安心忙你的即可。',
-      spokenBriefingText: todayFocus
-        ? `${greetingPrefix}。今天只需拍板一件事：${todayFocus.title}。`
-        : `${greetingPrefix}。今天所有待拍板事项都已处理妥当。`,
+      greetingTitle: greeting,
+      rhythmBanner: pending ? `有 ${counts.wait} 件事待你拍板` : '今天没有待你拍板的事项',
+      spokenBriefingText: pending ? `${greeting}。先看一件待你拍板的事：${pending.title}。` : `${greeting}。今天没有待你拍板的事项。`,
       rhythm,
       counts,
       firstAha: {
-        headline: `已与「${sanitizeForMobile(cfg.deviceName, 'Mac')}」建立加密默契`,
-        subheadline: '不搬运复杂代码与终端屏幕，只把电脑上需要你拿主意的结论轻轻递到手里。',
-        workspaceCount: effectiveWs.length,
-        workspaceSummary: effectiveWs.join(' · '),
-        activeDossierCount: counts.wait + counts.run,
-        pendingDecisionTitle: todayFocus ? todayFocus.title : '今日暂无需紧急拍板的事项',
-        bullets: [
-          `已连接电脑工作台：${effectiveWs.join('、')}`,
-          `后台共有 ${counts.wait + counts.run} 件在办事项，已自动过滤路径与噪音`,
-          todayFocus ? `首件待你拍板：「${todayFocus.title}」` : '随时可在底部输入栏口述或写一句话交办',
-        ],
+        headline: `已连接「${sanitizeForMobile(cfg.deviceName, 'Mac')}」`,
+        subheadline: '随时查看工作进展、日程和提醒。',
+        workspaceCount: workspaces.length,
+        workspaceSummary: workspaces.join(' · '),
+        activeDossierCount: carouselCards.length,
+        pendingDecisionTitle: pending?.title || '今天暂无待你拍板的事项',
+        bullets: [],
       },
       todayFocus,
       secondaryQueue,
+      carouselCards,
       scheduleItems,
+      reminders: embeddedState.reminders,
       dossiers,
       traits,
       notes,
-      messages: mobileState.messages.slice(-30),
+      routines,
+      memoryItems,
+      ...ledger,
+      messages: projectMessages(live.messages ?? embeddedState.messages, nowIso),
     };
   }
 
-  async function broadcastSnapshot() {
+  async function broadcastSnapshot(snapshot) {
     if (sseClients.size === 0) return;
-    const snap = await buildSnapshot();
-    const frame = `event: snapshot\ndata: ${JSON.stringify(snap)}\n\n`;
+    const snap = snapshot ?? await buildSnapshot();
+    const frame = `event: snapshot\ndata: ${stringifyWire(snap)}\n\n`;
     for (const client of sseClients) {
       try {
         client.write(frame);
@@ -627,16 +620,356 @@ export function createMobileCompanion(options = {}) {
     return safeTimingEqualString(candidate.toLowerCase(), cfg.bearerToken.toLowerCase());
   }
 
+  function fail(status, message) {
+    throw Object.assign(new Error(message), { status });
+  }
+
+  function issueUndo(restore, scope) {
+    const timestamp = Number(now());
+    for (const [token, entry] of mobileState.undoHistory) {
+      if (entry.expiresAt <= timestamp || (scope && entry.scope === scope)) mobileState.undoHistory.delete(token);
+    }
+    const undoToken = crypto.randomUUID();
+    mobileState.undoHistory.set(undoToken, { restore, scope, expiresAt: timestamp + UNDO_TTL_MS });
+    return undoToken;
+  }
+
+  function clearAppleReminderUndo() {
+    for (const [token, entry] of mobileState.undoHistory) {
+      if (entry.scope?.startsWith('reminder:rem-apple-')) mobileState.undoHistory.delete(token);
+    }
+  }
+
+  async function finishMutation(res, fields = {}) {
+    const snapshot = await buildSnapshot();
+    void broadcastSnapshot(snapshot);
+    sendJson(res, 200, { ok: true, ...fields, snapshot });
+  }
+
+  function reminderIdForEvent(eventKitIdentifier) {
+    return `rem-apple-${crypto.createHash('sha256').update(eventKitIdentifier).digest('hex').slice(0, 24)}`;
+  }
+
+  function mutateReminder(body) {
+    const { action, id } = body;
+    const reminders = embeddedState.reminders;
+    if (action === 'add') {
+      const text = sanitizeForMobile(body.text);
+      if (!text) fail(400, '请写下提醒内容');
+      const eventKitIdentifier = typeof body.eventKitIdentifier === 'string' && body.eventKitIdentifier.trim()
+        ? body.eventKitIdentifier.trim() : null;
+      const reminder = {
+        id: eventKitIdentifier ? reminderIdForEvent(eventKitIdentifier) : `rem-${crypto.randomUUID()}`,
+        timeLabel: sanitizeForMobile(body.timeLabel, '随时'),
+        text,
+        sourceLabel: body.sourceLabel === '随记' ? '随记' : '提醒',
+        done: false,
+        eventKitIdentifier,
+      };
+      const duplicate = eventKitIdentifier && reminders.find((row) => row.eventKitIdentifier === eventKitIdentifier);
+      if (duplicate) return { reminder: duplicate };
+      writeEmbeddedState({ reminders: [...reminders, reminder] });
+      const undoToken = issueUndo(() => {
+        writeEmbeddedState({ reminders: embeddedState.reminders.filter((row) => row.id !== reminder.id) });
+      }, `reminder:${reminder.id}`);
+      return { reminder, undoToken };
+    }
+
+    if (action !== 'toggle' && action !== 'remove') fail(400, '请选择有效的提醒操作');
+    const index = reminders.findIndex((row) => row.id === id);
+    if (index === -1) fail(404, '找不到这条提醒');
+    const previous = reminders[index];
+    const reminder = action === 'toggle' ? { ...previous, done: !previous.done } : null;
+    const next = [...reminders];
+    next.splice(index, 1, ...(reminder ? [reminder] : []));
+    writeEmbeddedState({ reminders: next });
+    const undoToken = issueUndo(() => {
+      const current = [...embeddedState.reminders];
+      const at = current.findIndex((row) => row.id === id);
+      if (at !== -1) current.splice(at, 1, previous);
+      else current.splice(index, 0, previous);
+      writeEmbeddedState({ reminders: current });
+    }, `reminder:${id}`);
+    return { reminder, undoToken };
+  }
+
+  async function mutateMemoryItem(body) {
+    const { id, text, active, remove, category, provenance, effect, sourceKind } = body;
+    if (id !== undefined && (typeof id !== 'string' || !id)) fail(400, '记忆编号无效');
+    if (!id && !sanitizeForMobile(text)) fail(400, '请写下要记住的内容');
+    if (active !== undefined && typeof active !== 'boolean') fail(400, '记忆状态无效');
+    if (remove !== undefined && (typeof remove !== 'boolean' || (remove && !id))) fail(400, '忘掉记忆需要指定条目');
+    if (sourceKind !== undefined && !['chat', 'workspace', 'flomo', 'manual'].includes(sourceKind)) fail(400, '记忆来源无效');
+    const fields = {
+      ...(id ? { id } : {}),
+      ...(text !== undefined ? { text: sanitizeForMobile(text) } : {}),
+      ...(category !== undefined ? { category: sanitizeForMobile(category, 'note') } : {}),
+      ...(provenance !== undefined ? { provenance: sanitizeForMobile(provenance) } : {}),
+      ...(effect !== undefined ? { effect: sanitizeForMobile(effect) } : {}),
+      ...(active !== undefined ? { active } : {}),
+      ...(remove !== undefined ? { remove } : {}),
+      ...(sourceKind !== undefined ? { sourceKind } : {}),
+    };
+
+    if (typeof options.onMemoryItem === 'function') {
+      const result = await options.onMemoryItem(fields);
+      if (result?.ok !== true) fail(400, result?.error || '记忆未更新');
+      const token = result.undoToken;
+      if (!token || typeof options.onUndoMemory !== 'function') return {};
+      return {
+        undoToken: issueUndo(async () => {
+          const restored = await options.onUndoMemory({ undoToken: token });
+          if (restored?.ok !== true) fail(409, restored?.error || '记忆已变更');
+        }, id ? `memory:${id}` : undefined),
+      };
+    }
+
+    const index = embeddedState.memoryItems.findIndex((row) => row.id === id);
+    if (id && index === -1) fail(404, '找不到这条记忆');
+    const previous = embeddedState.memoryItems[index];
+    const memoryId = id || `mem-${crypto.randomUUID()}`;
+    const { remove: _remove, ...patch } = fields;
+    const nowIso = new Date(now()).toISOString();
+    const item = remove ? null : projectMemoryItem({
+      ...previous, ...patch, id: memoryId, updatedAt: nowIso, relativeTime: '刚刚',
+    }, nowIso);
+    if (item && !item.text) fail(400, '请写下要记住的内容');
+    const memoryItems = [...embeddedState.memoryItems];
+    if (index === -1) memoryItems.unshift(item);
+    else memoryItems.splice(index, 1, ...(item ? [item] : []));
+    writeEmbeddedState({ memoryItems });
+    const undoToken = issueUndo(() => {
+      const current = [...embeddedState.memoryItems];
+      const at = current.findIndex((row) => row.id === memoryId);
+      if (at !== -1) current.splice(at, 1, ...(previous ? [previous] : []));
+      else if (previous) current.splice(index, 0, previous);
+      writeEmbeddedState({ memoryItems: current });
+    }, `memory:${memoryId}`);
+    return { undoToken };
+  }
+
+  async function readDossier(id) {
+    if (typeof options.readSession === 'function') {
+      const row = await options.readSession(id);
+      if (row?.id === id) return projectDossier(row, new Date(now()).toISOString());
+      const local = mobileState.dossiers.find((row) => row.id === id);
+      return local ? projectDossier(local, new Date(now()).toISOString()) : null;
+    }
+    return (await buildSnapshot()).dossiers.find((row) => row.id === id) ?? null;
+  }
+
+  async function mutateDossier(id, body) {
+    const local = mobileState.dossiers.find((row) => row.id === id);
+    const dossier = await readDossier(id);
+    if (!dossier) fail(404, '找不到这个会话');
+    const action = body.action;
+    const scope = `dossier:${id}`;
+    if ((action === 'complete' && dossier.archived) || (action === 'reopen' && !dossier.archived)) return {};
+    let checked = body.checked;
+    if (action === 'toggle_checklist') {
+      const item = dossier.checklist.find((row) => row.id === body.itemId);
+      if (!item || dossier.archived) fail(404, '找不到可勾选的步骤');
+      if (typeof checked !== 'boolean') checked = !item.checked;
+    }
+    if (!local) {
+      if (typeof options.onDossierAct !== 'function') fail(503, '这个会话目前无法更新');
+      const result = await options.onDossierAct({
+        id,
+        action,
+        ...(typeof body.itemId === 'string' ? { itemId: body.itemId } : {}),
+        ...(typeof checked === 'boolean' ? { checked } : {}),
+        ...(typeof body.instruction === 'string' ? { instruction: body.instruction } : {}),
+        ...(typeof body.draftText === 'string' ? { draftText: body.draftText } : {}),
+      });
+      if (result?.ok !== true) fail(409, result?.error || '会话未更新');
+      if (action === 'complete' && result.undoState !== undefined) {
+        return { undoToken: issueUndo(async () => {
+          const restored = await options.onDossierAct({ id, action: 'undo', previous: result.undoState });
+          if (restored?.ok !== true) fail(409, restored?.error || '会话已变更');
+        }, scope) };
+      }
+    } else if (action === 'complete') {
+      local.archived = true;
+      return { undoToken: issueUndo(() => { local.archived = false; }, scope) };
+    } else if (action === 'reopen') {
+      local.archived = false;
+    } else if (action === 'toggle_checklist') {
+      local.checklist = local.checklist.map((row) => row.id === body.itemId ? { ...row, checked } : row);
+    } else {
+      local.summary = sanitizeForMobile(body.instruction || body.draftText || local.summary);
+      local.updatedAt = new Date(now()).toISOString();
+    }
+    if (action === 'reopen') {
+      for (const [token, entry] of mobileState.undoHistory) {
+        if (entry.scope === scope) mobileState.undoHistory.delete(token);
+      }
+    }
+    return {};
+  }
+
+  async function toggleConnector(body) {
+    const { id, enabled, contextMode } = body;
+    const ledger = await readConnectorLedger();
+    const connector = ledger.connectors.find((row) => row.id === id);
+    if (!connector) fail(404, '找不到这个连接');
+    if (!connector.canToggle || (enabled === true && !connector.connected)) fail(403, '请先在电脑端完成授权');
+    if (id === 'workspace_grants') {
+      if (!['full_local', 'curated_only'].includes(contextMode) || enabled !== undefined) fail(400, '请选择工作区读取范围');
+    } else if (typeof enabled !== 'boolean' || contextMode !== undefined) {
+      fail(400, '请选择启用或暂停此连接');
+    }
+    if (typeof options.onToggleConnector !== 'function') fail(503, '此连接目前无法更新');
+    const result = await options.onToggleConnector(id === 'workspace_grants' ? { id, contextMode } : { id, enabled });
+    if (result?.ok !== true) fail(409, result?.error || '连接状态未更新');
+    return Array.isArray(result.connectors) ? connectorLedger({ connectors: result }) : await readConnectorLedger();
+  }
+
+  function syncAppleContext(body) {
+    if (body.clear) {
+      writeEmbeddedState({ reminders: embeddedState.reminders.filter((row) => !row.eventKitIdentifier) });
+      clearAppleReminderUndo();
+      mobileState.appleCalendarItems = [];
+      mobileState.applePermissions = {};
+      mobileState.rhythm.calendarAuthorized = false;
+      mobileState.rhythm.remindersAuthorized = false;
+      return;
+    }
+    const legacy = asArray(body.items).filter(Boolean);
+    const events = body.events ?? (body.items ? legacy.filter((item) => item.kind !== 'reminder') : null);
+    const reminders = body.reminders ?? (body.items ? legacy.filter((item) => item.kind === 'reminder') : null);
+    if (Array.isArray(events)) {
+      mobileState.appleCalendarItems = events.filter(Boolean).map((row) => ({
+        id: row.id,
+        timeLabel: row.timeLabel,
+        title: row.title,
+        subtitle: row.subtitle || row.location || 'iPhone 日历',
+        source: 'apple_calendar',
+      }));
+    }
+    if (Array.isArray(reminders) || body.permissions?.reminders === false) {
+      const captured = new Map();
+      if (body.permissions?.reminders !== false) {
+        const previous = new Map(embeddedState.reminders.map((row) => [row.eventKitIdentifier, row]));
+        for (const row of asArray(reminders)) {
+          const eventKitIdentifier = row?.eventKitIdentifier ?? row?.id;
+          const text = sanitizeForMobile(row?.text || row?.title);
+          if (typeof eventKitIdentifier !== 'string' || !eventKitIdentifier || !text) continue;
+          const prior = previous.get(eventKitIdentifier);
+          captured.set(eventKitIdentifier, {
+            id: prior?.id || reminderIdForEvent(eventKitIdentifier),
+            text,
+            timeLabel: sanitizeForMobile(row.dueLabel || row.timeLabel, prior?.timeLabel || '随时'),
+            sourceLabel: prior?.sourceLabel || '提醒',
+            done: typeof row.done === 'boolean' ? row.done : prior?.done === true,
+            eventKitIdentifier,
+          });
+        }
+      }
+      writeEmbeddedState({
+        reminders: [...embeddedState.reminders.filter((row) => !row.eventKitIdentifier), ...captured.values()],
+      });
+      if (body.permissions?.reminders === false) clearAppleReminderUndo();
+    }
+    for (const [grant, field] of [['calendar', 'calendarAuthorized'], ['reminders', 'remindersAuthorized']]) {
+      if (typeof body.permissions?.[grant] === 'boolean') {
+        mobileState.applePermissions[grant] = body.permissions[grant];
+        mobileState.rhythm[field] = body.permissions[grant];
+      }
+    }
+    if (body.permissions?.calendar === false) mobileState.appleCalendarItems = [];
+  }
+
+  function appendMainMessage(role, text, fields = {}) {
+    const message = { id: `message-${crypto.randomUUID()}`, role, text, createdAt: new Date(now()).toISOString(), ...fields };
+    writeEmbeddedState({ messages: [...embeddedState.messages, message].slice(-120) });
+  }
+
+  async function streamChat(res, body) {
+    const text = typeof body.text === 'string' ? body.text.trim() : '';
+    if (!text) fail(400, '内容不能为空');
+    if (body.sessionId != null && typeof body.sessionId !== 'string') fail(400, '会话编号无效');
+    const sessionId = body.sessionId?.trim() || null;
+    if (sessionId && !await readDossier(sessionId)) fail(404, '找不到这个会话');
+    if (typeof options.onStreamChat !== 'function') fail(503, '当前无法打开对话');
+    const clientRequestId = typeof body.clientRequestId === 'string' ? body.clientRequestId : null;
+    const scope = sessionId || '';
+    const cacheKey = clientRequestId ? JSON.stringify([sessionId, clientRequestId]) : null;
+    const previous = chatQueues.get(scope);
+    const abort = new AbortController();
+    res.once('close', () => abort.abort());
+    res.writeHead(200, {
+      'Content-Type': 'application/x-ndjson; charset=utf-8',
+      'Cache-Control': 'no-cache, no-transform',
+      'Access-Control-Allow-Origin': '*',
+      'X-Accel-Buffering': 'no',
+    });
+    const emit = (obj) => {
+      if (!res.destroyed && !res.writableEnded) res.write(stringifyWire(obj) + '\n');
+    };
+    emit({ type: 'ack', clientRequestId, sessionId });
+    const work = (previous ?? Promise.resolve()).then(async () => {
+      if (abort.signal.aborted) return;
+      const before = sessionId ? await readDossier(sessionId) : null;
+      if (sessionId && !before) fail(404, '找不到这个会话');
+      let result = cacheKey ? completedChat.get(cacheKey) : null;
+      if (result && result.text !== text) fail(409, '此请求编号已经用于另一条消息');
+      if (!result) {
+        const mainMessages = sessionId ? null : await options.readMainMessages?.();
+        result = (await options.onStreamChat({
+          sessionId,
+          text,
+          source: sanitizeForMobile(body.source, 'chat_drawer'),
+          clientRequestId,
+          scheduleItemId: typeof body.scheduleItemId === 'string' ? body.scheduleItemId : null,
+          messages: before?.messages ?? projectMessages(mainMessages ?? embeddedState.messages, new Date(now()).toISOString()),
+          signal: abort.signal,
+          onEvent: (event) => {
+            if (['tool_start', 'tool_done', 'text_delta', 'widgets'].includes(event?.type)) {
+              emit({ ...event, ...(typeof event.delta === 'string' ? { delta: cleanWireText(event.delta) } : {}), sessionId });
+            }
+          },
+        })) ?? {};
+        if (result.ok === false) fail(409, result.error || '对话未完成');
+        if (!sessionId && !Array.isArray(mainMessages)) {
+          if (Array.isArray(result.messages)) writeEmbeddedState({ messages: result.messages.slice(-120) });
+          else {
+            const createdAt = new Date(now()).toISOString();
+            const messages = [{ id: `message-${crypto.randomUUID()}`, role: 'user', text, createdAt }];
+            if (typeof result.reply === 'string' && result.reply.trim()) {
+              messages.push({ id: `message-${crypto.randomUUID()}`, role: 'assistant', text: result.reply, createdAt });
+            }
+            writeEmbeddedState({ messages: [...embeddedState.messages, ...messages].slice(-120) });
+          }
+        }
+        if (cacheKey) {
+          completedChat.set(cacheKey, { text, reply: result.reply, widgets: result.widgets });
+          if (completedChat.size > 120) completedChat.delete(completedChat.keys().next().value);
+        }
+      }
+      const dossier = sessionId ? await readDossier(sessionId) : null;
+      if (sessionId && !dossier) fail(404, '找不到这个会话');
+      const snapshot = await buildSnapshot();
+      void broadcastSnapshot(snapshot);
+      emit({
+        type: 'done', ok: true, clientRequestId, sessionId, snapshot,
+        ...(dossier ? { dossier } : {}),
+        ...(typeof result.reply === 'string' ? { reply: cleanWireText(result.reply) } : {}),
+        ...(Array.isArray(result.widgets) ? { widgets: result.widgets } : {}),
+      });
+    }).catch((error) => {
+      emit({ type: 'error', error: error.status ? sanitizeForMobile(error.message) : '对话暂时中断', sessionId });
+    });
+    chatQueues.set(scope, work);
+    await work;
+    if (chatQueues.get(scope) === work) chatQueues.delete(scope);
+    res.end();
+  }
+
   async function handleCommandBody(body = {}) {
     const text = sanitizeForMobile(String(body.text || ''));
     if (!text) return { ok: false, error: '内容不能为空', snapshot: await buildSnapshot() };
     const nowIso = new Date().toISOString();
-    mobileState.messages.push({
-      id: `m-u-${Date.now()}`,
-      role: 'user',
-      text,
-      createdAt: nowIso,
-    });
+    appendMainMessage('user', text);
     if (/^(记住|以后|偏好|不要|习惯)/.test(text)) {
       if (typeof options.onAddNote === 'function') {
         await options.onAddNote({ text, category: 'preference', source: 'mobile' }).catch(() => {});
@@ -649,7 +982,7 @@ export function createMobileCompanion(options = {}) {
         relativeTime: '刚刚',
       });
       const reply = `已记下这条长期偏好：「${text}」。`;
-      mobileState.messages.push({ id: `m-a-${Date.now() + 1}`, role: 'assistant', text: reply, tier: 'tier_a', createdAt: nowIso });
+      appendMainMessage('assistant', reply, { tier: 'tier_a' });
       return { ok: true, tier: 'tier_a', reply, snapshot: await buildSnapshot() };
     }
     if (body.confirmTierC !== true && /删|清空|重置|发送邮件|发给|覆盖/.test(text)) {
@@ -658,24 +991,18 @@ export function createMobileCompanion(options = {}) {
         topicTitle: text.slice(0, 32),
         prompt: '涉及对外或高影响动作，请确认后再写入电脑待办台。',
       };
-      mobileState.messages.push({
-        id: `m-a-${Date.now() + 1}`,
-        role: 'assistant',
-        text: proposal.prompt,
-        tier: 'tier_c',
-        createdAt: nowIso,
-      });
+      appendMainMessage('assistant', proposal.prompt, { tier: 'tier_c' });
       return { ok: true, tier: 'tier_c', requiresConfirm: true, proposal, snapshot: await buildSnapshot() };
     }
     if (typeof options.onQueuePending === 'function') {
       await options.onQueuePending({ text, title: text.slice(0, 48) }).catch(() => {});
     }
-    const dosId = `dos-${Date.now()}`;
+    const dosId = `dos-${crypto.randomUUID()}`;
     const dossier = {
       id: dosId,
       title: text.slice(0, 48),
       status: 'run',
-      statusLabel: '电脑推进中',
+      statusLabel: '推进中',
       summary: `已由手机交办给电脑幕僚台：${text}`,
       category: 'work',
       source: 'mobile',
@@ -692,14 +1019,7 @@ export function createMobileCompanion(options = {}) {
       summary: dossier.summary,
     };
     const reply = `已收下并放进电脑协办台：「${dossier.title}」。`;
-    mobileState.messages.push({
-      id: `m-a-${Date.now() + 1}`,
-      role: 'assistant',
-      text: reply,
-      tier: 'tier_b',
-      briefCard,
-      createdAt: nowIso,
-    });
+    appendMainMessage('assistant', reply, { tier: 'tier_b', briefCard });
     return { ok: true, tier: 'tier_b', reply, briefCard, snapshot: await buildSnapshot() };
   }
 
@@ -727,7 +1047,7 @@ export function createMobileCompanion(options = {}) {
           sendJson(res, 200, {
             ok: true,
             app: 'dsh-dot-embedded',
-            version: '0.38.0',
+            version: packageManifest.version,
             deviceName: latestCfg.deviceName,
             port: boundPort,
             fingerprint: computeTokenFingerprint(latestCfg.bearerToken),
@@ -839,51 +1159,83 @@ export function createMobileCompanion(options = {}) {
             'X-Accel-Buffering': 'no',
           });
           const snap = await buildSnapshot();
-          res.write(`event: snapshot\ndata: ${JSON.stringify(snap)}\n\n`);
+          res.write(`event: snapshot\ndata: ${stringifyWire(snap)}\n\n`);
           sseClients.add(res);
-          req.on('close', () => sseClients.delete(res));
+          res.on('close', () => sseClients.delete(res));
+          return;
+        }
+
+        const sessionMatch = pathname.match(/^\/api\/sessions\/([^/]+)$/);
+        if (req.method === 'GET' && sessionMatch) {
+          const dossier = await readDossier(decodeURIComponent(sessionMatch[1]));
+          if (!dossier) fail(404, '找不到这个会话');
+          sendJson(res, 200, { ok: true, dossier, messages: dossier.messages });
+          return;
+        }
+
+        if (req.method === 'GET' && pathname === '/api/connectors') {
+          sendJson(res, 200, { ok: true, ...await readConnectorLedger() });
+          return;
+        }
+
+        if (req.method === 'POST' && pathname === '/api/chat/stream') {
+          await streamChat(res, await readJsonBody(req));
+          return;
+        }
+
+        if (req.method === 'POST' && pathname === '/api/reminders') {
+          await finishMutation(res, mutateReminder(await readJsonBody(req)));
+          return;
+        }
+
+        if (req.method === 'POST' && pathname === '/api/connectors/toggle') {
+          await finishMutation(res, await toggleConnector(await readJsonBody(req)));
           return;
         }
 
         if (req.method === 'POST' && pathname === '/api/today/act') {
           const body = await readJsonBody(req);
           const cardId = String(body?.cardId || '');
-          const undoToken = crypto.randomUUID();
+          if (cardId && (body.action === 'complete' || body.action === 'reopen')) {
+            const id = cardId.startsWith('fc-') ? cardId.slice(3) : cardId;
+            await finishMutation(res, await mutateDossier(id, body));
+            return;
+          }
           if (cardId) mobileState.dismissedCardIds.add(cardId);
-          mobileState.undoHistory.set(undoToken, { cardId, expiresAt: Date.now() + 10_000 });
-          const snap = await buildSnapshot();
-          void broadcastSnapshot();
-          sendJson(res, 200, { ok: true, undoToken, snapshot: snap });
+          const undoToken = issueUndo(() => mobileState.dismissedCardIds.delete(cardId), `card:${cardId}`);
+          await finishMutation(res, { undoToken });
           return;
         }
 
         if (req.method === 'POST' && pathname === '/api/undo') {
           const body = await readJsonBody(req);
-          const item = mobileState.undoHistory.get(String(body?.undoToken || ''));
-          if (item && item.expiresAt > Date.now() && item.cardId) {
-            mobileState.dismissedCardIds.delete(item.cardId);
-            mobileState.undoHistory.delete(String(body.undoToken));
-            const snap = await buildSnapshot();
-            void broadcastSnapshot();
-            sendJson(res, 200, { ok: true, snapshot: snap });
+          const token = String(body?.undoToken || '');
+          const item = mobileState.undoHistory.get(token);
+          mobileState.undoHistory.delete(token);
+          if (item && item.expiresAt > Number(now())) {
+            await item.restore();
+            await finishMutation(res);
             return;
           }
           sendJson(res, 409, { ok: false, error: '撤回窗口已过', snapshot: await buildSnapshot() });
           return;
         }
 
-        if (req.method === 'POST' && pathname.startsWith('/api/dossiers/') && pathname.endsWith('/act')) {
-          const id = decodeURIComponent(pathname.slice('/api/dossiers/'.length, -'/act'.length));
-          const body = await readJsonBody(req);
-          const existing = mobileState.dossiers.find((d) => d.id === id);
-          if (existing) {
-            existing.summary = sanitizeForMobile(body?.instruction || body?.draftText || existing.summary);
-            existing.updatedAt = new Date().toISOString();
-            existing.relativeTime = '刚刚';
+        const dossierMatch = pathname.match(/^\/api\/dossiers\/([^/]+)\/act$/);
+        if (req.method === 'POST' && dossierMatch) {
+          const id = decodeURIComponent(dossierMatch[1]);
+          const result = await mutateDossier(id, await readJsonBody(req));
+          await finishMutation(res, { ...result, dossier: await readDossier(id) });
+          return;
+        }
+
+        if (req.method === 'POST' && pathname === '/api/widgets/act') {
+          const { dossierId, action, itemId } = await readJsonBody(req);
+          if (action !== 'checklist_toggle' || typeof dossierId !== 'string' || typeof itemId !== 'string') {
+            fail(400, '找不到可勾选的步骤');
           }
-          const snap = await buildSnapshot();
-          void broadcastSnapshot();
-          sendJson(res, 200, { ok: true, snapshot: snap });
+          const result = await mutateDossier(dossierId, { action: 'toggle_checklist', itemId });
+          await finishMutation(res, { ...result, dossier: await readDossier(dossierId) });
           return;
         }
 
@@ -892,6 +1244,11 @@ export function createMobileCompanion(options = {}) {
           const out = await handleCommandBody(body);
           void broadcastSnapshot();
           sendJson(res, 200, out);
+          return;
+        }
+
+        if (req.method === 'POST' && pathname === '/api/memory/items') {
+          await finishMutation(res, await mutateMemoryItem(await readJsonBody(req)));
           return;
         }
 
@@ -947,21 +1304,8 @@ export function createMobileCompanion(options = {}) {
         }
 
         if (req.method === 'POST' && pathname === '/api/apple/sync') {
-          const body = await readJsonBody(req);
-          if (body?.clear) {
-            mobileState.appleCalendarItems = [];
-          } else if (Array.isArray(body?.items)) {
-            mobileState.appleCalendarItems = body.items.slice(0, 12).map((ev, idx) => ({
-              id: sanitizeForMobile(String(ev?.id || `apple-${idx}`)),
-              timeLabel: sanitizeForMobile(ev?.timeLabel || '今天'),
-              title: sanitizeForMobile(ev?.title || '日程'),
-              subtitle: sanitizeForMobile(ev?.subtitle || '来自 iPhone 日历'),
-              source: ev?.kind === 'reminder' ? 'apple_reminder' : 'apple_calendar',
-            }));
-          }
-          const snap = await buildSnapshot();
-          void broadcastSnapshot();
-          sendJson(res, 200, { ok: true, snapshot: snap });
+          syncAppleContext(await readJsonBody(req));
+          await finishMutation(res);
           return;
         }
 
@@ -994,7 +1338,11 @@ export function createMobileCompanion(options = {}) {
 
         sendJson(res, 404, { ok: false, error: 'Not Found' });
       } catch (err) {
-        sendJson(res, 400, { ok: false, error: err?.message || '请求处理异常' });
+        if (res.headersSent) {
+          res.end();
+          return;
+        }
+        sendJson(res, err?.status || 400, { ok: false, error: sanitizeForMobile(err?.message, '请求处理异常') });
       }
     });
 
@@ -1058,6 +1406,18 @@ export function createMobileCompanion(options = {}) {
       Number(externalHealth?.pairedCount || 0)
     );
     const paired = Boolean(cfg.lastPairedAt || pairedCount > 0 || externalHealth?.paired);
+    const { calendar, reminders } = mobileState.applePermissions;
+    const iphoneSystem = [];
+    if (paired && (calendar !== undefined || reminders !== undefined)) {
+      const authorized = [calendar === true && '日历', reminders === true && '提醒'].filter(Boolean);
+      const denied = [calendar === false && '日历', reminders === false && '提醒'].filter(Boolean);
+      iphoneSystem.push({
+        id: 'ios_eventkit',
+        connected: authorized.length > 0,
+        enabled: authorized.length > 0,
+        statusText: authorized.length ? `${authorized.join('与')}已授权` : `${denied.join('与')}未授权`,
+      });
+    }
     return {
       available: true,
       deviceName: cfg.deviceName,
@@ -1069,6 +1429,7 @@ export function createMobileCompanion(options = {}) {
       tunnelReady: Boolean(cfg.remoteUrl || externalHealth?.tunnelReady),
       bridgeActive: Boolean(embeddedServer || externalHealth?.ok),
       lanUrl: lanUrls[0] || externalHealth?.lanUrl || null,
+      iphoneSystem,
     };
   }
 
@@ -1155,7 +1516,7 @@ export function createMobileCompanion(options = {}) {
     ensureStarted,
     summary,
     pairInfo,
-    notifyChange: broadcastSnapshot,
+    notifyChange: () => broadcastSnapshot(),
     dispose,
     getBoundPort: () => boundPort,
   };

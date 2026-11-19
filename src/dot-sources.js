@@ -80,6 +80,7 @@ export const dotSourcesRowSchema = z.object({
   sources: z.array(sourceRowSchema).max(8),
   decisions: z.array(decisionSchema).max(500),
   links: z.array(linkSchema).max(500),
+  wechatNotificationsEnabled: z.boolean().optional(),
   migrated: z.object({from: z.literal('project_companion_context'), at: stamp, legacyDigest: hash}).strict().optional(),
 }).strict();
 
@@ -210,6 +211,30 @@ export function createDotSources({store, legacyReader = null, clock = () => new 
     return {row: next, changed: true};
   });
   const emptySession = (sessionId, credentialKey = null, bindingKey = null) => ({sessionId, credentialKey, bindingKey, addedAt: new Date(clock()).toISOString()});
+  function changeSwitch(next, source, enabled, credentialKey, now) {
+    const row = next.sources.find(item => item.source === source);
+    if (!enabled) {
+      if (!row || row.enabled !== true) return false;
+      row.enabled = false;
+      row.generation = (row.generation ?? 0) + 1;
+      row.lastReadAt = null;
+      row.lastReadState = null;
+      return true;
+    }
+    if (!row) {
+      next.sources.push({source, enabled: true, credentialKey, bindingKey: null,
+        connectedAt: now, lastReadAt: null, lastReadState: null, allowedSessions: []});
+      return true;
+    }
+    row.enabled = true;
+    row.credentialKey = credentialKey;
+    row.bindingKey = null;
+    delete row.grantId;
+    row.connectedAt = now;
+    row.lastReadState = null;
+    row.generation = (row.generation ?? 0) + 1;
+    return true;
+  }
   return {
     async ready() {
       await load();
@@ -240,28 +265,33 @@ export function createDotSources({store, legacyReader = null, clock = () => new 
     async enable(source, credentialKey) {
       if (!DOT_SOURCE_IDS.includes(source) || typeof credentialKey !== 'string' || !/^[a-f0-9]{64}$/.test(credentialKey)) throw Object.assign(new Error('Invalid source enable'), {code: 'DOT_SOURCES_INVALID'});
       const now = new Date(clock()).toISOString();
-      return mutate(next => {
-        const row = next.sources.find(item => item.source === source);
-        if (!row) { next.sources.push({source, enabled: true, credentialKey, bindingKey: null, connectedAt: now, lastReadAt: null, lastReadState: null, allowedSessions: []}); return true; }
-        row.enabled = true; row.credentialKey = credentialKey;
-        // A fresh explicit enable is a new grant: clear the old account's
-        // binding id, but keep explicit conversation rows for their own checks.
-        row.bindingKey = null; delete row.grantId; row.connectedAt = now; row.lastReadState = null;
-        row.generation = (row.generation ?? 0) + 1;
-        return true;
-      });
+      return mutate(next => changeSwitch(next, source, true, credentialKey, now));
     },
     async disable(source) {
+      return mutate(next => changeSwitch(next, source, false));
+    },
+    setConnectorSwitches(sources, enabled, credentialFor) {
       return mutate(next => {
-        const row = next.sources.find(item => item.source === source);
-        if (!row || row.enabled !== true) return false;
-        row.enabled = false;
-        row.generation = (row.generation ?? 0) + 1;
-        // Revocation must not leave a cacheable title behind.
-        row.lastReadAt = null; row.lastReadState = null;
+        let changed = false;
+        const now = new Date(clock()).toISOString();
+        for (const source of sources) {
+          if (!DOT_SOURCE_IDS.includes(source)) throw new Error('Invalid Dot source');
+          const row = next.sources.find(item => item.source === source);
+          const key = enabled ? credentialFor(source, row) : null;
+          if (enabled && (!/^[a-f0-9]{64}$/.test(key ?? '') || row?.enabled === true)) continue;
+          changed = changeSwitch(next, source, enabled, key, now) || changed;
+        }
+        return changed;
+      });
+    },
+    setWechatNotifications(enabled) {
+      return mutate(next => {
+        if ((next.wechatNotificationsEnabled !== false) === enabled) return false;
+        next.wechatNotificationsEnabled = enabled;
         return true;
       });
     },
+    wechatNotificationsEnabled() { return state !== null && state.wechatNotificationsEnabled !== false; },
     async addSession(source, sessionId, credentialKey = null, bindingKey = null) {
       if (typeof sessionId !== 'string' || !sessionId) throw Object.assign(new Error('Invalid session'), {code: 'DOT_SOURCES_INVALID'});
       return mutate(next => {

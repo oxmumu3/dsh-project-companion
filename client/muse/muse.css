@@ -1,4 +1,4 @@
-/* DSH Dot Muse v3.1 — "私人幕僚长 · 一屏一焦点 · 去框降噪" */
+/* DSH Dot Muse desktop views */
 /* Uses only inherited --dot-* / --dsw-alias-* theme tokens (light & dark). */
 
 .pc_dot_muse {
@@ -184,6 +184,75 @@
 
 .muse-status-dot.info {
   background: var(--dot-blue);
+}
+
+.muse-session-meta,
+.muse-session-status {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.muse-session-meta {
+  color: var(--dot-muted);
+  flex-wrap: wrap;
+}
+
+.muse-session-dot {
+  position: relative;
+  display: inline-block;
+  flex: 0 0 8px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--muse-session-status);
+}
+
+.muse-session-status {
+  color: var(--muse-session-status, var(--dot-muted));
+}
+
+.muse-session-status.is-wait,
+.muse-session-dot.is-wait {
+  --muse-session-status: var(--dot-session-wait);
+}
+
+.muse-session-status.is-run,
+.muse-session-dot.is-run {
+  --muse-session-status: var(--dot-session-run);
+}
+
+.muse-session-status.is-done,
+.muse-session-dot.is-done {
+  --muse-session-status: var(--dot-session-done);
+}
+
+.muse-session-dot.is-quiet {
+  background: transparent;
+  border: 1.4px solid var(--dot-session-quiet);
+}
+
+.muse-session-dot.is-run::after {
+  position: absolute;
+  inset: 0;
+  content: '';
+  border: 1px solid var(--dot-session-run);
+  border-radius: inherit;
+  animation: muse-session-breathe 2.4s ease-out infinite;
+}
+
+@keyframes muse-session-breathe {
+  0%, 100% {transform: scale(1); opacity: 0;}
+  15% {opacity: .55;}
+  68% {transform: scale(2); opacity: 0;}
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .muse-session-dot.is-run::after {
+    animation: none;
+  }
 }
 
 /* Main scrolling viewport */
@@ -527,6 +596,131 @@
   cursor: pointer;
   padding: 6px 2px;
   user-select: none;
+}
+
+.muse-session-group {
+  margin-bottom: 18px;
+}
+
+.muse-session-group > :is(h2, h3) {
+  margin: 0;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--dot-line);
+}
+
+.muse-session-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 16px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--dot-line);
+}
+
+.pc_dot_muse .muse-session-open {
+  display: grid;
+  flex: 1;
+  min-width: 0;
+  gap: 4px;
+  padding: 4px 0;
+  background: transparent;
+  border: 0;
+  color: var(--dot-ink);
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+}
+
+.pc_dot_muse .muse-session-open:disabled {
+  cursor: default;
+}
+
+.pc_dot_muse .muse-session-open:hover:not(:disabled) :is(.muse-thread-title, .muse-memory-text) {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.muse-session-open .muse-thread-title,
+.muse-session-focus .muse-focus-title,
+.muse-memory-text {
+  font-family: 'Songti SC', 'STSong', 'Noto Serif SC', Georgia, serif;
+  font-weight: 400;
+}
+
+.muse-session-open .muse-thread-title,
+.muse-memory-text {
+  margin: 0;
+  font-size: 17px;
+  overflow-wrap: anywhere;
+}
+
+.muse-session-open .muse-session-summary {
+  display: -webkit-box;
+  margin: 0;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  font-size: 13px;
+}
+
+.pc_dot_muse .muse-compact-button {
+  flex-shrink: 0;
+  min-height: 32px;
+  padding: 4px 11px;
+  border-radius: 999px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.muse-session-focus .muse-focus-actions {
+  justify-content: space-between;
+}
+
+.muse-session-focus {
+  position: relative;
+}
+
+.muse-session-focus .muse-session-detail {
+  padding-inline-start: 0;
+}
+
+.muse-session-focus .muse-session-detail::after {
+  position: absolute;
+  inset: 0;
+  content: '';
+}
+
+.muse-session-focus .muse-compact-button {
+  position: relative;
+  z-index: 1;
+}
+
+.muse-memory-paused .muse-memory-text {
+  color: var(--dot-muted);
+  text-decoration: line-through;
+}
+
+.muse-routine-receipt {
+  margin: 4px 0 0;
+  color: var(--dot-muted);
+  font-size: 12px;
+}
+
+.muse-routine-receipt.is-done {
+  color: var(--dot-session-done);
+}
+
+.muse-connector-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+}
+
+.muse-context-modes {
+  flex-wrap: wrap;
+  margin-top: 8px;
 }
 
 /* Right rail — quiet, de-boxed */

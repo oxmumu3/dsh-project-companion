@@ -20,10 +20,19 @@ export async function safeProjectRoot(root) {
   return absolute;
 }
 
-export async function readProjectFiles(root) {
+export function readProjectFiles(root, {curatedOnly=false}={}) {
+  return readSources(root, curatedOnly ? PROJECT_FILES.filter(path=>path.startsWith('.agent/memory/')) : PROJECT_FILES);
+}
+
+export async function readWorkspaceExperience(root) {
+  const [row]=await readSources(root, ['.agent/memory/experience.md']);
+  return row;
+}
+
+async function readSources(root, paths) {
   const absolute = await safeProjectRoot(root);
   const rows = [];
-  for (const relative of PROJECT_FILES) {
+  for (const relative of paths) {
     let handle;
     try {
       const pieces = relative.split('/');

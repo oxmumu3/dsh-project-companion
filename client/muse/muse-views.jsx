@@ -1,5 +1,5 @@
 /**
- * DSH Dot Muse v3.1 UI Views ("私人幕僚长 · 一屏一焦点 · 去框降噪")
+ * DSH Dot Muse desktop views.
  * Pure React.createElement components consuming `buildMuseViewModel`.
  */
 import {TRAIT_PRESETS} from './muse-model.js';
@@ -10,7 +10,7 @@ export function createMuseViews(React) {
   function MuseTopbar({tab, onTab, model, onOpenSettings, onOpenBrief, onOpenMobilePair}) {
     const tabs = [
       {id: 'today', label: '今天'},
-      {id: 'threads', label: '脉络'},
+      {id: 'threads', label: model.v10 ? '在办' : '脉络'},
       {id: 'memory', label: '记忆'},
       {id: 'connections', label: '连接'},
     ];
@@ -389,6 +389,35 @@ export function createMuseViews(React) {
           : null));
   }
 
+  function SessionStatus({session}) {
+    return h('span', {className: `muse-session-status is-${session.status}`},
+      h('span', {className: `muse-session-dot is-${session.status}`, 'aria-hidden': true}),
+      session.statusLabel);
+  }
+
+  function SessionFocus({session, busy, onOpenSession, onMuseAct}) {
+    return h('article', {className: 'muse-focus-card muse-session-focus', 'data-muse-focus-card': 'session'},
+      h('div', {className: 'muse-focus-meta'},
+        h(SessionStatus, {session}),
+        h('span', null, `工作区 ${session.workspaceTitle}`)),
+      h('h2', {className: 'muse-focus-title'}, session.title),
+      session.whyHere ? h('p', {className: 'muse-focus-body'}, session.whyHere) : null,
+      h('div', {className: 'muse-focus-actions'},
+        h('button', {
+          type: 'button',
+          className: 'muse-btn-link muse-session-detail',
+          'data-muse-session-open': session.id,
+          onClick: () => onOpenSession?.(session.id),
+        }, [session.progressLabel, '查看详情 ›'].filter(Boolean).join(' · ')),
+        h('button', {
+          type: 'button',
+          className: 'muse-btn-outline muse-compact-button',
+          'data-muse-session-complete': session.id,
+          disabled: busy,
+          onClick: () => onMuseAct?.({action: 'dossier_act', id: session.id, operation: 'complete'}),
+        }, '办妥')));
+  }
+
   function MuseTodayView({
     model,
     busy,
@@ -397,8 +426,10 @@ export function createMuseViews(React) {
     onPinFocus,
     onAsk,
     onOpenProject,
+    onOpenSession,
     onOpenWorkspacePicker,
     onOpenTab,
+    onMuseAct,
   }) {
     const visibleFolded = model.folded.slice(0, 3);
     const hiddenFolded = model.folded.slice(3);
@@ -425,7 +456,9 @@ export function createMuseViews(React) {
         : null,
       h('div', {className: 'muse-grid'},
         h('div', {className: 'muse-col-main'},
-          h(FocusCard, {focus: model.focus, busy, onAction, onSaveDraft, onAsk}),
+          model.focus?.session
+            ? h(SessionFocus, {session: model.focus.session, busy, onOpenSession, onMuseAct})
+            : h(FocusCard, {focus: model.focus, busy, onAction, onSaveDraft, onAsk}),
           model.folded.length > 0
             ? h('section', {className: 'muse-section', 'aria-label': '顺手排队的事项'},
               h('div', {className: 'muse-section-head'},
@@ -434,7 +467,9 @@ export function createMuseViews(React) {
               ...visibleFolded.map(item => h('div', {key: item.key, className: 'muse-hairline-row', 'data-muse-folded': item.key},
                 h('div', {className: 'muse-hairline-main'},
                   h('div', {className: 'muse-hairline-title'}, item.title),
-                  h('div', {className: 'muse-hairline-sub'}, `${item.sourceLabel}${item.timeText ? ` · ${item.timeText}` : ''}`)),
+                  h('div', {className: 'muse-hairline-sub muse-session-meta'},
+                    item.session ? h(SessionStatus, {session: item.session}) : null,
+                    `${item.sourceLabel}${item.timeText ? ` · ${item.timeText}` : ''}`)),
                 h('div', {className: 'muse-hairline-actions'},
                   h('button', {type: 'button', className: 'muse-btn-link', onClick: () => onPinFocus?.(item.key)}, '切到焦点'),
                   item.askPrompt ? h('button', {type: 'button', className: 'muse-btn-link', onClick: () => onAsk?.(item.askPrompt)}, '聊聊') : null))),
@@ -444,7 +479,9 @@ export function createMuseViews(React) {
                   ...hiddenFolded.map(item => h('div', {key: item.key, className: 'muse-hairline-row'},
                     h('div', {className: 'muse-hairline-main'},
                       h('div', {className: 'muse-hairline-title'}, item.title),
-                      h('div', {className: 'muse-hairline-sub'}, item.sourceLabel)),
+                      h('div', {className: 'muse-hairline-sub muse-session-meta'},
+                        item.session ? h(SessionStatus, {session: item.session}) : null,
+                        item.sourceLabel)),
                     h('div', {className: 'muse-hairline-actions'},
                       h('button', {type: 'button', className: 'muse-btn-link', onClick: () => onPinFocus?.(item.key)}, '切到焦点')))))
                 : null)
@@ -493,8 +530,50 @@ export function createMuseViews(React) {
               : h('p', {className: 'muse-rail-empty'}, '没有积压在邮箱或清单里忘记回复的事。')))));
   }
 
-  function MuseThreadsView({model, onAsk}) {
+  function SessionRow({session, busy, onOpenSession, onMuseAct, showWorkspace = false}) {
+    return h('article', {className: 'muse-session-row', 'data-muse-session-id': session.id},
+      h('button', {
+        type: 'button',
+        className: 'muse-session-open',
+        'data-muse-session-open': session.id,
+        onClick: () => onOpenSession?.(session.id),
+      },
+      h('span', {className: 'muse-session-meta'},
+        h(SessionStatus, {session}),
+        showWorkspace ? h('span', null, `工作区 ${session.workspaceTitle}`) : null,
+        session.progressLabel ? h('span', null, session.progressLabel) : null),
+      h('span', {className: 'muse-thread-title'}, session.title),
+      session.whyHere ? h('span', {className: 'muse-thread-body muse-session-summary'}, session.whyHere) : null),
+      h('button', {
+        type: 'button',
+        className: `muse-compact-button ${session.archived ? 'muse-btn-link' : 'muse-btn-outline'}`,
+        [session.archived ? 'data-muse-session-reopen' : 'data-muse-session-complete']: session.id,
+        disabled: busy,
+        onClick: () => onMuseAct?.({action: 'dossier_act', id: session.id, operation: session.archived ? 'reopen' : 'complete'}),
+      }, session.archived ? '恢复' : '办结'));
+  }
+
+  function MuseSessionsView({model, busy, onMuseAct, onOpenSession}) {
+    return h('div', {className: 'muse-stage-narrow'},
+      h('section', {className: 'muse-hero'},
+        h('h1', {className: 'muse-greeting'}, `眼下在办，${model.carouselCards.length} 个会话`)),
+      model.sessionGroups.length
+        ? model.sessionGroups.map(group => h('section', {key: group.workspaceTitle, className: 'muse-session-group'},
+          h('h2', {className: 'muse-section-title'}, `工作区 ${group.workspaceTitle}`),
+          ...group.items.map(session => h(SessionRow, {key: session.id, session, busy, onOpenSession, onMuseAct}))))
+        : h('p', {className: 'muse-rail-empty'}, '眼下没有在办会话。'),
+      h('details', {className: 'muse-more-disclosure', 'data-muse-session-archive': true},
+        h('summary', null, `查看已办妥与全部历史会话（${model.archivedSessions.length}）`),
+        model.archivedSessions.length
+          ? model.archivedSessions.map(session => h(SessionRow, {
+            key: session.id, session, busy, onOpenSession, onMuseAct, showWorkspace: true,
+          }))
+          : h('p', {className: 'muse-rail-empty'}, '还没有已办妥的会话。')));
+  }
+
+  function MuseThreadsView({model, onAsk, busy, onMuseAct, onOpenSession}) {
     const [filter, setFilter] = React.useState('all');
+    if (model.v10) return h(MuseSessionsView, {model, busy, onMuseAct, onOpenSession});
     const filters = [
       {id: 'all', label: '全部脉络'},
       {id: 'attention', label: '等待与承诺'},
@@ -529,10 +608,85 @@ export function createMuseViews(React) {
         : h('p', {className: 'muse-rail-empty'}, '这一栏暂时还没有新的跨来源动态；打开「连接」页接上几个来源或工作区，这里会自然长出脉络。'));
   }
 
+  function MuseUndoBar({undoBanner, onMuseAct, onDismissUndo}) {
+    const {token, message, kind} = undoBanner;
+    return h('div', {className: 'muse-undo-bar', role: 'status', 'data-muse-undo-bar': true},
+      h('span', null, message || '已更新。'),
+      h('div', {className: 'muse-hairline-actions'},
+        token ? h('button', {
+          type: 'button',
+          className: 'muse-btn-link',
+          'data-muse-undo-btn': true,
+          onClick: () => onMuseAct?.(kind === 'dossier'
+            ? {action: 'dossier_undo', undoToken: token}
+            : {action: 'profile_undo', token}),
+        }, '撤回') : null,
+        h('button', {type: 'button', className: 'muse-btn-link', onClick: () => onDismissUndo?.()}, '知道了')));
+  }
+
+  function MemoryLedger({model, busy, onMuseAct}) {
+    const flomo = model.connectorGroups.find(group => group.id === 'external_apps')?.items.find(row => row.id === 'flomo');
+    const digestCompleted = ['sent', 'quiet'].includes(model.digest.lastStatus);
+    return [
+      h('section', {key: 'routines', className: 'muse-section'},
+        h('h2', {className: 'muse-section-title'}, '动态例行与守候'),
+        model.routines.length
+          ? model.routines.map(routine => h('article', {key: routine.id, className: 'muse-hairline-row', 'data-muse-routine-id': routine.id},
+            h('div', {className: 'muse-hairline-main'},
+              h('h3', {className: 'muse-memory-text'}, routine.title),
+              h('p', {className: 'muse-hairline-sub'}, [routine.scheduleLabel, routine.instruction || routine.summary].filter(Boolean).join(' · ')),
+              routine.lastReceipt
+                ? h('p', {className: `muse-routine-receipt${routine.id === 'daily-digest' && digestCompleted ? ' is-done' : ''}`},
+                  routine.id === 'daily-digest' && digestCompleted ? `✓ ${routine.lastReceipt}` : routine.lastReceipt)
+                : null),
+            h('div', {className: 'muse-hairline-actions'},
+              h('button', {
+                type: 'button',
+                className: 'muse-btn-outline muse-compact-button',
+                'data-muse-routine-toggle': routine.id,
+                'aria-pressed': routine.active === true,
+                disabled: busy,
+                onClick: () => onMuseAct?.({action: 'routine_toggle', id: routine.id, active: !routine.active}),
+              }, routine.active ? '守候中' : '已暂停'))))
+          : h('p', {className: 'muse-rail-empty'}, '还没有设定例行。')),
+      h('section', {key: 'memory', className: 'muse-section'},
+        h('div', {className: 'muse-section-head'},
+          h('h2', {className: 'muse-section-title'}, '对话与工作区沉淀的记忆'),
+          flomo?.enabled && flomo.connected ? h('button', {
+            type: 'button',
+            className: 'muse-btn-link',
+            disabled: busy,
+            onClick: () => onMuseAct?.({action: 'flomo_memory_refresh'}),
+          }, '取回最近的 flomo 笔记') : null),
+        model.memoryItems.length
+          ? model.memoryItems.map(item => h('article', {key: item.id, className: 'muse-hairline-row', 'data-muse-note-id': item.id},
+            h('button', {
+              type: 'button',
+              className: `muse-session-open${item.active === false ? ' muse-memory-paused' : ''}`,
+              'data-muse-memory-toggle': item.id,
+              'aria-pressed': item.active !== false,
+              disabled: busy,
+              onClick: () => onMuseAct?.({action: 'memory_item', id: item.id, active: item.active === false}),
+            },
+            h('span', {className: 'muse-memory-text'}, item.text),
+            h('span', {className: 'muse-hairline-sub'}, [item.provenance, item.effect, item.active === false ? '已暂停' : ''].filter(Boolean).join(' · '))),
+            h('button', {
+              type: 'button',
+              className: 'muse-btn-link danger',
+              'data-muse-note-delete': item.id,
+              disabled: busy,
+              onClick: () => onMuseAct?.({action: 'memory_item', id: item.id, remove: true}),
+            }, '忘掉')))
+          : h('p', {className: 'muse-rail-empty'}, '在上方记下一条偏好或分寸。')),
+    ];
+  }
+
   function MuseMemoryView({model, busy, undoBanner, onMuseAct, onDismissUndo, onAsk}) {
     const [noteDraft, setNoteDraft] = React.useState('');
+    const [memoryCategory, setMemoryCategory] = React.useState('preference');
     const [alsoQueue, setAlsoQueue] = React.useState(false);
     const [editingCat, setEditingCat] = React.useState(null);
+    const [editingTraitId, setEditingTraitId] = React.useState(null);
     const [traitLabel, setTraitLabel] = React.useState('');
     const [traitValue, setTraitValue] = React.useState('');
     const composing = React.useRef(false);
@@ -540,8 +694,11 @@ export function createMuseViews(React) {
     const submitNote = async () => {
       const text = noteDraft.trim();
       if (!text || busy) return;
-      setNoteDraft('');
-      await onMuseAct?.({action: 'profile_add_note', text, category: 'note', source: 'desktop'});
+      const result = await onMuseAct?.(model.memoryItems
+        ? {action: 'memory_item', text, category: memoryCategory, sourceKind: 'manual'}
+        : {action: 'profile_add_note', text, category: 'note', source: 'desktop'});
+      if (result?.ok === false || result === null) return;
+      setNoteDraft(current => current === noteDraft ? '' : current);
       if (alsoQueue && model.mode === 'synergy') {
         await onMuseAct?.({action: 'superagent_pending', text, title: text.slice(0, 48)});
       }
@@ -549,6 +706,7 @@ export function createMuseViews(React) {
 
     const startEdit = (category, existing = null) => {
       setEditingCat(category);
+      setEditingTraitId(existing?.id ?? null);
       setTraitLabel(existing?.label || (category === 'rhythm' ? '作息节律' : category === 'tone' ? '沟通语气' : category === 'focus' ? '当前重心' : '顺手偏好'));
       setTraitValue(existing?.value || '');
     };
@@ -558,35 +716,35 @@ export function createMuseViews(React) {
       const value = traitValue.trim();
       if (!label || !value || busy) return;
       setEditingCat(null);
-      await onMuseAct?.({action: 'profile_set_trait', category, label, value});
+      await onMuseAct?.({action: 'profile_set_trait', ...(editingTraitId ? {id: editingTraitId} : {}), category, label, value});
     };
 
     return h('div', {className: 'muse-stage-narrow'},
-      undoBanner
-        ? h('div', {className: 'muse-undo-bar', role: 'status', 'data-muse-undo-bar': true},
-          h('span', null, undoBanner.message || '刚才那条记忆已经更新。'),
-          h('div', {className: 'muse-hairline-actions'},
-            undoBanner.token
-              ? h('button', {
-                type: 'button',
-                className: 'muse-btn-link',
-                'data-muse-undo-btn': true,
-                onClick: () => onMuseAct?.({action: 'profile_undo', token: undoBanner.token}),
-              }, '撤回刚才那步')
-              : null,
-            h('button', {type: 'button', className: 'muse-btn-link', onClick: () => onDismissUndo?.()}, '知道了')))
-        : null,
+      undoBanner ? h(MuseUndoBar, {undoBanner, onMuseAct, onDismissUndo}) : null,
       h('article', {className: 'muse-portrait-sheet'},
         h('header', {className: 'muse-sheet-header'},
-          h('h1', {className: 'muse-sheet-title'}, '关于你 · 个人记忆侧写'),
-          h('p', {className: 'muse-sheet-sub'}, '这里只放你自己愿意让 Dot 记住的偏好、节律与随口便签；随时点一下改写或忘掉，绝不猜着用、也不擅自改你的文件。')),
+          h('h1', {className: 'muse-sheet-title'}, model.memoryItems
+            ? `关于你，记着 ${model.memoryItems.length} 条记忆与 ${model.routines.length} 项例行`
+            : '关于你 · 个人记忆侧写'),
+          !model.memoryItems ? h('p', {className: 'muse-sheet-sub'}, '随时改写或忘掉已经记下的偏好、节律与随记。') : null),
         h('div', {className: 'muse-note-composer'},
+          model.memoryItems ? h('select', {
+            className: 'muse-inline-select',
+            'aria-label': '记忆类型',
+            value: memoryCategory,
+            disabled: busy,
+            onChange: event => setMemoryCategory(event.target.value),
+          },
+          h('option', {value: 'preference'}, '偏好'),
+          h('option', {value: 'boundary'}, '分寸'),
+          h('option', {value: 'note'}, '随记')) : null,
           h('input', {
             type: 'text',
             className: 'muse-input',
             value: noteDraft,
             'data-muse-note-input': true,
-            placeholder: '顺口记下一句话，比如：下周三出差一天，上午别排深思考任务…',
+            'aria-label': '记下一条偏好或随记',
+            placeholder: model.memoryItems ? '顺口记一条偏好或分寸…' : '顺口记下一句话，比如：下周三出差一天，上午别排深思考任务…',
             onChange: event => setNoteDraft(event.target.value),
             onCompositionStart: () => { composing.current = true; },
             onCompositionEnd: () => { composing.current = false; },
@@ -610,6 +768,9 @@ export function createMuseViews(React) {
             h('input', {type: 'checkbox', checked: alsoQueue, onChange: event => setAlsoQueue(event.target.checked)}),
             '这条顺口如果是工程任务，同时放进 SuperAgent「待确认」栏')
           : null,
+        model.memoryItems ? h(MemoryLedger, {model, busy, onMuseAct}) : null,
+        h(model.memoryItems ? 'details' : 'div', {className: model.memoryItems ? 'muse-more-disclosure' : undefined},
+        model.memoryItems ? h('summary', null, '编辑分类偏好') : null,
         ...model.traitGroups.map(group => h('section', {key: group.category, className: 'muse-trait-group'},
           h('div', {style: {display: 'flex', justifyContent: 'space-between', alignItems: 'baseline'}},
             h('h3', {className: 'muse-trait-group-title'}, `${group.label} · ${group.hint}`),
@@ -641,8 +802,8 @@ export function createMuseViews(React) {
                 disabled: busy,
                 onClick: () => onMuseAct?.({action: 'profile_set_trait', ...preset}),
               }, `+ ${preset.label}：${preset.value}`))))
-          : null,
-        h('section', {className: 'muse-section'},
+          : null),
+        !model.memoryItems ? h('section', {className: 'muse-section'},
           h('div', {className: 'muse-section-head'},
             h('h3', {className: 'muse-section-title'}, `近期顺口记下的事（${model.profile.notes.length}）`),
             h('span', {className: 'muse-section-note'}, '删除后 2 分钟内随时可以撤回')),
@@ -660,7 +821,7 @@ export function createMuseViews(React) {
                   disabled: busy,
                   onClick: () => onMuseAct?.({action: 'profile_delete_note', id: note.id}),
                 }, '忘掉'))))
-            : h('p', {className: 'muse-rail-empty'}, '这里还没有随记；在上方输入一句行程、心情或边界规则，Dot 会立刻记住。')),
+            : h('p', {className: 'muse-rail-empty'}, '在上方输入一句行程、心情或边界规则，Dot 会记住。')) : null,
         Array.isArray(model.staleProjectMemories) && model.staleProjectMemories.length > 0
           ? h('section', {className: 'muse-section', 'data-muse-stale-memories': true},
             h('div', {className: 'muse-section-head'},
@@ -689,7 +850,7 @@ export function createMuseViews(React) {
   }
 
   function MuseConnectionsView({model, busy, onMuseAct, onOpenBrief, onOpenMobilePair, onOpenWorkspacePicker, renderConnectionsHost}) {
-    const times = ['07:30', '08:00', '08:30', '09:00', '10:00', '12:30', '18:00', '21:00'];
+    const times = [...new Set(['07:30', '08:00', '08:30', '09:00', '10:00', '12:30', '18:00', '21:00', model.digest.dailyTime])].sort();
     const deliveryModes = [
       {value: 'wechat_and_desktop', label: '桌面和微信一起提醒'},
       {value: 'desktop_only', label: '只在电脑桌面静静准备好'},
@@ -702,11 +863,52 @@ export function createMuseViews(React) {
       {value: '3', label: '最多 3 次'},
     ];
 
+    const macConnected = model.connectorGroups[0].items.find(row => row.id === 'mac_bridge')?.connected === true;
+    const paired = model.mobile?.paired === true;
+    const pairCount = model.mobile?.pairedCount || 1;
+    const modeOptions = [
+      {id: 'full_local', label: '已授权目录内的工作背景'},
+      {id: 'curated_only', label: '工作区记忆文件'},
+    ];
+    const renderRow = row => h('div', {key: row.id, className: 'muse-source-row', 'data-muse-connector': row.id},
+      h('div', {className: 'muse-hairline-main'},
+        h('div', {className: 'muse-hairline-title'}, row.title),
+        row.id === 'workspace_grants' && model.mountedWorkspaces.length > 0
+          ? h('p', {className: 'muse-hairline-sub'}, `已授权 ${model.mountedWorkspaces.join(' · ')}`)
+          : row.subtitle ? h('p', {className: 'muse-hairline-sub'}, row.subtitle) : null,
+        row.boundaryNote ? h('p', {className: 'muse-hairline-sub'}, row.boundaryNote) : null,
+        row.id === 'workspace_grants' ? h('div', {className: 'muse-hairline-actions muse-context-modes'},
+          ...modeOptions.map(option => h('button', {
+            key: option.id,
+            type: 'button',
+            className: model.contextMode === option.id ? 'muse-chip active' : 'muse-chip',
+            'aria-pressed': model.contextMode === option.id,
+            'data-muse-context-mode': option.id,
+            disabled: busy || row.canToggle !== true || model.contextMode === option.id,
+            onClick: () => onMuseAct?.({action: 'connector_toggle', id: row.id, contextMode: option.id}),
+          }, option.label))) : null),
+      row.canToggle === true && row.group !== 'iphone_system' && row.id !== 'workspace_grants'
+        ? h('button', {
+          type: 'button',
+          className: 'muse-btn-outline muse-compact-button',
+          'data-muse-connector-toggle': row.id,
+          'aria-label': `${row.enabled ? '停用' : '启用'} ${row.title}`,
+          'aria-pressed': row.enabled === true,
+          disabled: busy,
+          onClick: () => onMuseAct?.({action: 'connector_toggle', id: row.id, enabled: !row.enabled}),
+        }, row.statusText || (row.enabled ? '已开启' : '未启用'))
+        : h('span', {className: 'muse-section-note'}, row.statusText || (row.enabled ? '已开启' : row.known ? '未启用' : '在 iPhone 查看')));
+
     return h('div', {className: 'muse-stage-narrow'},
+      h('section', {className: 'muse-hero'},
+        h('div', {className: 'muse-connector-heading'},
+          h('h1', {className: 'muse-greeting'}, '连接'),
+          h('span', {className: 'muse-section-note muse-session-meta'},
+            h('span', {className: `muse-session-dot ${macConnected ? 'is-done' : 'is-quiet'}`, 'aria-hidden': true}),
+            `Mac ${macConnected ? '已连接' : '未连接'} · 已开 ${model.connectorEnabledCount}/${model.connectorTotalCount} 项`))),
       h('article', {className: 'muse-rhythm-sheet', 'data-muse-rhythm-sheet': true},
         h('header', {className: 'muse-sheet-header'},
-          h('h1', {className: 'muse-sheet-title'}, '连接与提醒节律'),
-          h('p', {className: 'muse-sheet-sub'}, '像跟真人助手交代默契一样，用一句话设定早报时间、安静模式和桌面协同。')),
+          h('h2', {className: 'muse-sheet-title'}, '守候与打扰分寸')),
         h('div', {className: 'muse-madlib'},
           '每天早上 ',
           h('select', {
@@ -714,7 +916,7 @@ export function createMuseViews(React) {
             'aria-label': '每日早报时间',
             'data-muse-rhythm-time': true,
             disabled: busy,
-            value: times.includes(model.digest.dailyTime) ? model.digest.dailyTime : '09:00',
+            value: model.digest.dailyTime,
             onChange: event => onMuseAct?.({action: 'rhythm_configure', dailyTime: event.target.value}),
           }, ...times.map(t => h('option', {key: t, value: t}, t))),
           '（', model.digest.timeZone, '），请以 ',
@@ -747,45 +949,33 @@ export function createMuseViews(React) {
             type: 'button',
             className: 'muse-btn-outline',
             onClick: () => onOpenBrief?.(true),
-          }, '预览今天的第一份早报'),
-          h('button', {
-            type: 'button',
-            className: 'muse-btn-link',
-            onClick: () => onOpenWorkspacePicker?.(),
-          }, '管理关注工作区'))),
-      h('section', {className: 'muse-section'},
-        h('div', {className: 'muse-section-head'},
-          h('h3', {className: 'muse-section-title'}, 'iPhone 随身端 · DSH Dot iOS（零命令行直连）'),
-          h('span', {className: 'muse-section-note'}, model.mobile?.paired ? '已配对 · 同 Wi-Fi / 5G 自动同步' : '支持扫码或 6 位动态配对码')),
-        h('div', {className: 'muse-source-row muse-mobile-pair-row', 'data-muse-mobile-connection-row': true},
+          }, '预览今天的早报'))),
+      ...model.connectorGroups.map(group => h('section', {
+        key: group.id, className: 'muse-section', 'data-muse-connector-group': group.id,
+      },
+      h('div', {className: 'muse-section-head'},
+        h('h2', {className: 'muse-section-title'}, group.title),
+        group.id === 'mac_base'
+          ? h('button', {type: 'button', className: 'muse-btn-link', onClick: () => onOpenWorkspacePicker?.()}, '管理关注工作区')
+          : null),
+      group.id === 'iphone_system'
+        ? h('div', {className: 'muse-source-row muse-mobile-pair-row', 'data-muse-mobile-connection-row': true},
           h('div', {className: 'muse-hairline-main'},
-            h('div', {className: 'muse-hairline-title'},
-              h('span', {className: `muse-status-dot ${model.mobile?.paired ? 'ok' : 'info'}`, style: {display: 'inline-block', marginRight: 7, verticalAlign: 'middle'}}),
-              model.mobile?.paired ? 'iPhone 随身端已配对' : '把电脑上的 Dot 装进 iPhone'),
-            h('div', {className: 'muse-hairline-sub'}, model.mobile?.paired
-              ? `配对设备数：${model.mobile?.pairedCount || 1} · 可随时查看新的 6 位配对码或扫码绑定新设备`
-              : '不用记终端命令。点右侧按钮获取 6 位配对码或二维码，在 iPhone 打开 DSH Dot 即可连上。')),
+            h('div', {className: 'muse-hairline-title'}, paired ? `已配对 ${pairCount} 台 iPhone` : 'iPhone 尚未配对'),
+            h('div', {className: 'muse-hairline-sub'}, '系统权限在 iPhone 上管理，原始数据留在手机。')),
           h('button', {
             type: 'button',
             className: 'muse-btn-outline',
             'data-muse-conn-mobile-pair': true,
             disabled: busy,
             onClick: () => onOpenMobilePair?.(true),
-          }, model.mobile?.paired ? '查看 6 位码 / 扫码加设备' : '查看 6 位配对码 / 扫码连接'))),
-      h('section', {className: 'muse-section'},
-        h('div', {className: 'muse-section-head'},
-          h('h3', {className: 'muse-section-title'}, '外部信息与工作台连接（按需只读，不主动全盘扫描）'),
-          h('span', {className: 'muse-section-note'}, model.mode === 'synergy' ? 'SuperAgent 台账已挂载' : '未检测到 SuperAgent，独立运行')),
-        ...model.connectionSources.map(src => h('div', {key: src.id, className: 'muse-source-row'},
-          h('div', {className: 'muse-hairline-main'},
-            h('div', {className: 'muse-hairline-title'}, src.name),
-            h('div', {className: 'muse-hairline-sub'}, src.desc)),
-          h('span', {className: 'muse-section-note'}, src.ready ? '已就绪' : src.enabled ? '已开启' : '未启用'))),
-        renderConnectionsHost
-          ? h('details', {className: 'muse-more-disclosure', open: !model.wechatConnected || undefined},
-            h('summary', null, '展开账号授权、微信扫码与详细连接面板'),
-            renderConnectionsHost())
-          : null));
+          }, paired ? '添加设备' : '获取配对码')) : null,
+      ...group.items.map(renderRow),
+      group.id === 'external_apps' && renderConnectionsHost
+        ? h('details', {className: 'muse-more-disclosure'},
+          h('summary', null, '管理账号授权与微信扫码'),
+          renderConnectionsHost())
+        : null)));
   }
 
   function MuseCapsule({
@@ -898,6 +1088,7 @@ export function createMuseViews(React) {
     onPinFocus,
     onAsk,
     onOpenProject,
+    onOpenSession,
     onOpenWorkspacePicker,
     onOpenSettings,
     capsuleDraft = '',
@@ -937,6 +1128,9 @@ export function createMuseViews(React) {
               ? h('button', {type: 'button', className: 'muse-btn-link', onClick: () => feedback.onAction()}, feedback.actionLabel)
               : null)
           : null,
+        undoBanner && tab !== 'memory'
+          ? h('div', {className: 'muse-stage-narrow'}, h(MuseUndoBar, {undoBanner, onMuseAct, onDismissUndo}))
+          : null,
         tab === 'today'
           ? h(MuseTodayView, {
             model,
@@ -946,11 +1140,13 @@ export function createMuseViews(React) {
             onPinFocus,
             onAsk,
             onOpenProject,
+            onOpenSession,
+            onMuseAct,
             onOpenWorkspacePicker,
             onOpenTab: onTab,
           })
           : tab === 'threads'
-            ? h(MuseThreadsView, {model, onAsk})
+            ? h(MuseThreadsView, {model, onAsk, busy, onMuseAct, onOpenSession})
             : tab === 'memory'
               ? h(MuseMemoryView, {
                 model,

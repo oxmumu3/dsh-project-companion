@@ -1,3 +1,57 @@
+const DIGEST_ROUTINE_ID = 'daily-digest';
+
+export async function buildMuseMemorySnapshot({personalProfile, museIntelligence}) {
+  const profile = await personalProfile.snapshot();
+  const sourceItems = await museIntelligence?.readMemoryItems?.().catch(() => []) ?? [];
+  return {profile, memoryItems: personalProfile.memoryItems?.(profile, sourceItems) ?? sourceItems};
+}
+
+function digestTimeLabel(at, timeZone) {
+  if (typeof at !== 'string' || !Number.isFinite(Date.parse(at))) return '';
+  const options = {month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false};
+  try {
+    return new Intl.DateTimeFormat('zh-CN', {...options, timeZone}).format(new Date(at));
+  } catch {
+    return new Intl.DateTimeFormat('zh-CN', {...options, timeZone: 'UTC'}).format(new Date(at));
+  }
+}
+
+export function projectMuseDigest(summary) {
+  if (!summary) return {digest: null, routines: []};
+  const record = summary.lastDigest;
+  const failed = summary.lastStatus === 'failed';
+  const lastRunAt = failed ? summary.lastAttemptAt ?? null : record?.at ?? null;
+  const time = digestTimeLabel(lastRunAt, summary.timeZone);
+  const count = Array.isArray(record?.items) ? record.items.length : 0;
+  const results = {
+    quiet: '本次没有需要提醒的事项',
+    sent: `已整理出 ${count} 项 · 已交给微信通道`,
+    blocked: `已整理出 ${count} 项 · 投递被拦截`,
+    uncertain: `已整理出 ${count} 项 · 投递结果待确认`,
+  };
+  const lastResultSummary = failed ? '本次整理未完成' : results[record?.status] ?? null;
+  const lastReceipt = time && lastResultSummary ? `${time} ${lastResultSummary}` : null;
+  const receipt = lastReceipt ? {lastReceipt} : {};
+  const active = summary.enabled === true;
+  const scheduleLabel = `每天 ${summary.dailyTime || '09:00'}`;
+  return {
+    digest: {...summary, ...receipt},
+    routines: [{
+      id: DIGEST_ROUTINE_ID,
+      title: '晨间整理',
+      triggerKind: 'daily',
+      scheduleLabel,
+      instruction: '整理待跟进事项与接下来的日程',
+      notifyWeChat: summary.deliveryMode === 'wechat_and_desktop',
+      active,
+      lastRunAt,
+      lastResultSummary,
+      nextRunLabel: active ? scheduleLabel : null,
+      ...receipt,
+    }],
+  };
+}
+
 export function createMuseController({
   personalProfile,
   dailyDigest = null,
@@ -6,26 +60,36 @@ export function createMuseController({
   mobileCompanion = null,
   archiveProjectMemory = null,
   readPromises = () => [],
+  readConnections = null,
+  readSessionRows = null,
+  changeDossier = null,
+  undoDossier = null,
+  changeConnector = null,
   onChange = null,
   isClosed = () => false,
 } = {}) {
-  const buildSnapshot = async () => ({
-    ok: true,
-    profile: await personalProfile.snapshot(),
-    digest: typeof dailyDigest?.desktopSummary === 'function' ? dailyDigest.desktopSummary() : null,
-    superagent: typeof superAgent?.readSynergySnapshot === 'function'
-      ? await superAgent.readSynergySnapshot()
-      : { mode: 'standalone', available: false, ledgerRevision: 0, revision: 0, milestones: [], counts: { inReview: 0, blocked: 0, inProgress: 0, todo: 0, pending: 0 }, lastQueued: null },
-    workspaceBrief: typeof museIntelligence?.readWorkspaceBrief === 'function'
-      ? await museIntelligence.readWorkspaceBrief().catch(() => null)
-      : null,
-    staleProjectMemories: typeof museIntelligence?.readStaleMemorySuggestions === 'function'
-      ? await museIntelligence.readStaleMemorySuggestions().catch(() => [])
-      : [],
-    mobile: typeof mobileCompanion?.summary === 'function'
-      ? await mobileCompanion.summary().catch(() => null)
-      : null,
-  });
+  const buildSnapshot = async () => {
+    const [superagent, workspaceBrief, staleProjectMemories, mobile, connections, sessionRows] = await Promise.all([
+      superAgent?.readSynergySnapshot?.() ??
+        { mode: 'standalone', available: false, ledgerRevision: 0, revision: 0, milestones: [], counts: { inReview: 0, blocked: 0, inProgress: 0, todo: 0, pending: 0 }, lastQueued: null },
+      museIntelligence?.readWorkspaceBrief?.().catch(() => null) ?? null,
+      museIntelligence?.readStaleMemorySuggestions?.().catch(() => []) ?? [],
+      mobileCompanion?.summary?.().catch(() => null) ?? null,
+      readConnections?.() ?? {},
+      readSessionRows?.() ?? {},
+    ]);
+    return {
+      ...connections,
+      ...sessionRows,
+      ok: true,
+      ...await buildMuseMemorySnapshot({personalProfile, museIntelligence}),
+      ...projectMuseDigest(dailyDigest?.desktopSummary?.()),
+      superagent,
+      workspaceBrief,
+      staleProjectMemories,
+      mobile,
+    };
+  };
 
   const notify = async () => {
     try {
@@ -52,6 +116,10 @@ export function createMuseController({
           category: input.category,
           label: input.label,
           value: input.value,
+          active: input.active,
+          sourceKind: input.sourceKind,
+          provenance: input.provenance,
+          effect: input.effect,
         });
       } else if (action === 'profile_remove_trait') {
         result = await personalProfile.removeTrait({
@@ -64,14 +132,40 @@ export function createMuseController({
           text: input.text,
           category: input.category,
           source: input.source,
+          active: input.active,
+          sourceKind: input.sourceKind,
+          provenance: input.provenance,
+          effect: input.effect,
         });
       } else if (action === 'profile_delete_note') {
         result = await personalProfile.deleteNote({ id: input.id });
       } else if (action === 'profile_undo') {
         result = await personalProfile.undo({ token: input.token });
-      } else if (action === 'rhythm_configure') {
+      } else if (action === 'memory_item') {
+        result = await personalProfile.mutateMemoryItem(input, {
+          readSourceItems: () => museIntelligence?.readMemoryItems?.() ?? [],
+        });
+      } else if (action === 'flomo_memory_refresh') {
+        result = await museIntelligence?.refreshFlomoMemory?.() ??
+          {ok: false, code: 'UNAVAILABLE', error: 'flomo 记忆暂不可用。'};
+      } else if (action === 'dossier_act') {
+        result = await changeDossier?.({id: input.id, action: input.operation}) ??
+          {ok: false, code: 'UNAVAILABLE', error: '事项操作暂不可用。'};
+      } else if (action === 'dossier_undo') {
+        result = await undoDossier?.({undoToken: input.undoToken}) ??
+          {ok: false, code: 'UNAVAILABLE', error: '撤回事项操作暂不可用。'};
+      } else if (action === 'connector_toggle') {
+        result = await changeConnector?.({id: input.id, enabled: input.enabled, contextMode: input.contextMode}) ??
+          {ok: false, code: 'UNAVAILABLE', error: '连接设置暂不可用。'};
+      } else if (action === 'rhythm_configure' || action === 'routine_toggle') {
         if (typeof dailyDigest?.configureRhythm !== 'function') {
           result = { ok: false, code: 'UNAVAILABLE', error: '当前早报节律服务暂不可用。' };
+        } else if (action === 'routine_toggle') {
+          if (input.id !== DIGEST_ROUTINE_ID || typeof input.active !== 'boolean') {
+            result = {ok: false, code: 'INVALID_ROUTINE', error: '找不到要修改的例行。'};
+          } else {
+            result = await dailyDigest.configureRhythm({enabled: input.active});
+          }
         } else {
           result = await dailyDigest.configureRhythm(input);
         }
@@ -141,7 +235,12 @@ export function createMuseController({
 
       if (result?.ok) await notify();
       const state = await buildSnapshot();
-      return { ...state, ...result };
+      return {
+        ...state,
+        ...result,
+        profile: state.profile,
+        ...(result?.digest ? {digest: state.digest ?? projectMuseDigest(result.digest).digest} : {}),
+      };
     },
   };
 }

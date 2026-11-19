@@ -13,6 +13,15 @@ import museCss from './muse/muse.css';
 import {buildMuseViewModel} from './muse/muse-model.js';
 import {createMuseViews} from './muse/muse-views.jsx';
 
+const museSnapshotFields = [
+  'profile', 'digest', 'superagent', 'workspaceBrief', 'staleProjectMemories', 'mobile',
+  'dossiers', 'carouselCards', 'memoryItems', 'routines', 'connectors', 'contextMode', 'mountedWorkspaces',
+];
+const updateMuseSnapshot = (previous, value) => ({
+  ...previous,
+  ...Object.fromEntries(museSnapshotFields.filter(key => Object.hasOwn(value, key)).map(key => [key, value[key]])),
+});
+
 /** Shared POST for the small Today surface. It never retries: a failed action
  *  shows its reason, and the next 2s projection poll is the read-back. */
 async function todayPost(path, body, timeoutMs = 15000) {
@@ -33,7 +42,31 @@ export default function createDotClient(require){
     const {Dock}=createDockView(React);
     const {TodayOverlay}=createTodayOverlay(React);
     const {Toast,injectStyles}=createUi(React);
-    injectStyles(globalThis.document,dotCss+museCss);
+    const museStatusColors=`
+      .pc_dot_muse{
+        --dot-session-wait:#D4820A;
+        --dot-session-run:#3E63DD;
+        --dot-session-done:#288054;
+        --dot-session-quiet:#ADA79C;
+      }
+      @media (prefers-color-scheme:dark){
+        .pc_dot_muse{
+          --dot-session-wait:#E89D32;
+          --dot-session-run:#6889FF;
+          --dot-session-done:#47A876;
+          --dot-session-quiet:#57534B;
+        }
+      }
+      @supports (color:light-dark(black,white)){
+        .pc_dot_muse{
+          --dot-session-wait:light-dark(#D4820A,#E89D32);
+          --dot-session-run:light-dark(#3E63DD,#6889FF);
+          --dot-session-done:light-dark(#288054,#47A876);
+          --dot-session-quiet:light-dark(#ADA79C,#57534B);
+        }
+      }
+    `;
+    injectStyles(globalThis.document,dotCss+museCss+museStatusColors);
     const endpoint='/api/project_companion/onboarding';
     const inject=['slots','uiWorkspace','configForms','layout','sessions'];
     const css=`.pc_setup{display:flex;flex-direction:column;gap:18px;padding:0 24px 24px;line-height:1.6}.pc_setup h2,.pc_setup h3,.pc_setup p{margin:0}.pc_setup h2{font-size:21px;font-weight:600}.pc_setup h3{font-size:15px;font-weight:600}.pc_setup .pc_card{border:1px solid var(--dsw-alias-border-l3);border-radius:12px;padding:16px;display:flex;flex-direction:column;gap:10px}.pc_setup .pc_muted{font-size:12px;color:var(--dsw-alias-label-secondary)}.pc_setup .pc_actions{display:flex;gap:10px;flex-wrap:wrap}.pc_setup button{border:1px solid var(--dsw-alias-border-l3);border-radius:8px;background:transparent;color:inherit;font:inherit;font-size:13px;padding:8px 14px;cursor:pointer}.pc_setup button:disabled{opacity:.5;cursor:default}.pc_setup button.pc_primary{background:var(--dot-blue-fill);border-color:transparent;color:var(--dot-on-blue)}.pc_setup button:focus-visible,.pc_setup input:focus-visible{outline:2px solid var(--dot-blue);outline-offset:3px}.pc_setup a{color:var(--dot-blue)}.pc_setup label{display:flex;gap:10px;align-items:flex-start;font-size:14px}.pc_setup input{margin-top:5px}.pc_setup .pc_brief{white-space:pre-wrap;font-size:13px;overflow-wrap:anywhere}.pc_setup .pc_error{color:var(--dsw-alias-state-error-primary);font-size:13px}.pc_setup img{width:200px;height:200px;max-width:100%;align-self:center}.pc_setup .pc_connect_heading{display:flex;justify-content:space-between;align-items:flex-start;gap:16px}.pc_setup .pc_connect_heading h2{margin-bottom:4px}.pc_setup .pc_connect_row{display:flex;justify-content:space-between;align-items:center;gap:16px;padding:16px 0;border-top:1px solid var(--dsw-alias-border-l3)}.pc_setup .pc_connect_row>div{min-width:0}.pc_setup .pc_connect_row button{flex-shrink:0}.pc_setup .pc_connect_status{font-size:12px;margin-top:4px}.pc_setup .pc_connect_badge{font-size:11px;padding:3px 8px;border:1px solid var(--dsw-alias-border-l3);border-radius:20px;white-space:nowrap;color:var(--dot-muted)}.pc_setup .pc_google_connect{background:var(--dsw-alias-bg-layer-2)}.pc_setup .pc_connect_help{font-size:13px;border-top:1px solid var(--dsw-alias-border-l3);padding-top:12px}.pc_setup .pc_connect_help summary{cursor:pointer}.pc_setup [data-google-auth-controls]{display:flex;flex-direction:column;gap:10px}.pc_setup .pc_connect_help p{margin:10px 0}.pc_setup .pc_connect_authorizing,.pc_setup .pc_connect_notice{padding:12px 14px;background:var(--dsw-alias-interactive-bg-hover);border-radius:8px;font-size:13px;overflow-wrap:anywhere}.pc_setup .pc_connect_authorizing a{color:var(--dot-blue);display:inline-block;margin-top:8px}.pc_setup_modal{width:min(620px,100%);max-height:90vh;overflow-y:auto;padding:24px 0 0;background:var(--dot-paper);color:var(--dot-ink)}.pc_setup_modal .pc_setup{padding-top:0}@media(max-width:560px){.pc_setup .pc_connect_heading,.pc_setup .pc_connect_row{align-items:flex-start;flex-direction:column;gap:8px}.pc_setup .pc_connect_row{padding:14px 0}.pc_setup{padding:0 16px 20px}.pc_setup .pc_actions button{flex:1}}`;
@@ -1272,6 +1305,7 @@ function createDotGoalBoardViews(React) {
         const [pendingCards,setPendingCards]=React.useState(()=>new Set());
         const [museTab,setMuseTab]=React.useState('today');
         const [museState,setMuseState]=React.useState(null);
+        const museRevision=React.useRef(0);
         const [contextSnap,setContextSnap]=React.useState(null);
         const [pinnedFocusKey,setPinnedFocusKey]=React.useState(null);
         const [capsuleDraft,setCapsuleDraft]=React.useState('');
@@ -1336,14 +1370,16 @@ function createDotGoalBoardViews(React) {
           }catch(failure){if(active.current&&epoch===catalogEpoch.current&&binding===bindingOf(currentSnapshot.current)){if(failure.code==='CATALOG_CHANGED')setCatalog(null);setCatalogError(failure.code==='CATALOG_CHANGED'?'项目目录已变化，请刷新项目目录后继续。':'这次项目资料未能读取，请核对后重试。没有加入关注或创建计划。');}}
           finally{if(epoch===catalogEpoch.current){catalogFlight.current=false;if(active.current)setCatalogBusy(false);}}
         };
-        const refreshMuseExtras=async()=>{
+        const refreshMuseExtras=async({includeContext=true}={})=>{
+          const revision=++museRevision.current;
           try{
             const m=await request('/api/project_companion/muse');
-            if(active.current&&m?.ok)setMuseState({profile:m.profile,digest:m.digest,superagent:m.superagent,workspaceBrief:m.workspaceBrief??null,mobile:m.mobile??null});
+            if(active.current&&revision===museRevision.current&&m?.ok)setMuseState(previous=>updateMuseSnapshot(previous,m));
           }catch{}
+          if(!includeContext||!active.current||revision!==museRevision.current)return;
           try{
             const c=await request('/api/project_companion/context');
-            if(active.current&&c?.version===1)setContextSnap(c);
+            if(active.current&&revision===museRevision.current&&c?.version===1)setContextSnap(c);
           }catch{}
         };
         const refresh=async()=>{
@@ -1366,7 +1402,22 @@ function createDotGoalBoardViews(React) {
           finally{flight.current=false;if(active.current)setBusy(false);}
         };
         React.useEffect(()=>{active.current=true;void refresh();return()=>{active.current=false;viewEpoch.current++;for(const c of controllers.current)c.abort();controllers.current.clear();};},[]);
-        React.useEffect(()=>{if(museTab==='connections')void refreshMuseExtras();},[museTab]);
+        React.useEffect(()=>{
+          const refreshVisibleMuse=()=>{
+            if(todayPanelRef.current&&!conversationOpen&&globalThis.document?.visibilityState!=='hidden'){
+              void refreshMuseExtras({includeContext:museTab==='connections'});
+            }
+          };
+          refreshVisibleMuse();
+          globalThis.document?.addEventListener?.('visibilitychange',refreshVisibleMuse);
+          return()=>globalThis.document?.removeEventListener?.('visibilitychange',refreshVisibleMuse);
+        },[museTab,activePanelId,conversationOpen,todaySnapshot.revision,todaySnapshot.accessKey]);
+        React.useEffect(()=>{
+          const expiresAt=typeof undoBanner?.expiresAt==='number'?undoBanner.expiresAt:Date.parse(undoBanner?.expiresAt);
+          if(!Number.isFinite(expiresAt))return;
+          const timer=setTimeout(()=>setUndoBanner(current=>current===undoBanner?null:current),Math.max(0,expiresAt-Date.now()));
+          return()=>clearTimeout(timer);
+        },[undoBanner]);
         // This is a passive view of the bridge's existing pairing state. Unknown
         // or Family bindings never enter the legacy pairing path.
         const readInlineConnection=async()=>{
@@ -1701,17 +1752,13 @@ function createDotGoalBoardViews(React) {
         };
         const museAct=async(payload={})=>{
           if(!active.current)return null;
+          museRevision.current++;
           setError('');setBusy(true);
           try{
             const value=await todayPost('/api/project_companion/muse',payload);
-            if(active.current&&(value?.profile||value?.digest||value?.superagent||Object.hasOwn(value,'workspaceBrief')||Object.hasOwn(value,'mobile'))){
-              setMuseState(prev=>({
-                profile:value.profile??prev?.profile??null,
-                digest:value.digest??prev?.digest??null,
-                superagent:value.superagent??prev?.superagent??null,
-                workspaceBrief:Object.hasOwn(value,'workspaceBrief')?value.workspaceBrief:(prev?.workspaceBrief??null),
-                mobile:Object.hasOwn(value,'mobile')?value.mobile:(prev?.mobile??null),
-              }));
+            if(active.current&&value&&typeof value==='object'){
+              museRevision.current++;
+              setMuseState(previous=>updateMuseSnapshot(previous,value));
             }
             if(!value?.ok){
               if(active.current)setError(value?.error||'操作没有完成，请刷新核对。');
@@ -1719,13 +1766,14 @@ function createDotGoalBoardViews(React) {
             }
             if(active.current){
               if(value.undoToken){
-                setUndoBanner({token:value.undoToken,message:value.text||'刚才那条记忆已经更新。',expiresAt:value.undoExpiresAt});
-              }else if(payload.action==='profile_undo'){
+                const dossier=payload.action==='dossier_act';
+                setUndoBanner({token:value.undoToken,kind:dossier?'dossier':'profile',message:value.text||(dossier?'已办妥。':'刚才那条记忆已经更新。'),expiresAt:value.undoExpiresAt});
+              }else if(payload.action==='profile_undo'||payload.action==='dossier_undo'){
                 setUndoBanner(null);
               }
               if(value.text)setNotice(value.text);
             }
-            if(['superagent_pending','rhythm_configure','workspace_brief_refresh','promise_draft_save','promise_draft_reset'].includes(payload.action)){
+            if(['superagent_pending','rhythm_configure','routine_toggle','workspace_brief_refresh','promise_draft_save','promise_draft_reset','dossier_act','dossier_undo','connector_toggle'].includes(payload.action)){
               await todayStoreRef.current.refreshNow();
             }
             return value;
@@ -1776,7 +1824,7 @@ function createDotGoalBoardViews(React) {
           if(dot)void navigate(dot.sessionId);
           else void workspaceScope.open();
         };
-        const museSample=liveEmpty&&!sampleCleared&&(liveToday?.access?.count??0)===0&&!liveToday?.workspaceBrief?.workspaces?.length&&!museState?.workspaceBrief?.workspaces?.length&&!liveToday?.digest?.lastDigest?.text&&!(liveToday?.superagent?.milestones?.length);
+        const museSample=liveEmpty&&!sampleCleared&&(liveToday?.access?.count??0)===0&&!museState?.dossiers?.length&&!liveToday?.workspaceBrief?.workspaces?.length&&!museState?.workspaceBrief?.workspaces?.length&&!liveToday?.digest?.lastDigest?.text&&!(liveToday?.superagent?.milestones?.length);
         const museActivity=museSample
           ?{...sampleActivity(),sample:true,superagent:liveToday?.superagent??museState?.superagent,profile:liveToday?.profile??museState?.profile,digest:liveToday?.digest??museState?.digest,workspaceBrief:null,events:Array.isArray(liveToday?.events)?liveToday.events:[],connection:liveToday?.connection??sampleActivity().connection}
           :liveToday;
@@ -1805,6 +1853,7 @@ function createDotGoalBoardViews(React) {
             onPinFocus:key=>setPinnedFocusKey(key),
             onAsk:prefill=>focusCapsuleInput(prefill),
             onOpenProject:openMuseProject,
+            onOpenSession:id=>{void navigate(id);},
             onOpenWorkspacePicker:()=>{void workspaceScope.open();},
             onOpenSettings:()=>setSetup(true),
             capsuleDraft,
