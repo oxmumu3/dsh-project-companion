@@ -18,6 +18,7 @@ const execFileAsync = promisify(execFile);
 export const DEFAULT_MOBILE_PORT = 58471;
 export const MOBILE_PIN_TTL_MS = 15 * 60 * 1000;
 const UNDO_TTL_MS = 12_000;
+const CHECKLIST_READ_ONLY_MESSAGE = '执行步骤由会话自动推进，请在对话中直接回复。';
 
 function cleanDeviceName(raw = os.hostname()) {
   const cleaned = String(raw || 'Mac')
@@ -759,25 +760,18 @@ export function createMobileCompanion(options = {}) {
   }
 
   async function mutateDossier(id, body) {
+    const action = body.action;
+    if (action === 'toggle_checklist') fail(409, CHECKLIST_READ_ONLY_MESSAGE);
     const local = mobileState.dossiers.find((row) => row.id === id);
     const dossier = await readDossier(id);
     if (!dossier) fail(404, '找不到这个会话');
-    const action = body.action;
     const scope = `dossier:${id}`;
     if ((action === 'complete' && dossier.archived) || (action === 'reopen' && !dossier.archived)) return {};
-    let checked = body.checked;
-    if (action === 'toggle_checklist') {
-      const item = dossier.checklist.find((row) => row.id === body.itemId);
-      if (!item || dossier.archived) fail(404, '找不到可勾选的步骤');
-      if (typeof checked !== 'boolean') checked = !item.checked;
-    }
     if (!local) {
       if (typeof options.onDossierAct !== 'function') fail(503, '这个会话目前无法更新');
       const result = await options.onDossierAct({
         id,
         action,
-        ...(typeof body.itemId === 'string' ? { itemId: body.itemId } : {}),
-        ...(typeof checked === 'boolean' ? { checked } : {}),
         ...(typeof body.instruction === 'string' ? { instruction: body.instruction } : {}),
         ...(typeof body.draftText === 'string' ? { draftText: body.draftText } : {}),
       });
@@ -793,8 +787,6 @@ export function createMobileCompanion(options = {}) {
       return { undoToken: issueUndo(() => { local.archived = false; }, scope) };
     } else if (action === 'reopen') {
       local.archived = false;
-    } else if (action === 'toggle_checklist') {
-      local.checklist = local.checklist.map((row) => row.id === body.itemId ? { ...row, checked } : row);
     } else {
       local.summary = sanitizeForMobile(body.instruction || body.draftText || local.summary);
       local.updatedAt = new Date(now()).toISOString();
@@ -1230,13 +1222,9 @@ export function createMobileCompanion(options = {}) {
         }
 
         if (req.method === 'POST' && pathname === '/api/widgets/act') {
-          const { dossierId, action, itemId } = await readJsonBody(req);
-          if (action !== 'checklist_toggle' || typeof dossierId !== 'string' || typeof itemId !== 'string') {
-            fail(400, '找不到可勾选的步骤');
-          }
-          const result = await mutateDossier(dossierId, { action: 'toggle_checklist', itemId });
-          await finishMutation(res, { ...result, dossier: await readDossier(dossierId) });
-          return;
+          const { action } = await readJsonBody(req);
+          if (action === 'checklist_toggle') fail(409, CHECKLIST_READ_ONLY_MESSAGE);
+          fail(400, '不支持的组件操作');
         }
 
         if (req.method === 'POST' && pathname === '/api/command') {

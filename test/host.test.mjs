@@ -130,6 +130,51 @@ async function openLedgerHost(t,options={}){
   return {...h,workspace,setGrant,activity,finish,baseline:baseline.value};
 }
 
+test('session artifact tool keeps legacy todo parameters and preserves document read and write',async t=>{
+  const h=await openLedgerHost(t);
+  const agent=h.live.get('ledger-authorized-history');
+  const invoke=async(args,callId)=>{
+    const result=await executeHostTool(h.ctx.tools,{callId,name:'dot_session_artifact',arguments:args,agent,signal:new AbortController().signal});
+    assert.equal(result.isError,false,JSON.stringify(result));
+    return result.value;
+  };
+  const markdown='# Synthetic report\n\nComplete contents.';
+  const artifact={kind:'doc',markdown};
+  assert.deepEqual(await invoke({action:'write_doc',markdown},'write-document'),{ok:true,artifact});
+  assert.deepEqual(await invoke({action:'write_todo',checklist:[{id:'step',text:'Synthetic step',checked:false}]},'old-todo'),{
+    ok:false,error:'请使用原生的 todo 工具维护执行步骤，不要单独写侧边假清单。',
+  });
+  assert.deepEqual(await invoke({action:'read'},'read-document'),{ok:true,artifact});
+});
+
+test('authorized native artifact events invalidate desktop activity and notify the paired projection',async t=>{
+  const h=await openLedgerHost(t);
+  const agent=h.live.get('ledger-authorized-history');
+  const ungranted=addLive(h,'ledger-ungranted',h.root);
+  const family=addLive(h,'family_native_fixture',h.workspace.path);
+  const broadcast=t.mock.method(h.adapter.mobileCompanion,'notifyChange',async()=>{});
+  await new Promise(resolve=>setTimeout(resolve,150));
+  const waitFor=async predicate=>{
+    const deadline=performance.now()+2000;
+    do{
+      if(await predicate())return true;
+      await new Promise(resolve=>setTimeout(resolve,10));
+    }while(performance.now()<deadline);
+    return false;
+  };
+  for(const type of ['todo/write','deliverables/presented']){
+    const before=(await h.activity()).value;
+    const calls=broadcast.mock.callCount();
+    const event={type,time:Date.now(),data:{}};
+    for(const {session} of [ungranted,family,agent])h.ctx.emit('session/event',session,event);
+    assert.equal(await waitFor(async()=>(await h.activity()).value.revision>before.revision),true,type);
+    assert.equal(await waitFor(()=>broadcast.mock.callCount()>calls),true,type);
+    const after=(await h.activity()).value;
+    assert.equal(after.revision,before.revision+1,'only the authorized project event invalidates the views');
+    assert.deepEqual(after.sessions,before.sessions);
+  }
+});
+
 test('M1 ledger stops collecting immediately after workspace authorization is revoked',async t=>{
   const now=Date.now();
   t.mock.method(Date,'now',()=>now);

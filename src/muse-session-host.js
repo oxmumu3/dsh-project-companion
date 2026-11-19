@@ -1,12 +1,16 @@
 import {randomUUID} from 'node:crypto';
-import {basename} from 'node:path';
+import {closeSync, constants, fstatSync, lstatSync, openSync, readSync, realpathSync} from 'node:fs';
+import {basename, dirname, relative, resolve, sep} from 'node:path';
 import {createUserMessage} from '@deepseek-ai/dsh-llm';
 import {effectiveCwd} from './coordination.js';
 import {grantForCwd} from './session-ledger.js';
 import {createWireTextStream} from './mobile-wire.js';
 
 const undoWindow = 12_000;
+const messageLimit = 30;
+const markdownLimit = 512 * 1024;
 const stale = () => ({ok: false, error: '会话状态已变化，请刷新后再试。'});
+const emptyTranscript = () => ({messages: [], checklist: [], markdown: null});
 const textBlocks = blocks => Array.isArray(blocks) ? blocks
   .filter(block => block?.type === 'text' && typeof block.text === 'string')
   .map(block => block.text).join('\n') : '';
@@ -16,20 +20,103 @@ const ranks = {wait: 0, run: 1, done: 2, quiet: 3};
 export const isProjectSessionHeader = header => Boolean(header && !header.isSeeded &&
   !header.parentSession && !header.parentSessionId && header.origin !== 'subagent');
 
-export function projectMuseDossier(row, grant, messages = []) {
+function extractTranscriptSignals(records, {id, cwd, grant, contextMode, throughSeq, beforeSeq, includeMessages, clock}, signals) {
+  const events = records.filter(record => record?.type === 'event').map(record => record.event)
+    .filter(event => Number.isSafeInteger(event?.seq) && event.seq >= 0 && event.seq <= throughSeq && event.seq < beforeSeq)
+    .sort((a, b) => b.seq - a.seq);
+  const includeDocument = grant && contextMode !== 'curated_only';
+  // Pages arrive newest first. Resolve a relative file using the cwd at its event.
+  for (const event of events) {
+    if (grant && signals.todoAt === undefined && event.type === 'todo/write' && Array.isArray(event.data?.todos)) {
+      signals.checklist = event.data.todos
+        .filter(todo => typeof todo?.content === 'string' && todo.content.trim())
+        .map((todo, index) => {
+          const status = ['pending', 'in_progress', 'completed'].includes(todo.status)
+            ? todo.status : (todo.checked === true ? 'completed' : 'pending');
+          return {id: `native-${event.seq}-${index}`, text: todo.content, checked: status === 'completed', status};
+        });
+      signals.todoAt = Number(event.time) || 0;
+      if (!signals.cwdChanged) signals.todoCwd = cwd;
+    } else if (includeDocument && signals.documentAt === undefined && event.type === 'deliverables/presented' && Array.isArray(event.data?.files)) {
+      signals.nativeDocumentPath = event.data.files.find(file => typeof file?.path === 'string' && /\.(?:md|markdown)$/i.test(file.path))?.path;
+      signals.documentAt = Number(event.time) || 0;
+      if (!signals.cwdChanged) signals.documentCwd = cwd;
+    } else if (grant && event.type === 'working-directory/change' && typeof event.data?.cwd === 'string') {
+      signals.cwdChanged = true;
+      if (signals.checklist?.length && signals.todoCwd === undefined) signals.todoCwd = event.data.cwd;
+      if (signals.nativeDocumentPath && signals.documentCwd === undefined) signals.documentCwd = event.data.cwd;
+    } else if (includeMessages && signals.messages.length < messageLimit) {
+      const isUser = event.type === 'user/message' && event.data?.source?.kind === 'user';
+      const isAssistant = event.type === 'assistant/message' && event.data?.interrupted !== true;
+      if (!isUser && !isAssistant) continue;
+      const text = textBlocks(isUser ? event.data.content : event.data?.message?.content);
+      if (!text.trim()) continue;
+      const time = Number.isFinite(event.time) ? event.time : Number(clock());
+      signals.messages.push({id: `${id}:${event.seq}`, role: isUser ? 'user' : 'assistant', text, createdAt: new Date(time).toISOString()});
+    }
+  }
+  return events.at(-1)?.seq;
+}
+
+const isDescendant = (root, target) => target !== root && target.startsWith(root.endsWith(sep) ? root : root + sep);
+const sameFile = (a, b) => a.dev === b.dev && a.ino === b.ino;
+
+function readPresentedMarkdown({grant, cwd, docPath, contextMode, workspaceAccess, snapshot, maxBytes = markdownLimit}) {
+  let fd;
+  try {
+    if (!grant || !docPath || contextMode === 'curated_only' || workspaceAccess.authorizeSync(snapshot) !== true) return null;
+    const grantStat = lstatSync(grant.root);
+    if (!grantStat.isDirectory()) return null;
+    const root = realpathSync(grant.root);
+    // macOS exposes /tmp and /var as system aliases under /private.
+    const systemAlias = process.platform === 'darwin' && /^\/(?:tmp|var)\//.test(grant.root) && root === '/private' + grant.root;
+    if (root !== grant.root && !systemAlias) return null;
+    const candidate = resolve(cwd, docPath);
+    const target = isDescendant(grant.root, candidate) ? resolve(root, relative(grant.root, candidate)) : candidate;
+    const parent = dirname(target);
+    if (!isDescendant(root, target) || realpathSync(parent) !== parent) return null;
+    const expected = lstatSync(target);
+    if (!expected.isFile() || expected.nlink !== 1 || expected.size > maxBytes) return null;
+    fd = openSync(target, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+    const opened = fstatSync(fd);
+    if (!opened.isFile() || opened.nlink !== 1 || opened.size > maxBytes || !sameFile(expected, opened)) return null;
+    const buffer = Buffer.alloc(opened.size + 1);
+    let length = 0;
+    while (length < buffer.length) {
+      const count = readSync(fd, buffer, length, buffer.length - length, length);
+      if (!count) break;
+      length += count;
+    }
+    const after = fstatSync(fd);
+    if (length !== opened.size || after.size !== opened.size || after.nlink !== 1 ||
+      after.mtimeMs !== opened.mtimeMs || after.ctimeMs !== opened.ctimeMs ||
+      !sameFile(grantStat, lstatSync(grant.root)) || realpathSync(grant.root) !== root ||
+      realpathSync(parent) !== parent || !sameFile(opened, lstatSync(target)) ||
+      workspaceAccess.authorizeSync(snapshot) !== true) return null;
+    return buffer.subarray(0, length).toString('utf8');
+  } catch {
+    return null;
+  } finally {
+    if (fd !== undefined) closeSync(fd);
+  }
+}
+
+export function projectMuseDossier(row, grant, messages = [], nativeOverlay = {}) {
   const archived = row.state === 'handled';
-  const artifactMarkdown = row.artifact?.kind === 'doc' ? row.artifact.markdown : null;
-  const checklist = row.artifact?.kind === 'todo' ? row.artifact.checklist : [];
+  const rowDocMarkdown = row.artifact?.kind === 'doc' ? row.artifact.markdown : null;
+  const artifactMarkdown = nativeOverlay.markdown ?? rowDocMarkdown;
+  const checklist = artifactMarkdown ? [] : (Array.isArray(nativeOverlay.checklist) ? nativeOverlay.checklist : []);
+  const artifactKind = artifactMarkdown ? 'doc' : checklist.length > 0 ? 'todo' : 'none';
   const status = archived || (row.state === 'done' && artifactMarkdown) ? 'done'
     : ['needs_you', 'stuck'].includes(row.state) ? 'wait' : row.state === 'doing' ? 'run' : 'quiet';
   return {
     id: row.sessionId, title: row.title || '工作会话', summary: row.what, whyHere: row.what,
     workspaceTitle: cleanWorkspace(row.projectLabel) || cleanWorkspace(grant.label) || cleanWorkspace(basename(grant.root)) || '工作区',
     state: row.state, status, statusLabel: archived ? '已办妥' : statusLabels[status], archived,
-    artifactKind: row.artifact?.kind ?? 'none', artifactMarkdown, checklist,
+    artifactKind, artifactMarkdown, checklist,
     artifactWordCount: artifactMarkdown ? [...artifactMarkdown.trim().matchAll(/\p{Script=Han}|[\p{L}\p{N}]+/gu)]
       .reduce((count, [word]) => count + (/\p{Script=Han}/u.test(word) ? [...word].length : 1), 0) : null,
-    progress: checklist.length ? checklist.filter(item => item.checked).length / checklist.length : null,
+    progress: checklist.length ? checklist.filter(item => item.checked).length / checklist.length : artifactMarkdown ? 1 : null,
     draftText: artifactMarkdown, updatedAt: row.lastEventAt, category: 'work', source: row.sessionId,
     timeline: [], messages,
   };
@@ -61,31 +148,55 @@ export function createMuseSessionHost({ctx, ledger, workspaceAccess, foregroundS
     return header;
   }
 
-  async function history(id, permits, signal = AbortSignal.timeout(5000)) {
+  const canInspect = api => typeof api?.projections === 'function' && typeof api?.page === 'function';
+
+  async function inspectSession(id, permits, signal = AbortSignal.timeout(8000), {includeMessages = true, selected} = {}) {
     try {
       const api = controller();
-      if (typeof api?.projections !== 'function' || typeof api?.page !== 'function') return [];
+      if (!canInspect(api) || signal.aborted) return emptyTranscript();
       const header = await nativeHeader(id, signal);
-      if (!header || !await permits(header)) return [];
+      if (!header || !await permits(header)) return emptyTranscript();
       const projection = await api.projections({sessionId: id}, signal);
+      const cwd = projection?.values?.workingDirectory;
       if (projection?.kind !== 'sequenced' || !Number.isSafeInteger(projection.asOfSeq) ||
-        projection.values?.workingDirectory !== header.cwd) return [];
-      const page = await api.page({address: {kind: 'session', sessionId: id}, throughSeq: projection.asOfSeq, maxMessages: 30}, signal);
+        projection.asOfSeq < 0 || typeof cwd !== 'string' ||
+        (cwd !== header.cwd && (!selected || !await permits({...header, cwd})))) return emptyTranscript();
+      const contextMode = selected?.snapshot.contextMode;
+      const grant = selected?.grant;
+      const includeDocument = grant && contextMode !== 'curated_only';
+      const signals = {messages: []};
+      let beforeSeq;
+      // The host caps pages by messages, so native events may precede the newest page.
+      while (true) {
+        signal.throwIfAborted();
+        const page = await api.page({
+          address: {kind: 'session', sessionId: id}, throughSeq: projection.asOfSeq, maxMessages: messageLimit,
+          ...(beforeSeq === undefined ? {} : {beforeSeq}),
+        }, signal);
+        if (!Array.isArray(page?.records)) return emptyTranscript();
+        const firstSeq = extractTranscriptSignals(page.records, {
+          id, cwd, grant, contextMode, throughSeq: projection.asOfSeq, beforeSeq: beforeSeq ?? Infinity, includeMessages, clock,
+        }, signals);
+        const needsChecklist = grant && (signals.todoAt === undefined ||
+          (signals.checklist.length > 0 && signals.todoCwd === undefined));
+        const needsDocument = includeDocument && (signals.documentAt === undefined ||
+          (signals.nativeDocumentPath && signals.documentCwd === undefined));
+        const needsMessages = includeMessages && signals.messages.length < messageLimit;
+        if (!page.hasMore || !firstSeq || !(needsChecklist || needsDocument || needsMessages)) break;
+        beforeSeq = firstSeq;
+      }
       const current = await nativeHeader(id, signal);
-      if (current?.cwd !== header.cwd || !await permits(current) || !Array.isArray(page?.records)) return [];
-      return page.records.flatMap(record => {
-        const event = record?.type === 'event' ? record.event : null;
-        if (!Number.isSafeInteger(event?.seq) || event.seq < 0 || event.seq > projection.asOfSeq) return [];
-        const isUser = event.type === 'user/message' && event.data?.source?.kind === 'user';
-        const isAssistant = event.type === 'assistant/message' && event.data?.interrupted !== true;
-        if (!isUser && !isAssistant) return [];
-        const text = textBlocks(isUser ? event.data.content : event.data?.message?.content);
-        if (!text.trim()) return [];
-        const time = Number.isFinite(event.time) ? event.time : Number(clock());
-        return [{id: `${id}:${event.seq}`, role: isUser ? 'user' : 'assistant', text, createdAt: new Date(time).toISOString()}];
-      }).slice(-30);
+      if (current?.cwd !== header.cwd || !await permits(current) || signal.aborted) return emptyTranscript();
+      const permitsArtifactCwd = cwd => grant && grantForCwd(cwd, selected.snapshot.grants)?.root === grant.root;
+      const documentCwd = signals.documentCwd ?? header.cwd;
+      const markdown = signals.nativeDocumentPath && permitsArtifactCwd(documentCwd) ? readPresentedMarkdown({
+        grant, cwd: documentCwd, docPath: signals.nativeDocumentPath, contextMode,
+        workspaceAccess, snapshot: selected.snapshot,
+      }) : null;
+      const checklist = permitsArtifactCwd(signals.todoCwd ?? header.cwd) ? signals.checklist ?? [] : [];
+      return {messages: signals.messages.reverse(), checklist, markdown};
     } catch {
-      return [];
+      return emptyTranscript();
     }
   }
 
@@ -98,16 +209,17 @@ export function createMuseSessionHost({ctx, ledger, workspaceAccess, foregroundS
     try {
       const selected = await scope(id);
       if (!selected) return null;
-      const messages = await history(id, workspacePermits(selected));
+      const transcript = await inspectSession(id, workspacePermits(selected), undefined, {selected});
       await workspaceAccess.assertCurrent(selected.snapshot);
-      return projectMuseDossier(selected.row, selected.grant, messages);
+      return projectMuseDossier(selected.row, selected.grant, transcript.messages, transcript);
     } catch { return null; }
   }
 
   async function readForegroundMessages() {
     const id = await foregroundSession();
     if (!id || /^family[_-]/.test(id) || typeof controller()?.page !== 'function') return undefined;
-    return history(id, async () => !lifecycle?.aborted && await foregroundSession() === id);
+    const {messages} = await inspectSession(id, async () => !lifecycle?.aborted && await foregroundSession() === id);
+    return messages;
   }
 
   async function snapshot({includeMessages = false} = {}) {
@@ -122,14 +234,15 @@ export function createMuseSessionHost({ctx, ledger, workspaceAccess, foregroundS
         return grant ? [{row, grant, snapshot: access}] : [];
       });
       const dossiers = [];
-      if (includeMessages) {
-        // Bound simultaneous host history reads. A delayed session cannot flood
+      if (canInspect(controller())) {
+        // Bound simultaneous transcript reads. A delayed session cannot flood
         // the host with one request for every row in a large workspace.
         const signal = AbortSignal.timeout(8000);
         for (let offset = 0; offset < entries.length; offset += 8) {
-          dossiers.push(...await Promise.all(entries.slice(offset, offset + 8).map(async selected =>
-            projectMuseDossier(selected.row, selected.grant,
-              signal.aborted ? [] : await history(selected.row.sessionId, workspacePermits(selected), signal)))));
+          dossiers.push(...await Promise.all(entries.slice(offset, offset + 8).map(async selected => {
+            const transcript = await inspectSession(selected.row.sessionId, workspacePermits(selected), signal, {includeMessages, selected});
+            return projectMuseDossier(selected.row, selected.grant, transcript.messages, transcript);
+          })));
         }
       } else {
         for (const entry of entries) dossiers.push(projectMuseDossier(entry.row, entry.grant));
@@ -141,7 +254,8 @@ export function createMuseSessionHost({ctx, ledger, workspaceAccess, foregroundS
     } catch { return {dossiers: [], carouselCards: [], todayFocus: null}; }
   }
 
-  async function act({id, action, previous, itemId, checked} = {}) {
+  async function act({id, action, previous} = {}) {
+    if (action === 'toggle_checklist') return {ok: false, error: '执行步骤由会话自动推进，请在对话中直接回复。'};
     if (!await canRun()) return {ok: false, error: 'Dot 已暂停，请恢复后再修改会话。'};
     const selected = await scope(id).catch(() => null);
     if (!selected) return stale();
@@ -157,15 +271,6 @@ export function createMuseSessionHost({ctx, ledger, workspaceAccess, foregroundS
     if (action === 'reopen' || action === 'undo') {
       if (row.state !== 'handled' || (action === 'undo' && previous?.id !== id)) return stale();
       const result = await ledger.restoreState(id, null, {...(action === 'undo' ? previous : row), authorize});
-      if (!result.changed) return stale();
-      onChange();
-      return {ok: true};
-    }
-    if (action === 'toggle_checklist' && row.state !== 'handled' && row.artifact?.kind === 'todo' &&
-      row.artifact.checklist.some(item => item.id === itemId) && typeof checked === 'boolean') {
-      if (row.artifact.checklist.find(item => item.id === itemId).checked === checked) return {ok: true};
-      const result = await ledger.setArtifact(id, artifact => ({kind: 'todo',
-        checklist: artifact.checklist.map(item => item.id === itemId ? {...item, checked} : item)}), {...row, authorize});
       if (!result.changed) return stale();
       onChange();
       return {ok: true};
@@ -197,7 +302,10 @@ export function createMuseSessionHost({ctx, ledger, workspaceAccess, foregroundS
     const selected = await scope(id);
     if (!selected || selected.row.state === 'handled' ||
       grantForCwd(effectiveCwd(ctx, agent), selected.snapshot.grants)?.root !== selected.grant.root) return null;
-    if (artifact === undefined) return selected.row.artifact ?? {kind: 'none'};
+    if (artifact === undefined) {
+      return selected.row.artifact?.kind === 'doc' ? selected.row.artifact : {kind: 'none'};
+    }
+    if (artifact?.kind !== 'doc') return null;
     await workspaceAccess.assertCurrent(selected.snapshot);
     const result = await ledger.setArtifact(id, artifact, {...selected.row,
       authorize: () => workspaceAccess.authorizeSync(selected.snapshot)});

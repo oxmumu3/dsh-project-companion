@@ -1,5 +1,8 @@
 import assert from 'node:assert/strict';
 import {EventEmitter} from 'node:events';
+import {link, mkdir, mkdtemp, realpath, rm, symlink, writeFile} from 'node:fs/promises';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
 import test from 'node:test';
 import {createDotConnectorLedger} from '../src/dot-connector-ledger.js';
 import {createDotSources} from '../src/dot-sources.js';
@@ -125,4 +128,166 @@ test('workspace context mode survives a restart and invalidates old captures', a
   assert.equal(workspaceAccessRowSchema.parse(await store.get('profile')).contextMode, 'curated_only');
   assert.equal((await createWorkspaceAccess({store, catalog}).capture()).contextMode, 'curated_only');
   await assert.rejects(access.setContextMode('unrestricted'));
+});
+
+async function transcriptFixture({root = '/work/project', cwd = root, currentCwd = cwd, pageSize} = {}) {
+  const id = 'native-transcript';
+  const ledger = createSessionLedger({store: memoryStore()});
+  await ledger.apply({sessionId: id, root, title: 'Native transcript', kind: 'start'});
+  const records = [];
+  const grant = {root, label: 'Project'};
+  const access = {grants: [grant], contextMode: 'full_local'};
+  const services = {
+    sessionPersistence: {stat: async () => ({header: {id, cwd}})},
+    sessionController: {
+      projections: async () => ({kind: 'sequenced', asOfSeq: 100, values: {workingDirectory: currentCwd}}),
+      page: async ({throughSeq, beforeSeq = throughSeq + 1}) => {
+        if (!pageSize) return {records};
+        const eligible = records.filter(record => record.event.seq < beforeSeq);
+        return {records: eligible.slice(-pageSize), hasMore: eligible.length > pageSize};
+      },
+    },
+  };
+  const host = createMuseSessionHost({
+    ledger, ctx: {get: key => services[key]},
+    workspaceAccess: {
+      capture: async () => ({...access}), authorizeSync: captured => captured.contextMode === access.contextMode,
+      assertCurrent: async captured => assert.equal(captured.contextMode, access.contextMode),
+    },
+    foregroundSession: async () => null, isForeground: async () => false, canRun: async () => true,
+  });
+  const append = (type, seq, data) => records.push({type: 'event', event: {type, seq, data, time: Date.now()}});
+  return {id, ledger, host, append, access};
+}
+
+test('native checklist wins over legacy sidecar data in session reads and both snapshots', async () => {
+  const {id, ledger, host, append} = await transcriptFixture();
+  await ledger.setArtifact(id, {kind: 'todo', checklist: [{id: 'legacy', text: 'Previously saved', checked: true}]});
+  const plain = await host.readSession(id);
+  assert.equal(plain.artifactKind, 'none');
+  assert.deepEqual(plain.checklist, []);
+  assert.equal(plain.progress, null);
+  assert.equal((await host.snapshot()).todayFocus.artifactKind, 'none');
+  assert.deepEqual(await host.act({id, action: 'toggle_checklist', itemId: 'legacy', checked: false}), {
+    ok: false, error: '执行步骤由会话自动推进，请在对话中直接回复。',
+  });
+
+  append('todo/write', 4, {todos: [
+    {content: 'Research', status: 'completed'}, {content: 'Draft', status: 'in_progress', checked: true},
+    {content: 'Proofread', status: 'pending'}, {content: ' '}, {content: 'Publish', checked: true},
+  ]});
+  append('todo/write', 2, {todos: [{content: 'Old checklist'}]});
+  append('todo/write', 101, {todos: [{content: 'Outside the sequence cut'}]});
+  for (let seq = 10; seq < 44; seq++) append('user/message', seq, {source: {kind: 'user'}, content: [{type: 'text', text: String(seq)}]});
+  append('assistant/message', 44, {interrupted: true, message: {content: [{type: 'text', text: 'discard'}]}});
+
+  const detail = await host.readSession(id);
+  const defaultSnapshot = await host.snapshot();
+  const withMessages = await host.snapshot({includeMessages: true});
+  for (const row of [detail, defaultSnapshot.todayFocus, withMessages.todayFocus]) {
+    assert.equal(row.artifactKind, 'todo');
+    assert.equal(row.progress, 0.5);
+    assert.deepEqual(row.checklist, [
+      {id: 'native-4-0', text: 'Research', checked: true, status: 'completed'},
+      {id: 'native-4-1', text: 'Draft', checked: false, status: 'in_progress'},
+      {id: 'native-4-2', text: 'Proofread', checked: false, status: 'pending'},
+      {id: 'native-4-3', text: 'Publish', checked: true, status: 'completed'},
+    ]);
+  }
+  assert.equal(detail.messages.length, 30);
+  assert.equal(detail.messages[0].text, '14');
+  assert.deepEqual(withMessages.todayFocus.messages, detail.messages);
+  assert.deepEqual(defaultSnapshot.todayFocus.messages, []);
+
+  append('todo/write', 45, {todos: []});
+  assert.equal((await host.snapshot()).todayFocus.artifactKind, 'none');
+});
+
+test('a native checklist from an older transcript page remains visible', async () => {
+  const {id, host, append} = await transcriptFixture({pageSize: 1});
+  append('todo/write', 0, {todos: [{content: 'Keep this plan', status: 'in_progress'}]});
+  append('user/message', 1, {source: {kind: 'user'}, content: [{type: 'text', text: 'Continue'}]});
+  const row = await host.readSession(id);
+  assert.equal(row.checklist[0]?.status, 'in_progress');
+  assert.equal(row.messages[0]?.text, 'Continue');
+  assert.equal((await host.snapshot()).todayFocus.checklist[0]?.status, 'in_progress');
+});
+
+test('a relative deliverable follows the working directory at the presentation event', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'dot-native-directory-'));
+  t.after(() => rm(root, {recursive: true, force: true}));
+  const drafts = join(root, 'drafts');
+  const currentCwd = join(root, 'review');
+  await Promise.all([mkdir(drafts), mkdir(currentCwd)]);
+  await Promise.all([writeFile(join(currentCwd, 'final.md'), 'Different file'), writeFile(join(drafts, 'final.md'), 'Presented file')]);
+  const {id, host, append} = await transcriptFixture({root, currentCwd, pageSize: 1});
+  append('working-directory/change', 1, {cwd: drafts});
+  append('deliverables/presented', 2, {files: [{path: 'final.md'}]});
+  append('working-directory/change', 3, {cwd: currentCwd});
+  assert.equal((await host.readSession(id)).artifactMarkdown, 'Presented file');
+});
+
+test('a checklist written outside the granted workspace is hidden on return', async () => {
+  const {host, id, append} = await transcriptFixture({pageSize: 1});
+  append('working-directory/change', 0, {cwd: '/other/project'});
+  append('todo/write', 1, {todos: [{content: 'Another workspace'}]});
+  append('working-directory/change', 2, {cwd: '/work/project'});
+  assert.equal((await host.readSession(id)).artifactKind, 'none');
+  append('todo/write', 3, {todos: [{content: 'Authorized workspace'}]});
+  assert.equal((await host.snapshot()).todayFocus.checklist[0]?.text, 'Authorized workspace');
+});
+
+test('presented Markdown is read only from the currently granted workspace', async t => {
+  const temporary = await realpath(await mkdtemp(join(tmpdir(), 'dot-native-markdown-')));
+  t.after(() => rm(temporary, {recursive: true, force: true}));
+  const root = join(temporary, 'project');
+  const cwd = join(root, 'drafts');
+  const outside = join(temporary, 'project-private');
+  await Promise.all([mkdir(cwd, {recursive: true}), mkdir(outside)]);
+  const markdown = '# Final\n\nComplete Markdown.\n';
+  const source = join(cwd, 'final.markdown');
+  const secret = join(outside, 'secret.md');
+  await Promise.all([
+    writeFile(source, markdown), writeFile(secret, 'outside workspace'),
+    writeFile(join(cwd, 'oversized.md'), Buffer.alloc(512 * 1024 + 1, 'a')),
+  ]);
+  await Promise.all([
+    link(secret, join(cwd, 'hardlink.md')),
+    symlink(secret, join(cwd, 'symlink.md')),
+    symlink(outside, join(cwd, 'escape')),
+    symlink(cwd, join(root, 'alias')),
+    mkdir(join(cwd, 'directory.md')),
+  ]);
+  const {host, id, ledger, append, access} = await transcriptFixture({root, cwd});
+  await ledger.setArtifact(id, {kind: 'doc', markdown: '# Earlier explicit draft'});
+  append('todo/write', 1, {todos: [{content: 'Prepare final'}]});
+  append('deliverables/presented', 2, {files: [{path: 'export.pdf'}, {path: 'final.markdown'}, {path: 'missing.md'}]});
+  append('deliverables/presented', 101, {files: [{path: 'missing.md'}]});
+  for (const row of [await host.readSession(id), (await host.snapshot()).todayFocus]) {
+    assert.equal(row.artifactKind, 'doc');
+    assert.equal(row.artifactMarkdown, markdown);
+    assert.deepEqual(row.checklist, []);
+    assert.equal(row.progress, 1);
+  }
+  access.contextMode = 'curated_only';
+  assert.equal((await host.snapshot()).todayFocus.artifactMarkdown, '# Earlier explicit draft');
+  access.contextMode = 'full_local';
+  const blocked = [secret, '../../project-private/secret.md', 'symlink.md', 'escape/secret.md', '../alias/final.markdown',
+    'hardlink.md', 'directory.md', 'oversized.md', 'missing.md', 'latest.pdf'];
+  for (const [index, path] of blocked.entries()) {
+    append('deliverables/presented', 3 + index, {files: [{path}]});
+    assert.equal((await host.readSession(id)).artifactMarkdown, '# Earlier explicit draft', path);
+  }
+});
+
+test('a symlink in the granted root path cannot redirect a presented document', async t => {
+  const temporary = await realpath(await mkdtemp(join(tmpdir(), 'dot-native-grant-')));
+  t.after(() => rm(temporary, {recursive: true, force: true}));
+  const outside = join(temporary, 'outside');
+  await mkdir(join(outside, 'project'), {recursive: true});
+  await writeFile(join(outside, 'project', 'secret.md'), 'outside');
+  await symlink(outside, join(temporary, 'alias'));
+  const {host, id, append} = await transcriptFixture({root: join(temporary, 'alias', 'project')});
+  append('deliverables/presented', 0, {files: [{path: 'secret.md'}]});
+  assert.equal((await host.readSession(id)).artifactKind, 'none');
 });

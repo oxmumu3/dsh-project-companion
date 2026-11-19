@@ -397,6 +397,7 @@ export async function installCompanion(ctx,options={}){
     try{const title=ctx.get('sessionProjections')?.snapshot?.(session,['title'])?.values?.title;return typeof title==='string'?title.replace(/[\u0000-\u001f\u007f]/g,' ').trim().slice(0,300):'';}catch{return '';}
   };
   let ledgerEventTail=Promise.resolve();
+  let nativeArtifactRevision=0;
   const ledgerEvent=(sessionId,subject,event)=>{
     // Preserve host event order even when each authorization requires I/O.
     const pending=ledgerEventTail.then(async()=>{
@@ -407,6 +408,12 @@ export async function installCompanion(ctx,options={}){
       if(!ledgerEligible(sessionId,{foreground:ledgerForeground}))return;
       const cwd=effectiveCwd(ctx,subject);if(!cwd)return;
       const grant=await ledgerGrantFor(cwd);if(!grant||disposed)return;
+      // Native artifacts are read from Harness. Invalidate the views without recording the event in Dot.
+      if(event.kind==='native-artifact'){
+        nativeArtifactRevision++;
+        notifyMobileSoon();
+        return;
+      }
       const result=await sessionLedger.apply({sessionId,root:grant.root,projectLabel:String(grant.label??grant.root.split('/').at(-1)??'项目').slice(0,120),title:sessionTitle(subject?.session??subject),...event});
       if(result.changed)notifyMobileSoon();
     });
@@ -914,19 +921,18 @@ export async function installCompanion(ctx,options={}){
   });
   ctx.tools.register(defineTool({
     name:'dot_session_artifact',
-    description:'读取或更新当前在办会话顶部的唯一产物。多步事项维护一份可勾选清单，交付长文时保存完整 Markdown。同一个会话中可以读取现有产物再原位更新。普通聊天不调用。',
+    description:'用 read 读取当前在办会话已保存的 Markdown 成稿，用 write_doc 保存完整成稿。会话优先展示 Harness 原生交付件，执行步骤使用 Harness 原生 todo 工具。普通聊天不调用。',
     parameters:{
       action:{type:'string',enum:['read','write_todo','write_doc'],required:true},
       checklist:{type:'array',items:{type:'object',additionalProperties:false,properties:{id:{type:'string',required:true},text:{type:'string',required:true},checked:{type:'boolean',required:true}}}},
       markdown:{type:'string',description:'文稿全文，保留标题、段落和 Markdown 格式。'},
     },
-    output:{schema:{type:'object',additionalProperties:true}},
+    output:{schema:{type:'object',additionalProperties:true},render:(_args,value)=>[{type:'text',text:value.error??JSON.stringify(value.artifact)}]},
     async execute(input,{agent,signal}){
       signal?.throwIfAborted();
+      if(input.action==='write_todo')return{ok:false,error:'请使用原生的 todo 工具维护执行步骤，不要单独写侧边假清单。'};
       try{
-        const artifact=input.action==='read'?undefined:input.action==='write_todo'
-          ?{kind:'todo',checklist:input.checklist}
-          :{kind:'doc',markdown:input.markdown};
+        const artifact=input.action==='read'?undefined:{kind:'doc',markdown:input.markdown};
         const saved=await museSessionHost.artifactFor(agent,artifact);
         return saved?{ok:true,artifact:saved}:{ok:false,error:'当前会话无法修改产物。'};
       }catch{return{ok:false,error:'产物格式有误或会话状态已变化。'};}
@@ -1122,7 +1128,16 @@ export async function installCompanion(ctx,options={}){
   const projectCatalogController=createProjectCatalogController({catalog:projectCatalog,readConnection:readWorkbenchConnection,isPaused:()=>service.isPaused(),isPausedSync:()=>disposed||service.isPausedSync(),isClosed:()=>disposed});
   if(typeof ctx.inject==='function')ctx.inject(['connection'],scope=>{if(!disposed)registerProjectCatalogRoute(scope,projectCatalogController);});
   if(typeof ctx.inject==='function')ctx.inject(['connection'],scope=>{if(!disposed){registerWorkspaceAccessRoute(scope,workspaceAccessController);registerGoalBoardRoute(scope,goalBoardController);}});
-  if(typeof ctx.inject==='function')ctx.inject(['connection'],scope=>{if(!disposed){registerActivityRoute(scope,{snapshot:async()=>{void dotSourceReader.refreshIfStale();return ledgerProjection();},isClosed:()=>disposed});registerTodayRoutes(scope,{controller:todayController,isClosed:()=>disposed});}});  if(typeof ctx.inject==='function')ctx.inject(['connection'],scope=>{if(!disposed)registerWorkbenchActionsRoute(scope,workbenchActions);});
+  if(typeof ctx.inject==='function')ctx.inject(['connection'],scope=>{
+    if(disposed)return;
+    registerActivityRoute(scope,{snapshot:async()=>{
+      void dotSourceReader.refreshIfStale();
+      const activity=await ledgerProjection();
+      return {...activity,revision:activity.revision+nativeArtifactRevision};
+    },isClosed:()=>disposed});
+    registerTodayRoutes(scope,{controller:todayController,isClosed:()=>disposed});
+  });
+  if(typeof ctx.inject==='function')ctx.inject(['connection'],scope=>{if(!disposed)registerWorkbenchActionsRoute(scope,workbenchActions);});
   if(typeof ctx.inject==='function')ctx.inject(['connection'],scope=>{if(!disposed){registerWorkbenchRoute(scope,workbench);registerDesktopConversationRoute(scope,workbench);}});
   if(typeof ctx.inject==='function')ctx.inject(['connection'],scope=>{if(!disposed)registerContextRoute(scope,contextRoute);});
   if(typeof ctx.inject==='function')ctx.inject(['connection'],scope=>{if(!disposed){registerDigestRoute(scope,digestRoute);registerMuseRoute(scope,{controller:museController,isClosed:()=>disposed});}});
@@ -2009,6 +2024,8 @@ export async function installCompanion(ctx,options={}){
     else if(event.type==='approval/asked')track(()=>ledgerEvent(String(session.id),session,{kind:'approval-asked',at:ledgerAt,toolName:event.data?.toolName,reasonText:event.data?.reason,approvalId:event.data?.id,callId:event.data?.callId}));
     else if(event.type==='approval/decided')track(()=>ledgerEvent(String(session.id),session,{kind:'approval-decided',at:ledgerAt,approvalId:event.data?.id}));
     else if(event.type==='assistant/message')track(()=>ledgerEvent(String(session.id),session,{kind:'assistant',at:ledgerAt,text:resultTexts(event.data?.message?.content)}));
+    else if((event.type==='todo/write'||event.type==='deliverables/presented')&&!/^family[_-]/.test(session.id))
+      track(()=>ledgerEvent(String(session.id),session,{kind:'native-artifact'}));
     if(event.type==='assistant/message'&&Number.isInteger(event.data?.turn))track(()=>taskResults.observe({sessionId:String(session.id),type:'assistant',turn:event.data.turn,text:resultTexts(event.data.message?.content),interrupted:event.data.interrupted===true}));
     else if(event.type==='turn/end'&&Number.isInteger(event.data?.turn)&&typeof event.data?.reason?.kind==='string')track(async()=>{await taskResults.observe({sessionId:String(session.id),type:event.type,turn:event.data.turn,reason:{kind:event.data.reason.kind}});await personalReview.reconcileJobs();});
     const root=effectiveCwd(ctx,session);

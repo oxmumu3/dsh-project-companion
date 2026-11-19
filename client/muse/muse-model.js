@@ -30,11 +30,9 @@ function sessionModel(row, now) {
   const checklist = Array.isArray(row.checklist) ? row.checklist.filter(Boolean) : [];
   let progressLabel = '';
   if (row.artifactKind === 'doc') {
-    progressLabel = row.artifactWordCount > 0 ? `完整成稿 · ${row.artifactWordCount} 字` : '完整成稿';
+    progressLabel = Number.isFinite(row.artifactWordCount) ? `完整成稿 · ${row.artifactWordCount} 字` : '完整成稿';
   } else if (checklist.length) {
     progressLabel = `${checklist.filter(item => item.checked === true).length}/${checklist.length} 步`;
-  } else if (Number.isFinite(row.progress)) {
-    progressLabel = `${Math.round(row.progress * 100)}%`;
   }
   const updatedAt = row.updatedAt ?? row.at ?? null;
   return {

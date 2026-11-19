@@ -49,8 +49,11 @@ test('v10 snapshot orders active native sessions and preserves full documents an
   const { paired } = await fixture(t, {
     readLiveState: async () => ({
       sessions: [
-        { id: 'quiet', state: 'watching', title: '跟进事项', projectLabel: 'Writing', updatedAt: nowIso },
-        { id: 'doc', state: 'done', title: '工作计划', artifactMarkdown, updatedAt: nowIso },
+        {
+          id: 'quiet', state: 'watching', title: '跟进事项', projectLabel: 'Writing', updatedAt: nowIso,
+          artifactKind: 'todo', checklist: [], progress: 0.5,
+        },
+        { id: 'doc', state: 'done', title: '工作计划', artifactMarkdown, progress: 0.5, updatedAt: nowIso },
         { id: 'closed', state: 'handled', title: '已结束', updatedAt: nowIso },
         { id: 'run', state: 'doing', title: '进行中', updatedAt: nowIso },
         { id: 'wait-old', state: 'needs_you', title: '更早拍板', updatedAt: '2026-11-18T15:00:00.000Z' },
@@ -78,15 +81,70 @@ test('v10 snapshot orders active native sessions and preserves full documents an
   assert.equal(snapshot.todayFocus.artifactKind, 'todo');
   assert.equal(snapshot.dossiers.find(({ id }) => id === 'doc').artifactMarkdown, artifactMarkdown);
   assert.equal(snapshot.dossiers.find(({ id }) => id === 'doc').statusLabel, '成稿就绪');
+  assert.equal(snapshot.dossiers.find(({ id }) => id === 'doc').progress, 1);
   assert.equal(snapshot.dossiers.find(({ id }) => id === 'closed').archived, true);
   assert.equal(snapshot.dossiers.find(({ id }) => id === 'closed').statusLabel, '已办妥');
   assert.equal(snapshot.dossiers.find(({ id }) => id === 'quiet').artifactKind, 'none');
+  assert.equal(snapshot.dossiers.find(({ id }) => id === 'quiet').progress, 0);
   assert.equal(snapshot.dossiers.find(({ id }) => id === 'quiet').workspaceTitle, 'Writing');
   assert.equal(snapshot.scheduleItems.find(({ id }) => id === 'meeting').sourceLabel, '日历');
   assert.equal(snapshot.routines[0].lastReceipt, '08:30 已发送');
   assert.deepEqual(snapshot.messages, []);
   assert.deepEqual(snapshot.reminders, []);
   assert.doesNotMatch(JSON.stringify(snapshot), /电脑同源|电脑原有|主会话新建|分身/);
+});
+
+test('v10 preserves native checklist statuses and derives progress with legacy checked fallback', async (t) => {
+  const session = {
+    id: 'session-1', state: 'doing', title: '写周报', updatedAt: nowIso,
+    checklist: [
+      { id: 'a', text: '收集资料', status: 'completed' },
+      { id: 'b', text: '起草周报', status: 'in_progress', checked: true },
+      { id: 'c', text: '提交审核', status: 'pending', checked: true },
+      { id: 'd', text: '核对指标', checked: true },
+      { id: 'e', text: '整理附件', checked: false },
+    ],
+  };
+  const { paired, request } = await fixture(t, {
+    readLiveState: async () => ({ sessions: [session] }),
+    readSession: async (id) => id === session.id ? session : null,
+  });
+
+  const detail = await (await request('/api/sessions/session-1')).json();
+  for (const dossier of [paired.snapshot.todayFocus, detail.dossier]) {
+    assert.equal(dossier.artifactKind, 'todo');
+    assert.equal(dossier.progress, 0.4);
+    assert.deepEqual(dossier.checklist.map(({ status, checked }) => [status, checked]), [
+      ['completed', true], ['in_progress', false], ['pending', false], ['completed', true], ['pending', false],
+    ]);
+  }
+});
+
+test('v10 rejects manual checklist updates from dossiers and widgets', async (t) => {
+  const session = {
+    id: 'session-1', state: 'doing', title: '写周报', updatedAt: nowIso,
+    checklist: [{ id: 'step-1', text: '整理事项', status: 'in_progress', checked: false }],
+  };
+  const calls = [];
+  const { request } = await fixture(t, {
+    readLiveState: async () => ({ sessions: [session] }),
+    onDossierAct(input) {
+      calls.push(input);
+      return { ok: true };
+    },
+  });
+
+  const widget = await request('/api/widgets/act', {
+    action: 'checklist_toggle', dossierId: session.id, itemId: 'step-1',
+  });
+  const dossier = await request('/api/dossiers/session-1/act', {
+    action: 'toggle_checklist', itemId: 'step-1', checked: true,
+  });
+  for (const response of [widget, dossier]) {
+    assert.equal(response.status, 409);
+    assert.deepEqual(await response.json(), { ok: false, error: '执行步骤由会话自动推进，请在对话中直接回复。' });
+  }
+  assert.deepEqual(calls, []);
 });
 
 test('v10 reminders persist, reject stale undo, and restore on single use', async (t) => {
@@ -124,14 +182,8 @@ test('v10 streams main and native session conversations with isolated history an
   const calls = [];
   const { request } = await fixture(t, {
     readLiveState: async () => ({ sessions }),
-    onDossierAct({ id, action, previous, itemId, checked }) {
+    onDossierAct({ id, action, previous }) {
       calls.push({ id, action, previous });
-      if (action === 'toggle_checklist') {
-        assert.equal(itemId, 'step-1');
-        assert.equal(checked, true);
-        sessions[0].checklist[0].checked = checked;
-        return { ok: true };
-      }
       const before = sessions[0].state;
       sessions[0].state = action === 'undo' ? previous : action === 'complete' ? 'handled' : 'doing';
       return { ok: true, undoState: before };
@@ -152,11 +204,6 @@ test('v10 streams main and native session conversations with isolated history an
       return { reply: '只在主会话里' };
     },
   });
-  const widget = await (await request('/api/widgets/act', {
-    action: 'checklist_toggle', dossierId: 'session-1', itemId: 'step-1',
-  })).json();
-  assert.equal(widget.dossier.checklist[0].checked, true);
-  assert.equal(widget.dossier.progress, 1);
   assert.equal((await request('/api/chat/stream', { sessionId: 'missing', text: '写周报' })).status, 404);
   const sessionStream = await request('/api/chat/stream', { sessionId: 'session-1', text: '继续写' });
   assert.match(sessionStream.headers.get('content-type'), /ndjson/);
@@ -165,6 +212,9 @@ test('v10 streams main and native session conversations with isolated history an
   const sessionDone = sessionChunks.at(-1);
   assert.equal(sessionDone.sessionId, 'session-1');
   assert.equal(sessionDone.dossier.artifactMarkdown, '# 完整周报\n\n新的内容');
+  assert.equal(sessionDone.dossier.artifactKind, 'doc');
+  assert.equal(sessionDone.dossier.progress, 1);
+  assert.deepEqual(sessionDone.dossier.checklist, []);
   assert.deepEqual(sessionDone.snapshot.messages, []);
   const detail = await (await request('/api/sessions/session-1')).json();
   assert.equal(detail.messages.at(-1).text, '只在周报里');
@@ -177,7 +227,7 @@ test('v10 streams main and native session conversations with isolated history an
   assert.equal(complete.undoState, undefined);
   const undo = await (await request('/api/undo', { undoToken: complete.undoToken })).json();
   assert.equal(undo.snapshot.dossiers[0].status, 'run');
-  assert.deepEqual(calls.map(({ action }) => action), ['toggle_checklist', 'complete', 'undo']);
+  assert.deepEqual(calls.map(({ action }) => action), ['complete', 'undo']);
 });
 
 test('v10 EventKit sync deduplicates reminders by identifier and revocation clears the synced data and undo', async (t) => {

@@ -518,7 +518,7 @@ test('MuseMemoryView renders stale project memory review cards and dispatches ar
 const v10Snapshot = {
   dossiers: [
     {id: 'doc', title: '上线使用手册', workspaceTitle: 'Writing/', status: 'done', artifactKind: 'doc', artifactWordCount: 1650},
-    {id: 'running', title: '跑回归', workspaceTitle: 'Agent', state: 'doing'},
+    {id: 'running', title: '跑回归', workspaceTitle: 'Agent', state: 'doing', progress: 0.65},
     {id: 'archived', title: '旧提案', workspaceTitle: 'Finvo/', status: 'done', archived: true},
     {id: 'wait', title: '确认排期', workspaceTitle: '/work/Agent/', state: 'stuck', checklist: [{id: '1', checked: true}, {id: '2', checked: false}]},
     {id: 'quiet', title: '收拢素材', workspaceTitle: '', status: 'quiet'},
@@ -560,6 +560,20 @@ test('Muse v10 maps the four status states and excludes archived work from Today
   assert.equal(buildMuseViewModel({activity: sampleActivity(), muse: {dossiers: []}}).todayFocus, null);
 });
 
+test('Muse v10 labels progress only from a document or a populated checklist', () => {
+  const model = buildMuseViewModel({muse: {dossiers: [
+    ...v10Snapshot.dossiers,
+    {id: 'zero-words', artifactKind: 'doc', artifactWordCount: 0},
+    {id: 'empty-checklist', artifactKind: 'todo', checklist: [], progress: 0},
+  ]}});
+  const labels = new Map(model.carouselCards.map(({id, progressLabel}) => [id, progressLabel]));
+  assert.equal(labels.get('wait'), '1/2 步');
+  assert.equal(labels.get('doc'), '完整成稿 · 1650 字');
+  assert.equal(labels.get('zero-words'), '完整成稿 · 0 字');
+  assert.equal(labels.get('running'), '');
+  assert.equal(labels.get('empty-checklist'), '');
+});
+
 test('Muse v10 shows the active cards, opens native sessions and restores an archived session', async t => {
   const {createMuseViews} = await loadMuseViews(t);
   const {React, expand} = runtime();
@@ -579,7 +593,8 @@ test('Muse v10 shows the active cards, opens native sessions and restores an arc
     assert.ok(findAll(tree, item => hasClass(item, 'muse-session-dot') && hasClass(item, `is-${status}`)).length);
   }
   assert.match(allText(tree), /1\/2 步/);
-  assert.match(allText(tree), /1650 字/);
+  assert.match(allText(tree), /完整成稿 · 1650 字/);
+  assert.doesNotMatch(allText(tree), /65%/);
   findAll(tree, item => item.props['data-muse-session-open'] === 'wait')[0].props.onClick();
   findAll(tree, item => item.props['data-muse-session-complete'] === 'wait')[0].props.onClick();
   const archive = findAll(tree, item => item.props['data-muse-session-archive'])[0];

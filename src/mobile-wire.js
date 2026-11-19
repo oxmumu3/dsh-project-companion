@@ -10,6 +10,7 @@ const DOSSIER_STATUS = {
   done: 'done',
 };
 const DOSSIER_PRIORITY = { wait: 0, run: 1, done: 2, quiet: 3 };
+const CHECKLIST_STATUSES = new Set(['pending', 'in_progress', 'completed']);
 const MEMORY_SOURCES = new Set(['chat', 'workspace', 'flomo', 'manual']);
 const legacyLabels = new Map([['电脑同源', '工作区'], ['电脑原有', '工作区'], ['主会话新建', '新事项'], ['分身', '协办事项']]);
 const userPath = /\/Users\/[^\s"'\x60)\]}]+/g;
@@ -80,8 +81,16 @@ export function projectDossier(row, nowIso) {
   const artifactMarkdown = cleanWireText(row.artifactMarkdown, null);
   const checklist = asArray(row.checklist)
     .filter((item) => item && typeof item.text === 'string')
-    .map((item, index) => ({ id: String(item.id || `${id}-${index + 1}`), text: cleanWireText(item.text).trim(), checked: item.checked === true }));
-  const artifactKind = artifactMarkdown ? 'doc' : checklist.length || row.artifactKind === 'todo' ? 'todo' : 'none';
+    .map((item, index) => {
+      const status = CHECKLIST_STATUSES.has(item.status) ? item.status : item.checked === true ? 'completed' : 'pending';
+      return {
+        id: String(item.id || `${id}-${index + 1}`),
+        text: cleanWireText(item.text).trim(),
+        status,
+        checked: status === 'completed',
+      };
+    });
+  const artifactKind = artifactMarkdown ? 'doc' : checklist.length ? 'todo' : 'none';
   const workspaceTitle = [row.workspaceTitle, row.projectLabel, typeof row.root === 'string' ? basename(row.root) : '']
     .map((label) => !LEGACY_WORKSPACE_LABEL.test(label) && cleanWireText(label).trim())
     .find(Boolean) || '个人事务';
@@ -95,9 +104,9 @@ export function projectDossier(row, nowIso) {
     done: '成稿就绪',
     quiet: '跟进中',
   }[status];
-  const progress = artifactKind === 'todo' && checklist.length
+  const progress = artifactKind === 'todo'
     ? checklist.filter(({ checked }) => checked).length / checklist.length
-    : Number.isFinite(row.progress) ? Math.max(0, Math.min(1, row.progress)) : 0;
+    : artifactKind === 'doc' ? 1 : 0;
   const artifactWordCount = artifactMarkdown
     ? Math.max(0, Number.isInteger(row.artifactWordCount) ? row.artifactWordCount : [...artifactMarkdown.replace(/\s/gu, '')].length)
     : null;
