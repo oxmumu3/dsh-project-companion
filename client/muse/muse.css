@@ -2,6 +2,7 @@
 /* Uses only inherited --dot-* / --dsw-alias-* theme tokens (light & dark). */
 
 .pc_dot_muse {
+  --dot-flow: conic-gradient(var(--dot-flow-1), var(--dot-flow-2), var(--dot-flow-3), var(--dot-flow-4), var(--dot-flow-1));
   position: relative;
   display: flex;
   flex-direction: column;
@@ -203,15 +204,15 @@
 .muse-session-dot {
   position: relative;
   display: inline-block;
-  flex: 0 0 8px;
-  width: 8px;
-  height: 8px;
+  flex: 0 0 var(--muse-dot-size, 6.5px);
+  width: var(--muse-dot-size, 6.5px);
+  height: var(--muse-dot-size, 6.5px);
   border-radius: 50%;
   background: var(--muse-session-status);
 }
 
 .muse-session-status {
-  color: var(--muse-session-status, var(--dot-muted));
+  color: var(--dot-muted);
 }
 
 .muse-session-status.is-wait,
@@ -219,9 +220,17 @@
   --muse-session-status: var(--dot-session-wait);
 }
 
+.muse-session-dot.is-wait {
+  box-shadow: 0 0 0 2.5px var(--dot-wait-ring);
+}
+
 .muse-session-status.is-run,
 .muse-session-dot.is-run {
   --muse-session-status: var(--dot-session-run);
+}
+
+.muse-session-dot.is-run {
+  animation: muse-session-breathe 2.4s ease-in-out infinite;
 }
 
 .muse-session-status.is-done,
@@ -234,25 +243,31 @@
   border: 1.4px solid var(--dot-session-quiet);
 }
 
-.muse-session-dot.is-run::after {
-  position: absolute;
-  inset: 0;
-  content: '';
-  border: 1px solid var(--dot-session-run);
-  border-radius: inherit;
-  animation: muse-session-breathe 2.4s ease-out infinite;
+.muse-session-status.is-prebake {
+  color: var(--dot-proactive);
+}
+
+.muse-session-dot:is(.is-prebake, .is-ai-inline) {
+  background: var(--dot-proactive);
+  background: var(--dot-flow);
+  animation: muse-dot-flow 5.8s linear infinite;
+}
+
+.muse-session-dot.is-prebake {
+  box-shadow: 0 0 0 2.5px var(--dot-proactive-ring);
+}
+
+.muse-session-dot.is-ai-inline {
+  --muse-dot-size: 6px;
 }
 
 @keyframes muse-session-breathe {
-  0%, 100% {transform: scale(1); opacity: 0;}
-  15% {opacity: .55;}
-  68% {transform: scale(2); opacity: 0;}
+  0%, 100% {opacity: 1;}
+  50% {opacity: .55;}
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .muse-session-dot.is-run::after {
-    animation: none;
-  }
+@keyframes muse-dot-flow {
+  to {transform: rotate(1turn);}
 }
 
 /* Main scrolling viewport */
@@ -290,11 +305,31 @@
 .muse-greeting {
   font-family: 'Songti SC', 'STSong', 'Noto Serif SC', Georgia, serif;
   font-size: 28px;
-  font-weight: 500;
+  font-weight: 400;
   line-height: 1.32;
   letter-spacing: -0.01em;
   color: var(--dot-ink);
   margin: 0;
+}
+
+.muse-today-prebakes,
+.muse-status-overview {
+  margin-top: 5px;
+}
+
+.muse-today-prebakes {
+  --muse-dot-size: 7.5px;
+  display: block;
+}
+
+.muse-today-prebakes .muse-session-dot {
+  margin-inline: 3px 9px;
+  vertical-align: middle;
+}
+
+.muse-status-overview {
+  gap: 16px;
+  margin-left: 3px;
 }
 
 .muse-subline {
@@ -700,6 +735,88 @@
   text-decoration: line-through;
 }
 
+.muse-memory-budget {
+  color: var(--dot-muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.muse-memory-bucket {
+  margin: 12px 0 20px;
+}
+
+.muse-memory-evidence {
+  border-bottom: 1px solid var(--dot-line);
+}
+
+.muse-memory-evidence summary {
+  cursor: pointer;
+  padding: 10px 0;
+}
+
+.muse-memory-evidence summary::marker {
+  color: var(--dot-muted);
+  font-size: 11px;
+}
+
+.muse-memory-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-inline: 8px;
+  color: var(--dot-proactive);
+  font-size: 11px;
+}
+
+.muse-memory-badge .muse-session-dot {
+  --muse-dot-size: 5.5px;
+}
+
+.muse-memory-proof {
+  padding: 0 0 12px 16px;
+}
+
+.muse-memory-proof blockquote {
+  margin: 0 0 8px;
+  padding-inline-start: 9px;
+  border-inline-start: 2px solid var(--dot-line-strong);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.muse-memory-edit {
+  margin-top: 10px;
+  margin-bottom: 0;
+}
+
+.muse-proactive-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 20px;
+  margin-top: 15px;
+}
+
+.muse-proactive-controls label {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.muse-prebake-trigger {
+  font-variant-numeric: tabular-nums;
+}
+
+.muse-prebake-checklist {
+  padding-left: 0;
+  list-style: none;
+}
+
+.muse-prebake-draft {
+  font: inherit;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 .muse-routine-receipt {
   margin: 4px 0 0;
   color: var(--dot-muted);
@@ -769,6 +886,63 @@
   font-weight: 500;
   color: var(--dot-ink);
   line-height: 1.5;
+}
+
+.muse-day-entry {
+  border-bottom: 1px solid var(--dot-line);
+}
+
+.muse-day-grid {
+  display: grid;
+  grid-template-columns: 42px 18px minmax(0, 1fr) auto 26px;
+  align-items: center;
+  min-height: 36px;
+  column-gap: 3px;
+}
+
+.muse-day-time,
+.muse-day-grid svg {
+  color: var(--dot-muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.muse-day-time.is-overdue {
+  color: var(--dot-error);
+}
+
+.muse-day-title {
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.pc_dot_muse .muse-day-action button {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--dot-proactive);
+}
+
+.muse-day-terminal {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  min-height: 28px;
+}
+
+.pc_dot_muse button.muse-day-terminal {
+  color: var(--dot-muted);
+}
+
+.muse-day-ring {
+  width: 15.5px;
+  height: 15.5px;
+  border: 1.4px solid var(--dot-session-quiet);
+  border-radius: 50%;
+}
+
+.muse-day-expanded {
+  margin: 0 0 8px 66px;
 }
 
 .muse-rail-empty {
@@ -1063,8 +1237,89 @@
   background: var(--dot-white);
   border: 1px solid var(--dot-line-strong);
   border-radius: 999px;
-  padding: 6px 7px 6px 14px;
+  padding: 3px 7px 3px 14px;
+  min-height: 42px;
   box-shadow: 0 8px 26px color-mix(in srgb, var(--dot-ink) 8%, transparent);
+}
+
+.muse-whisper-tray {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  pointer-events: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 740px;
+  height: 58px;
+  margin: 0 auto;
+  padding: 0 9px 0 17px;
+  border-radius: 29px;
+  background: var(--dot-white);
+}
+
+.muse-whisper-tray::before {
+  position: absolute;
+  z-index: -2;
+  content: '';
+  width: 200%;
+  aspect-ratio: 1;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  background: var(--dot-flow);
+  opacity: .92;
+  animation: muse-tray-flow 5.8s linear infinite;
+}
+
+.muse-whisper-tray::after {
+  position: absolute;
+  z-index: -1;
+  content: '';
+  inset: 1.5px;
+  border-radius: inherit;
+  background: var(--dot-white);
+}
+
+@keyframes muse-tray-flow {
+  to {transform: translate(-50%, -50%) rotate(1turn);}
+}
+
+.muse-whisper-copy {
+  flex: 1;
+  min-width: 0;
+}
+
+.muse-whisper-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--dot-proactive);
+  font-size: 11px;
+}
+
+.muse-whisper-label > :last-child,
+.muse-whisper-copy p {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.muse-whisper-copy p {
+  margin: 0;
+  font-size: 13px;
+  color: var(--dot-ink);
+}
+
+.pc_dot_muse .muse-whisper-carry {
+  color: var(--dot-proactive);
+}
+
+.pc_dot_muse .muse-dismiss {
+  color: var(--dot-muted);
+  width: 28px;
+  padding-inline: 0;
+  font-size: 17px;
 }
 
 .pc_dot_muse .muse-capsule-toggle {
@@ -1365,5 +1620,32 @@
   .pc_dot_muse * {
     transition: none !important;
     scroll-behavior: auto !important;
+  }
+
+  .muse-session-dot,
+  .muse-whisper-tray::before {
+    animation: none !important;
+  }
+}
+
+@media (forced-colors: active) {
+  .muse-session-dot {
+    background: Highlight !important;
+    box-shadow: none !important;
+    forced-color-adjust: none;
+  }
+
+  .muse-session-dot.is-quiet {
+    background: transparent !important;
+    border-color: CanvasText;
+  }
+
+  .muse-whisper-tray {
+    border: 2px solid Highlight;
+  }
+
+  .muse-whisper-tray::before,
+  .muse-whisper-tray::after {
+    display: none;
   }
 }

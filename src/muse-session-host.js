@@ -4,7 +4,8 @@ import {basename, dirname, relative, resolve, sep} from 'node:path';
 import {createUserMessage} from '@deepseek-ai/dsh-llm';
 import {effectiveCwd} from './coordination.js';
 import {grantForCwd} from './session-ledger.js';
-import {createWireTextStream} from './mobile-wire.js';
+import {compactHistoryEvents, createWireTextStream} from './mobile-wire.js';
+import {createNativeMuseGateway} from './muse-native-gateway.js';
 
 const undoWindow = 12_000;
 const messageLimit = 30;
@@ -101,14 +102,15 @@ function readPresentedMarkdown({grant, cwd, docPath, contextMode, workspaceAcces
   }
 }
 
-export function projectMuseDossier(row, grant, messages = [], nativeOverlay = {}) {
+export function projectMuseDossier(row, grant, messages = [], nativeOverlay = {}, metadata = {}) {
   const archived = row.state === 'handled';
   const rowDocMarkdown = row.artifact?.kind === 'doc' ? row.artifact.markdown : null;
   const artifactMarkdown = nativeOverlay.markdown ?? rowDocMarkdown;
   const checklist = artifactMarkdown ? [] : (Array.isArray(nativeOverlay.checklist) ? nativeOverlay.checklist : []);
   const artifactKind = artifactMarkdown ? 'doc' : checklist.length > 0 ? 'todo' : 'none';
   const status = archived || (row.state === 'done' && artifactMarkdown) ? 'done'
-    : ['needs_you', 'stuck'].includes(row.state) ? 'wait' : row.state === 'doing' ? 'run' : 'quiet';
+    : ['needs_you', 'stuck'].includes(row.state) ? 'wait'
+    : row.state === 'doing' && metadata.origin !== 'proactive_prebake' ? 'run' : 'quiet';
   return {
     id: row.sessionId, title: row.title || '工作会话', summary: row.what, whyHere: row.what,
     workspaceTitle: cleanWorkspace(row.projectLabel) || cleanWorkspace(grant.label) || cleanWorkspace(basename(grant.root)) || '工作区',
@@ -118,16 +120,19 @@ export function projectMuseDossier(row, grant, messages = [], nativeOverlay = {}
       .reduce((count, [word]) => count + (/\p{Script=Han}/u.test(word) ? [...word].length : 1), 0) : null,
     progress: checklist.length ? checklist.filter(item => item.checked).length / checklist.length : artifactMarkdown ? 1 : null,
     draftText: artifactMarkdown, updatedAt: row.lastEventAt, category: 'work', source: row.sessionId,
-    timeline: [], messages,
+    timeline: [], messages, origin: metadata.origin ?? 'user',
+    ...(metadata.prebakeTrigger ? {prebakeTrigger: metadata.prebakeTrigger} : {}),
   };
 }
 
 export function createMuseSessionHost({ctx, ledger, workspaceAccess, foregroundSession, isForeground, canRun,
-  signal: lifecycle, clock = () => new Date(), onChange = () => {}, waitForLedger = () => {}, readForegroundIds}) {
+  signal: lifecycle, clock = () => new Date(), onChange = () => {}, waitForLedger = () => {}, readForegroundIds,
+  getPrebakeMetadata = () => null, mutatePrebake}) {
   const controller = () => ctx.get('sessionController', false);
   const pending = new Set();
   const undo = new Map();
   const mobileAdmissions = new Map();
+  const nativeRequests = new Map();
 
   async function scope(id) {
     if (typeof id !== 'string' || /^family[_-]/.test(id)) return null;
@@ -174,7 +179,7 @@ export function createMuseSessionHost({ctx, ledger, workspaceAccess, foregroundS
           ...(beforeSeq === undefined ? {} : {beforeSeq}),
         }, signal);
         if (!Array.isArray(page?.records)) return emptyTranscript();
-        const firstSeq = extractTranscriptSignals(page.records, {
+        const firstSeq = extractTranscriptSignals(compactHistoryEvents(page.records), {
           id, cwd, grant, contextMode, throughSeq: projection.asOfSeq, beforeSeq: beforeSeq ?? Infinity, includeMessages, clock,
         }, signals);
         const needsChecklist = grant && (signals.todoAt === undefined ||
@@ -208,10 +213,11 @@ export function createMuseSessionHost({ctx, ledger, workspaceAccess, foregroundS
   async function readSession(id) {
     try {
       const selected = await scope(id);
-      if (!selected) return null;
+      if (!selected || getPrebakeMetadata(id)?.hidden) return null;
       const transcript = await inspectSession(id, workspacePermits(selected), undefined, {selected});
       await workspaceAccess.assertCurrent(selected.snapshot);
-      return projectMuseDossier(selected.row, selected.grant, transcript.messages, transcript);
+      const metadata = getPrebakeMetadata(id);
+      return metadata?.hidden ? null : projectMuseDossier(selected.row, selected.grant, transcript.messages, transcript, metadata ?? {});
     } catch { return null; }
   }
 
@@ -229,7 +235,7 @@ export function createMuseSessionHost({ctx, ledger, workspaceAccess, foregroundS
         readForegroundIds?.() ?? foregroundSession().then(id => new Set([id])),
       ]);
       const entries = state.sessions.flatMap(row => {
-        if (foreground.has(row.sessionId) || /^family[_-]/.test(row.sessionId)) return [];
+        if (foreground.has(row.sessionId) || /^family[_-]/.test(row.sessionId) || getPrebakeMetadata(row.sessionId)?.hidden) return [];
         const grant = grantForCwd(row.root, access.grants);
         return grant ? [{row, grant, snapshot: access}] : [];
       });
@@ -241,16 +247,20 @@ export function createMuseSessionHost({ctx, ledger, workspaceAccess, foregroundS
         for (let offset = 0; offset < entries.length; offset += 8) {
           dossiers.push(...await Promise.all(entries.slice(offset, offset + 8).map(async selected => {
             const transcript = await inspectSession(selected.row.sessionId, workspacePermits(selected), signal, {includeMessages, selected});
-            return projectMuseDossier(selected.row, selected.grant, transcript.messages, transcript);
+            const metadata = getPrebakeMetadata(selected.row.sessionId);
+            return metadata?.hidden ? null : projectMuseDossier(selected.row, selected.grant, transcript.messages, transcript, metadata ?? {});
           })));
         }
       } else {
-        for (const entry of entries) dossiers.push(projectMuseDossier(entry.row, entry.grant));
+        for (const entry of entries) dossiers.push(projectMuseDossier(entry.row, entry.grant, undefined, undefined,
+          getPrebakeMetadata(entry.row.sessionId) ?? {}));
       }
       await workspaceAccess.assertCurrent(access);
-      dossiers.sort((a, b) => ranks[a.status] - ranks[b.status] || Date.parse(b.updatedAt) - Date.parse(a.updatedAt));
-      const carouselCards = dossiers.filter(row => !row.archived);
-      return {dossiers, carouselCards, todayFocus: carouselCards[0] ?? null};
+      const visible = dossiers.filter(row => row && !getPrebakeMetadata(row.id)?.hidden);
+      visible.sort((a, b) => Number(b.origin === 'proactive_prebake') - Number(a.origin === 'proactive_prebake') ||
+        ranks[a.status] - ranks[b.status] || Date.parse(b.updatedAt) - Date.parse(a.updatedAt));
+      const carouselCards = visible.filter(row => !row.archived);
+      return {dossiers: visible, carouselCards, todayFocus: carouselCards[0] ?? null};
     } catch { return {dossiers: [], carouselCards: [], todayFocus: null}; }
   }
 
@@ -262,6 +272,14 @@ export function createMuseSessionHost({ctx, ledger, workspaceAccess, foregroundS
     const {row, snapshot} = selected;
     await workspaceAccess.assertCurrent(snapshot);
     const authorize = () => workspaceAccess.authorizeSync(snapshot);
+    const metadata = getPrebakeMetadata(id);
+    if (metadata?.hidden) return stale();
+    if (action === 'adopt_prebake' || action === 'dismiss_prebake') {
+      if (metadata?.origin !== 'proactive_prebake' || typeof mutatePrebake !== 'function') return stale();
+      const result = await mutatePrebake({id, action, authorize});
+      if (result?.ok) onChange();
+      return result;
+    }
     if (action === 'complete') {
       const result = await ledger.setState(id, 'handled', {...row, authorize}, {archive: true});
       if (!result.changed) return stale();
@@ -314,18 +332,19 @@ export function createMuseSessionHost({ctx, ledger, workspaceAccess, foregroundS
     return artifact;
   }
 
-  async function streamChat({sessionId, text, onEvent, signal}) {
+  async function streamChat({sessionId, text, onEvent, signal, operationId, native, prepared}) {
     if (!await canRun()) return {ok: false, error: 'Dot 已暂停，请先恢复。'};
     const id = sessionId || await foregroundSession();
     if (!id || /^family[_-]/.test(id)) return {ok: false, error: '请先在电脑上选择 Dot 会话。'};
     if (pending.has(id)) return {ok: false, error: '本会话正在回复，请稍后再试。'};
     pending.add(id);
     try {
-      const selected = sessionId ? await scope(id) : null;
-      if (sessionId && (!selected || selected.row.state === 'handled')) return stale();
+      const selected = sessionId ? prepared ?? await scope(id) : null;
+      if (sessionId && (!selected || selected.row?.state === 'handled' || getPrebakeMetadata(id)?.hidden)) return stale();
       const cancelled = AbortSignal.any([lifecycle, AbortSignal.timeout(120_000), ...(signal ? [signal] : [])].filter(Boolean));
       const getAgent = () => ctx.get('agents', false)?.get?.(id);
       let agent = getAgent();
+      if (!agent && native && !prepared) return {ok: false, status: 404, fallbackHeadless: true};
       if (!agent) {
         const header = await nativeHeader(id, cancelled);
         if (!header || (selected && grantForCwd(header.cwd, selected.snapshot.grants)?.root !== selected.grant.root)) return stale();
@@ -341,9 +360,30 @@ export function createMuseSessionHost({ctx, ledger, workspaceAccess, foregroundS
           grantForCwd(effectiveCwd(ctx, agent), selected.snapshot.grants)?.root === selected.grant.root));
       if (!cwd || !inScope() || (!selected && await foregroundSession() !== id)) return stale();
       if (!inScope() || cancelled.aborted || agent.status !== 'idle') return stale();
-      const message = createUserMessage({content: [{type: 'text', text}], source: {kind: 'user'}});
-      mobileAdmissions.set(message.id, id);
-      if (mobileAdmissions.size > 200) mobileAdmissions.delete(mobileAdmissions.keys().next().value);
+      function recordAdmission(message) {
+        mobileAdmissions.set(message.id, id);
+        if (mobileAdmissions.size > 200) mobileAdmissions.delete(mobileAdmissions.keys().next().value);
+      }
+      const message = native ? null : createUserMessage({content: [{type: 'text', text}], source: {kind: 'user'}});
+      if (message) recordAdmission(message);
+      const followLifetime = new AbortController();
+      const followSignal = AbortSignal.any([cancelled, followLifetime.signal]);
+      let follow;
+      if (native) {
+        follow = (await native.stream('session', 'follow', {request: {address: {kind: 'session', sessionId: id},
+          maxMessages: 1, assistantStream: true}}, followSignal))[Symbol.asyncIterator]();
+        try {
+          if ((await follow.next()).value?.type !== 'snapshot') {
+            followLifetime.abort();
+            await follow.return?.();
+            return stale();
+          }
+        } catch (error) {
+          followLifetime.abort();
+          void follow.return?.().catch(() => {});
+          throw error;
+        }
+      }
       const result = await new Promise(resolve => {
         let turn = null;
         let mixed = false;
@@ -357,13 +397,18 @@ export function createMuseSessionHost({ctx, ledger, workspaceAccess, foregroundS
           if (settled) return;
           settled = true;
           cancelled.removeEventListener('abort', abort);
+          followLifetime.abort();
           for (const dispose of disposers) if (typeof dispose === 'function') dispose();
           resolve(result);
         };
         const abort = () => finish({ok: false, error: '等候回复已结束，可打开原会话查看进展。'});
+        const matchesInput = input => native ? input?.source?.rpcId === operationId : input?.id === message.id;
+        if (native) disposers.push(ctx.on('agent/inbox/inserted', payload => {
+          if (payload?.agent === agent && matchesInput(payload.message)) recordAdmission(payload.message);
+        }));
         disposers.push(ctx.on('agent/inbox/claimed', payload => {
           if (payload?.agent !== agent || !Number.isSafeInteger(payload.turn)) return;
-          if (payload.message?.id === message.id) {
+          if (matchesInput(payload.message)) {
             turn = payload.turn;
             mixed ||= competingTurns.has(turn);
           } else {
@@ -371,8 +416,8 @@ export function createMuseSessionHost({ctx, ledger, workspaceAccess, foregroundS
             mixed ||= payload.turn === turn;
           }
         }));
-        disposers.push(ctx.on('agent/assistant-stream', ({agent: source, frame} = {}) => {
-          if (source !== agent || turn === null || !frame) return;
+        const consumeAssistantFrame = frame => {
+          if (turn === null || !frame) return;
           if (!inScope() || mixed) return finish(stale());
           if (frame.type === 'start' && frame.turn === turn) {
             attempt = {id: frame.attemptId, revision: frame.revision, text: ''};
@@ -382,9 +427,9 @@ export function createMuseSessionHost({ctx, ledger, workspaceAccess, foregroundS
             emitText(!attempt.text && completed.length ? `\n${frame.chunk.text}` : frame.chunk.text);
             attempt.text += frame.chunk.text;
           }
-        }));
-        disposers.push(ctx.on('session/event', (session, event) => {
-          if (session !== agent.session || turn === null || event?.data?.turn !== turn) return;
+        };
+        const consumeSessionEvent = event => {
+          if (turn === null || event?.data?.turn !== turn) return;
           if (!inScope() || mixed) return finish(stale());
           if (event.type === 'assistant/message' && event.data.interrupted !== true) {
             const chunk = textBlocks(event.data.message?.content);
@@ -399,18 +444,84 @@ export function createMuseSessionHost({ctx, ledger, workspaceAccess, foregroundS
             finish(reason === 'completed' ? {ok: true, reply: completed.join('\n')}
               : {ok: false, error: '本轮已结束，请打开原会话查看进展。'});
           }
-        }));
+        };
+        if (!native) {
+          disposers.push(ctx.on('agent/assistant-stream', ({agent: source, frame} = {}) => {
+            if (source === agent) consumeAssistantFrame(frame);
+          }));
+          disposers.push(ctx.on('session/event', (session, event) => {
+            if (session === agent.session) consumeSessionEvent(event);
+          }));
+        }
         cancelled.addEventListener('abort', abort, {once: true});
         if (!inScope()) return abort();
-        try { agent.followup(message); } catch { finish(stale()); }
+        if (native) {
+          nativeRequests.set(operationId, id);
+          void (async () => {
+            while (!settled) {
+              const next = await follow.next();
+              if (next.done) break;
+              if (next.value?.type === 'assistant-stream') consumeAssistantFrame(next.value.frame);
+              if (next.value?.type === 'event') consumeSessionEvent(next.value.event);
+            }
+            if (!settled) finish(stale());
+          })().catch(() => finish(stale())).finally(() => follow.return?.()).catch(() => {});
+          void native.invoke('session', 'prompt', {request: {sessionId: id, requestId: operationId,
+            mode: 'queue', content: [{type: 'text', text}]}}, cancelled).then(result => {
+            if (result?.accepted !== true) finish(stale());
+          }).catch(() => finish(stale()));
+        } else {
+          try { agent.followup(message); } catch { finish(stale()); }
+        }
       });
       if (!inScope()) return stale();
       await waitForLedger();
       return inScope() ? result : stale();
     } catch {
       return stale();
-    } finally { pending.delete(id); }
+    } finally {
+      pending.delete(id);
+      nativeRequests.delete(operationId);
+    }
   }
-  return {snapshot, readSession, readForegroundMessages, act, desktopAct, desktopUndo, streamChat, artifactFor,
-    isMobileAdmission: (id, messageId) => mobileAdmissions.get(messageId) === id};
+
+  async function gatewaySession(sessionId, signal) {
+    const foregroundId = await foregroundSession();
+    const id = sessionId || foregroundId;
+    if (typeof id !== 'string' || /^family[_-]/.test(id) || getPrebakeMetadata(id)?.hidden) return null;
+    const selected = id === foregroundId ? null : await scope(id);
+    if (id !== foregroundId && (!selected || selected.row.state === 'handled')) return null;
+    const allowed = async () => {
+      if (signal?.aborted || lifecycle?.aborted || getPrebakeMetadata(id)?.hidden) return false;
+      if (!selected) return await foregroundSession() === id;
+      const agent = ctx.get('agents', false)?.get?.(id);
+      return workspaceAccess.authorizeSync(selected.snapshot) && !await isForeground(id) &&
+        (!agent || grantForCwd(effectiveCwd(ctx, agent), selected.snapshot.grants)?.root === selected.grant.root);
+    };
+    const header = await nativeHeader(id, signal);
+    if (!header || (selected && grantForCwd(header.cwd, selected.snapshot.grants)?.root !== selected.grant.root) ||
+      !await allowed()) return null;
+    const live = ctx.get('agents', false)?.get?.(id);
+    return {id, allowed, needs: selected?.row.needs, cwd: header.cwd, foreground: !selected,
+      live: live?.id === id && live.session?.id === id};
+  }
+
+  async function createGatewaySession({cwd, signal}) {
+    const snapshot = await workspaceAccess.capture();
+    const grant = grantForCwd(cwd, snapshot.grants);
+    const api = controller();
+    if (!grant || cwd !== grant.root || snapshot.contextMode !== 'full_local' ||
+      typeof api?.create !== 'function' || realpathSync(cwd) !== cwd) return null;
+    const id = `dot-mobile-${randomUUID()}`;
+    const allowed = () => !signal?.aborted && !lifecycle?.aborted && workspaceAccess.authorizeSync(snapshot);
+    await workspaceAccess.assertCurrent(snapshot);
+    if (!allowed() || !await canRun()) return null;
+    const created = await api.create({sessionId: id, cwd, agentPreset: 'standard'}, signal);
+    if (created?.sessionId !== id || !allowed()) return null;
+    return {id, cwd, allowed, prepared: {grant, snapshot}};
+  }
+
+  const gateway = createNativeMuseGateway({ctx, lifecycle, canRun, gatewaySession, createSession: createGatewaySession, ledger, streamChat});
+  return {snapshot, readSession, readForegroundMessages, act, desktopAct, desktopUndo, streamChat, artifactFor, gateway,
+    isMobileAdmission: (id, messageId, requestId) => mobileAdmissions.get(messageId) === id || nativeRequests.get(requestId) === id};
 }

@@ -158,11 +158,12 @@ function cancellable(promise, signal) {
 }
 
 /** One native adapter call; no Agent or durable transcript is created. */
-export async function runNewsModel({ llm, selection, system, data, signal, maxTokens, onUsage = () => {}, onDiagnostic = () => {}, preparePolicy, beforeStream, beforeStreamSync, diagnoseFinish = false }) {
+export async function runNewsModel({ llm, selection, system, data, signal, maxTokens, onUsage = () => {}, onDiagnostic = () => {}, preparePolicy, beforeStream, beforeStreamSync, diagnoseFinish = false, store, requiredProvider }) {
   if (beforeStream !== undefined && typeof beforeStream !== 'function' || beforeStreamSync !== undefined && typeof beforeStreamSync !== 'function') fail('MODEL_INVALID_INPUT');
   if (!llm || typeof llm.prepareCall !== 'function' || !record(selection) || typeof selection.provider !== 'string' || !selection.provider.trim() || typeof selection.model !== 'string' || !selection.model.trim()) fail('MODEL_UNAVAILABLE');
   const config = { provider: selection.provider, model: selection.model,
-    ...(typeof selection.reasoningEffort === 'string' && selection.reasoningEffort ? { reasoningEffort: selection.reasoningEffort } : {}), maxTokens };
+    ...(typeof selection.reasoningEffort === 'string' && selection.reasoningEffort ? { reasoningEffort: selection.reasoningEffort } : {}),
+    ...(store === false ? {store} : {}), maxTokens };
   const blocks = new Map(), reasoningLengths = new Map();
   let prepared, finish, failureCode, usage, length = 0, ended = false;
   const diagnostic = () => safeModelCallDiagnostic({ requestedMaxTokens: maxTokens, preparedMaxTokens: prepared?.config?.maxTokens,
@@ -173,8 +174,10 @@ export async function runNewsModel({ llm, selection, system, data, signal, maxTo
   emitDiagnostic();
   prepared = await cancellable(Promise.resolve().then(() => llm.prepareCall(config, signal, preparePolicy)), signal);
   if (!prepared || !record(prepared.config) || typeof prepared.stream !== 'function') fail('MODEL_UNAVAILABLE');
+  if (requiredProvider && prepared.config.provider !== requiredProvider) fail('MODEL_UNAVAILABLE');
   emitDiagnostic();
-  const request = { ...prepared.config, system, messages: [{ role: 'user', content: [{ type: 'text', text: data }] }], tools: [], signal };
+  const request = { ...prepared.config, ...(store === false ? {store} : {}),
+    system, messages: [{ role: 'user', content: [{ type: 'text', text: data }] }], tools: [], signal };
   // Provider preparation can await routing/configuration. Recheck permission
   // after it, then make the last synchronous check adjacent to transmission.
   if (beforeStream) await cancellable(Promise.resolve().then(() => { if (signal.aborted) throw aborted(signal); return beforeStream(); }), signal);

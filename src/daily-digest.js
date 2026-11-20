@@ -368,7 +368,7 @@ export function createDigestModel(ctx, {clock = () => new Date(), timeoutMs = 12
   const active = new Set();
   const totals = {requests: 0, successful: 0, failed: 0, tokens: {}};
   return {
-    async summarize({material, signal} = {}) {
+    async summarize({material, signal, proactive = null} = {}) {
       if (closed) throw new NewsModelError('MODEL_CLOSED');
       if (signal?.aborted) throw new NewsModelError('MODEL_ABORTED');
       let data;
@@ -379,7 +379,7 @@ export function createDigestModel(ctx, {clock = () => new Date(), timeoutMs = 12
       signal?.addEventListener('abort', stop, {once: true});
       const timer = setTimeout(stop, timeoutMs);
       try {
-        const includesGoogle = (Array.isArray(material?.mails) && material.mails.length > 0)
+        const includesGoogle = proactive?.google === true || (Array.isArray(material?.mails) && material.mails.length > 0)
           || (Array.isArray(material?.calendar) && material.calendar.length > 0)
           || (Array.isArray(material?.promises) && material.promises.some(p => p?.source === 'calendar'))
           || material?.states?.gmail?.state === 'ok'
@@ -387,7 +387,9 @@ export function createDigestModel(ctx, {clock = () => new Date(), timeoutMs = 12
         let llm, selection;
         try {
           llm = ctx.get('llm', false);
-          if (includesGoogle && typeof resolveGoogleSelection === 'function') {
+          if (proactive?.google === true) {
+            selection = await proactive.resolveSelection();
+          } else if (includesGoogle && typeof resolveGoogleSelection === 'function') {
             selection = await resolveGoogleSelection();
           } else {
             selection = ctx.get('agentDefaultModel', false)?.currentSelection();
@@ -401,15 +403,17 @@ export function createDigestModel(ctx, {clock = () => new Date(), timeoutMs = 12
         controller.signal.throwIfAborted();
         totals.requests += 1;
         const result = await runNewsModel({
-          llm, selection, system: DIGEST_SYSTEM, data, signal: controller.signal,
+          llm, selection, system: proactive?.system ?? DIGEST_SYSTEM, data, signal: controller.signal,
           maxTokens: 2600, preparePolicy: boundedModelControls, diagnoseFinish: true,
+          ...(proactive?.beforeStream ? {beforeStream: proactive.beforeStream} : {}),
+          ...(proactive?.google === true ? {store: false, requiredProvider: selection?.provider} : {}),
           onUsage(usage) { for (const [key, count] of Object.entries(usage)) totals.tokens[key] = (totals.tokens[key] ?? 0) + count; },
         });
         controller.signal.throwIfAborted();
         let parsed;
         try { parsed = JSON.parse(result.text); } catch { throw new NewsModelError('MODEL_INVALID_OUTPUT'); }
         totals.successful += 1;
-        return {output: parsed, text: result.text};
+        return {output: parsed, text: result.text, ...(proactive ? {usage: result.usage} : {})};
       } catch (error) {
         totals.failed += 1;
         throw new NewsModelError(controller.signal.aborted ? 'MODEL_ABORTED' : error instanceof NewsModelError ? error.code : 'MODEL_REQUEST_FAILED');

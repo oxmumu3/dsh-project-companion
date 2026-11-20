@@ -261,7 +261,7 @@ export function createGoogleSuiteRest({getToken,fetch:fetchImpl=globalThis.fetch
    });
   },
   async diagnose(name,settings={}){
-   if(name!=='history')fail('CONTEXT_UNSUPPORTED_OPERATION');
+   if(!['history','history_cursor'].includes(name))fail('CONTEXT_UNSUPPORTED_OPERATION');
    return operate(settings,async signal=>{
     await authorized(settings,signal);cancelled(settings);
     let bearer;try{bearer=await wait(Promise.resolve().then(()=>{signal.throwIfAborted();cancelled(settings);return getToken?.('gmail',{signal,authorizeMutation:()=>authorized(settings,signal)});}),signal);}catch(e){if(CODES.has(e?.code))throw error(e.code);throw error('CONTEXT_AUTH_REQUIRED');}
@@ -274,6 +274,12 @@ export function createGoogleSuiteRest({getToken,fetch:fetchImpl=globalThis.fetch
     };
     // Field projection keeps only the cursor and the IDs needed for counting.
     const profile=await fetchJson('/gmail/v1/users/me/profile?fields=historyId');
+    if(name==='history_cursor'){
+     await authorized(settings,signal);cancelled(settings);
+     const cursor=profile.status===200&&typeof profile.value?.historyId==='string'&&/^\d{1,64}$/u.test(profile.value.historyId)
+      ?profile.value.historyId:null;
+     return{value:{cursor},fetchedAt:new Date(clock()).toISOString()};
+    }
     const historyId=typeof profile.value?.historyId==='string'&&profile.value.historyId.length>0;
     let historyStatus = null;
     let page = null;

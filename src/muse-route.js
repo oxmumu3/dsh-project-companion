@@ -58,6 +58,7 @@ export function createMuseController({
   superAgent = null,
   museIntelligence = null,
   mobileCompanion = null,
+  proactive = null,
   archiveProjectMemory = null,
   readPromises = () => [],
   readConnections = null,
@@ -69,7 +70,7 @@ export function createMuseController({
   isClosed = () => false,
 } = {}) {
   const buildSnapshot = async () => {
-    const [superagent, workspaceBrief, staleProjectMemories, mobile, connections, sessionRows] = await Promise.all([
+    const [superagent, workspaceBrief, staleProjectMemories, mobile, connections, sessionRows, proactiveState] = await Promise.all([
       superAgent?.readSynergySnapshot?.() ??
         { mode: 'standalone', available: false, ledgerRevision: 0, revision: 0, milestones: [], counts: { inReview: 0, blocked: 0, inProgress: 0, todo: 0, pending: 0 }, lastQueued: null },
       museIntelligence?.readWorkspaceBrief?.().catch(() => null) ?? null,
@@ -77,10 +78,12 @@ export function createMuseController({
       mobileCompanion?.summary?.().catch(() => null) ?? null,
       readConnections?.() ?? {},
       readSessionRows?.() ?? {},
+      proactive?.snapshot?.() ?? {},
     ]);
     return {
       ...connections,
       ...sessionRows,
+      ...proactiveState,
       ok: true,
       ...await buildMuseMemorySnapshot({personalProfile, museIntelligence}),
       ...projectMuseDigest(dailyDigest?.desktopSummary?.()),
@@ -148,6 +151,17 @@ export function createMuseController({
       } else if (action === 'flomo_memory_refresh') {
         result = await museIntelligence?.refreshFlomoMemory?.() ??
           {ok: false, code: 'UNAVAILABLE', error: 'flomo 记忆暂不可用。'};
+      } else if (action === 'proactive_settings_update') {
+        const {cadence, autoPrebake, dailyPrebakeCap, dailyPushCap, quietHours} = input.settings ?? input;
+        const patch = Object.fromEntries(Object.entries({cadence, autoPrebake, dailyPrebakeCap, dailyPushCap, quietHours})
+          .filter(([, value]) => value !== undefined));
+        result = await personalProfile.updateProactiveSettings(patch);
+      } else if (action === 'proactive_insight_act') {
+        result = await proactive?.actInsight({id: input.id, operation: input.operation}) ??
+          {ok: false, code: 'UNAVAILABLE', error: '轻提醒暂不可用。'};
+      } else if (action === 'proactive_dream_run') {
+        result = await proactive?.runDream({force: input.force === true}) ??
+          {ok: false, code: 'UNAVAILABLE', error: '暂时无法复盘记忆。'};
       } else if (action === 'dossier_act') {
         result = await changeDossier?.({id: input.id, action: input.operation}) ??
           {ok: false, code: 'UNAVAILABLE', error: '事项操作暂不可用。'};

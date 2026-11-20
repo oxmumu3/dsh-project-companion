@@ -88,11 +88,13 @@ import {createGoalBoardController,registerGoalBoardRoute} from './src/goal-board
 import {parseFamilyCatalogList} from './src/project-catalog-intent.js';
 import {observeWelcomeOutcome} from './src/onboarding-outcome.js';
 import {installBundledWechat} from './src/bundled-wechat.js';
-import {createPersonalProfile,personalProfileRowSchema} from './src/personal-profile.js';
+import {buildFirstUserTurnMemoryEnvelope,createPersonalProfile,personalProfileRowSchema,quotedIn} from './src/personal-profile.js';
 import {createSuperAgentBridge} from './src/superagent-bridge.js';
 import {buildMuseMemorySnapshot,createMuseController,projectMuseDigest,registerMuseRoute} from './src/muse-route.js';
 import {createMuseIntelligence} from './src/muse-intelligence.js';
 import {createMobileCompanion} from './src/mobile-companion.js';
+import {createProactiveWatermark,proactiveWatermarkRowSchema} from './src/proactive-watermark.js';
+import {createProactiveDesktop} from './src/proactive-desktop.js';
 export {Config};
 
 export const name='project-companion';
@@ -133,6 +135,7 @@ const sessionLedgerDomainSpec=defineDomain({name:'project_companion_sessions',ve
 const goalBoardDomainSpec=defineDomain({name:'project_companion_goals',version:1,tables:{state:domainTable(goalBoardRowSchema)}});
 const personalProfileDomainSpec=defineDomain({name:'project_companion_personal_profile',version:1,tables:{state:domainTable(personalProfileRowSchema)}});
 const googleIsolationDomainSpec=defineDomain({name:'project_companion_google_isolation',version:1,tables:{state:domainTable(googleIsolationRowSchema)}});
+const proactiveDomainSpec=defineDomain({name:'project_companion_proactive',version:1,tables:{state:domainTable(proactiveWatermarkRowSchema)}});
 
 function owner(ctx,agent){
   const cwd=effectiveCwd(ctx,agent);
@@ -192,9 +195,12 @@ export async function installCompanion(ctx,options={}){
   const personalProfileTable=personalProfileDomain.table('state');
   const googleIsolationDomain=await ctx.storageDomain.open(googleIsolationDomainSpec);
   const googleIsolationTable=googleIsolationDomain.table('state');
+  const proactiveDomain=await ctx.storageDomain.open(proactiveDomainSpec);
+  const proactiveTable=proactiveDomain.table('state');
   const hasMockHarness=Boolean(options.clock||options.fetch||options.readSetup||options.readBinding||options.readNativeRoute||options.contextLoop||options.personalReview||options.dailyDigest||options.projectUpdates||options.context?.transport||options.context?.googleAuth||options.context?.googleSuiteAuth||options.context?.vaultFactory||options.context?.suiteTransport||options.context?.calendarTransport);
   const enforceStrictAllowlist=options.googleIsolation?.enforceStrictAllowlist??!hasMockHarness;
   const syntheticHost=options.googleIsolation?.syntheticHost??!enforceStrictAllowlist;
+  const isTestOrSynthetic=Boolean(process.env.NODE_TEST_CONTEXT||globalThis.__dshCiNetwork||syntheticHost);
   const googleIsolation=createGoogleIsolationGuard({
     ctx,
     store:{get:key=>googleIsolationTable.get(key),put:(key,value)=>googleIsolationTable.put(key,googleIsolationRowSchema.parse(value))},
@@ -246,11 +252,13 @@ export async function installCompanion(ctx,options={}){
   });
   let timer;
   let mobileNotifyTimer=null;
+  const livingMemorySessions=new WeakSet();
+  const recentOwnerTurn=new Map();
   let familyRecoveryPending=false,familyRecoveryRunning=false;
   let disposed=false;
   const coordinates=new Set();
   let lastRuntimeError='';
-  let projectPulse,pulseLedger,memory,followup,onboarding,welcomeGuard,contextRoute,digestRoute,workbench,workbenchActions,projectUpdates,projectUpdateModel,contextLoop,context,familyDelegate,familyContext,personalReview,personalReviewModel,dailyDigest,digestModel,mobileCompanion;
+  let projectPulse,pulseLedger,memory,followup,onboarding,welcomeGuard,contextRoute,digestRoute,workbench,workbenchActions,projectUpdates,projectUpdateModel,contextLoop,context,familyDelegate,familyContext,personalReview,personalReviewModel,dailyDigest,digestModel,mobileCompanion,proactive;
   // 污点标记只活在本进程内存里；这次装载从干净状态开始，不继承上一次运行的标记。
   clearPrivateReads();
   const lifecycle=new AbortController();
@@ -664,6 +672,7 @@ export async function installCompanion(ctx,options={}){
     lifecycle.abort();
     clearTimeout(mobileNotifyTimer);
     mobileRelease?.();
+    await proactive?.close();
     await mobileCompanion?.dispose?.().catch(()=>{});
     goalBoard.close();goalBoardModel.close();unsubscribeIntelligence?.();workspaceAccess.close();
     await sessionLedger.close();
@@ -683,7 +692,7 @@ export async function installCompanion(ctx,options={}){
     // A failed news store must not prevent cleanup of unrelated services.
     await externalClosing;
     try{await taskResults.close();}
-    finally{try{await service.ready();}finally{await Promise.allSettled([taskDomain.close(),onboardingDomain.close(),newsDomain.close(),personalReviewDomain.close(),contextDomain.close(),dotSourcesDomain.close(),familyDomain.close(),projectUpdatesDomain.close(),contextLoopDomain.close(),workspaceAccessDomain.close(),sessionLedgerDomain.close(),goalBoardDomain.close(),personalProfileDomain.close(),googleIsolationDomain.close(),domain.close()]);}}
+    finally{try{await service.ready();}finally{await Promise.allSettled([taskDomain.close(),onboardingDomain.close(),newsDomain.close(),personalReviewDomain.close(),contextDomain.close(),dotSourcesDomain.close(),familyDomain.close(),projectUpdatesDomain.close(),contextLoopDomain.close(),workspaceAccessDomain.close(),sessionLedgerDomain.close(),goalBoardDomain.close(),personalProfileDomain.close(),googleIsolationDomain.close(),proactiveDomain.close(),domain.close()]);}}
   });
   // Cordis emits disposal before waiting for an asynchronous apply to settle.
   // Abort startup at that boundary; normal effect cleanup alone runs too late.
@@ -870,7 +879,55 @@ export async function installCompanion(ctx,options={}){
     ctx,ledger:sessionLedger,workspaceAccess,foregroundSession:async()=>ledgerDesktopSession()||null,
     isForeground:ledgerIsForeground,readForegroundIds:refreshLedgerForeground,canRun:canRunMuse,signal:lifecycle.signal,clock:options.clock,
     onChange:notifyMobileSoon,waitForLedger:()=>ledgerEventTail,
+    getPrebakeMetadata:id=>proactive?.getPrebakeMetadata(id),
+    mutatePrebake:input=>proactive?.actPrebake(input),
   });
+  const proactiveDesktop=createProactiveDesktop({
+    ctx,googleIsolation,digestModel,readGoogleConfig:()=>readGoogleWorkspaceModelConfig(options.context?.config),
+    workspaceAccess,sessionLedger,personalProfile,context,dotSources,dotSourceReader,canRun:canRunMuse,
+    getGateway:()=>museSessionHost.gateway,readDeviceContext:()=>mobileCompanion?.readProactiveDeviceContext?.(),
+    writeDraft:(id,markdown)=>mobileCompanion?.writeProactiveDraft?.(id,markdown),
+    removeDraft:id=>mobileCompanion?.removeProactiveDraft?.(id),
+    clock:options.clock,signal:lifecycle.signal,
+  });
+  proactive=createProactiveWatermark({
+    store:{get:key=>proactiveTable.get(key),put:(key,value)=>proactiveTable.put(key,value)},
+    readSettings:async()=>(await personalProfile.stage4Snapshot()).proactiveSettings,
+    readRules:async()=>(await personalProfile.stage4Snapshot()).stage4Memory.items.filter(item=>item.bucket==='proactive_rules'),
+    ...proactiveDesktop,clock:options.clock,timeZone:hostZone,signal:lifecycle.signal,
+    canRun:canRunMuse,onChange:notifyMobileSoon,onError:noteError,
+    dream:(input,settings)=>personalProfile.runDreaming(input,settings),
+    strongPush:async insight=>{
+      const owner=await resolveDigestOwner();
+      if(!owner||!await canRunMuse()||!dotSources.wechatNotificationsEnabled())return;
+      await sendDailyDigest({owner,requestId:insight.id,text:insight.title,signal:lifecycle.signal});
+    },
+  });
+  await proactive.snapshot();
+  ctx.effect(()=>ctx.on('agent/pre-step',async(payload,next)=>{
+    const decision=await next();
+    const session=payload?.agent?.session,id=session?.id;
+    if(disposed||decision?.kind!=='enter'||!session||payload.signal?.aborted||/^family[_-]/.test(id??''))return decision;
+    const first=decision.messages.find(message=>message.source?.kind==='user');
+    if(!first||!await dotForegroundSession(id)||payload.signal?.aborted)return decision;
+    recentOwnerTurn.set(id,{id:first.id,text:resultTexts(first.content),at:Date.now()});
+    if(recentOwnerTurn.size>4)recentOwnerTurn.delete(recentOwnerTurn.keys().next().value);
+    if(livingMemorySessions.has(session))return decision;
+    // This notice travels with the user turn through the official admission
+    // channel, preserving both the static system prompt and the user's words.
+    const profile=await personalProfile.stage4Snapshot();
+    const workspace=(await workspaceAccess.capture().catch(()=>null))?.grants??[];
+    const memoryEnvelope=buildFirstUserTurnMemoryEnvelope(profile,{allowSource:item=>{
+      if(item.sourceKind==='flomo')return Boolean(proactiveDesktop.sourceGrant('flomo'));
+      if(item.sourceKind==='workspace')return workspace.some(grant=>grant.label&&item.provenance.includes(grant.label));
+      return true;
+    }});
+    if(!memoryEnvelope||payload.signal?.aborted)return decision;
+    const notice=createUserMessage({content:[{type:'text',text:memoryEnvelope}],source:{kind:'dot-living-memory',form:'recall'}});
+    const messages=[...decision.messages];
+    messages.splice(messages.indexOf(first),0,notice);
+    return {...decision,messages};
+  }));
   const connectorLedger=createDotConnectorLedger({
     dotSources,context,workspaceAccess,readMobile:()=>mobileCompanion?.summary().catch(()=>null),
     readWechat:async()=>Boolean(await resolveDigestOwner().catch(()=>null)),
@@ -887,14 +944,17 @@ export async function installCompanion(ctx,options={}){
     ...(options.mobile||{}),
     syntheticHost:Boolean(options.clock||!ctx.get?.('pluginManager',false)),
     isClosed:()=>disposed,
+    loopbackGateway:options.loopbackGateway??options.mobile?.loopbackGateway,
+    gateway:museSessionHost.gateway,signal:lifecycle.signal,
     readLiveState:async()=>{
-      const [memorySnapshot,sessions,connectors,workspaceBrief,superagent,messages]=await Promise.all([
+      const [memorySnapshot,sessions,connectors,workspaceBrief,superagent,messages,proactiveState]=await Promise.all([
         buildMuseMemorySnapshot({personalProfile,museIntelligence}),
         museSessionHost.snapshot({includeMessages:true}),connectorLedger.snapshot().catch(()=>null),
         museIntelligence.readWorkspaceBrief().catch(()=>null),superAgentBridge.readSynergySnapshot(),
         museSessionHost.readForegroundMessages().catch(()=>undefined),
+        proactive.snapshot(),
       ]);
-      return {...memorySnapshot,...projectMuseDigest(dailyDigest.desktopSummary()),
+      return {...memorySnapshot,...proactiveState,...projectMuseDigest(dailyDigest.desktopSummary()),
         sessions:sessions.dossiers,connectors,workspaceBrief,superagent,messages,scheduleItems:readMobileSchedule()};
     },
     readSession:museSessionHost.readSession,readMainMessages:museSessionHost.readForegroundMessages,
@@ -907,9 +967,12 @@ export async function installCompanion(ctx,options={}){
     onRemoveTrait:input=>personalProfile.removeTrait(input),
     onQueuePending:input=>superAgentBridge.enqueuePending(input),
     onConfigureRhythm:input=>dailyDigest?.configureRhythm?.(input),
+    onProactiveSettings:input=>personalProfile.updateProactiveSettings(input),
+    onProactiveInsight:input=>proactive.actInsight(input),
+    onProactiveDream:input=>proactive.runDream(input),
   });
   const museController=createMuseController({
-    personalProfile,dailyDigest,superAgent:superAgentBridge,museIntelligence,mobileCompanion,
+    personalProfile,dailyDigest,superAgent:superAgentBridge,museIntelligence,mobileCompanion,proactive,
     readConnections:connectorLedger.snapshot,changeConnector:connectorLedger.toggle,
     readSessionRows:museSessionHost.snapshot,changeDossier:museSessionHost.desktopAct,undoDossier:museSessionHost.desktopUndo,
     archiveProjectMemory:async({projectRoot,memoryId}={})=>{
@@ -1654,7 +1717,7 @@ export async function installCompanion(ctx,options={}){
       traitLabel:{type:'string',description:'profile_remember/profile_forget：简短偏好名，如“读报时间”“汇报方式”，最多40字。'},
       traitValue:{type:'string',description:'profile_remember：本人明确表达的偏好内容，最多120字。'},
       noteText:{type:'string',description:'profile_remember/profile_forget：顺口记下的个人习惯、偏好或备忘，最多500字。'},
-      noteCategory:{type:'string',enum:['note','travel','preference','context','habit','schedule','idea'],description:'profile_remember：随记分类，默认 preference/note。'},
+      noteCategory:{type:'string',enum:['note','travel','preference','context','habit','schedule','idea','boundary'],description:'profile_remember：随记分类，默认 preference/note。用户明确纠正 Dot 的主动提醒分寸时用 boundary，noteText 填用户原话。'},
       undoToken:{type:'string',description:'profile_forget：撤回刚才保存或忘掉的记忆时传 latest 或对应撤回令牌。'},
       reviewItemId:{type:'string',description:'coordinate可选：仅当本人任务全文明确引用个人回顾「事项原题」时，从prepare结果映射稳定itemId。目标须在该事项原回顾项目范围内；不自行添加源正文或宣称已处理。'},
       objective:{type:'string',description:'context_brief：用户明确想推进的目标，最多160字；沿用同一目标时可省略。'},
@@ -1776,6 +1839,14 @@ export async function installCompanion(ctx,options={}){
             }
             const rawNote=typeof args.noteText==='string'&&args.noteText.trim()?args.noteText:typeof args.memoryText==='string'?args.memoryText:'';
             if(!rawNote.trim())return{status:'blocked',accepted:false,text:'请提供要记入个人记忆的偏好或随记内容。'};
+            if(args.noteCategory==='boundary'){
+              const receipt=recentOwnerTurn.get(callerId);
+              if(!receipt||Date.now()-receipt.at>300000||rawNote.trim().length>240||!quotedIn(rawNote,receipt.text)){
+                return{status:'blocked',accepted:false,text:'这条提醒分寸需要用本轮对话里的本人原话记录。'};
+              }
+              await proactive.recordCorrection({id: receipt.id,summary:rawNote.trim(),quote:rawNote.trim()});
+              return{status:'ok',accepted:true,text:'已记下这次纠正，晚间复盘时会更新你的提醒分寸。'};
+            }
             const res=await personalProfile.addNote({text:rawNote,category:args.noteCategory??'preference',source});
             if(!res.ok)return{status:'blocked',accepted:false,...(res.code?{code:res.code}:{}),text:res.error};
             return{status:'ok',accepted:true,...(res.undoToken?{undoToken:res.undoToken}:{}),profile:res.profile,text:`${res.text}：${res.note.text}（已记入「记忆」页，2 分钟内对我说“撤回刚才记的”可撤销）`};
@@ -2006,7 +2077,7 @@ export async function installCompanion(ctx,options={}){
   ctx.on('agent/inbox/claimed',payload=>{
     if(!payload?.agent?.id||!payload.message?.id||!Number.isInteger(payload.turn))return;
     const sessionId=String(payload.agent.id),messageId=String(payload.message.id);
-    if(!museSessionHost.isMobileAdmission(sessionId,messageId))track(async()=>{await quickAck(sessionId,messageId);});
+    if(!museSessionHost.isMobileAdmission(sessionId,messageId,payload.message.source?.rpcId))track(async()=>{await quickAck(sessionId,messageId);});
     track(async()=>{await taskResults.claimed({sessionId,messageId,turn:payload.turn,sourceKind:payload.message.source?.kind,sourceCallId:payload.message.source?.callId});await personalReview.reconcileJobs();});
   });
   ctx.on('agent/inbox/discarded',payload=>{
@@ -2015,6 +2086,14 @@ export async function installCompanion(ctx,options={}){
   });
   ctx.on('session/event',(session,event)=>{
     if(disposed||!session?.id||!event)return;
+    if(event.type==='user/message'&&event.data?.source?.kind==='dot-living-memory')livingMemorySessions.add(session);
+    if(event.type==='user/message'&&event.data?.source?.kind==='user'&&!/^family[_-]/.test(session.id)){
+      if(ledgerForeground.has(session.id)||ledgerDesktopSession()===session.id||
+        museSessionHost.isMobileAdmission(session.id,event.data?.id,event.data?.source?.rpcId))proactive.noteChat();
+      else if(isProjectSessionHeader(session.header)){
+        void ledgerGrantFor(effectiveCwd(ctx,session)).then(grant=>{if(grant&&!disposed)proactive.noteChat();});
+      }
+    }
     if((ledgerForeground.has(session.id)||ledgerDesktopSession()===session.id)&&
       ['user/message','assistant/message','turn/end'].includes(event.type))notifyMobileSoon();
     // Ledger first: the watched-project recorder below drops every event whose
@@ -2061,8 +2140,9 @@ export async function installCompanion(ctx,options={}){
     try{await followup.resume({root:project.root});}catch(error){noteError(error);}
   }
   await recoverFamilyPlans();
+  if(!isTestOrSynthetic||options.proactive?.start===true)proactive.start();
   if(typeof ctx.inject==='function')ctx.inject(['familyDotBridge'],()=>{if(!disposed)void recoverFamilyPlans();});
-  return{service,taskResults,memory,followup,onboarding,news,personalReview,dailyDigest,personalProfile,superAgentBridge,museController,mobileCompanion,context,contextLoop,projectUpdates,googleIsolation,googleCalendarAuth,googleSuiteAuth,flomoAuth,didaAuth,workbench,workbenchActions,familyRoute,projectCatalog,projectCatalogController,workspaceAccess,goalBoard,goalBoardController,dotSources,dotSourceReader,registeredProjectTarget:service.registeredProjectTarget,authorizeRegisteredCoordinationSync:service.authorizeRegisteredCoordinationSync};
+  return{service,taskResults,memory,followup,onboarding,news,personalReview,dailyDigest,personalProfile,superAgentBridge,museController,mobileCompanion,proactive,context,contextLoop,projectUpdates,googleIsolation,googleCalendarAuth,googleSuiteAuth,flomoAuth,didaAuth,workbench,workbenchActions,familyRoute,projectCatalog,projectCatalogController,workspaceAccess,goalBoard,goalBoardController,dotSources,dotSourceReader,registeredProjectTarget:service.registeredProjectTarget,authorizeRegisteredCoordinationSync:service.authorizeRegisteredCoordinationSync};
 }
 
 export async function apply(ctx,config){

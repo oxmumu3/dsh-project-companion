@@ -282,6 +282,25 @@ export function createSessionLedger({store,clock=()=>new Date(),isClosed=()=>fal
         return{changed:true,transition:next.transition===true,revision:state.revision};
       });
     },
+    async publishPrepared({sessionId, root, projectLabel, title, markdown, at}, authorize = () => true) {
+      return serial(async () => {
+        await load();
+        if (isClosed() || !/^dot-proactive-[a-f0-9]{24}$/.test(sessionId) ||
+            state.sessions.some(row => row.sessionId === sessionId)) return false;
+        const artifact = sessionArtifactSchema.parse({kind: 'doc', markdown});
+        const source = {sessionId, root, projectLabel, title, at};
+        const started = reduceLedger(state, {...source, kind: 'start'});
+        if (!started.changed) return false;
+        const authored = reduceLedger(started.state, {...source, kind: 'assistant', text: title});
+        const settled = reduceLedger(authored.state, {...source, kind: 'turn-end', reason: {kind: 'completed'}}).state;
+        const row = settled.sessions.find(item => item.sessionId === sessionId);
+        if (!row || isClosed() || !authorize()) return false;
+        row.artifact = artifact;
+        await save(settled);
+        state = settled;
+        return true;
+      });
+    },
     async snapshot({connection='unknown',grants=null}={}){
       if(isClosed())throw new Error('Session ledger closed');
       return serial(async()=>{await load();return projectLedger(state,{connection,grants});});

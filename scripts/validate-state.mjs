@@ -29,6 +29,7 @@ const DOMAINS = {
   project_companion_personal_profile: ['personal-profile.js', 'personalProfileRowSchema'],
   project_companion_daily_digest: ['daily-digest.js', 'dailyDigestRowSchema'],
   project_companion_google_isolation: ['google-data-isolation.js', 'googleIsolationRowSchema'],
+  project_companion_proactive: ['proactive-watermark.js', 'proactiveWatermarkRowSchema'],
 };
 
 if (!existsSync(storages)) {

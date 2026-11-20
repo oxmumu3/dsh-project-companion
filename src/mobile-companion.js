@@ -2,15 +2,18 @@ import crypto from 'node:crypto';
 import { execFile, spawn } from 'node:child_process';
 import fs from 'node:fs';
 import http from 'node:http';
+import {isIPv4, isIPv6} from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { URL } from 'node:url';
 import { promisify } from 'node:util';
 import packageManifest from '../package.json' with { type: 'json' };
 import { qrSvgFor } from '../vendor/dsh-wechat/dist/qr.js';
+import {createLoopbackGatewayRelay} from './loopback-gateway-relay.js';
+import {createOperationLedger, validOperationId} from './operation-idempotency.js';
 import {
-  asArray, cleanWireText, projectCarousel, projectConnectorLedger, projectDossier, projectMemoryItem, projectMessages,
-  projectRoutine, projectSchedule, stringifyWire,
+  asArray, cleanWireText, projectCarousel, projectConnectorLedger, projectDossier, projectLiveInsight, projectMemoryItem, projectMessages,
+  projectReminderFields, projectRoutine, projectSchedule, stringifyWire,
 } from './mobile-wire.js';
 
 const execFileAsync = promisify(execFile);
@@ -68,6 +71,29 @@ export function listLanIPv4Addresses() {
       }
     }
     return [...new Set(out)];
+  } catch {
+    return [];
+  }
+}
+
+export function listTailscaleAddresses(interfaces) {
+  try {
+    const addresses = new Set();
+    for (const [name, entries] of Object.entries(interfaces ?? os.networkInterfaces())) {
+      if (!/^utun\d+$/.test(name) || !Array.isArray(entries)) continue;
+      const v4 = [], v6 = [];
+      for (const entry of entries) {
+        if (entry?.internal || typeof entry?.address !== 'string') continue;
+        const address = entry.address.split('%')[0];
+        if ((entry.family === 'IPv4' || entry.family === 4) && isIPv4(address)) {
+          const [first, second] = address.split('.').map(Number);
+          if (first === 100 && second >= 64 && second <= 127) v4.push(address);
+        } else if ((entry.family === 'IPv6' || entry.family === 6) && isIPv6(address) &&
+            /^fd7a:115c:a1e0:/i.test(address)) v6.push(address);
+      }
+      if (v4.length && v6.length) for (const address of [...v4, ...v6]) addresses.add(address);
+    }
+    return [...addresses];
   } catch {
     return [];
   }
@@ -277,7 +303,9 @@ export function createMobileCompanion(options = {}) {
   const isTestOrSynthetic = Boolean(
     process.env.NODE_TEST_CONTEXT || globalThis.__dshCiNetwork || options.syntheticHost
   );
-  const isClosed = typeof options.isClosed === 'function' ? options.isClosed : () => false;
+  const lifecycle = new AbortController();
+  const lifecycleSignal = options.signal ? AbortSignal.any([options.signal, lifecycle.signal]) : lifecycle.signal;
+  const isClosed = () => lifecycleSignal.aborted || options.isClosed?.() === true;
   const persistToDisk = Boolean(options.stateDir || options.dshHome || !isTestOrSynthetic);
   const resolvedDshHome = options.dshHome
     ? path.resolve(options.dshHome)
@@ -285,14 +313,16 @@ export function createMobileCompanion(options = {}) {
   const stateDir = persistToDisk
     ? options.stateDir
       ? path.resolve(options.stateDir)
-      : path.join(resolvedDshHome, 'dot-mobile-bridge')
+      : !options.dshHome && process.env.DOT_MOBILE_STATE_DIR
+        ? path.resolve(process.env.DOT_MOBILE_STATE_DIR)
+        : path.join(resolvedDshHome, 'dot-mobile-bridge')
     : null;
   const configPath = stateDir ? path.join(stateDir, 'config.json') : null;
   const embeddedStatePath = stateDir ? path.join(stateDir, 'embedded-v10-state.json') : null;
   const now = options.clock || (() => new Date());
 
   const configuredPort = Number.isInteger(options.port) ? options.port : DEFAULT_MOBILE_PORT;
-  const host = options.host || '0.0.0.0';
+  const host = options.host || '::';
   const embeddedEnabled =
     options.embeddedServer !== false && (options.embeddedServer === true || !isTestOrSynthetic);
   const shouldAutoStart =
@@ -349,6 +379,20 @@ export function createMobileCompanion(options = {}) {
   const pairAttemptsByKey = new Map();
   const chatQueues = new Map();
   const completedChat = new Map();
+  const operations = createOperationLedger({clock: now});
+  const relay = stateDir && options.gateway && options.loopbackGateway !== false &&
+    (options.loopbackGateway === true || !isTestOrSynthetic) ? createLoopbackGatewayRelay({
+      stateDir, gateway: options.gateway, signal: lifecycleSignal, clock: now,
+      readBearerToken() {
+        try { return JSON.parse(fs.readFileSync(configPath, 'utf8')).bearerToken; }
+        catch { return null; }
+      },
+    }) : null;
+  function ensureRelay() {
+    if (!relay || isClosed()) return;
+    loadOrCreateConfig();
+    return relay.start().catch(() => null);
+  }
 
   function loadOrCreateConfig({ rotate = false, deviceHint } = {}) {
     const now = Date.now();
@@ -567,12 +611,15 @@ export function createMobileCompanion(options = {}) {
       secondaryQueue,
       carouselCards,
       scheduleItems,
-      reminders: embeddedState.reminders,
+      reminders: embeddedState.reminders.map(row => ({...row, ...projectReminderFields(row)})),
       dossiers,
       traits,
       notes,
       routines,
       memoryItems,
+      memoryUsageBytes: Buffer.byteLength(JSON.stringify(asArray(live.profile?.stage4Memory?.items).filter(item => item.active)), 'utf8'),
+      liveInsight: projectLiveInsight(live.liveInsight, nowIso),
+      ...(live.proactiveSettings ? {proactiveSettings: live.proactiveSettings} : {}),
       ...ledger,
       messages: projectMessages(live.messages ?? embeddedState.messages, nowIso),
     };
@@ -594,7 +641,14 @@ export function createMobileCompanion(options = {}) {
   function currentLanUrls() {
     const p = boundPort > 0 ? boundPort : loadOrCreateConfig().port;
     const ips = listLanIPv4Addresses();
-    return ips.map((ip) => `http://${ip}:${p}`);
+    return [...new Set([...ips.map((ip) => `http://${ip}:${p}`), ...currentTailscaleUrls()])];
+  }
+
+  function currentTailscaleUrls() {
+    const p = boundPort > 0 ? boundPort : loadOrCreateConfig().port;
+    const addresses = listTailscaleAddresses();
+    return addresses.filter(address => host === '::' || (host === '0.0.0.0' && isIPv4(address)) || host === address)
+      .map(address => `http://${isIPv6(address) ? `[${address}]` : address}:${p}`);
   }
 
   function checkRateLimit(req) {
@@ -765,6 +819,8 @@ export function createMobileCompanion(options = {}) {
     const local = mobileState.dossiers.find((row) => row.id === id);
     const dossier = await readDossier(id);
     if (!dossier) fail(404, '找不到这个会话');
+    if (['adopt_prebake', 'dismiss_prebake'].includes(action) &&
+      (local || dossier.origin !== 'proactive_prebake')) fail(409, '这项预办已处理。');
     const scope = `dossier:${id}`;
     if ((action === 'complete' && dossier.archived) || (action === 'reopen' && !dossier.archived)) return {};
     if (!local) {
@@ -830,11 +886,17 @@ export function createMobileCompanion(options = {}) {
     const events = body.events ?? (body.items ? legacy.filter((item) => item.kind !== 'reminder') : null);
     const reminders = body.reminders ?? (body.items ? legacy.filter((item) => item.kind === 'reminder') : null);
     if (Array.isArray(events)) {
-      mobileState.appleCalendarItems = events.filter(Boolean).map((row) => ({
+      mobileState.appleCalendarItems = events.filter(row => typeof row?.id === 'string' && typeof row.title === 'string').map((row) => ({
         id: row.id,
         timeLabel: row.timeLabel,
         title: row.title,
         subtitle: row.subtitle || row.location || 'iPhone 日历',
+        ...(typeof row.startAt === 'string' ? {startAt: row.startAt} : {}),
+        ...(typeof row.endAt === 'string' ? {endAt: row.endAt} : {}),
+        ...(typeof row.updatedAt === 'string' ? {updatedAt: row.updatedAt} : {}),
+        ...(typeof row.isAllDayBirthday === 'boolean' ? {isAllDayBirthday: row.isAllDayBirthday} : {}),
+        ...(Array.isArray(row.groupedNames) ? {groupedNames: row.groupedNames} : {}),
+        ...(typeof row.iconCategory === 'string' ? {iconCategory: row.iconCategory} : {}),
         source: 'apple_calendar',
       }));
     }
@@ -854,6 +916,9 @@ export function createMobileCompanion(options = {}) {
             sourceLabel: prior?.sourceLabel || '提醒',
             done: typeof row.done === 'boolean' ? row.done : prior?.done === true,
             eventKitIdentifier,
+            ...(typeof row.dueAt === 'string' ? {dueAt: row.dueAt} : {}),
+            ...(typeof row.updatedAt === 'string' ? {updatedAt: row.updatedAt} : {}),
+            ...(typeof row.overdue === 'boolean' ? {overdue: row.overdue} : {}),
           });
         }
       }
@@ -871,6 +936,54 @@ export function createMobileCompanion(options = {}) {
     if (body.permissions?.calendar === false) mobileState.appleCalendarItems = [];
   }
 
+  function readProactiveDeviceContext() {
+    const {calendar, reminders: remindersAllowed} = mobileState.applePermissions;
+    if (calendar !== true && remindersAllowed !== true) return null;
+    const events = calendar === true ? mobileState.appleCalendarItems.map(row => ({...row})) : [];
+    const reminders = remindersAllowed === true ? embeddedState.reminders.filter(row => row.eventKitIdentifier).map(row => ({
+      id: row.id, title: row.text, timeLabel: row.timeLabel, dueAt: row.dueAt, done: row.done,
+      overdue: row.overdue, updatedAt: row.updatedAt,
+    })) : [];
+    const rows = [...events, ...reminders].sort((a, b) => a.id.localeCompare(b.id));
+    const watermark = crypto.createHash('sha256').update(JSON.stringify(rows)).digest('hex');
+    return {events, reminders, watermark};
+  }
+
+  async function proactiveDraftFile(id, create = false) {
+    if (!stateDir || typeof id !== 'string' || !/^dot-proactive-[a-f0-9]{24}$/.test(id)) return null;
+    const draftDir = path.join(stateDir, 'proactive-drafts');
+    if (create) {
+      await fs.promises.mkdir(stateDir, {recursive: true, mode: 0o700});
+      if (await fs.promises.realpath(stateDir) !== stateDir) throw Error('预办存储目录不可用。');
+      await fs.promises.mkdir(draftDir, {mode: 0o700}).catch(error => { if (error.code !== 'EEXIST') throw error; });
+    }
+    const uid = process.getuid?.();
+    for (const dir of [stateDir, draftDir]) {
+      const info = await fs.promises.lstat(dir).catch(error => { if (error.code !== 'ENOENT') throw error; return null; });
+      if (!info) return null;
+      if (!info.isDirectory() || (uid !== undefined && info.uid !== uid) || (info.mode & 0o077) !== 0 ||
+        await fs.promises.realpath(dir) !== dir) throw Error('预办存储目录不可用。');
+    }
+    return path.join(draftDir, `${id}.md`);
+  }
+
+  async function writeProactiveDraft(id, markdown) {
+    if (typeof markdown !== 'string' || !markdown.trim() || Buffer.byteLength(markdown) > 512 * 1024) return false;
+    const file = await proactiveDraftFile(id, true);
+    if (!file) return false;
+    const temporary = `${file}.${crypto.randomUUID()}.tmp`;
+    try {
+      await fs.promises.writeFile(temporary, markdown, {flag: 'wx', mode: 0o600});
+      await fs.promises.rename(temporary, file);
+      return true;
+    } finally { await fs.promises.rm(temporary, {force: true}); }
+  }
+
+  async function removeProactiveDraft(id) {
+    const file = await proactiveDraftFile(id);
+    if (file) await fs.promises.rm(file, {force: true});
+  }
+
   function appendMainMessage(role, text, fields = {}) {
     const message = { id: `message-${crypto.randomUUID()}`, role, text, createdAt: new Date(now()).toISOString(), ...fields };
     writeEmbeddedState({ messages: [...embeddedState.messages, message].slice(-120) });
@@ -883,38 +996,37 @@ export function createMobileCompanion(options = {}) {
     const sessionId = body.sessionId?.trim() || null;
     if (sessionId && !await readDossier(sessionId)) fail(404, '找不到这个会话');
     if (typeof options.onStreamChat !== 'function') fail(503, '当前无法打开对话');
+    const operationId = getOperationId(body);
     const clientRequestId = typeof body.clientRequestId === 'string' ? body.clientRequestId : null;
     const scope = sessionId || '';
     const cacheKey = clientRequestId ? JSON.stringify([sessionId, clientRequestId]) : null;
     const previous = chatQueues.get(scope);
     const abort = new AbortController();
     res.once('close', () => abort.abort());
-    res.writeHead(200, {
-      'Content-Type': 'application/x-ndjson; charset=utf-8',
-      'Cache-Control': 'no-cache, no-transform',
-      'Access-Control-Allow-Origin': '*',
-      'X-Accel-Buffering': 'no',
-    });
+    const signal = operationId ? lifecycleSignal : AbortSignal.any([abort.signal, lifecycleSignal]);
     const emit = (obj) => {
       if (!res.destroyed && !res.writableEnded) res.write(stringifyWire(obj) + '\n');
     };
-    emit({ type: 'ack', clientRequestId, sessionId });
-    const work = (previous ?? Promise.resolve()).then(async () => {
-      if (abort.signal.aborted) return;
+    const source = sanitizeForMobile(body.source, 'chat_drawer');
+    const scheduleItemId = typeof body.scheduleItemId === 'string' ? body.scheduleItemId : null;
+    const work = operations.run(operationId, ['chat', sessionId, text, source, scheduleItemId], () =>
+      (previous ?? Promise.resolve()).catch(() => {}).then(async () => {
+      if (signal.aborted) return null;
       const before = sessionId ? await readDossier(sessionId) : null;
       if (sessionId && !before) fail(404, '找不到这个会话');
-      let result = cacheKey ? completedChat.get(cacheKey) : null;
+      let result = !operationId && cacheKey ? completedChat.get(cacheKey) : null;
       if (result && result.text !== text) fail(409, '此请求编号已经用于另一条消息');
       if (!result) {
         const mainMessages = sessionId ? null : await options.readMainMessages?.();
         result = (await options.onStreamChat({
           sessionId,
           text,
-          source: sanitizeForMobile(body.source, 'chat_drawer'),
+          source,
           clientRequestId,
-          scheduleItemId: typeof body.scheduleItemId === 'string' ? body.scheduleItemId : null,
+          operationId,
+          scheduleItemId,
           messages: before?.messages ?? projectMessages(mainMessages ?? embeddedState.messages, new Date(now()).toISOString()),
-          signal: abort.signal,
+          signal,
           onEvent: (event) => {
             if (['tool_start', 'tool_done', 'text_delta', 'widgets'].includes(event?.type)) {
               emit({ ...event, ...(typeof event.delta === 'string' ? { delta: cleanWireText(event.delta) } : {}), sessionId });
@@ -933,11 +1045,24 @@ export function createMobileCompanion(options = {}) {
             writeEmbeddedState({ messages: [...embeddedState.messages, ...messages].slice(-120) });
           }
         }
-        if (cacheKey) {
+        if (!operationId && cacheKey) {
           completedChat.set(cacheKey, { text, reply: result.reply, widgets: result.widgets });
           if (completedChat.size > 120) completedChat.delete(completedChat.keys().next().value);
         }
       }
+      return result;
+    }));
+    chatQueues.set(scope, work);
+    res.writeHead(200, {
+      'Content-Type': 'application/x-ndjson; charset=utf-8',
+      'Cache-Control': 'no-cache, no-transform',
+      'Access-Control-Allow-Origin': '*',
+      'X-Accel-Buffering': 'no',
+    });
+    emit({ type: 'ack', clientRequestId, sessionId });
+    try {
+      const result = await work;
+      if (!result || abort.signal.aborted) return;
       const dossier = sessionId ? await readDossier(sessionId) : null;
       if (sessionId && !dossier) fail(404, '找不到这个会话');
       const snapshot = await buildSnapshot();
@@ -948,13 +1073,25 @@ export function createMobileCompanion(options = {}) {
         ...(typeof result.reply === 'string' ? { reply: cleanWireText(result.reply) } : {}),
         ...(Array.isArray(result.widgets) ? { widgets: result.widgets } : {}),
       });
-    }).catch((error) => {
+    } catch (error) {
       emit({ type: 'error', error: error.status ? sanitizeForMobile(error.message) : '对话暂时中断', sessionId });
-    });
-    chatQueues.set(scope, work);
-    await work;
-    if (chatQueues.get(scope) === work) chatQueues.delete(scope);
-    res.end();
+    } finally {
+      if (chatQueues.get(scope) === work) chatQueues.delete(scope);
+      res.end();
+    }
+  }
+
+  function getOperationId(body) {
+    if (body.operationId === undefined) return null;
+    if (!validOperationId(body.operationId)) fail(400, '请求编号无效。');
+    return body.operationId;
+  }
+
+  async function mutateProactive(callback, body) {
+    if (typeof callback !== 'function') fail(503, '主动参谋暂不可用。');
+    const result = await callback(body);
+    if (result?.ok === false) fail(409, result.error || '主动参谋设置未更新。');
+    return result ?? {};
   }
 
   async function handleCommandBody(body = {}) {
@@ -1135,6 +1272,7 @@ export function createMobileCompanion(options = {}) {
               port: boundPort,
               lanUrl: lanUrls[0] || null,
               lanUrls,
+              tailscaleUrls: currentTailscaleUrls(),
               remoteUrl: latestCfg.remoteUrl || null,
               rendezvousTopic: deriveRendezvousTopic(latestCfg.bearerToken),
             },
@@ -1175,6 +1313,16 @@ export function createMobileCompanion(options = {}) {
           return;
         }
 
+        const proactiveCallback = {
+          '/api/proactive/settings': options.onProactiveSettings,
+          '/api/proactive/insight': options.onProactiveInsight,
+          '/api/proactive/dream': options.onProactiveDream,
+        };
+        if (req.method === 'POST' && Object.hasOwn(proactiveCallback, pathname)) {
+          await finishMutation(res, await mutateProactive(proactiveCallback[pathname], await readJsonBody(req)));
+          return;
+        }
+
         if (req.method === 'POST' && pathname === '/api/reminders') {
           await finishMutation(res, mutateReminder(await readJsonBody(req)));
           return;
@@ -1188,7 +1336,7 @@ export function createMobileCompanion(options = {}) {
         if (req.method === 'POST' && pathname === '/api/today/act') {
           const body = await readJsonBody(req);
           const cardId = String(body?.cardId || '');
-          if (cardId && (body.action === 'complete' || body.action === 'reopen')) {
+          if (cardId && ['complete', 'reopen', 'adopt_prebake', 'dismiss_prebake'].includes(body.action)) {
             const id = cardId.startsWith('fc-') ? cardId.slice(3) : cardId;
             await finishMutation(res, await mutateDossier(id, body));
             return;
@@ -1229,9 +1377,10 @@ export function createMobileCompanion(options = {}) {
 
         if (req.method === 'POST' && pathname === '/api/command') {
           const body = await readJsonBody(req);
-          const out = await handleCommandBody(body);
+          const operationId = getOperationId(body);
+          const out = await operations.run(operationId, ['command', body.text, body.confirmTierC === true], () => handleCommandBody(body));
           void broadcastSnapshot();
-          sendJson(res, 200, out);
+          sendJson(res, 200, operationId ? {...out, snapshot: await buildSnapshot()} : out);
           return;
         }
 
@@ -1372,6 +1521,8 @@ export function createMobileCompanion(options = {}) {
     if (isClosed()) return { active: false };
     if (startingPromise) return startingPromise;
     startingPromise = (async () => {
+      await ensureRelay();
+      if (isClosed()) return {active: false};
       const ext = await probeExternalBridge();
       if (ext?.ok) return { active: true, mode: 'external', port: ext.port || configuredPort };
       if (!embeddedEnabled) return { active: false, mode: 'disabled' };
@@ -1425,6 +1576,7 @@ export function createMobileCompanion(options = {}) {
     if (isClosed()) {
       return { ok: false, code: 'CLOSED', error: 'Dot 正在关闭，无法读取手机配对码。' };
     }
+    await ensureRelay();
     const ext = await probeExternalBridge();
     if (!ext?.ok && embeddedEnabled && !embeddedServer) {
       await startEmbeddedServer();
@@ -1472,6 +1624,10 @@ export function createMobileCompanion(options = {}) {
   }
 
   async function dispose() {
+    lifecycle.abort();
+    await startingPromise?.catch(() => {});
+    await relay?.dispose().catch(() => {});
+    operations.clear();
     if (heartbeatTimer) {
       clearInterval(heartbeatTimer);
       heartbeatTimer = null;
@@ -1492,12 +1648,16 @@ export function createMobileCompanion(options = {}) {
     if (embeddedServer) {
       const s = embeddedServer;
       embeddedServer = null;
-      await new Promise((resolve) => s.close(() => resolve()));
+      const closed = new Promise(resolve => s.close(resolve));
+      s.closeAllConnections();
+      await closed;
     }
   }
 
   if (shouldAutoStart && !isClosed()) {
     void ensureStarted();
+  } else if (options.loopbackGateway === true) {
+    void ensureRelay();
   }
 
   return {
@@ -1505,6 +1665,9 @@ export function createMobileCompanion(options = {}) {
     summary,
     pairInfo,
     notifyChange: () => broadcastSnapshot(),
+    readProactiveDeviceContext,
+    writeProactiveDraft,
+    removeProactiveDraft,
     dispose,
     getBoundPort: () => boundPort,
   };

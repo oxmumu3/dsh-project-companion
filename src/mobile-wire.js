@@ -12,6 +12,8 @@ const DOSSIER_STATUS = {
 const DOSSIER_PRIORITY = { wait: 0, run: 1, done: 2, quiet: 3 };
 const CHECKLIST_STATUSES = new Set(['pending', 'in_progress', 'completed']);
 const MEMORY_SOURCES = new Set(['chat', 'workspace', 'flomo', 'manual']);
+const ICON_CATEGORIES = new Set(['work', 'admin', 'life', 'birthday', 'note']);
+const DOSSIER_ORIGINS = new Set(['user', 'proactive_prebake', 'adopted_prebake']);
 const legacyLabels = new Map([['电脑同源', '工作区'], ['电脑原有', '工作区'], ['主会话新建', '新事项'], ['分身', '协办事项']]);
 const userPath = /\/Users\/[^\s"'\x60)\]}]+/g;
 const LEGACY_WORKSPACE_LABEL = /电脑同源|电脑原有|主会话新建|分身/;
@@ -75,6 +77,42 @@ export function projectMessages(rows, nowIso) {
   }));
 }
 
+/** Compact only the mobile projection. Raw logs, user input and cursors stay intact. */
+export function compactHistoryEvents(rows) {
+  function compactToolValue(value) {
+    if (typeof value === 'string') return value.slice(0, 512);
+    if (value === undefined) return value;
+    const serialized = JSON.stringify(value);
+    return serialized.length > 512 ? serialized.slice(0, 512) : value;
+  }
+  const toolKeys = new Set(['input', 'output', 'arguments', 'args', 'result', 'content', 'text', 'body', 'response', 'delta', 'message', 'value']);
+  const toolData = data => Object.fromEntries(Object.entries(data).map(([key, value]) => {
+    if (!toolKeys.has(key)) return [key, value];
+    if (value && typeof value === 'object' && !Array.isArray(value) &&
+      ['isError', 'usage'].some(field => Object.hasOwn(value, field))) return [key, toolData(value)];
+    return [key, compactToolValue(value)];
+  }));
+  return asArray(rows).map(row => {
+    const wrapped = row?.type === 'event' && row.event;
+    const event = wrapped ? row.event : row;
+    const data = event?.data;
+    if (!data || typeof data !== 'object' || data.source?.kind === 'user' || event.source?.kind === 'user') return row;
+    let compact;
+    if (event.type === 'request/header') {
+      const strip = ({tools, system, ...rest}) => rest;
+      compact = strip(data);
+      if (compact.header && typeof compact.header === 'object') compact.header = strip(compact.header);
+      if (compact.request && typeof compact.request === 'object') compact.request = strip(compact.request);
+    } else if (/^tool[/:_-]/.test(event.type) || event.type === 'stream' || /^stream[/:_-]/.test(event.type)) {
+      compact = toolData(data);
+    } else {
+      return row;
+    }
+    const projected = {...event, data: compact};
+    return wrapped ? {...row, event: projected} : projected;
+  });
+}
+
 export function projectDossier(row, nowIso) {
   const { id } = row;
   const summary = cleanWireText(row.summary || row.note).trim();
@@ -110,6 +148,8 @@ export function projectDossier(row, nowIso) {
   const artifactWordCount = artifactMarkdown
     ? Math.max(0, Number.isInteger(row.artifactWordCount) ? row.artifactWordCount : [...artifactMarkdown.replace(/\s/gu, '')].length)
     : null;
+  const origin = DOSSIER_ORIGINS.has(row.origin) ? row.origin : null;
+  const trigger = row.prebakeTrigger;
   return {
     id,
     title: cleanWireText(row.title || row.text, '待跟进事项').trim(),
@@ -137,13 +177,21 @@ export function projectDossier(row, nowIso) {
     })),
     messages: projectMessages(row.messages, nowIso),
     deliverableKind: cleanWireText(row.deliverableKind, artifactKind),
+    ...(origin ? {origin} : {}),
+    ...(trigger && typeof trigger === 'object' ? {prebakeTrigger: {
+      source: cleanWireText(trigger.source),
+      workspace: cleanWireText(trigger.workspace),
+      tokenCost: Number.isSafeInteger(trigger.tokenCost) && trigger.tokenCost >= 0 ? trigger.tokenCost : 0,
+    }} : {}),
     ...(Array.isArray(row.widgets) ? { widgets: row.widgets } : {}),
   };
 }
 
 export function projectCarousel(dossiers) {
+  const isPrebake = row => row.origin === 'proactive_prebake';
   const carouselCards = dossiers.filter((row) => !row.archived).sort((a, b) =>
-    DOSSIER_PRIORITY[a.status] - DOSSIER_PRIORITY[b.status] || Date.parse(b.updatedAt) - Date.parse(a.updatedAt));
+    Number(isPrebake(b)) - Number(isPrebake(a)) ||
+    DOSSIER_PRIORITY[a.status] - DOSSIER_PRIORITY[b.status] || Date.parse(b.updatedAt) - Date.parse(a.updatedAt)).slice(0, 5);
   const first = carouselCards[0];
   const todayFocus = first ? {
     ...first,
@@ -180,6 +228,29 @@ export function projectSchedule(row, index) {
     statusBadge: cleanWireText(row.statusBadge, null),
     linkedDossierId: cleanWireText(row.linkedDossierId, null),
     sourceLabel: cleanWireText(row.sourceLabel, sourceLabel),
+    ...(ICON_CATEGORIES.has(row.iconCategory) ? {iconCategory: row.iconCategory} : {}),
+    ...(typeof row.isAllDayBirthday === 'boolean' ? {isAllDayBirthday: row.isAllDayBirthday} : {}),
+    ...(Array.isArray(row.groupedNames) ? {groupedNames: row.groupedNames.map(name => cleanWireText(name)).filter(Boolean)} : {}),
+  };
+}
+
+export function projectReminderFields(row) {
+  return {
+    ...(ICON_CATEGORIES.has(row.iconCategory) ? {iconCategory: row.iconCategory} : {}),
+    ...(typeof row.overdue === 'boolean' ? {overdue: row.overdue} : {}),
+    ...(row.actionLabel !== undefined ? {actionLabel: cleanWireText(row.actionLabel, null)} : {}),
+    ...(row.actionPrompt !== undefined ? {actionPrompt: cleanWireText(row.actionPrompt, null)} : {}),
+  };
+}
+
+export function projectLiveInsight(row, nowIso) {
+  if (!row || typeof row.id !== 'string') return null;
+  return {
+    id: row.id, unread: row.unread === true, category: cleanWireText(row.category),
+    title: cleanWireText(row.title), eyebrow: cleanWireText(row.eyebrow), prompt: cleanWireText(row.prompt),
+    sourceRef: cleanWireText(row.sourceRef), suggestedReplies: asArray(row.suggestedReplies)
+      .map(reply => cleanWireText(reply)).filter(Boolean).slice(0, 3),
+    createdAt: wireDate(row.createdAt, nowIso),
   };
 }
 
@@ -205,12 +276,17 @@ export function projectMemoryItem(row, nowIso) {
     id: String(row.id),
     text: cleanWireText(row.text).trim(),
     active: row.active !== false,
-    category: cleanWireText(row.category, 'note'),
+    category: cleanWireText(row.bucket ?? row.category, 'note'),
     sourceKind,
     provenance: cleanWireText(row.provenance, { chat: '来自对话', workspace: '来自工作区', flomo: '来自 flomo', manual: '手动添加' }[sourceKind]),
     effect: cleanWireText(row.effect, '待应用'),
     updatedAt: wireDate(row.updatedAt ?? row.createdAt, nowIso),
     relativeTime: cleanWireText(row.relativeTime, '最近'),
+    ...(typeof row.quote === 'string' ? {quote: cleanWireText(row.quote)} : {}),
+    ...(typeof row.quoteSource === 'string' ? {quoteSource: cleanWireText(row.quoteSource)} : {}),
+    ...(typeof row.quotedInVerified === 'boolean' ? {quotedInVerified: row.quotedInVerified} : {}),
+    ...(row.replacedOld !== undefined ? {replacedOld: cleanWireText(row.replacedOld, null)} : {}),
+    ...(row.tagBadge !== undefined ? {tagBadge: ['新', '已更新'].includes(row.tagBadge) ? row.tagBadge : null} : {}),
   };
 }
 

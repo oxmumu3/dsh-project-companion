@@ -11,6 +11,7 @@ const clean = value => typeof value === 'string'
   : '';
 
 const SESSION_STATUS = {
+  prebake: {rank: -1, label: '预办就绪'},
   wait: {rank: 0, label: '待你拍板'},
   run: {rank: 1, label: '推进中'},
   done: {rank: 2, label: '成稿就绪'},
@@ -18,13 +19,20 @@ const SESSION_STATUS = {
 };
 const STATE_STATUS = {needs_you: 'wait', stuck: 'wait', doing: 'run', done: 'done'};
 
+export const MEMORY_BUCKETS = [
+  {id: 'proactive_rules', label: '参谋分寸'},
+  {id: 'working_style', label: '办事偏好与品味'},
+  {id: 'active_focus', label: '近期主线脉络'},
+];
+
 function workspaceTitle(value) {
   return clean(clean(value).split(/[\\/]+/).filter(Boolean).at(-1)) || '个人事务';
 }
 
 function sessionModel(row, now) {
   const archived = row.archived === true || row.state === 'handled';
-  const status = archived ? 'done' : Object.hasOwn(SESSION_STATUS, row.status) ? row.status
+  const status = archived ? 'done' : row.origin === 'proactive_prebake' ? 'prebake'
+    : Object.hasOwn(SESSION_STATUS, row.status) ? row.status
     : Object.hasOwn(STATE_STATUS, row.state) ? STATE_STATUS[row.state] : 'quiet';
   const statusLabel = archived ? '已办妥' : SESSION_STATUS[status].label;
   const checklist = Array.isArray(row.checklist) ? row.checklist.filter(Boolean) : [];
@@ -107,6 +115,43 @@ function eventTimeText(event) {
   return fmt(startMs);
 }
 
+const sameLocalDay = (a, b) => a.toDateString() === b.toDateString();
+
+function buildStage4Timeline(schedule, reminders, now) {
+  const rows = [];
+  const birthdays = [];
+  for (const item of schedule) {
+    const start = new Date(item?.startAt ?? '');
+    if (!item?.id || (Number.isFinite(start.getTime()) && !sameLocalDay(start, now))) continue;
+    const row = {
+      ...item, kind: 'event', title: clean(item.title) || '日程',
+      timeLabel: item.allDay || item.isAllDayBirthday ? '全天'
+        : clean(item.timeLabel || item.timeText || (item.startAt && eventTimeText(item))).split(' – ')[0] || '今天',
+    };
+    if (row.isAllDayBirthday) birthdays.push(row);
+    else rows.push(row);
+  }
+  if (birthdays.length) {
+    const first = birthdays[0];
+    const names = [...new Set(birthdays.flatMap(item =>
+      Array.isArray(item.groupedNames) ? item.groupedNames.map(clean).filter(Boolean) : []))];
+    rows.push({...first, iconCategory: 'birthday', groupedNames: names,
+      title: names.length ? `今日生日：${names[0]}${names.length > 1 ? `等 ${names.length} 人` : ''}` : first.title});
+  }
+  for (const item of reminders) {
+    const title = clean(item?.text || item?.title);
+    if (!item?.id || item.done === true || !title) continue;
+    const due = new Date(item.dueAt ?? '');
+    const overdue = item.overdue === true || (due < now && !sameLocalDay(due, now));
+    rows.push({
+      ...item, kind: 'reminder', title, overdue, timeLabel: overdue ? '昨日' : clean(item.timeLabel) || '随时',
+    });
+  }
+  const timeOrder = row => row.overdue ? -2 : row.timeLabel === '全天' ? -1
+    : /^\d\d:\d\d$/u.test(row.timeLabel) ? Number(row.timeLabel.replace(':', '')) : Infinity;
+  return rows.sort((a, b) => timeOrder(a) - timeOrder(b));
+}
+
 const TRAIT_GROUP_META = {
   rhythm: {label: '作息与早报节律', hint: '什么时候推给你最不打扰'},
   tone: {label: '沟通语气与习惯', hint: '先给结论还是附带来源依据'},
@@ -152,6 +197,8 @@ export function buildMuseViewModel({
   const v10 = Boolean(wireSessions);
   const sessions = (wireSessions ?? [])
     .filter(row => row?.id || row?.sessionId)
+    .filter(row => row.origin !== 'proactive_prebake' ||
+      (['todo', 'doc'].includes(row.artifactKind) && row.status !== 'run' && row.state !== 'doing'))
     .map(row => sessionModel(row, safeNow));
   const carouselCards = sessions.filter(row => !row.archived)
     .sort((a, b) => SESSION_STATUS[a.status].rank - SESSION_STATUS[b.status].rank || byNewest(a, b));
@@ -182,6 +229,18 @@ export function buildMuseViewModel({
     updatedAt: profileRaw?.updatedAt ?? null,
   };
   const memoryItems = [muse?.memoryItems, activity?.memoryItems, profileRaw?.memoryItems].find(Array.isArray);
+  const proactiveSettings = muse?.proactiveSettings ?? activity?.proactiveSettings ?? null;
+  const insight = Object.hasOwn(muse ?? {}, 'liveInsight') ? muse.liveInsight : activity?.liveInsight;
+  const liveInsight = insight?.unread === true && clean(insight.id) && clean(insight.prompt) ? insight : null;
+  const stage4Memory = profileRaw?.stage4Memory;
+  const memoryGroups = MEMORY_BUCKETS.map(bucket => ({
+    ...bucket,
+    items: (memoryItems ?? []).filter(item => item.category === bucket.id),
+  }));
+  const legacyMemoryItems = (memoryItems ?? []).filter(item => !MEMORY_BUCKETS.some(bucket => item.category === bucket.id));
+  const memoryBytes = Array.isArray(stage4Memory?.items)
+    ? new TextEncoder().encode(JSON.stringify(stage4Memory.items.filter(item => item.active))).byteLength
+    : null;
   const routines = [muse?.routines, activity?.routines].find(Array.isArray) ?? [];
 
   const digestRaw = muse?.digest ?? activity?.digest ?? null;
@@ -223,9 +282,15 @@ export function buildMuseViewModel({
     startAt: ev.startAt ?? null,
     allDay: ev.allDay === true,
   }));
+  const stage4Timeline = proactiveSettings ? buildStage4Timeline(
+    [muse?.scheduleItems, activity?.scheduleItems, activity?.events].find(Array.isArray) ?? [],
+    [muse?.reminders, activity?.reminders].find(Array.isArray) ?? [],
+    safeNow,
+  ) : null;
 
-  // Keep the desktop focus card and rank active sessions in its candidate list.
-  const candidates = carouselCards.map(sessionFocusCard);
+  const prebakeCount = carouselCards.filter(row => row.status === 'prebake').length;
+  const dailyCards = proactiveSettings || prebakeCount ? carouselCards.slice(0, 5) : carouselCards;
+  const candidates = dailyCards.map(sessionFocusCard);
   for (const item of v10 ? [] : today.urgent) {
     const key = `session:${item.projectId}:${item.cardId ?? item.state}`;
     const hasDistinctSecond = Boolean(item.second && item.secondAct);
@@ -302,7 +367,7 @@ export function buildMuseViewModel({
   let focus = null;
   let folded = [];
   if (candidates.length > 0) {
-    const pinnedIdx = pinnedKey ? candidates.findIndex(c => c.key === pinnedKey) : -1;
+    const pinnedIdx = pinnedKey && !prebakeCount ? candidates.findIndex(c => c.key === pinnedKey) : -1;
     const focusIdx = pinnedIdx >= 0 ? pinnedIdx : 0;
     focus = candidates[focusIdx];
     folded = candidates.filter((_, idx) => idx !== focusIdx);
@@ -582,6 +647,13 @@ export function buildMuseViewModel({
     superagent,
     profile,
     memoryItems,
+    memoryGroups,
+    legacyMemoryItems,
+    memoryBytes,
+    stage4Memory: Boolean(stage4Memory || proactiveSettings || memoryGroups.some(group => group.items.length)),
+    lastDreamAt: stage4Memory?.lastDreamAt ?? null,
+    proactiveSettings,
+    liveInsight,
     routines,
     traitGroups,
     digest,
@@ -593,10 +665,13 @@ export function buildMuseViewModel({
         : [],
     mobile,
     events,
+    stage4Timeline,
     focus,
     folded,
     v10,
     carouselCards,
+    prebakeCount,
+    greetingPrefix: greetingPrefix(safeNow),
     todayFocus: carouselCards[0] ?? null,
     sessionGroups,
     archivedSessions,

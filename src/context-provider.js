@@ -10,7 +10,7 @@ export function createContextProvider({calendar,suite,dida,mcp,useSuite=()=>fals
   if(source==='dida'&&useDidaRest()){if(!dida)throw new Error('滴答读取接口未就绪。');return dida;}
   return suite&&['gmail','drive','docs','sheets','slides'].includes(source)&&useSuite(source)?suite:mcp;
  };
- const DIAGNOSE={calendar:['updated_min'],gmail:['history']};
+ const DIAGNOSE={calendar:['updated_min'],gmail:['history','history_cursor']};
  return{
   catalog:(source,settings)=>provider(source).catalog(source,settings),
   call:(source,name,args,settings)=>provider(source).call(source,name,args,settings),

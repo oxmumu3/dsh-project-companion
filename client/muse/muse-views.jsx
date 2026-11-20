@@ -2,7 +2,7 @@
  * DSH Dot Muse desktop views.
  * Pure React.createElement components consuming `buildMuseViewModel`.
  */
-import {TRAIT_PRESETS} from './muse-model.js';
+import {MEMORY_BUCKETS, TRAIT_PRESETS} from './muse-model.js';
 
 export function createMuseViews(React) {
   const h = React.createElement;
@@ -395,6 +395,17 @@ export function createMuseViews(React) {
       session.statusLabel);
   }
 
+  function PrebakeDismiss({session, busy, onMuseAct}) {
+    return h('button', {
+      type: 'button',
+      className: 'muse-btn-link muse-dismiss',
+      'data-muse-prebake-dismiss': session.id,
+      'aria-label': `忽略预办：${session.title}`,
+      disabled: busy,
+      onClick: () => onMuseAct?.({action: 'dossier_act', id: session.id, operation: 'dismiss_prebake'}),
+    }, '×');
+  }
+
   function SessionFocus({session, busy, onOpenSession, onMuseAct}) {
     return h('article', {className: 'muse-focus-card muse-session-focus', 'data-muse-focus-card': 'session'},
       h('div', {className: 'muse-focus-meta'},
@@ -409,13 +420,98 @@ export function createMuseViews(React) {
           'data-muse-session-open': session.id,
           onClick: () => onOpenSession?.(session.id),
         }, [session.progressLabel, '查看详情 ›'].filter(Boolean).join(' · ')),
-        h('button', {
+        session.status === 'prebake' ? h(PrebakeDismiss, {session, busy, onMuseAct}) : h('button', {
           type: 'button',
           className: 'muse-btn-outline muse-compact-button',
           'data-muse-session-complete': session.id,
           disabled: busy,
           onClick: () => onMuseAct?.({action: 'dossier_act', id: session.id, operation: 'complete'}),
         }, '办妥')));
+  }
+
+  function PrebakeDetail({session, busy, onClose, onMuseAct, onOpenSession}) {
+    const dialog = React.useRef(null);
+    React.useEffect(() => {
+      if (typeof dialog.current?.showModal === 'function') dialog.current.showModal();
+      else dialog.current?.setAttribute('open', '');
+    }, []);
+    const trigger = session.prebakeTrigger;
+    const cost = Number.isFinite(trigger?.tokenCost) ? `${trigger.tokenCost.toLocaleString('zh-CN')} Token` : '';
+    const metadata = [trigger?.source, trigger?.workspace && `工作区 ${trigger.workspace}`, cost].filter(Boolean);
+    return h('dialog', {
+      ref: dialog,
+      className: 'muse-dialog muse-prebake-detail',
+      'aria-labelledby': 'muse-prebake-title',
+      'data-muse-prebake-detail': session.id,
+      onCancel: event => { event.preventDefault(); onClose(); },
+    },
+    h('header', {className: 'muse-dialog-head'},
+      h('div', null,
+        h(SessionStatus, {session}),
+        h('h2', {className: 'muse-dialog-title', id: 'muse-prebake-title'}, session.title),
+        metadata.length ? h('p', {className: 'muse-sheet-sub muse-prebake-trigger'}, `触发于 ${metadata.join(' · ')}`) : null),
+      h('button', {type: 'button', className: 'muse-btn-outline', onClick: onClose}, '关闭')),
+    h('div', {className: 'muse-dialog-body'},
+      session.whyHere ? h('p', null, session.whyHere) : null,
+      session.checklist.length ? h('ul', {className: 'muse-prebake-checklist'},
+        ...session.checklist.map((step, index) => h('li', {key: step.id ?? index},
+          `${step.checked ? '✓ ' : '○ '}${step.text || step.title || step.label || ''}`))) : null,
+      session.artifactMarkdown ? h('pre', {className: 'muse-prebake-draft'}, session.artifactMarkdown) : null),
+    h('footer', {className: 'muse-dialog-foot'},
+      h('button', {
+        type: 'button', className: 'muse-btn-link', disabled: busy,
+        onClick: async () => {
+          const result = await onMuseAct?.({action: 'dossier_act', id: session.id, operation: 'dismiss_prebake'});
+          if (result?.ok) onClose();
+        },
+      }, '忽略预办'),
+      h('button', {
+        type: 'button', className: 'muse-btn-primary', disabled: busy,
+        'data-muse-prebake-adopt': session.id,
+        onClick: async () => {
+          const result = await onMuseAct?.({action: 'dossier_act', id: session.id, operation: 'adopt_prebake'});
+          if (result?.ok) {
+            onClose();
+            onOpenSession?.(session.id);
+          }
+        },
+      }, '继续对话 ›')));
+  }
+
+  const timelineIcons = {
+    work: 'M2 4h4l1.5 1.5H12v6H2z',
+    admin: 'M3.5 2h7v10l-1.8-1-1.7 1-1.8-1-1.7 1zM5.5 5h3M5.5 7.4h3',
+    life: 'M2.7 5h8.6l.8 7H1.9zM4.8 5V4a2.2 2.2 0 0 1 4.4 0v1',
+    birthday: 'M2 11.7h10V7.5H2zM7 7.5V5.3M7 3.8c-1.7 0-.8-1.8 0-2.3.8.5 1.7 2.3 0 2.3ZM2 9.3h10',
+    note: 'M4 2.4h6v9.3L7 9.5l-3 2.2z',
+  };
+
+  function Stage4TimelineRow({row, onOpenSession, onAsk, busy}) {
+    const [expanded, setExpanded] = React.useState(false);
+    const icon = timelineIcons[row.iconCategory] || timelineIcons[row.kind === 'reminder' ? 'note' : 'work'];
+    const group = row.groupedNames?.length > 1;
+    const detail = group ? row.groupedNames.join('、') : row.subtitle || row.location || row.sourceLabel;
+    const action = row.actionLabel && row.actionPrompt && !(row.kind === 'reminder' && row.iconCategory === 'life');
+    return h('div', {className: 'muse-day-entry', 'data-muse-timeline-row': row.id},
+      h('div', {className: 'muse-day-grid'},
+        h('span', {className: `muse-day-time${row.overdue ? ' is-overdue' : ''}`}, row.timeLabel),
+        h('svg', {viewBox: '0 0 14 14', width: 14, height: 14, 'aria-hidden': true,
+          fill: 'none', stroke: 'currentColor', strokeWidth: 1.45, strokeLinejoin: 'round', strokeLinecap: 'round'},
+        h('path', {d: icon})),
+        h('div', {className: 'muse-day-title'}, row.title),
+        h('div', {className: 'muse-day-action'}, action ? h('button', {
+          type: 'button', className: 'muse-btn-link', disabled: busy, 'data-muse-timeline-action': row.id,
+          onClick: () => onAsk?.(row.actionPrompt),
+        }, h('span', {className: 'muse-session-dot is-ai-inline', 'aria-hidden': true}), row.actionLabel) : null),
+        row.kind === 'reminder'
+          ? h('span', {className: 'muse-day-terminal', role: 'img', 'aria-label': '未完成'}, h('span', {className: 'muse-day-ring'}))
+          : row.linkedDossierId || detail ? h('button', {
+            type: 'button', className: 'muse-btn-link muse-day-terminal',
+            'aria-label': `${group ? '展开生日名单' : '查看日程'}：${row.title}`,
+            'aria-expanded': row.linkedDossierId ? undefined : expanded,
+            onClick: () => row.linkedDossierId ? onOpenSession?.(row.linkedDossierId) : setExpanded(!expanded),
+          }, group ? (expanded ? '▾' : '▸') : '›') : h('span', {className: 'muse-day-terminal'})),
+      expanded && detail ? h('p', {className: 'muse-hairline-sub muse-day-expanded'}, detail) : null);
   }
 
   function MuseTodayView({
@@ -425,6 +521,7 @@ export function createMuseViews(React) {
     onSaveDraft,
     onPinFocus,
     onAsk,
+    onCarryPrompt,
     onOpenProject,
     onOpenSession,
     onOpenWorkspacePicker,
@@ -433,11 +530,24 @@ export function createMuseViews(React) {
   }) {
     const visibleFolded = model.folded.slice(0, 3);
     const hiddenFolded = model.folded.slice(3);
+    const eventCount = model.stage4Timeline?.filter(row => row.kind === 'event').length ?? model.events.length;
+    const ordinaryCount = model.carouselCards.length - model.prebakeCount;
+    const headlineCounts = [
+      model.prebakeCount ? `${model.prebakeCount} 项预办` : '',
+      eventCount ? `${eventCount} 场日程` : '',
+      ordinaryCount ? `${ordinaryCount} 件在办` : '',
+    ].filter(Boolean);
 
     return h('div', {className: 'muse-stage'},
       h('section', {className: 'muse-hero'},
         h('p', {className: 'muse-kicker'}, model.dateText),
-        h('h1', {className: 'muse-greeting'}, model.greeting),
+        h('h1', {className: 'muse-greeting'},
+          model.proactiveSettings || model.prebakeCount
+            ? [`${model.greetingPrefix}，`,
+              h('span', {key: 'prebakes', className: 'muse-today-prebakes'},
+                model.prebakeCount ? h('span', {className: 'muse-session-dot is-prebake', 'aria-hidden': true}) : null,
+                headlineCounts.join('，') || '今日清净。')]
+            : model.greeting),
         h('p', {className: 'muse-subline'}, model.heroSubline)),
       model.paused
         ? h('div', {className: 'muse-notice-line', role: 'status'},
@@ -471,7 +581,11 @@ export function createMuseViews(React) {
                     item.session ? h(SessionStatus, {session: item.session}) : null,
                     `${item.sourceLabel}${item.timeText ? ` · ${item.timeText}` : ''}`)),
                 h('div', {className: 'muse-hairline-actions'},
-                  h('button', {type: 'button', className: 'muse-btn-link', onClick: () => onPinFocus?.(item.key)}, '切到焦点'),
+                  h('button', {
+                    type: 'button', className: 'muse-btn-link',
+                    onClick: () => model.prebakeCount && item.session ? onOpenSession?.(item.session.id) : onPinFocus?.(item.key),
+                  }, model.prebakeCount && item.session ? '查看详情 ›' : '切到焦点'),
+                  item.session?.status === 'prebake' ? h(PrebakeDismiss, {session: item.session, busy, onMuseAct}) : null,
                   item.askPrompt ? h('button', {type: 'button', className: 'muse-btn-link', onClick: () => onAsk?.(item.askPrompt)}, '聊聊') : null))),
               hiddenFolded.length > 0
                 ? h('details', {className: 'muse-more-disclosure'},
@@ -483,9 +597,16 @@ export function createMuseViews(React) {
                         item.session ? h(SessionStatus, {session: item.session}) : null,
                         item.sourceLabel)),
                     h('div', {className: 'muse-hairline-actions'},
-                      h('button', {type: 'button', className: 'muse-btn-link', onClick: () => onPinFocus?.(item.key)}, '切到焦点')))))
+                      h('button', {
+                        type: 'button', className: 'muse-btn-link',
+                        onClick: () => model.prebakeCount && item.session ? onOpenSession?.(item.session.id) : onPinFocus?.(item.key),
+                      }, model.prebakeCount && item.session ? '查看详情 ›' : '切到焦点'),
+                      item.session?.status === 'prebake' ? h(PrebakeDismiss, {session: item.session, busy, onMuseAct}) : null))))
                 : null)
             : null,
+          model.proactiveSettings && model.carouselCards.length > 5
+            ? h('button', {type: 'button', className: 'muse-btn-link', onClick: () => onOpenTab?.('threads')},
+              `全部 ${model.carouselCards.length} 件 ›`) : null,
           h('section', {className: 'muse-section muse-workspace-section', 'aria-label': '在推进的工作区'},
             h('div', {className: 'muse-section-head'},
               h('h3', {className: 'muse-section-title'}, model.mode === 'synergy' ? '在推进的项目与协同里程碑' : '在推进的本地工作区'),
@@ -502,7 +623,12 @@ export function createMuseViews(React) {
                   h('button', {type: 'button', className: 'muse-btn-link', onClick: () => onAsk?.(row.askPrompt)}, '问 Dot'))))
               : h('p', {className: 'muse-rail-empty'}, '还没有勾选要跟踪的工作区文件夹。点右上角「选关注文件夹」，即使不装 SuperAgent，Dot 也会把代码会话进度抽象到这里。'))),
         h('aside', {className: 'muse-col-rail', 'aria-label': '今日日程与答应过的事'},
-          h('div', {className: 'muse-rail-group'},
+          model.stage4Timeline ? h('div', {className: 'muse-rail-group'},
+            h('h3', {className: 'muse-rail-title'}, '日程与随手提醒'),
+            model.stage4Timeline.length ? model.stage4Timeline.map(row => h(Stage4TimelineRow, {
+              key: `${row.kind}:${row.id}`, row, busy, onOpenSession, onAsk: onCarryPrompt ?? onAsk,
+            })) : h('p', {className: 'muse-rail-empty'},
+              model.today.sourcesPhase === 'reading' ? '正在核对日程…' : '今天没有待处理的日程或随手提醒。')) : h('div', {className: 'muse-rail-group'},
             h('h3', {className: 'muse-rail-title'},
               h('span', null, '今日日程'),
               model.events.length ? h('span', {className: 'muse-section-note'}, `${model.events.length} 场`) : null),
@@ -544,7 +670,7 @@ export function createMuseViews(React) {
         session.progressLabel ? h('span', null, session.progressLabel) : null),
       h('span', {className: 'muse-thread-title'}, session.title),
       session.whyHere ? h('span', {className: 'muse-thread-body muse-session-summary'}, session.whyHere) : null),
-      h('button', {
+      session.status === 'prebake' ? h(PrebakeDismiss, {session, busy, onMuseAct}) : h('button', {
         type: 'button',
         className: `muse-compact-button ${session.archived ? 'muse-btn-link' : 'muse-btn-outline'}`,
         [session.archived ? 'data-muse-session-reopen' : 'data-muse-session-complete']: session.id,
@@ -554,9 +680,22 @@ export function createMuseViews(React) {
   }
 
   function MuseSessionsView({model, busy, onMuseAct, onOpenSession}) {
+    const counts = model.carouselCards.reduce((result, session) => {
+      result[session.status] = (result[session.status] || 0) + 1;
+      return result;
+    }, {});
+    const summary = [
+      {status: 'wait', label: '待拍板'},
+      {status: 'run', label: '跟进中'},
+      {status: 'prebake', label: '预办'},
+    ].filter(item => counts[item.status]);
     return h('div', {className: 'muse-stage-narrow'},
       h('section', {className: 'muse-hero'},
-        h('h1', {className: 'muse-greeting'}, `眼下在办，${model.carouselCards.length} 个会话`)),
+        h('h1', {className: 'muse-greeting'}, model.proactiveSettings ? 'Dot 在办，' : `眼下在办，${model.carouselCards.length} 个会话`),
+        model.proactiveSettings && summary.length
+          ? h('p', {className: 'muse-session-meta muse-status-overview'},
+            ...summary.map(item => h(SessionStatus, {key: item.status, session: {...item, statusLabel: `${counts[item.status]} ${item.label}`}})))
+          : null),
       model.sessionGroups.length
         ? model.sessionGroups.map(group => h('section', {key: group.workspaceTitle, className: 'muse-session-group'},
           h('h2', {className: 'muse-section-title'}, `工作区 ${group.workspaceTitle}`),
@@ -624,10 +763,93 @@ export function createMuseViews(React) {
         h('button', {type: 'button', className: 'muse-btn-link', onClick: () => onDismissUndo?.()}, '知道了')));
   }
 
+  function MemoryEvidence({item, busy, onMuseAct}) {
+    const [draft, setDraft] = React.useState(null);
+    const composing = React.useRef(false);
+    const save = async event => {
+      event.preventDefault();
+      const text = draft?.trim();
+      if (!text || busy || composing.current) return;
+      const result = await onMuseAct?.({action: 'memory_item', id: item.id, text});
+      if (result?.ok) setDraft(null);
+    };
+    return h('details', {className: 'muse-memory-evidence', 'data-muse-note-id': item.id},
+      h('summary', {className: item.active === false ? 'muse-memory-paused' : undefined},
+        h('span', {className: 'muse-memory-text'}, item.text),
+        item.tagBadge ? h('span', {className: 'muse-memory-badge'},
+          h('span', {className: 'muse-session-dot is-ai-inline', 'aria-hidden': true}), item.tagBadge) : null,
+        item.active === false ? h('span', {className: 'muse-section-note'}, '已暂停') : null),
+      h('div', {className: 'muse-memory-proof'},
+        item.quote ? h('blockquote', null, item.quote) : null,
+        h('p', {className: 'muse-hairline-sub'},
+          [item.quoteSource || item.provenance, item.quotedInVerified ? '已核对原话' : ''].filter(Boolean).join(' · ')),
+        item.replacedOld ? h('p', {className: 'muse-hairline-sub'}, `此前记的是：${item.replacedOld}`) : null,
+        item.effect ? h('p', {className: 'muse-hairline-sub'}, item.effect) : null,
+        h('div', {className: 'muse-focus-actions'},
+          h('button', {
+            type: 'button', className: 'muse-btn-outline muse-compact-button',
+            'data-muse-memory-toggle': item.id, disabled: busy,
+            onClick: () => onMuseAct?.({action: 'memory_item', id: item.id, active: item.active === false}),
+          }, item.active === false ? '恢复生效' : '暂停生效'),
+          h('button', {
+            type: 'button', className: 'muse-btn-link',
+            onClick: () => setDraft(item.text),
+            'aria-expanded': draft !== null,
+          }, '开口改一句'),
+          h('button', {
+            type: 'button', className: 'muse-btn-link danger',
+            'data-muse-note-delete': item.id, disabled: busy,
+            onClick: () => onMuseAct?.({action: 'memory_item', id: item.id, remove: true}),
+          }, '彻底忘掉')),
+        draft !== null ? h('form', {className: 'muse-note-composer muse-memory-edit', onSubmit: save},
+          h('input', {
+            className: 'muse-input', type: 'text', value: draft, autoFocus: true, maxLength: 240,
+            'aria-label': '改写这条记忆',
+            onChange: event => setDraft(event.target.value),
+            onCompositionStart: () => { composing.current = true; },
+            onCompositionEnd: () => { composing.current = false; },
+            onKeyDown: event => {
+              if (event.key === 'Enter' && (composing.current || event.nativeEvent?.isComposing || event.keyCode === 229)) {
+                event.preventDefault();
+              }
+            },
+          }),
+          h('button', {type: 'submit', className: 'muse-btn-primary', disabled: busy || !draft.trim()}, '保存'),
+          h('button', {type: 'button', className: 'muse-btn-outline', onClick: () => setDraft(null)}, '取消')) : null));
+  }
+
   function MemoryLedger({model, busy, onMuseAct}) {
     const flomo = model.connectorGroups.find(group => group.id === 'external_apps')?.items.find(row => row.id === 'flomo');
     const digestCompleted = ['sent', 'quiet'].includes(model.digest.lastStatus);
+    const existingItems = model.stage4Memory ? model.legacyMemoryItems : model.memoryItems;
+    const existingRows = existingItems.map(item => h('article', {
+      key: item.id, className: 'muse-hairline-row', 'data-muse-note-id': item.id,
+    },
+      h('button', {
+        type: 'button',
+        className: `muse-session-open${item.active === false ? ' muse-memory-paused' : ''}`,
+        'data-muse-memory-toggle': item.id,
+        'aria-pressed': item.active !== false,
+        disabled: busy,
+        onClick: () => onMuseAct?.({action: 'memory_item', id: item.id, active: item.active === false}),
+      },
+      h('span', {className: 'muse-memory-text'}, item.text),
+      h('span', {className: 'muse-hairline-sub'}, [item.provenance, item.effect, item.active === false ? '已暂停' : ''].filter(Boolean).join(' · '))),
+      h('button', {
+        type: 'button', className: 'muse-btn-link danger', 'data-muse-note-delete': item.id,
+        disabled: busy, onClick: () => onMuseAct?.({action: 'memory_item', id: item.id, remove: true}),
+      }, '忘掉')));
     return [
+      model.stage4Memory ? h('section', {key: 'stage4-memory', className: 'muse-section'},
+        h('div', {className: 'muse-section-head'},
+          h('h2', {className: 'muse-section-title'}, '活体记忆'),
+          h('span', {className: 'muse-memory-budget', 'data-muse-memory-budget': true},
+            model.memoryBytes === null ? '4 KB' : `${(model.memoryBytes / 1024).toFixed(1)} / 4 KB`)),
+        ...model.memoryGroups.map(group => h('section', {key: group.id, className: 'muse-memory-bucket', 'data-muse-memory-group': group.id},
+          h('h3', {className: 'muse-trait-group-title'}, group.label),
+          group.items.length
+            ? group.items.map(item => h(MemoryEvidence, {key: item.id, item, busy, onMuseAct}))
+            : h('p', {className: 'muse-rail-empty'}, '暂未记下。')))) : null,
       h('section', {key: 'routines', className: 'muse-section'},
         h('h2', {className: 'muse-section-title'}, '动态例行与守候'),
         model.routines.length
@@ -649,41 +871,24 @@ export function createMuseViews(React) {
                 onClick: () => onMuseAct?.({action: 'routine_toggle', id: routine.id, active: !routine.active}),
               }, routine.active ? '守候中' : '已暂停'))))
           : h('p', {className: 'muse-rail-empty'}, '还没有设定例行。')),
-      h('section', {key: 'memory', className: 'muse-section'},
+      existingRows.length || flomo?.enabled && flomo.connected || !model.stage4Memory
+        ? h('section', {key: 'memory', className: 'muse-section'},
         h('div', {className: 'muse-section-head'},
-          h('h2', {className: 'muse-section-title'}, '对话与工作区沉淀的记忆'),
+          h('h2', {className: 'muse-section-title'}, model.stage4Memory ? '其他来源记忆' : '对话与工作区沉淀的记忆'),
           flomo?.enabled && flomo.connected ? h('button', {
             type: 'button',
             className: 'muse-btn-link',
             disabled: busy,
             onClick: () => onMuseAct?.({action: 'flomo_memory_refresh'}),
           }, '取回最近的 flomo 笔记') : null),
-        model.memoryItems.length
-          ? model.memoryItems.map(item => h('article', {key: item.id, className: 'muse-hairline-row', 'data-muse-note-id': item.id},
-            h('button', {
-              type: 'button',
-              className: `muse-session-open${item.active === false ? ' muse-memory-paused' : ''}`,
-              'data-muse-memory-toggle': item.id,
-              'aria-pressed': item.active !== false,
-              disabled: busy,
-              onClick: () => onMuseAct?.({action: 'memory_item', id: item.id, active: item.active === false}),
-            },
-            h('span', {className: 'muse-memory-text'}, item.text),
-            h('span', {className: 'muse-hairline-sub'}, [item.provenance, item.effect, item.active === false ? '已暂停' : ''].filter(Boolean).join(' · '))),
-            h('button', {
-              type: 'button',
-              className: 'muse-btn-link danger',
-              'data-muse-note-delete': item.id,
-              disabled: busy,
-              onClick: () => onMuseAct?.({action: 'memory_item', id: item.id, remove: true}),
-            }, '忘掉')))
-          : h('p', {className: 'muse-rail-empty'}, '在上方记下一条偏好或分寸。')),
+        existingRows.length ? existingRows : h('p', {className: 'muse-rail-empty'}, '在上方记下一条偏好或分寸。')) : null,
     ];
   }
 
   function MuseMemoryView({model, busy, undoBanner, onMuseAct, onDismissUndo, onAsk}) {
     const [noteDraft, setNoteDraft] = React.useState('');
-    const [memoryCategory, setMemoryCategory] = React.useState('preference');
+    const [memoryCategory, setMemoryCategory] = React.useState(null);
+    const category = memoryCategory ?? (model.stage4Memory ? 'working_style' : 'preference');
     const [alsoQueue, setAlsoQueue] = React.useState(false);
     const [editingCat, setEditingCat] = React.useState(null);
     const [editingTraitId, setEditingTraitId] = React.useState(null);
@@ -695,7 +900,7 @@ export function createMuseViews(React) {
       const text = noteDraft.trim();
       if (!text || busy) return;
       const result = await onMuseAct?.(model.memoryItems
-        ? {action: 'memory_item', text, category: memoryCategory, sourceKind: 'manual'}
+        ? {action: 'memory_item', text, category, sourceKind: 'manual'}
         : {action: 'profile_add_note', text, category: 'note', source: 'desktop'});
       if (result?.ok === false || result === null) return;
       setNoteDraft(current => current === noteDraft ? '' : current);
@@ -723,21 +928,23 @@ export function createMuseViews(React) {
       undoBanner ? h(MuseUndoBar, {undoBanner, onMuseAct, onDismissUndo}) : null,
       h('article', {className: 'muse-portrait-sheet'},
         h('header', {className: 'muse-sheet-header'},
-          h('h1', {className: 'muse-sheet-title'}, model.memoryItems
+          h('h1', {className: 'muse-sheet-title'}, model.stage4Memory ? '关于你，' : model.memoryItems
             ? `关于你，记着 ${model.memoryItems.length} 条记忆与 ${model.routines.length} 项例行`
             : '关于你 · 个人记忆侧写'),
+          model.stage4Memory ? h('p', {className: 'muse-sheet-sub'},
+            `有了 ${model.memoryGroups.reduce((count, group) => count + group.items.length, 0)} 条活记忆与 ${model.routines.length} 项守候。`) : null,
           !model.memoryItems ? h('p', {className: 'muse-sheet-sub'}, '随时改写或忘掉已经记下的偏好、节律与随记。') : null),
         h('div', {className: 'muse-note-composer'},
           model.memoryItems ? h('select', {
             className: 'muse-inline-select',
             'aria-label': '记忆类型',
-            value: memoryCategory,
+            value: category,
             disabled: busy,
             onChange: event => setMemoryCategory(event.target.value),
           },
-          h('option', {value: 'preference'}, '偏好'),
-          h('option', {value: 'boundary'}, '分寸'),
-          h('option', {value: 'note'}, '随记')) : null,
+          ...(model.stage4Memory ? MEMORY_BUCKETS : [
+            {id: 'preference', label: '偏好'}, {id: 'boundary', label: '分寸'}, {id: 'note', label: '随记'},
+          ]).map(item => h('option', {key: item.id, value: item.id}, item.label))) : null,
           h('input', {
             type: 'text',
             className: 'muse-input',
@@ -902,10 +1109,37 @@ export function createMuseViews(React) {
     return h('div', {className: 'muse-stage-narrow'},
       h('section', {className: 'muse-hero'},
         h('div', {className: 'muse-connector-heading'},
-          h('h1', {className: 'muse-greeting'}, '连接'),
+          h('h1', {className: 'muse-greeting'}, model.proactiveSettings ? '连接边界，' : '连接'),
           h('span', {className: 'muse-section-note muse-session-meta'},
             h('span', {className: `muse-session-dot ${macConnected ? 'is-done' : 'is-quiet'}`, 'aria-hidden': true}),
-            `Mac ${macConnected ? '已连接' : '未连接'} · 已开 ${model.connectorEnabledCount}/${model.connectorTotalCount} 项`))),
+            `Mac ${macConnected ? '已连接' : '未连接'} · 已开 ${model.connectorEnabledCount}/${model.connectorTotalCount} 项`)),
+        model.proactiveSettings ? h('p', {className: 'muse-subline'}, '只连你点头的来源，两边都能管。') : null),
+      model.proactiveSettings ? h('section', {className: 'muse-rhythm-sheet muse-proactive-settings', 'aria-label': '主动巡检'},
+        h('h2', {className: 'muse-sheet-title'}, '主动巡检'),
+        h('div', {className: 'muse-proactive-controls'},
+          h('label', null, '巡检频率',
+            h('select', {
+              className: 'muse-inline-select', 'data-muse-proactive-cadence': true,
+              value: model.proactiveSettings.cadence, disabled: busy,
+              onChange: event => onMuseAct?.({action: 'proactive_settings_update', cadence: event.target.value}),
+            },
+              h('option', {value: '10m'}, '每 10 分钟'),
+              h('option', {value: 'twice_daily'}, '早晚各一次'),
+              h('option', {value: 'off'}, '暂停主动巡检'))),
+          h('label', null,
+            h('input', {
+              type: 'checkbox', 'data-muse-proactive-prebake': true,
+              checked: model.proactiveSettings.autoPrebake === true, disabled: busy,
+              onChange: event => onMuseAct?.({action: 'proactive_settings_update', autoPrebake: event.target.checked}),
+            }), '自动预办')),
+        h('div', {className: 'muse-focus-actions'},
+          h('button', {
+            type: 'button', className: 'muse-btn-link', disabled: busy,
+            'data-muse-proactive-dream': true,
+            onClick: () => onMuseAct?.({action: 'proactive_dream_run', force: true}),
+          }, '现在复盘提醒分寸'),
+          model.lastDreamAt ? h('time', {className: 'muse-section-note', dateTime: model.lastDreamAt},
+            `最近复盘 ${new Date(model.lastDreamAt).toLocaleString('zh-CN', {dateStyle: 'short', timeStyle: 'short'})}`) : null)) : null,
       h('article', {className: 'muse-rhythm-sheet', 'data-muse-rhythm-sheet': true},
         h('header', {className: 'muse-sheet-header'},
           h('h2', {className: 'muse-sheet-title'}, '守候与打扰分寸')),
@@ -989,6 +1223,9 @@ export function createMuseViews(React) {
     onSaveNote,
     onQueuePending,
     renderConversation,
+    liveInsight,
+    onMuseAct,
+    onCarryInsight,
   }) {
     const composing = React.useRef(false);
     const inputRef = React.useRef(null);
@@ -1023,7 +1260,27 @@ export function createMuseViews(React) {
           h('div', {className: 'muse-drawer-body'},
             renderConversation ? renderConversation() : h('p', {style: {padding: 16}}, '正在准备原生会话…')))
         : null,
-      h('div', {className: 'muse-capsule', 'data-muse-capsule': true},
+      liveInsight && !conversationOpen && !(draft || '').trim() ? h('section', {
+        className: 'muse-whisper-tray', 'data-muse-live-insight': liveInsight.id, 'aria-label': '参谋轻提醒',
+      },
+      h('div', {className: 'muse-whisper-copy'},
+        h('div', {className: 'muse-whisper-label'},
+          h('span', {className: 'muse-session-dot is-prebake', 'aria-hidden': true}),
+          h('span', null, liveInsight.title || '参谋轻提醒')),
+        h('p', null, liveInsight.eyebrow || liveInsight.prompt)),
+      h('button', {
+        type: 'button', className: 'muse-btn-link muse-whisper-carry', disabled: busy,
+        'data-muse-insight-carry': liveInsight.id,
+        onClick: async () => {
+          const result = await onMuseAct?.({action: 'proactive_insight_act', id: liveInsight.id, operation: 'mark_read'});
+          if (result?.ok) onCarryInsight?.(liveInsight.prompt);
+        },
+      }, '带进对话 ›'),
+      h('button', {
+        type: 'button', className: 'muse-btn-link muse-dismiss', disabled: busy,
+        'aria-label': '忽略这条轻提醒', 'data-muse-insight-dismiss': liveInsight.id,
+        onClick: () => onMuseAct?.({action: 'proactive_insight_act', id: liveInsight.id, operation: 'dismiss'}),
+      }, '×')) : h('div', {className: 'muse-capsule', 'data-muse-capsule': true},
         h('button', {
           type: 'button',
           className: 'muse-capsule-toggle',
@@ -1096,6 +1353,7 @@ export function createMuseViews(React) {
     conversationOpen = false,
     onToggleConversation,
     onSendChat,
+    onCarryInsight,
     renderConversation,
     renderConnectionsHost,
     briefOpen = false,
@@ -1107,6 +1365,12 @@ export function createMuseViews(React) {
     onRotateMobilePair,
   }) {
     const scrollRef = React.useRef(null);
+    const [prebakeDetailId, setPrebakeDetailId] = React.useState(null);
+    const prebakeDetail = model.carouselCards.find(item => item.id === prebakeDetailId && item.status === 'prebake');
+    const selectSession = id => {
+      if (model.carouselCards.some(item => item.id === id && item.status === 'prebake')) setPrebakeDetailId(id);
+      else onOpenSession?.(id);
+    };
     React.useEffect(() => {
       if (scrollRef.current) scrollRef.current.scrollTop = 0;
     }, [tab]);
@@ -1139,14 +1403,15 @@ export function createMuseViews(React) {
             onSaveDraft,
             onPinFocus,
             onAsk,
+            onCarryPrompt: onCarryInsight,
             onOpenProject,
-            onOpenSession,
+            onOpenSession: selectSession,
             onMuseAct,
             onOpenWorkspacePicker,
             onOpenTab: onTab,
           })
           : tab === 'threads'
-            ? h(MuseThreadsView, {model, onAsk, busy, onMuseAct, onOpenSession})
+            ? h(MuseThreadsView, {model, onAsk, busy, onMuseAct, onOpenSession: selectSession})
             : tab === 'memory'
               ? h(MuseMemoryView, {
                 model,
@@ -1173,10 +1438,17 @@ export function createMuseViews(React) {
         conversationOpen,
         onToggleConversation,
         onSendChat,
+        liveInsight: model.liveInsight,
+        onMuseAct,
+        onCarryInsight: onCarryInsight ?? onAsk,
         onSaveNote: text => onMuseAct?.({action: 'profile_add_note', text, category: 'note', source: 'desktop'}),
         onQueuePending: text => onMuseAct?.({action: 'superagent_pending', text, title: text.slice(0, 48)}),
         renderConversation,
       }),
+      prebakeDetail ? h(PrebakeDetail, {
+        key: prebakeDetail.id, session: prebakeDetail, busy, onMuseAct, onOpenSession,
+        onClose: () => setPrebakeDetailId(null),
+      }) : null,
       h(MuseBriefDialog, {
         open: briefOpen,
         model,

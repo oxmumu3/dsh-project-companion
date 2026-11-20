@@ -16,6 +16,7 @@ import {createMuseViews} from './muse/muse-views.jsx';
 const museSnapshotFields = [
   'profile', 'digest', 'superagent', 'workspaceBrief', 'staleProjectMemories', 'mobile',
   'dossiers', 'carouselCards', 'memoryItems', 'routines', 'connectors', 'contextMode', 'mountedWorkspaces',
+  'liveInsight', 'proactiveSettings', 'scheduleItems', 'reminders',
 ];
 const updateMuseSnapshot = (previous, value) => ({
   ...previous,
@@ -48,6 +49,13 @@ export default function createDotClient(require){
         --dot-session-run:#3E63DD;
         --dot-session-done:#288054;
         --dot-session-quiet:#ADA79C;
+        --dot-flow-1:#7E57C2;
+        --dot-flow-2:#C46D9E;
+        --dot-flow-3:#D99B52;
+        --dot-flow-4:#5E54B8;
+        --dot-proactive:#5C438C;
+        --dot-proactive-ring:rgba(126,87,194,.22);
+        --dot-wait-ring:rgba(212,130,10,.22);
       }
       @media (prefers-color-scheme:dark){
         .pc_dot_muse{
@@ -55,6 +63,13 @@ export default function createDotClient(require){
           --dot-session-run:#6889FF;
           --dot-session-done:#47A876;
           --dot-session-quiet:#57534B;
+          --dot-flow-1:#B39DDB;
+          --dot-flow-2:#F48FB1;
+          --dot-flow-3:#FFCC80;
+          --dot-flow-4:#9FA8DA;
+          --dot-proactive:#D1C4E9;
+          --dot-proactive-ring:rgba(179,157,219,.26);
+          --dot-wait-ring:rgba(232,157,50,.22);
         }
       }
       @supports (color:light-dark(black,white)){
@@ -63,6 +78,13 @@ export default function createDotClient(require){
           --dot-session-run:light-dark(#3E63DD,#6889FF);
           --dot-session-done:light-dark(#288054,#47A876);
           --dot-session-quiet:light-dark(#ADA79C,#57534B);
+          --dot-flow-1:light-dark(#7E57C2,#B39DDB);
+          --dot-flow-2:light-dark(#C46D9E,#F48FB1);
+          --dot-flow-3:light-dark(#D99B52,#FFCC80);
+          --dot-flow-4:light-dark(#5E54B8,#9FA8DA);
+          --dot-proactive:light-dark(#5C438C,#D1C4E9);
+          --dot-proactive-ring:light-dark(rgba(126,87,194,.22),rgba(179,157,219,.26));
+          --dot-wait-ring:light-dark(rgba(212,130,10,.22),rgba(232,157,50,.22));
         }
       }
     `;
@@ -1750,6 +1772,11 @@ function createDotGoalBoardViews(React) {
           if(typeof prefill==='string'&&prefill)setCapsuleDraft(prefill);
           setTimeout(()=>{try{document.querySelector('[data-muse-capsule-input]')?.focus?.();}catch{}},0);
         };
+        const carryMusePrompt=prompt=>{
+          setCapsuleDraft(previous=>previous.trim()?`${previous.trim()} ${prompt}`:prompt);
+          void openDock();
+          focusCapsuleInput();
+        };
         const museAct=async(payload={})=>{
           if(!active.current)return null;
           museRevision.current++;
@@ -1858,6 +1885,7 @@ function createDotGoalBoardViews(React) {
             onOpenSettings:()=>setSetup(true),
             capsuleDraft,
             onCapsuleDraft:setCapsuleDraft,
+            onCarryInsight:carryMusePrompt,
             conversationOpen,
             onToggleConversation:next=>{if(next)void openDock();else closeDock();},
             onSendChat:todaySay,
