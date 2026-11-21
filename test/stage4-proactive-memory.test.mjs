@@ -945,3 +945,129 @@ test('Stage 5 muse-intelligence scans up to 10 workspaces and deprioritizes fixt
   assert.equal(scanned.length, 10);
   assert.deepEqual(scanned.slice(0, 4), ['/Users/shan/Work/real-0', '/Users/shan/Work/real-1', '/Users/shan/Work/real-2', '/Users/shan/Work/real-3']);
 });
+
+test('Stage 6 loopback gateway serves /gateway/proactive/cursor and /gateway/proactive/delta and ledger surfaces partial Google reconnect', async t => {
+  const {createProactiveDesktop} = await import('../src/proactive-desktop.js');
+  const {createDotConnectorLedger} = await import('../src/dot-connector-ledger.js');
+  const {createDotSources} = await import('../src/dot-sources.js');
+  const {createWorkspaceAccess} = await import('../src/workspace-access.js');
+
+  let flomoNoteText = '先检查墨西哥报关清单';
+  let storeMap = new Map();
+  const sources = createDotSources({store: {get: async k => storeMap.get(k), put: async (k, v) => storeMap.set(k, v)}});
+  const key = 'c'.repeat(64);
+  for (const s of ['flomo', 'dida', 'gmail', 'calendar']) await sources.enable(s, key);
+  await sources.recordRead('calendar', 'needs_authorization');
+
+  const workspace = createWorkspaceAccess({
+    store: {get: async () => undefined, put: async () => {}},
+    catalog: {targets: () => []},
+  });
+  const connector = createDotConnectorLedger({
+    dotSources: sources,
+    workspaceAccess: workspace,
+    context: {credentialFingerprint: s => ({configured: ['flomo', 'dida', 'gmail', 'calendar'].includes(s), key}), suspend: () => {}},
+    readMobile: async () => ({bridgeActive: true, paired: true}),
+    readWechat: async () => true,
+    canEnable: async () => true,
+    onChange: () => {},
+  });
+  const ledgerSnap = await connector.snapshot();
+  const googleConn = ledgerSnap.connectors.find(c => c.id === 'google_suite');
+  assert.equal(googleConn.enabled, true);
+  assert.match(googleConn.subtitle, /日历待重连/);
+
+  const proactiveDesktop = createProactiveDesktop({
+    ctx: {get: () => null},
+    googleIsolation: {resolveBackgroundSelection: async () => ({provider: 'gemini', model: 'gemini-3.5-flash'})},
+    digestModel: {summarize: async () => ({output: {proposals: []}, usage: {}})},
+    readGoogleConfig: () => ({googleWorkspaceModelProvider: 'gemini'}),
+    workspaceAccess: workspace,
+    sessionLedger: {internal: async () => ({sessions: []})},
+    personalProfile: {upsertStage4Memory: async () => {}},
+    context: {
+      credentialFingerprint: s => ({configured: ['flomo', 'dida', 'gmail', 'calendar'].includes(s), key}),
+      readProactive: async (src) => src === 'flomo'
+        ? {items: [{id: 'fl-1', title: '报关备注', text: flomoNoteText, updatedAt: '2026-11-21T06:00:00Z'}]}
+        : {items: []},
+      diagnoseDot: async () => ({cursor: 'hist-1'}),
+      readDot: async () => ({items: [{id: 'gm-1', subject: 'Supplier reply', from: 'vendor@example.com', receivedAt: '2026-11-21T05:00:00Z', snippet: 'Please confirm'}]}),
+    },
+    dotSources: {stateOf: s => sources.stateOf(s)},
+    dotSourceReader: {
+      refreshIfStale: async () => {},
+      snapshot: () => ({
+        sources: [{id: 'dida', state: 'ok'}, {id: 'calendar', state: 'needs_authorization'}],
+        promises: [{id: 'p-1', source: 'dida', sourceItemId: 't-1', what: '交报关单', when: '2026-11-21T10:00:00Z'}],
+        events: [{id: 'cal-should-skip', title: 'Hidden cal'}],
+      }),
+    },
+    getGateway: () => null,
+    canRun: async () => true,
+    paidGeminiConfirmed: () => false,
+  });
+
+  const gateway = {
+    preflight: async (route, input) => {
+      if (['proactiveCursor', 'proactiveDelta'].includes(route) && !['flomo', 'dida', 'google_suite'].includes(input?.source)) {
+        return {ok: false, status: 400, error: '不支持的资料来源。'};
+      }
+      return null;
+    },
+    proactiveCursor: input => proactiveDesktop.proactiveCursor(input),
+    proactiveDelta: input => proactiveDesktop.proactiveDelta(input),
+  };
+
+  const {stateDir, request} = await mobileFixture(t, {loopbackGateway: true, gateway});
+  const discovery = JSON.parse(await readFile(join(stateDir, 'desktop-gateway.json'), 'utf8'));
+  const baseUrl = `http://127.0.0.1:${discovery.port}`;
+
+  const badAuth = await request(`${baseUrl}/gateway/proactive/cursor`, {
+    method: 'POST', bearer: 'wrong', body: {operationId: 'op-bad-auth', source: 'flomo'},
+  });
+  assert.equal(badAuth.status, 401);
+
+  const badSource = await request(`${baseUrl}/gateway/proactive/cursor`, {
+    method: 'POST', body: {operationId: 'op-bad-src', source: 'unknown'},
+  });
+  assert.equal(badSource.status, 400);
+
+  const cur1Res = await request(`${baseUrl}/gateway/proactive/cursor`, {
+    method: 'POST', body: {operationId: 'op-flomo-c1', source: 'flomo'},
+  });
+  assert.equal(cur1Res.status, 200);
+  const cur1 = await cur1Res.json();
+  assert.equal(cur1.ok, true);
+  assert.ok(typeof cur1.cursor === 'string' && cur1.cursor.length >= 32);
+
+  flomoNoteText = '更新了墨西哥报关编码与报价';
+  const cur2 = await (await request(`${baseUrl}/gateway/proactive/cursor`, {
+    method: 'POST', body: {operationId: 'op-flomo-c2', source: 'flomo'},
+  })).json();
+  assert.notEqual(cur2.cursor, cur1.cursor);
+
+  const deltaFlomo = await (await request(`${baseUrl}/gateway/proactive/delta`, {
+    method: 'POST', body: {operationId: 'op-flomo-d1', source: 'flomo', previous: cur1.cursor, cursor: cur2.cursor},
+  })).json();
+  assert.equal(deltaFlomo.ok, true);
+  assert.equal(deltaFlomo.events.length, 1);
+  assert.equal(deltaFlomo.events[0].id, 'fl-1');
+  assert.match(deltaFlomo.events[0].text, /更新了墨西哥报关编码/);
+
+  const curDida = await (await request(`${baseUrl}/gateway/proactive/cursor`, {
+    method: 'POST', body: {operationId: 'op-dida-c1', source: 'dida'},
+  })).json();
+  assert.equal(curDida.ok, true);
+  assert.ok(curDida.cursor);
+  const deltaDida = await (await request(`${baseUrl}/gateway/proactive/delta`, {
+    method: 'POST', body: {operationId: 'op-dida-d1', source: 'dida', previous: null, cursor: curDida.cursor},
+  })).json();
+  assert.equal(deltaDida.events[0].id, 't-1');
+
+  // Paid Gemini off -> google_suite returns null cursor cleanly rather than 404/error
+  const curGoogleOff = await (await request(`${baseUrl}/gateway/proactive/cursor`, {
+    method: 'POST', body: {operationId: 'op-g-c1', source: 'google_suite'},
+  })).json();
+  assert.equal(curGoogleOff.ok, true);
+  assert.equal(curGoogleOff.cursor, null);
+});

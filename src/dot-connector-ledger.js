@@ -9,6 +9,9 @@ const outside = [
   {id: 'dida', sources: ['dida'], title: '滴答清单', subtitle: '任务与到期时间', boundaryNote: '读取当前已授权账号的任务。'},
   {id: 'wechat', title: '微信通知', subtitle: '经已配对的微信通道投递 Dot 简报', boundaryNote: '关闭后暂停 Dot 简报的微信投递。'},
 ];
+const SOURCE_SHORT_LABEL = {
+  gmail: 'Gmail', calendar: '日历', drive: 'Drive', docs: 'Docs', sheets: 'Sheets', slides: 'Slides', flomo: 'flomo', dida: '滴答清单',
+};
 
 export function createDotConnectorLedger({dotSources, context, workspaceAccess, readMobile, readWechat, canEnable, onChange}) {
   const credential = source => {
@@ -48,7 +51,10 @@ export function createDotConnectorLedger({dotSources, context, workspaceAccess, 
           })
           : connected && sources.wechatNotificationsEnabled !== false;
         const configured = ids?.some(id => credential(id).configured);
-        return {...item, group: 'external_apps', connected, enabled,
+        const reconnectNames = ids ? ids.filter(id => rows.get(id)?.enabled === true && rows.get(id)?.lastReadState === 'needs_authorization')
+          .map(id => SOURCE_SHORT_LABEL[id] || id) : [];
+        const subtitle = enabled && reconnectNames.length ? `${item.subtitle} · ${reconnectNames.join('、')}待重连` : item.subtitle;
+        return {...item, subtitle, group: 'external_apps', connected, enabled,
           canToggle: connected || Boolean(ids?.some(id => rows.get(id)?.enabled === true)),
           statusText: enabled ? '已授权' : connected ? '已关闭' : configured ? '请在桌面连接' : '待授权'};
       }),

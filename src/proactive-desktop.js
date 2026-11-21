@@ -36,6 +36,8 @@ export function createProactiveDesktop({
   clock = () => new Date(), signal,
 }) {
   let lastGmail;
+  const gatewayCache = new Map();
+  const gatewayHistory = new Map();
   function sourceGrant(source) {
     try {
       const row = dotSources.stateOf(source), credential = context.credentialFingerprint(source);
@@ -244,6 +246,174 @@ export function createProactiveDesktop({
     return true;
   }
 
+  function rememberCursorStates(source, cursor, events) {
+    let history = gatewayHistory.get(source);
+    if (!history) {
+      history = new Map();
+      gatewayHistory.set(source, history);
+    }
+    if (!history.has(cursor) && history.size >= 8) history.delete(history.keys().next().value);
+    history.set(cursor, new Map(events.map(event => [event.id, stamp([event.state, event.text])])));
+  }
+
+  async function readGatewaySnapshot(source, requestSignal) {
+    const activeSignal = requestSignal ? AbortSignal.any([signal, requestSignal].filter(Boolean)) : signal;
+    const now = clock(), from = new Date(now.getTime() - DAY).toISOString(), to = now.toISOString();
+    const recent = {operation: 'recent', from, to, limit: 10, signal: activeSignal};
+
+    if (source === 'flomo') {
+      const grant = sourceGrant('flomo');
+      if (!grant || dotSources.stateOf('flomo')?.lastReadState === 'needs_authorization') return null;
+      const result = await context.readProactive('flomo', recent).catch(() => null);
+      if (!result || sourceGrant('flomo') !== grant) return null;
+      const events = (result.items ?? []).slice(0, 40).map(row => ({
+        id: String(row.id),
+        externalId: String(row.id),
+        source: 'flomo',
+        state: String(row.updatedAt ?? row.createdAt ?? 'observed'),
+        text: redactReviewText(fields(row.title ?? row.subject, row.text ?? row.snippet), 1200),
+      }));
+      const cursor = stamp([grant, events.map(e => [e.id, e.state, stamp(e.text)])]);
+      rememberCursorStates('flomo', cursor, events);
+      return {grantSig: grant, cursor, events};
+    }
+
+    if (source === 'dida') {
+      const grant = sourceGrant('dida');
+      if (!grant || dotSources.stateOf('dida')?.lastReadState === 'needs_authorization') return null;
+      if (typeof dotSourceReader?.refreshIfStale === 'function') await dotSourceReader.refreshIfStale().catch(() => {});
+      else await dotSourceReader?.refreshNow?.().catch(() => {});
+      if (sourceGrant('dida') !== grant) return null;
+      const {promises = [], sources = []} = dotSourceReader?.snapshot?.() ?? {};
+      if (sources.some(row => row.id === 'dida' && row.state === 'needs_authorization')) return null;
+      const events = promises.filter(row => row.source === 'dida').slice(0, 40).map(row => ({
+        id: String(row.sourceItemId ?? row.id),
+        externalId: String(row.sourceItemId ?? row.id),
+        source: 'dida',
+        kind: 'task',
+        state: stamp([row.when, row.what]),
+        text: redactReviewText(fields(row.what, row.when), 800),
+      }));
+      const cursor = stamp([grant, events.map(e => [e.id, e.state, stamp(e.text)])]);
+      rememberCursorStates('dida', cursor, events);
+      return {grantSig: grant, cursor, events};
+    }
+
+    if (source === 'google_suite') {
+      if (!await canUseGoogle()) return null;
+      const activeSubs = ['gmail', 'calendar', 'drive'].filter(sub =>
+        sourceGrant(sub) && dotSources.stateOf(sub)?.lastReadState !== 'needs_authorization');
+      if (!activeSubs.length) return null;
+      const grantsSig = stamp(activeSubs.map(sub => [sub, sourceGrant(sub)]));
+      const events = [];
+      let gmailToken = '';
+
+      if (activeSubs.includes('gmail')) {
+        const gGrant = sourceGrant('gmail');
+        const diag = await context.diagnoseDot?.('gmail', 'history_cursor', {signal: activeSignal}).catch(() => null);
+        gmailToken = String(diag?.cursor ?? '');
+        const mailRes = await context.readDot?.('gmail', {operation: 'search', query: 'newer_than:1d', limit: 10, signal: activeSignal}).catch(() => null);
+        if (mailRes && sourceGrant('gmail') === gGrant) {
+          for (const row of (mailRes.items ?? []).slice(0, 20)) {
+            events.push({
+              id: String(row.id),
+              externalId: String(row.id),
+              source: 'gmail',
+              kind: 'external_action',
+              state: 'actionable',
+              text: redactReviewText(fields(row.subject ?? row.title, row.from, row.receivedAt, row.snippet ?? row.text), 1000),
+            });
+          }
+        }
+      }
+
+      if (activeSubs.includes('calendar')) {
+        const cGrant = sourceGrant('calendar');
+        if (typeof dotSourceReader?.refreshIfStale === 'function') await dotSourceReader.refreshIfStale().catch(() => {});
+        else await dotSourceReader?.refreshNow?.().catch(() => {});
+        const snap = dotSourceReader?.snapshot?.() ?? {};
+        const calReady = (snap.sources ?? []).some(row => row.id === 'calendar' && row.state === 'ok');
+        if (calReady && sourceGrant('calendar') === cGrant) {
+          const calRows = snap.events ?? [];
+          for (const conflict of scheduleConflicts(calRows, now)) {
+            events.push({
+              id: String(conflict.externalId),
+              externalId: String(conflict.externalId),
+              source: 'calendar',
+              kind: 'schedule_conflict',
+              state: 'schedule_conflict',
+              text: redactReviewText(conflict.text, 600),
+            });
+          }
+          for (const row of calRows.slice(0, 20)) {
+            events.push({
+              id: String(row.id),
+              externalId: String(row.id),
+              source: 'calendar',
+              kind: 'calendar',
+              state: stamp([row.status, row.startAt, row.endAt, row.title]),
+              text: redactReviewText(fields(row.title, row.startAt, row.endAt), 600),
+              startAt: row.startAt,
+              endAt: row.endAt,
+              allDay: row.allDay === true,
+            });
+          }
+        }
+      }
+
+      if (activeSubs.includes('drive')) {
+        const dGrant = sourceGrant('drive');
+        const driveRes = await context.readProactive?.('drive', recent).catch(() => null);
+        if (driveRes && sourceGrant('drive') === dGrant) {
+          for (const row of (driveRes.items ?? []).slice(0, 20)) {
+            events.push({
+              id: String(row.id),
+              externalId: String(row.id),
+              source: 'drive',
+              kind: 'document',
+              state: String(row.updatedAt ?? row.createdAt ?? 'observed'),
+              text: redactReviewText(fields(row.title, row.updatedAt, row.snippet ?? row.text), 800),
+            });
+          }
+        }
+      }
+
+      const cursor = stamp([grantsSig, gmailToken, events.map(e => [e.source, e.id, e.state, stamp(e.text)])]);
+      rememberCursorStates('google_suite', cursor, events);
+      return {grantSig: grantsSig, cursor, events};
+    }
+
+    return null;
+  }
+
+  async function proactiveCursor({source, signal: reqSignal} = {}) {
+    if (!['flomo', 'dida', 'google_suite'].includes(source)) return {ok: false, error: '不支持的资料来源。'};
+    if (!await canRun()) return {ok: true, cursor: null};
+    const snapshot = await readGatewaySnapshot(source, reqSignal);
+    if (!snapshot) {
+      gatewayCache.delete(source);
+      return {ok: true, cursor: null};
+    }
+    gatewayCache.set(source, snapshot);
+    return {ok: true, cursor: snapshot.cursor};
+  }
+
+  async function proactiveDelta({source, previous, cursor, signal: reqSignal} = {}) {
+    if (!['flomo', 'dida', 'google_suite'].includes(source)) return {ok: false, error: '不支持的资料来源。'};
+    if (!await canRun()) return {ok: true, events: []};
+    const cached = gatewayCache.get(source);
+    const snapshot = (cached && (!cursor || cached.cursor === cursor) && (!previous || cached.cursor !== previous))
+      ? cached
+      : await readGatewaySnapshot(source, reqSignal);
+    if (!snapshot) return {ok: true, events: []};
+    gatewayCache.set(source, snapshot);
+    const prevMap = previous ? gatewayHistory.get(source)?.get(previous) : null;
+    const deltaEvents = prevMap
+      ? snapshot.events.filter(event => prevMap.get(event.id) !== stamp([event.state, event.text]))
+      : snapshot.events;
+    return {ok: true, events: deltaEvents.slice(0, 40)};
+  }
+
   return {readWatermarks, authorizeEvents, canUseGoogle, classifyLocal: classify(false), classifyGoogle: classify(true),
-    rememberCandidates, prepare, dismissPrebake, sourceGrant};
+    rememberCandidates, prepare, dismissPrebake, sourceGrant, proactiveCursor, proactiveDelta};
 }

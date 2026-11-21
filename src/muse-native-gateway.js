@@ -128,6 +128,12 @@ export function createNativeMuseGateway({ctx, lifecycle, canRun, foregroundSessi
 
   async function preflight(route, input, signal) {
     if (!await canRun()) return {ok: false, status: 409, error: 'Dot 已暂停，请先恢复。'};
+    if (['proactiveCursor', 'proactiveDelta'].includes(route)) {
+      if (!['flomo', 'dida', 'google_suite'].includes(input?.source)) {
+        return {ok: false, status: 400, error: '不支持的资料来源。'};
+      }
+      return null;
+    }
     if (route === 'schedule') {
       if (!scheduleInput(input)) return {ok: false, status: 400, error: '请提供有效的例行设置。'};
       return typeof service('schedule')?.create === 'function' ? null : unavailable;

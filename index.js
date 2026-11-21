@@ -1,5 +1,7 @@
 import {randomUUID,createHash} from 'node:crypto';
-import {resolve} from 'node:path';
+import {existsSync,readFileSync} from 'node:fs';
+import {homedir} from 'node:os';
+import {join,resolve} from 'node:path';
 import {z} from 'zod';
 import {defineTool} from '@deepseek-ai/dsh-tools';
 import {executeHostTool} from './src/host-tool-call.js';
@@ -928,9 +930,33 @@ export async function installCompanion(ctx,options={}){
     messages.splice(messages.indexOf(first),0,notice);
     return {...decision,messages};
   }));
+  const hasLocalWechatChannel=()=>{
+    try{
+      const familyDir=join(homedir(),'.local','share','dsh-family-assistant');
+      const familyPath=join(familyDir,'family.json');
+      if(existsSync(familyPath)){
+        const fam=JSON.parse(readFileSync(familyPath,'utf8'));
+        const owner=(fam?.people??[]).find(p=>p&&p.role==='owner'&&typeof p.id==='string');
+        if(owner){
+          const authPath=join(familyDir,'channels',owner.id,'auth.json');
+          if(existsSync(authPath)){
+            const auth=JSON.parse(readFileSync(authPath,'utf8'));
+            if(auth?.token&&auth?.peerId)return true;
+          }
+        }
+      }
+      const credsPath=join(homedir(),'.local','share','dsh-wechat','credentials.json');
+      if(existsSync(credsPath)){
+        const creds=JSON.parse(readFileSync(credsPath,'utf8'));
+        if((creds?.bot_token||creds?.token)&&(creds?.ilink_user_id||creds?.peerId))return true;
+      }
+    }catch{}
+    return false;
+  };
+  const syntheticCompanionHost=Boolean(options.clock||!ctx.get?.('pluginManager',false));
   const connectorLedger=createDotConnectorLedger({
     dotSources,context,workspaceAccess,readMobile:()=>mobileCompanion?.summary().catch(()=>null),
-    readWechat:async()=>Boolean(await resolveDigestOwner().catch(()=>null)),
+    readWechat:async()=>Boolean(await resolveDigestOwner().catch(()=>null))||(!syntheticCompanionHost&&hasLocalWechatChannel()),
     canEnable:canRunMuse,onChange:notifyMobileSoon,
   });
   const readSourceMemoryItems=()=>museIntelligence.readMemoryItems?.()??[];
@@ -939,13 +965,26 @@ export async function installCompanion(ctx,options={}){
     title:event.title,subtitle:'',source:'calendar',sourceLabel:'日历',
     actionLabel:null,actionPrompt:null,statusBadge:null,linkedDossierId:null,
   }));
+  const proactiveGateway={
+    ...museSessionHost.gateway,
+    preflight:async(route,input,reqSignal)=>{
+      if(['proactiveCursor','proactiveDelta'].includes(route)){
+        if(!await canRunMuse())return{ok:false,status:409,error:'Dot 已暂停，请先恢复。'};
+        if(!['flomo','dida','google_suite'].includes(input?.source))return{ok:false,status:400,error:'不支持的资料来源。'};
+        return null;
+      }
+      return museSessionHost.gateway.preflight(route,input,reqSignal);
+    },
+    proactiveCursor:input=>proactiveDesktop.proactiveCursor(input),
+    proactiveDelta:input=>proactiveDesktop.proactiveDelta(input),
+  };
   mobileCompanion=createMobileCompanion({
     ...(options.dshHome?{dshHome:options.dshHome}:{}),
     ...(options.mobile||{}),
-    syntheticHost:Boolean(options.clock||!ctx.get?.('pluginManager',false)),
+    syntheticHost:syntheticCompanionHost,
     isClosed:()=>disposed,
     loopbackGateway:options.loopbackGateway??options.mobile?.loopbackGateway,
-    gateway:museSessionHost.gateway,signal:lifecycle.signal,
+    gateway:proactiveGateway,signal:lifecycle.signal,
     readLiveState:async()=>{
       const [memorySnapshot,sessions,connectors,workspaceBrief,superagent,messages,proactiveState]=await Promise.all([
         buildMuseMemorySnapshot({personalProfile,museIntelligence}),

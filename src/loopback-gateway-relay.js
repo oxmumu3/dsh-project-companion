@@ -13,6 +13,8 @@ const routes = new Map([
   ['/gateway/control', 'control'],
   ['/gateway/questions/answer', 'answer'],
   ['/gateway/schedule/create', 'schedule'],
+  ['/gateway/proactive/cursor', 'proactiveCursor'],
+  ['/gateway/proactive/delta', 'proactiveDelta'],
 ]);
 
 function sendJson(res, status, payload) {
