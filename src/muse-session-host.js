@@ -10,6 +10,7 @@ import {createNativeMuseGateway} from './muse-native-gateway.js';
 const undoWindow = 12_000;
 const messageLimit = 30;
 const markdownLimit = 512 * 1024;
+const isButlerId = id => typeof id === 'string' && /^dot-butler-[A-Za-z0-9._-]+$/.test(id) && id.length <= 200;
 const stale = () => ({ok: false, error: '会话状态已变化，请刷新后再试。'});
 const emptyTranscript = () => ({messages: [], checklist: [], markdown: null});
 const textBlocks = blocks => Array.isArray(blocks) ? blocks
@@ -135,7 +136,7 @@ export function createMuseSessionHost({ctx, ledger, workspaceAccess, foregroundS
   const nativeRequests = new Map();
 
   async function scope(id) {
-    if (typeof id !== 'string' || /^family[_-]/.test(id)) return null;
+    if (typeof id !== 'string' || /^family[_-]/.test(id) || isButlerId(id)) return null;
     const [snapshot, state] = await Promise.all([workspaceAccess.capture(), ledger.internal()]);
     const row = state.sessions.find(item => item.sessionId === id);
     const grant = row && grantForCwd(row.root, snapshot.grants);
@@ -223,7 +224,7 @@ export function createMuseSessionHost({ctx, ledger, workspaceAccess, foregroundS
 
   async function readForegroundMessages() {
     const id = await foregroundSession();
-    if (!id || /^family[_-]/.test(id) || typeof controller()?.page !== 'function') return undefined;
+    if (!id || /^family[_-]/.test(id) || isButlerId(id) || typeof controller()?.page !== 'function') return undefined;
     const {messages} = await inspectSession(id, async () => !lifecycle?.aborted && await foregroundSession() === id);
     return messages;
   }
@@ -235,7 +236,7 @@ export function createMuseSessionHost({ctx, ledger, workspaceAccess, foregroundS
         readForegroundIds?.() ?? foregroundSession().then(id => new Set([id])),
       ]);
       const entries = state.sessions.flatMap(row => {
-        if (foreground.has(row.sessionId) || /^family[_-]/.test(row.sessionId) || getPrebakeMetadata(row.sessionId)?.hidden) return [];
+        if (foreground.has(row.sessionId) || /^family[_-]/.test(row.sessionId) || isButlerId(row.sessionId) || getPrebakeMetadata(row.sessionId)?.hidden) return [];
         const grant = grantForCwd(row.root, access.grants);
         return grant ? [{row, grant, snapshot: access}] : [];
       });
@@ -341,7 +342,8 @@ export function createMuseSessionHost({ctx, ledger, workspaceAccess, foregroundS
     try {
       const selected = sessionId ? prepared ?? await scope(id) : null;
       if (sessionId && (!selected || selected.row?.state === 'handled' || getPrebakeMetadata(id)?.hidden)) return stale();
-      const cancelled = AbortSignal.any([lifecycle, AbortSignal.timeout(120_000), ...(signal ? [signal] : [])].filter(Boolean));
+      const timeoutSignal = AbortSignal.timeout(600_000);
+      const cancelled = AbortSignal.any([lifecycle, timeoutSignal, ...(signal ? [signal] : [])].filter(Boolean));
       const getAgent = () => ctx.get('agents', false)?.get?.(id);
       let agent = getAgent();
       if (!agent && native && !prepared) return {ok: false, status: 404, fallbackHeadless: true};
@@ -401,7 +403,9 @@ export function createMuseSessionHost({ctx, ledger, workspaceAccess, foregroundS
           for (const dispose of disposers) if (typeof dispose === 'function') dispose();
           resolve(result);
         };
-        const abort = () => finish({ok: false, error: '等候回复已结束，可打开原会话查看进展。'});
+        const abort = () => finish(timeoutSignal.aborted && !signal?.aborted && !lifecycle?.aborted
+          ? {ok: false, code: 'turn_timeout', error: '后台仍在继续推进，稍后可打开会话查看结果。'}
+          : {ok: false, error: '等候回复已结束，可打开原会话查看进展。'});
         const matchesInput = input => native ? input?.source?.rpcId === operationId : input?.id === message.id;
         if (native) disposers.push(ctx.on('agent/inbox/inserted', payload => {
           if (payload?.agent === agent && matchesInput(payload.message)) recordAdmission(payload.message);
@@ -443,6 +447,11 @@ export function createMuseSessionHost({ctx, ledger, workspaceAccess, foregroundS
             const reason = event.data.reason?.kind;
             finish(reason === 'completed' ? {ok: true, reply: completed.join('\n')}
               : {ok: false, error: '本轮已结束，请打开原会话查看进展。'});
+          } else if (event.type === 'tool/call' || event.type === 'tool/result') {
+            const rawTool = event.data?.toolName ?? event.data?.name ?? event.data?.call?.toolName;
+            const step = typeof rawTool === 'string'
+              ? rawTool.replace(/[\u0000-\u001f\u007f]+/g, ' ').trim().slice(0, 80) : '';
+            if (step) onEvent?.({type: event.type === 'tool/call' ? 'tool_start' : 'tool_done', step});
           }
         };
         if (!native) {
@@ -489,6 +498,20 @@ export function createMuseSessionHost({ctx, ledger, workspaceAccess, foregroundS
     const foregroundId = await foregroundSession();
     const id = sessionId || foregroundId;
     if (typeof id !== 'string' || /^family[_-]/.test(id) || getPrebakeMetadata(id)?.hidden) return null;
+    if (isButlerId(id) && id !== foregroundId) {
+      const access = await workspaceAccess.capture();
+      if (access.contextMode !== 'full_local' || !workspaceAccess.authorizeSync(access)) return null;
+      const header = await nativeHeader(id, signal);
+      const grant = header && grantForCwd(header.cwd, access.grants);
+      if (!header || !grant || header.cwd !== grant.root || !isProjectSessionHeader(header)) return null;
+      await workspaceAccess.assertCurrent(access);
+      const allowed = async () => !signal?.aborted && !lifecycle?.aborted &&
+        workspaceAccess.authorizeSync(access) && await canRun();
+      if (!await allowed()) return null;
+      const live = ctx.get('agents', false)?.get?.(id);
+      return {id, allowed, needs: null, cwd: header.cwd, foreground: false, butler: true,
+        prepared: {grant, snapshot: access}, live: live?.id === id && live.session?.id === id};
+    }
     const selected = id === foregroundId ? null : await scope(id);
     if (id !== foregroundId && (!selected || selected.row.state === 'handled')) return null;
     const allowed = async () => {
@@ -506,22 +529,23 @@ export function createMuseSessionHost({ctx, ledger, workspaceAccess, foregroundS
       live: live?.id === id && live.session?.id === id};
   }
 
-  async function createGatewaySession({cwd, signal}) {
+  async function createGatewaySession({cwd, sessionId: requestedId, butler = false, signal}) {
+    if (butler && requestedId != null && !isButlerId(requestedId)) return null;
     const snapshot = await workspaceAccess.capture();
     const grant = grantForCwd(cwd, snapshot.grants);
     const api = controller();
     if (!grant || cwd !== grant.root || snapshot.contextMode !== 'full_local' ||
       typeof api?.create !== 'function' || realpathSync(cwd) !== cwd) return null;
-    const id = `dot-mobile-${randomUUID()}`;
+    const id = butler && isButlerId(requestedId) ? requestedId : `dot-mobile-${randomUUID()}`;
     const allowed = () => !signal?.aborted && !lifecycle?.aborted && workspaceAccess.authorizeSync(snapshot);
     await workspaceAccess.assertCurrent(snapshot);
     if (!allowed() || !await canRun()) return null;
-    const created = await api.create({sessionId: id, cwd, agentPreset: 'standard'}, signal);
+    const created = await api.create({sessionId: id, cwd, ...(butler ? {} : {agentPreset: 'standard'})}, signal);
     if (created?.sessionId !== id || !allowed()) return null;
-    return {id, cwd, allowed, prepared: {grant, snapshot}};
+    return {id, cwd, allowed, butler: Boolean(butler), prepared: {grant, snapshot}};
   }
 
-  const gateway = createNativeMuseGateway({ctx, lifecycle, canRun, gatewaySession, createSession: createGatewaySession, ledger, streamChat});
+  const gateway = createNativeMuseGateway({ctx, lifecycle, canRun, foregroundSession, gatewaySession, createSession: createGatewaySession, ledger, streamChat});
   return {snapshot, readSession, readForegroundMessages, act, desktopAct, desktopUndo, streamChat, artifactFor, gateway,
     isMobileAdmission: (id, messageId, requestId) => mobileAdmissions.get(messageId) === id || nativeRequests.get(requestId) === id};
 }

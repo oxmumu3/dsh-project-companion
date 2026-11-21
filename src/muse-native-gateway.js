@@ -4,6 +4,7 @@ const noResult = {ok: false, error: '桌面会话状态已变化，请刷新后�
 const unavailable = {ok: false, status: 503, fallbackHeadless: true, error: '桌面会话服务不可用。'};
 const isRecord = value => value !== null && typeof value === 'object' && !Array.isArray(value);
 const validId = value => typeof value === 'string' && value.trim().length > 0 && value.length <= 200;
+const isButlerId = value => typeof value === 'string' && /^dot-butler-[A-Za-z0-9._-]+$/.test(value) && value.length <= 200;
 const timingFields = {after_seconds: 'after', at: 'at', every_seconds: 'every', daily: 'daily', weekly: 'weekly', cron: 'cron', rrule: 'rrule'};
 const createRequest = z.object({title: z.string().trim().min(1).max(120), prompt: z.string().min(1).max(20_000)
   .refine(text => Boolean(text.trim()))});
@@ -35,7 +36,7 @@ function questionInput(input) {
   return {callId, answer: result.data};
 }
 
-export function createNativeMuseGateway({ctx, lifecycle, canRun, gatewaySession, createSession, ledger, streamChat}) {
+export function createNativeMuseGateway({ctx, lifecycle, canRun, foregroundSession, gatewaySession, createSession, ledger, streamChat}) {
   const service = key => ctx.get(key, false) ?? ctx.root?.get?.(key, false);
   let ownerPeer;
   let peerPromise;
@@ -88,8 +89,10 @@ export function createNativeMuseGateway({ctx, lifecycle, canRun, gatewaySession,
     if (!api) return unavailable;
     const timeout = AbortSignal.timeout(750);
     const signal = lifecycle ? AbortSignal.any([lifecycle, timeout]) : timeout;
-    const [projections, rows] = await Promise.all([
-      pendingProjection(api, signal), ledger.internal().then(value => value.sessions ?? []).catch(() => []),
+    const [projections, rows, foregroundSessionId] = await Promise.all([
+      pendingProjection(api, signal),
+      ledger.internal().then(value => value.sessions ?? []).catch(() => []),
+      Promise.resolve().then(() => foregroundSession?.()).catch(() => null),
     ]);
     const pending = new Map();
     function add(value) {
@@ -120,7 +123,7 @@ export function createNativeMuseGateway({ctx, lifecycle, canRun, gatewaySession,
       catch { return null; }
     }));
     const pendingInput = scoped.filter(Boolean);
-    return {ok: true, pendingInput, needsInputSessionIds: [...new Set(pendingInput.map(row => row.sessionId))]};
+    return {ok: true, foregroundSessionId: foregroundSessionId || null, pendingInput, needsInputSessionIds: [...new Set(pendingInput.map(row => row.sessionId))]};
   }
 
   async function preflight(route, input, signal) {
@@ -131,7 +134,9 @@ export function createNativeMuseGateway({ctx, lifecycle, canRun, gatewaySession,
     }
     if (route === 'prompt' && (typeof input.text !== 'string' || !input.text.trim() ||
       (input.sessionId != null && !validId(input.sessionId)) ||
-      (input.cwd != null && (typeof input.cwd !== 'string' || !input.cwd.startsWith('/'))))) {
+      (input.cwd != null && (typeof input.cwd !== 'string' || !input.cwd.startsWith('/'))) ||
+      (input.butler != null && typeof input.butler !== 'boolean') ||
+      (input.butler === true && input.sessionId != null && !isButlerId(input.sessionId)))) {
       return {ok: false, status: 400, error: '请提供会话与消息。'};
     }
     if (route === 'control' && (!validId(input.sessionId) || !['interrupt', 'approve', 'reject', 'deny'].includes(input.action))) {
@@ -141,6 +146,12 @@ export function createNativeMuseGateway({ctx, lifecycle, canRun, gatewaySession,
       return {ok: false, status: 400, error: '缺少问题或回答。'};
     }
     if (!await native()) return unavailable;
+    if (route === 'prompt' && input.butler === true) {
+      const target = input.sessionId ? await gatewaySession(input.sessionId, signal) : null;
+      if (target) return null;
+      if (input.cwd) return null;
+      return {ok: false, status: 404, error: '当前会话不可访问。'};
+    }
     if (route === 'prompt' && (input.sessionId || !input.cwd)) {
       const target = await gatewaySession(input.sessionId, signal);
       if (!target) return {ok: false, status: 404, error: '当前会话不可访问。'};
@@ -149,11 +160,18 @@ export function createNativeMuseGateway({ctx, lifecycle, canRun, gatewaySession,
     return null;
   }
 
-  async function prompt({sessionId, cwd, text, operationId, signal, onEvent}) {
+  async function prompt({sessionId, cwd, butler = false, text, operationId, signal, onEvent}) {
     const api = await native();
     if (!api) return unavailable;
     if (!await canRun()) return noResult;
-    const selected = !sessionId && cwd ? await createSession?.({cwd, signal}) : await gatewaySession(sessionId, signal);
+    let selected;
+    if (butler === true) {
+      if (sessionId != null && !isButlerId(sessionId)) return noResult;
+      selected = sessionId ? await gatewaySession(sessionId, signal) : null;
+      if (!selected && cwd) selected = await createSession?.({cwd, sessionId, butler: true, signal});
+    } else {
+      selected = !sessionId && cwd ? await createSession?.({cwd, signal}) : await gatewaySession(sessionId, signal);
+    }
     if (!selected || !await selected.allowed()) return noResult;
     const reply = await streamChat({sessionId: selected.foreground ? null : selected.id,
       text, onEvent, signal, operationId, native: api, prepared: selected.prepared});

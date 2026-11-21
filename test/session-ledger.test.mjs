@@ -328,3 +328,9 @@ test('capacity keeps the row count inside the schema bound',()=>{
   assert.equal(state.sessions.length,500);
   assert.equal(sessionLedgerRowSchema.safeParse(state).success,true);
 });
+
+test('ledgerEligible excludes dot-butler sessions alongside family and foreground ids',()=>{
+  assert.equal(ledgerEligible('dot-butler-123'),false);
+  assert.equal(ledgerEligible('dot-butler-main'),false);
+  assert.equal(ledgerEligible('dot-mobile-worker-1'),true);
+});

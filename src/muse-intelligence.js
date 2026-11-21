@@ -16,7 +16,8 @@ import { cleanGoalSource } from './goal-board-collect.js';
 import { memoryRelativeTime } from './personal-profile.js';
 import { readProjectFiles, readWorkspaceExperience, safeProjectRoot } from './sources.js';
 
-const MAX_SCAN_WORKSPACES = 6;
+const MAX_SCAN_WORKSPACES = 10;
+const isFixtureGrant = grant => /\/output\/.*fixtures\//.test(String(grant?.root ?? ''));
 const MAX_PROMISE_DRAFTS = 6;
 const MAX_CUSTOM_DRAFTS = 30;
 const PKG_BYTES = 16 * 1024;
@@ -269,8 +270,9 @@ export function createMuseIntelligence({
       internalSessions = [];
     }
 
+    const prioritizedGrants = [...grants].sort((a, b) => Number(isFixtureGrant(a)) - Number(isFixtureGrant(b)));
     const workspaces = [];
-    for (const grant of grants.slice(0, MAX_SCAN_WORKSPACES)) {
+    for (const grant of prioritizedGrants.slice(0, MAX_SCAN_WORKSPACES)) {
       if (isClosed()) {
         cachedBrief = null;
         return null;

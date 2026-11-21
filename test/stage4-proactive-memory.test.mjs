@@ -834,3 +834,106 @@ test('POST /api/proactive/insight accepts { action, id } via actInsight and snap
   assert.equal(dreamedFeedback[0].kind, 'dismiss');
   assert.ok(dreamedFeedback[0].quoteSource.endsWith(initialInsight.id));
 });
+
+test('Stage 5 gateway wakes cold dot-butler session via resolveAgent, exposes foregroundSessionId, and excludes butler from snapshot', async t => {
+  const {createMuseSessionHost} = await import('../src/muse-session-host.js');
+  const bus = new EventEmitter();
+  const lifecycle = new AbortController();
+  t.after(() => lifecycle.abort());
+  const root = '/approved-workspace';
+  const butlerId = 'dot-butler-main-1';
+  const resolved = [];
+  const agents = new Map();
+  let prompts = 0;
+  const butlerAgent = {
+    id: butlerId,
+    session: {id: butlerId, header: {id: butlerId, cwd: root, isSeeded: false}},
+    status: 'idle',
+    followup() { assert.fail('native gateway must admit the prompt'); },
+  };
+  const snapshot = {grants: [{root, label: 'Agent'}], contextMode: 'full_local'};
+  const native = {
+    async *stream({method}) {
+      if (method !== 'follow') return;
+      yield {type: 'snapshot'};
+      yield {type: 'event', event: {type: 'tool/call', data: {turn: 3, toolName: 'bash', input: {cmd: 'secret'}}}};
+      yield {type: 'event', event: {type: 'tool/result', data: {turn: 3, toolName: 'bash', result: 'raw output'}}};
+      yield {type: 'event', event: {type: 'assistant/message', data: {turn: 3, message: {content: [{type: 'text', text: 'Butler 已查完'}]}}}};
+      yield {type: 'event', event: {type: 'turn/end', data: {turn: 3, reason: {kind: 'completed'}}}};
+    },
+    async invoke({method, args}) {
+      assert.equal(method, 'prompt');
+      assert.equal(args.request.sessionId, butlerId);
+      prompts++;
+      bus.emit('agent/inbox/claimed', {agent: butlerAgent, message: {source: {kind: 'user', rpcId: args.request.requestId}}, turn: 3});
+      return {accepted: true};
+    },
+  };
+  const services = {
+    connection: {createPeer: () => ({})},
+    typertGateway: native,
+    agents,
+    sessionController: {
+      async resolveAgent(id) {
+        resolved.push(id);
+        if (id !== butlerId) return null;
+        agents.set(id, butlerAgent);
+        return {agent: butlerAgent};
+      },
+    },
+    sessionPersistence: {stat: async id => id === butlerId ? {header: butlerAgent.session.header} : null},
+  };
+  const host = createMuseSessionHost({
+    ctx: {get: key => services[key], on: (event, fn) => { bus.on(event, fn); return () => bus.off(event, fn); }},
+    ledger: {internal: async () => ({sessions: [{sessionId: butlerId, root, state: 'doing'}, {sessionId: 'worker-1', root, state: 'doing'}]})},
+    workspaceAccess: {capture: async () => snapshot, authorizeSync: () => true, assertCurrent: async () => {}},
+    foregroundSession: async () => 'desktop-fg-1',
+    isForeground: async id => id === 'desktop-fg-1',
+    canRun: async () => true,
+    signal: lifecycle.signal,
+  });
+
+  const snap = await host.snapshot();
+  assert.deepEqual(snap.dossiers.map(item => item.id), ['worker-1']);
+  assert.deepEqual(snap.carouselCards.map(item => item.id), ['worker-1']);
+
+  const {stateDir, request} = await mobileFixture(t, {loopbackGateway: true, gateway: host.gateway});
+  const discovery = JSON.parse(await readFile(join(stateDir, 'desktop-gateway.json'), 'utf8'));
+  const health = await (await request(`http://127.0.0.1:${discovery.port}/gateway/health`)).json();
+  assert.equal(health.ok, true);
+  assert.equal(health.foregroundSessionId, 'desktop-fg-1');
+
+  const butlerPreflight = await host.gateway.preflight('prompt', {sessionId: butlerId, cwd: root, butler: true, text: '查状态'}, lifecycle.signal);
+  assert.equal(butlerPreflight, null);
+
+  const res = await request(`http://127.0.0.1:${discovery.port}/gateway/prompt`, {
+    method: 'POST',
+    body: {sessionId: butlerId, cwd: root, butler: true, text: '查状态', operationId: 'butler-op-1'},
+  });
+  const frames = (await res.text()).trim().split('\n').map(JSON.parse);
+  assert.deepEqual(resolved, [butlerId]);
+  assert.equal(prompts, 1);
+  assert.ok(frames.some(frame => frame.type === 'tool_start' && frame.step === 'bash' && !JSON.stringify(frame).includes('secret')));
+  assert.ok(frames.some(frame => frame.type === 'tool_done' && frame.step === 'bash' && !JSON.stringify(frame).includes('raw output')));
+  assert.deepEqual(frames.at(-1), {ok: true, reply: 'Butler 已查完', sessionId: butlerId, cwd: root, type: 'done'});
+});
+
+test('Stage 5 muse-intelligence scans up to 10 workspaces and deprioritizes fixture grants', async () => {
+  const {createMuseIntelligence} = await import('../src/muse-intelligence.js');
+  const scanned = [];
+  const grants = [
+    ...Array.from({length: 8}, (_, index) => ({root: `/tmp/output/v3/fixtures/f-${index}`, label: `Fixture-${index}`})),
+    ...Array.from({length: 4}, (_, index) => ({root: `/Users/shan/Work/real-${index}`, label: `Real-${index}`})),
+  ];
+  const intelligence = createMuseIntelligence({
+    workspaceAccess: {
+      capture: async () => ({revision: 1, contextMode: 'full_local', grants}),
+      authorizeSync: () => true,
+    },
+    readProject: async root => { scanned.push(root); return []; },
+    readExperience: async () => [],
+  });
+  await intelligence.readWorkspaceBrief(null, {force: true});
+  assert.equal(scanned.length, 10);
+  assert.deepEqual(scanned.slice(0, 4), ['/Users/shan/Work/real-0', '/Users/shan/Work/real-1', '/Users/shan/Work/real-2', '/Users/shan/Work/real-3']);
+});

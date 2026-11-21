@@ -62,6 +62,7 @@ export function createLoopbackGatewayRelay({stateDir, readBearerToken, gateway, 
         const health = await gateway.health?.();
         const pendingInput = health?.pendingInput ?? [];
         return sendJson(res, 200, {ok: true, version: 1, pid: process.pid, liveReady: Boolean(health && health.ok !== false && health.liveReady !== false),
+          foregroundSessionId: health?.foregroundSessionId ?? null,
           pendingInput, needsInputSessionIds: health?.needsInputSessionIds ??
             [...new Set(pendingInput.map(item => item.sessionId).filter(Boolean))]});
       }
@@ -81,7 +82,7 @@ export function createLoopbackGatewayRelay({stateDir, readBearerToken, gateway, 
         res.write(stringifyWire(frame) + '\n');
       };
       const accepted = await operations.run(operationId, [route, input], async () => {
-        const operationSignal = AbortSignal.any([lifecycle.signal, AbortSignal.timeout(streamPrompt ? 120_000 : 60_000)]);
+        const operationSignal = AbortSignal.any([lifecycle.signal, AbortSignal.timeout(streamPrompt ? 600_000 : 60_000)]);
         const admit = await gateway.preflight?.(route, input, operationSignal);
         if (admit?.ok === false) return {error: admit};
         if (operationSignal.aborted) return {error: {...unavailable, status: 503}};

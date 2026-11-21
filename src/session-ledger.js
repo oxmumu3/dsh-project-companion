@@ -59,9 +59,9 @@ export function grantForCwd(cwd,grants){
   return rows.filter(grant=>target===grant.root||target.startsWith(grant.root+sep)).sort((a,b)=>b.root.length-a.root.length)[0]??null;
 }
 
-/** Foreground Dot conversations and Family member sessions never enter the ledger. */
+/** Foreground Dot conversations, Butler sessions, and Family member sessions never enter the ledger. */
 export function ledgerEligible(sessionId,{foreground=new Set(),familyPrefix='family_member_'}={}){
-  return typeof sessionId==='string'&&sessionId.length>0&&sessionId.length<=200&&!sessionId.startsWith(familyPrefix)&&!foreground.has(sessionId);
+  return typeof sessionId==='string'&&sessionId.length>0&&sessionId.length<=200&&!sessionId.startsWith(familyPrefix)&&!sessionId.startsWith('dot-butler-')&&!foreground.has(sessionId);
 }
 
 /** Apply both scope rules in one place: eligibility first, then workspace grant. */
