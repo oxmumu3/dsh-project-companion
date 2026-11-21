@@ -858,6 +858,10 @@ test('Stage 5 gateway wakes cold dot-butler session via resolveAgent, exposes fo
       yield {type: 'snapshot'};
       yield {type: 'event', event: {type: 'tool/call', data: {turn: 3, toolName: 'bash', input: {cmd: 'secret'}}}};
       yield {type: 'event', event: {type: 'tool/result', data: {turn: 3, toolName: 'bash', result: 'raw output'}}};
+      yield {type: 'event', event: {type: 'tool/call', data: {turn: 3, callId: 'call-read-1', name: 'read_file', arguments: '{"path":"/tmp/DOT-PRD-AND-ROADMAP.md"}'}}};
+      yield {type: 'event', event: {type: 'tool/result', surfaceOp: 'append', data: {turn: 3, message: {toolCallId: 'call-read-1', isError: false, content: []}}}};
+      yield {type: 'event', event: {type: 'tool/call', data: {turn: 3, callId: 'call-env-1', name: 'read_file', arguments: '{"path":"/tmp/.env.secret"}'}}};
+      yield {type: 'event', event: {type: 'tool/result', surfaceOp: 'replace', data: {turn: 3, message: {toolCallId: 'call-env-1', isError: false, content: []}}}};
       yield {type: 'event', event: {type: 'assistant/message', data: {turn: 3, message: {content: [{type: 'text', text: 'Butler 已查完'}]}}}};
       yield {type: 'event', event: {type: 'turn/end', data: {turn: 3, reason: {kind: 'completed'}}}};
     },
@@ -915,6 +919,10 @@ test('Stage 5 gateway wakes cold dot-butler session via resolveAgent, exposes fo
   assert.equal(prompts, 1);
   assert.ok(frames.some(frame => frame.type === 'tool_start' && frame.step === 'bash' && !JSON.stringify(frame).includes('secret')));
   assert.ok(frames.some(frame => frame.type === 'tool_done' && frame.step === 'bash' && !JSON.stringify(frame).includes('raw output')));
+  assert.ok(frames.some(frame => frame.type === 'tool_start' && frame.step === 'read_file' && frame.callId === 'call-read-1' && frame.detail === 'DOT-PRD-AND-ROADMAP.md'));
+  assert.ok(frames.some(frame => frame.type === 'tool_done' && frame.step === 'read_file' && frame.callId === 'call-read-1' && frame.status === 'completed'));
+  assert.ok(frames.some(frame => frame.type === 'tool_start' && frame.step === 'read_file' && frame.callId === 'call-env-1' && !frame.detail));
+  assert.ok(!frames.some(frame => frame.type === 'tool_done' && frame.callId === 'call-env-1'));
   assert.deepEqual(frames.at(-1), {ok: true, reply: 'Butler 已查完', sessionId: butlerId, cwd: root, type: 'done'});
 });
 

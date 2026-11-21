@@ -11,6 +11,49 @@ const undoWindow = 12_000;
 const messageLimit = 30;
 const markdownLimit = 512 * 1024;
 const isButlerId = id => typeof id === 'string' && /^dot-butler-[A-Za-z0-9._-]+$/.test(id) && id.length <= 200;
+const BUTLER_CTL_LABELS = {
+  status: '全局状态',
+  reminder: '随手提醒',
+  memory: '活体记忆',
+  routine: '例行安排',
+  delegate: '后台专办',
+  confirm: '准奏确认',
+};
+const FILE_DETAIL_TOOLS = new Set([
+  'read', 'read_file', 'view_file', 'glob', 'grep', 'list_dir', 'ls',
+  'edit', 'write', 'edit_file', 'write_file', 'apply_patch', 'multi_edit',
+]);
+function safeToolDetail(step, rawArgs) {
+  let args = rawArgs;
+  if (typeof rawArgs === 'string') {
+    try {
+      args = JSON.parse(rawArgs);
+    } catch {
+      args = null;
+    }
+  }
+  if (!args || typeof args !== 'object') return '';
+  if ((step === 'todo_write' || step === 'todowrite') && Array.isArray(args.todos)) {
+    return `${args.todos.length} 步`;
+  }
+  if (FILE_DETAIL_TOOLS.has(step)) {
+    const rawPath = args.path ?? args.file_path ?? args.filePath ?? args.directory;
+    if (typeof rawPath !== 'string' || !rawPath.trim()) return '';
+    const cleaned = basename(rawPath.trim()).replace(/[\u0000-\u001f\u007f]+/g, ' ').trim();
+    if (!cleaned || /^\.env|^credentials|\.credentials/i.test(cleaned)) return '';
+    return cleaned.slice(0, 48);
+  }
+  if (step === 'bash' || step === 'run_command') {
+    const cmd = typeof (args.command ?? args.cmd) === 'string' ? (args.command ?? args.cmd).trim() : '';
+    if (!cmd) return '';
+    const ctlMatch = cmd.match(/(?:^|\/)dot-butler-ctl(?:\.mjs)?\s+(status|reminder|memory|routine|delegate|confirm)\b/);
+    if (ctlMatch) return BUTLER_CTL_LABELS[ctlMatch[1]] || '';
+    if (/(?:^|\/)asc-publish\b/.test(cmd)) return 'App Store Connect';
+    if (/^git\s+(status|log|diff|show)\b/.test(cmd)) return '版本记录';
+    return '';
+  }
+  return '';
+}
 const stale = () => ({ok: false, error: '会话状态已变化，请刷新后再试。'});
 const emptyTranscript = () => ({messages: [], checklist: [], markdown: null});
 const textBlocks = blocks => Array.isArray(blocks) ? blocks
@@ -394,6 +437,7 @@ export function createMuseSessionHost({ctx, ledger, workspaceAccess, foregroundS
         let attempt = null;
         const disposers = [];
         const competingTurns = new Set();
+        const toolCalls = new Map();
         const emitText = createWireTextStream(delta => onEvent?.({type: 'text_delta', delta}));
         const finish = result => {
           if (settled) return;
@@ -447,11 +491,40 @@ export function createMuseSessionHost({ctx, ledger, workspaceAccess, foregroundS
             const reason = event.data.reason?.kind;
             finish(reason === 'completed' ? {ok: true, reply: completed.join('\n')}
               : {ok: false, error: '本轮已结束，请打开原会话查看进展。'});
-          } else if (event.type === 'tool/call' || event.type === 'tool/result') {
+          } else if (event.type === 'tool/call') {
+            const rawCallId = event.data?.callId ?? event.data?.id ?? event.data?.call?.id;
+            const callId = typeof rawCallId === 'string' ? rawCallId.trim().slice(0, 80) : '';
             const rawTool = event.data?.toolName ?? event.data?.name ?? event.data?.call?.toolName;
             const step = typeof rawTool === 'string'
               ? rawTool.replace(/[\u0000-\u001f\u007f]+/g, ' ').trim().slice(0, 80) : '';
-            if (step) onEvent?.({type: event.type === 'tool/call' ? 'tool_start' : 'tool_done', step});
+            const detail = step
+              ? safeToolDetail(step, event.data?.arguments ?? event.data?.input ?? event.data?.call?.arguments) : '';
+            if (callId && step) toolCalls.set(callId, step);
+            if (step) {
+              onEvent?.({
+                type: 'tool_start',
+                step,
+                ...(callId ? {callId} : {}),
+                ...(detail ? {detail} : {}),
+              });
+            }
+          } else if (event.type === 'tool/result') {
+            if (event.surfaceOp && event.surfaceOp !== 'append') return;
+            const rawCallId = event.data?.message?.toolCallId ?? event.data?.callId ?? event.data?.toolCallId;
+            const callId = typeof rawCallId === 'string' ? rawCallId.trim().slice(0, 80) : '';
+            const rawTool = event.data?.toolName ?? event.data?.name ?? event.data?.call?.toolName
+              ?? (callId ? toolCalls.get(callId) : '');
+            const step = typeof rawTool === 'string'
+              ? rawTool.replace(/[\u0000-\u001f\u007f]+/g, ' ').trim().slice(0, 80) : '';
+            const failed = event.data?.message?.isError === true || Boolean(event.data?.error);
+            if (step || callId) {
+              onEvent?.({
+                type: 'tool_done',
+                ...(step ? {step} : {}),
+                ...(callId ? {callId} : {}),
+                status: failed ? 'error' : 'completed',
+              });
+            }
           }
         };
         if (!native) {
