@@ -17,13 +17,13 @@ export async function planSdk(args) {
   const esbuildVersion = lock.packages?.['node_modules/esbuild']?.version;
   if (!/^\d+\.\d+\.\d+$/.test(esbuildVersion ?? '')) throw Error('Missing locked esbuild version');
   dependencies.esbuild = esbuildVersion;
-  dependencies['@deepseek-ai/cordis'] = sdk.startsWith('0.2.2-rc.') ? '4.1.0' : sdk === '0.2.0-rc.2' ? '4.0.4' : '4.0.5';
-  dependencies['@deepseek-ai/schemastery'] = sdk.startsWith('0.2.2-rc.') ? '3.19.0' : sdk === '0.2.0-rc.2' ? '3.18.4' : '3.18.5';
+  dependencies['@deepseek-ai/cordis'] = sdk.startsWith('0.2.3-') ? '4.2.0-alpha.1' : sdk.startsWith('0.2.2-rc.') ? '4.1.0' : sdk === '0.2.0-rc.2' ? '4.0.4' : '4.0.5';
+  dependencies['@deepseek-ai/schemastery'] = sdk.startsWith('0.2.3-') ? '3.20.0-alpha.1' : sdk.startsWith('0.2.2-rc.') ? '3.19.0' : sdk === '0.2.0-rc.2' ? '3.18.4' : '3.18.5';
   for (const name of Object.keys(dependencies)) if (name.startsWith('@deepseek-ai/dsh-')) dependencies[name] = sdk;
   for (const name of Object.keys(metadata.peerDependencies ?? {})) if (name.startsWith('@deepseek-ai/dsh-')) dependencies[name] = sdk;
   Object.assign(dependencies, { fflate: '0.8.3', qrcode: '1.5.4' });
   for (const name of ['dsh-storage', 'dsh-storage-domain', 'dsh-storage-json', 'dsh-client-connection', 'dsh-scope']) dependencies['@deepseek-ai/' + name] = sdk;
-  if (sdk.startsWith('0.2.2-rc.')) for (const name of ['dsh-tool-executor-native', 'dsh-tool-executor-ptc']) dependencies['@deepseek-ai/' + name] = sdk;
+  if (sdk.startsWith('0.2.2-rc.') || sdk.startsWith('0.2.3-')) for (const name of ['dsh-session-projection', 'dsh-tool-executor-native', 'dsh-tool-executor-ptc']) dependencies['@deepseek-ai/' + name] = sdk;
   return { sdk, dependencies, compatibilityOverride: false, hooks: false };
 }
 async function main() {

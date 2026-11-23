@@ -18,8 +18,8 @@ import {executeHostTool} from '../src/host-tool-call.js';
 
 test('host integration runs against the selected verified official SDK packages',()=>{
   const sdk=process.env.DSH_TEST_SDK_VERSION??'0.2.1-rc.3';
-  const cordis=sdk.startsWith('0.2.2-rc.')?'4.1.0':sdk.startsWith('0.2.1-')?'4.0.5':'4.0.4';
-  assert.ok(['0.2.0-rc.2','0.2.1-rc.2','0.2.1-rc.3','0.2.1-rc.4','0.2.1-rc.5','0.2.2-rc.1','0.2.2-rc.2','0.2.2-rc.3','0.2.2-rc.4','0.2.2-rc.5'].includes(sdk),'unsupported test SDK version');
+  const cordis=sdk.startsWith('0.2.3-')?'4.2.0-alpha.1':sdk.startsWith('0.2.2-rc.')?'4.1.0':sdk.startsWith('0.2.1-')?'4.0.5':'4.0.4';
+  assert.ok(['0.2.0-rc.2','0.2.1-rc.2','0.2.1-rc.3','0.2.1-rc.4','0.2.1-rc.5','0.2.2-rc.1','0.2.2-rc.2','0.2.2-rc.3','0.2.2-rc.4','0.2.2-rc.5','0.2.3-alpha.2'].includes(sdk),'unsupported test SDK version');
   const require=createRequire(import.meta.url);
   assert.equal(require('@deepseek-ai/cordis/package.json').version,cordis);
   for(const name of ['agent','tools','commands','storage-domain','session','llm','system-prompt','storage','storage-json'])assert.equal(require(`@deepseek-ai/dsh-${name}/package.json`).version,sdk,name);
@@ -33,6 +33,7 @@ async function openHost(t, options={}){
   await writeFile(join(workspace,'README.md'),'SYNTHETIC host project source');
   const ctx=new Context();let adapter;const live=new Map();const sent=[];const accepted=[];
   let now=new Date('2026-10-18T15:00:00Z');let timer;let timerStarts=0;let timerStops=0;let intervalMs;
+  if(SystemPrompt.inject?.includes('sessionProjections')){const {SessionProjectionRegistry}=await import('@deepseek-ai/dsh-session-projection');await ctx.plugin(SessionProjectionRegistry);}
   await ctx.plugin(SystemPrompt,{});
   const batchTools=typeof ToolRuntime.prototype?.selectExecutor==='function';
   await ctx.plugin(ToolRuntime,batchTools?{}:{mode:options.mode??'native'});
@@ -95,6 +96,13 @@ function addLive(h,id,cwd,{status='idle',origin}={}){
   h.live.set(id,agent);return agent;
 }
 
+const syntheticSeq=new WeakMap();
+function nextSyntheticSeq(session){
+  const seq=Math.max(session.seq??0,syntheticSeq.get(session)??0);
+  syntheticSeq.set(session,seq+1);
+  return seq;
+}
+
 async function openLedgerHost(t,options={}){
   const routes=new Map();
   const h=await openHost(t,{
@@ -115,7 +123,7 @@ async function openLedgerHost(t,options={}){
   };
   const finish=(id,message)=>{
     const agent=addLive(h,id,workspace.path);
-    h.ctx.emit('session/event',agent.session,{type:'turn/end',time:Date.now(),data:{reason:{kind:'error',message}}});
+    h.ctx.emit('session/event',agent.session,{type:'turn/end',seq:nextSyntheticSeq(agent.session),time:Date.now(),data:{reason:{kind:'error',message}}});
   };
   await setGrant(true);
   finish('ledger-authorized-history','Synthetic authorized history');
@@ -165,8 +173,7 @@ test('authorized native artifact events invalidate desktop activity and notify t
   for(const type of ['todo/write','deliverables/presented']){
     const before=(await h.activity()).value;
     const calls=broadcast.mock.callCount();
-    const event={type,time:Date.now(),data:{}};
-    for(const {session} of [ungranted,family,agent])h.ctx.emit('session/event',session,event);
+    for(const {session} of [ungranted,family,agent])h.ctx.emit('session/event',session,{type,seq:nextSyntheticSeq(session),time:Date.now(),data:{}});
     assert.equal(await waitFor(async()=>(await h.activity()).value.revision>before.revision),true,type);
     assert.equal(await waitFor(()=>broadcast.mock.callCount()>calls),true,type);
     const after=(await h.activity()).value;
@@ -331,7 +338,7 @@ function syntheticFactory(h,{root,logged={provider:'saved-provider',model:'saved
 
 function projectSnapshots(h,values){
   const calls=[];
-  h.ctx.provide('sessionProjections',{
+  const impl={
     snapshot(session,keys){
       calls.push({session,keys});
       const value=values.get(String(session.id));
@@ -339,7 +346,9 @@ function projectSnapshots(h,values){
       return{asOfSeq:session.seq-1,values:value??{}};
     },
     cachedSnapshot(){assert.fail('routing must read the current public snapshot');},
-  });
+  };
+  if(h.ctx.get('sessionProjections'))Object.assign(h.ctx.get('sessionProjections'),impl);
+  else h.ctx.provide('sessionProjections',impl);
   return calls;
 }
 
@@ -1061,7 +1070,7 @@ test('native authenticated onboarding is passive until an explicit start in the 
 
 test('host capture marks an observed event truncated before its saved 500 character excerpt',async t=>{
   const h=await openHost(t);await h.tool({action:'watch',project:'synthetic-project'});
-  h.ctx.emit('session/event',h.owner.session,{type:'user/message',seq:700,time:Date.now(),data:{source:{kind:'user'},content:[{type:'text',text:'SYNTHETIC '.repeat(100)}]}});
+  h.ctx.emit('session/event',h.owner.session,{type:'user/message',seq:nextSyntheticSeq(h.owner.session),time:Date.now(),data:{source:{kind:'user'},content:[{type:'text',text:'SYNTHETIC '.repeat(100)}]}});
   await h.adapter.service.ready();
   const result=await h.tool({action:'digest',project:'synthetic-project',detail:'analysis'});
   assert.equal(result.analysis.events.at(-1).truncated,true);

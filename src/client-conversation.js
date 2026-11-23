@@ -51,7 +51,7 @@ export function createDesktopConversationController(ctx) {
         if (lifetime && lifetime.id!==target.sessionId) discardLifetime();
         if (closed) throw unavailable();
         if (!lifetime) {
-          const reference=ctx.sessions.retain(target.sessionId,{source:'controllerOperation'});
+          const reference=ctx.sessions.retain(target.sessionId,{source:'controllerOperation',facets:{conversation:true}});
           if (!reference || typeof reference.release!=='function') { closed=true; throw unavailable(); }
           const life={id:target.sessionId,reference,released:false,isReady:false}; lifetime=life;
           life.ready=(async()=>{

@@ -28,6 +28,7 @@ test('new Host uses exactly one call with original authority and requires an una
 
 test('exact official Host dispatcher preserves tool guards, cancellation, and one synthetic execution',async()=>{
  const execute=await api(),ctx=new Context();let bodies=0;
+ if(SystemPrompt.inject?.includes('sessionProjections')){const {SessionProjectionRegistry}=await import('@deepseek-ai/dsh-session-projection');await ctx.plugin(SessionProjectionRegistry);}
  await ctx.plugin(SystemPrompt,{});
  const newSdk=typeof ToolRuntime.prototype?.selectExecutor==='function';
  await ctx.plugin(ToolRuntime,newSdk?{}:{mode:'native'});
