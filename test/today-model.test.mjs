@@ -15,7 +15,7 @@ function activity(overrides = {}) {
       session('p1', 'needs_you'), session('p2', 'stuck'), session('p3', 'doing'), session('p4', 'doing'),
       session('p5', 'done'), session('p5', 'done'),
     ],
-    projects: [project('p1', 'Finder'), project('p2', '产品站'), project('p3', '写作'), project('p4', 'Dot'), project('p5', '墨西哥')],
+    projects: [project('p1', 'Finder'), project('p2', '产品站'), project('p3', '写作'), project('p4', 'Dot'), project('p5', '海外项目')],
     promises: [
       {id: 'pr1', when: '2026-11-11T10:00:00.000Z', whenText: '今天 18:00', what: '交稿', from: '滴答清单', linkProjectId: 'p1'},
       {id: 'pr2', when: '2026-11-12T02:00:00.000Z', whenText: '明天 10:00', what: '对账', from: 'Google 日历'},
@@ -47,7 +47,7 @@ test('needs-you and stuck items become two big cards and the rest become rows', 
 });
 
 test('done work groups one row per project and keeps the newest first', () => {
-  const model = buildToday(activity({sessions: [session('p5', 'done', {what: '最近一件'}), session('p5', 'done', {what: '更早一件'}), session('p6', 'done')], projects: [project('p5', '墨西哥'), project('p6', '阅读')], counts: {done: 3, wait: 0, stuck: 0, run: 0, total: 3}}));
+  const model = buildToday(activity({sessions: [session('p5', 'done', {what: '最近一件'}), session('p5', 'done', {what: '更早一件'}), session('p6', 'done')], projects: [project('p5', '海外项目'), project('p6', '阅读')], counts: {done: 3, wait: 0, stuck: 0, run: 0, total: 3}}));
   assert.equal(model.doneGroups.length, 2);
   assert.equal(model.doneGroups[0].count, 2);
   assert.match(model.doneGroups[0].latest.what, /最近一件|更早一件/);

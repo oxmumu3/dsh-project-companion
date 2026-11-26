@@ -30,7 +30,7 @@ test('watermarks debounce and deduplicate work without crossing the Google model
     classifyLocal: ({events}) => {
       localCalls += 1;
       assert.ok(events.every(event => !event.includes('GOOGLE-ONLY')));
-      return {decision: 'Prepare', evidence: ['note', 'repo'], confidence: 0.95, title: 'Customs update', workspace: 'Mexico', markdown: '# Customs update', checklist: ['Read the guide']};
+      return {decision: 'Prepare', evidence: ['note', 'repo'], confidence: 0.95, title: 'Customs update', workspace: 'Atlas', markdown: '# Customs update', checklist: ['Read the guide']};
     },
     classifyGoogle: ({events}) => {
       googleCalls += 1;
@@ -157,7 +157,7 @@ test('a prepared dossier enters the shared ledger in one completed write', async
   const writes = [];
   const ledger = createSessionLedger({store: {get: () => undefined, put: (key, value) => writes.push(value)}});
   const item = {sessionId: 'dot-proactive-' + 'a'.repeat(24), root: '/synthetic-workspace',
-    projectLabel: 'Mexico', title: '核对费率', markdown: '# 核对费率', at: '2026-11-20T09:00:00.000Z'};
+    projectLabel: 'Atlas', title: '核对费率', markdown: '# 核对费率', at: '2026-11-20T09:00:00.000Z'};
   assert.equal(await ledger.publishPrepared(item, () => false), false);
   assert.equal(writes.length, 0);
   assert.equal(await ledger.publishPrepared(item, () => true), true);
@@ -608,10 +608,10 @@ const liveInsight = {
 };
 const dossier = {id: 'ordinary', status: 'wait', title: '等你拍板', workspaceTitle: 'Agent'};
 const prebake = {
-  id: 'prebake', origin: 'proactive_prebake', status: 'wait', workspaceTitle: 'Mexico',
+  id: 'prebake', origin: 'proactive_prebake', status: 'wait', workspaceTitle: 'Atlas',
   title: '先核对清关费率', artifactKind: 'todo',
   checklist: [{id: 'read', text: '对照条款', checked: true}],
-  prebakeTrigger: {source: 'flomo', workspace: 'Mexico', tokenCost: 3840},
+  prebakeTrigger: {source: 'flomo', workspace: 'Atlas', tokenCost: 3840},
 };
 const pending = {id: 'pending', origin: 'proactive_prebake', status: 'run', artifactKind: 'none'};
 const settings = {cadence: '10m', autoPrebake: true};
@@ -765,7 +765,7 @@ test('prebake detail shows the source and adopts the native session only on succ
   assert.deepEqual(native, []);
   const detail = draw();
   assert.ok(detail.some(node => node.props?.['data-muse-prebake-detail'] === prebake.id));
-  assert.ok(detail.some(node => node.children.some(child => typeof child === 'string' && child.includes('flomo · 工作区 Mexico'))));
+  assert.ok(detail.some(node => node.children.some(child => typeof child === 'string' && child.includes('flomo · 工作区 Atlas'))));
   const adopt = detail.find(node => node.props?.['data-muse-prebake-adopt'] === prebake.id);
   await adopt.props.onClick();
   assert.deepEqual(native, []);
@@ -952,7 +952,7 @@ test('Stage 6 loopback gateway serves /gateway/proactive/cursor and /gateway/pro
   const {createDotSources} = await import('../src/dot-sources.js');
   const {createWorkspaceAccess} = await import('../src/workspace-access.js');
 
-  let flomoNoteText = '先检查墨西哥报关清单';
+  let flomoNoteText = '先检查跨境报关清单';
   let storeMap = new Map();
   const sources = createDotSources({store: {get: async k => storeMap.get(k), put: async (k, v) => storeMap.set(k, v)}});
   const key = 'c'.repeat(64);
@@ -1040,7 +1040,7 @@ test('Stage 6 loopback gateway serves /gateway/proactive/cursor and /gateway/pro
   assert.equal(cur1.ok, true);
   assert.ok(typeof cur1.cursor === 'string' && cur1.cursor.length >= 32);
 
-  flomoNoteText = '更新了墨西哥报关编码与报价';
+  flomoNoteText = '更新了跨境报关编码与报价';
   const cur2 = await (await request(`${baseUrl}/gateway/proactive/cursor`, {
     method: 'POST', body: {operationId: 'op-flomo-c2', source: 'flomo'},
   })).json();
@@ -1052,7 +1052,7 @@ test('Stage 6 loopback gateway serves /gateway/proactive/cursor and /gateway/pro
   assert.equal(deltaFlomo.ok, true);
   assert.equal(deltaFlomo.events.length, 1);
   assert.equal(deltaFlomo.events[0].id, 'fl-1');
-  assert.match(deltaFlomo.events[0].text, /更新了墨西哥报关编码/);
+  assert.match(deltaFlomo.events[0].text, /更新了跨境报关编码/);
 
   const curDida = await (await request(`${baseUrl}/gateway/proactive/cursor`, {
     method: 'POST', body: {operationId: 'op-dida-c1', source: 'dida'},

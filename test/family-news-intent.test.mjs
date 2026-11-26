@@ -4,7 +4,7 @@ const mod=await import('../src/family-news-intent.js').catch(()=>({}));
 const owner={familySessionId:'family_owner_synthetic',bindingRevision:'a'.repeat(64),sourceRequestId:'wechat-'+'b'.repeat(64),sourceTimingState:'fresh',sourceTiming:{receivedAt:'2026-10-29T12:00:02.000Z',providerCreatedAt:'2026-10-29T12:00:00.000Z'}};
 const parse=(userText,action)=>{assert.equal(typeof mod.deriveFamilyNewsRequest,'function');return mod.deriveFamilyNewsRequest({...owner,userText},{action,now:new Date('2026-10-29T12:00:10.000Z'),activeCallVerified:true});};
 test('persistent news interests come only from explicitly provided short phrases',()=>{
- assert.deepEqual(parse('把我的资讯兴趣设为：AI Agent、墨西哥创业、开发者工具。','set_topics'),{action:'set_topics',topics:['AI Agent','墨西哥创业','开发者工具'],sourceRequestId:owner.sourceRequestId});
+ assert.deepEqual(parse('把我的资讯兴趣设为：AI Agent、出海创业、开发者工具。','set_topics'),{action:'set_topics',topics:['AI Agent','出海创业','开发者工具'],sourceRequestId:owner.sourceRequestId});
  assert.equal(parse('清空我的资讯兴趣。','clear_topics').action,'clear_topics');
  assert.equal(parse('查看我的资讯兴趣。','status').action,'status');
 });

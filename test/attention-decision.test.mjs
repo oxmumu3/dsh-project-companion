@@ -31,7 +31,7 @@ test('unavailable sources and exhausted budget are distinct decisions and never 
 
 test('the last work-hours check covers verified deadlines before the next scheduled morning check',()=>{
  assert.equal(typeof attention.attentionDeadlineThrough,'function','a bounded next-check horizon is required');
- const now='2026-10-31T23:00:00Z'; // 17:00 Mexico; 19:00 is the quiet-hours boundary.
+ const now='2026-10-31T23:00:00Z'; // 17:00 Mexico City; 19:00 is the quiet-hours boundary.
  const through=attention.attentionDeadlineThrough({now:new Date(now),timeZone:'America/Mexico_City',attention:policy,createdAt:'2026-10-30T20:59:00Z',dailyTime:'09:00',weeklyDay:1,weeklyTime:'09:00'});
  assert.equal(through,'2026-11-01T15:00:00.000Z');
  const item=highRisk({kind:'deadline',priority:'normal',dueAt:'2026-11-01T02:00:00.000Z',dueAtBasis:'source'});

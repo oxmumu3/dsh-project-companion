@@ -60,14 +60,14 @@ test('watch accepts only discovered/current roots and caps watched projects at f
 });
 
 test('unique friendly project names select only known roots and work for watched actions',async()=>{
-  const f=await fixture();f.roots[0].label='墨西哥增长';f.roots[1].label='写作研究';
-  const watched=await f.service.act(f.owner,{action:'watch',project:'墨西哥'});
+  const f=await fixture();f.roots[0].label='海外增长';f.roots[1].label='写作研究';
+  const watched=await f.service.act(f.owner,{action:'watch',project:'海外'});
   assert.equal(watched.project.root,f.owner.cwd);
-  assert.equal(watched.project.label,'墨西哥增长','the human workspace name must survive current-agent fallback metadata');
-  assert.match((await f.service.act(f.owner,{action:'digest',project:'墨西哥增长'})).text,/SYNTHETIC/);
-  await f.service.act(f.owner,{action:'link_github',project:'墨西哥增长',repository:'example/synthetic-project'});
+  assert.equal(watched.project.label,'海外增长','the human workspace name must survive current-agent fallback metadata');
+  assert.match((await f.service.act(f.owner,{action:'digest',project:'海外增长'})).text,/SYNTHETIC/);
+  await f.service.act(f.owner,{action:'link_github',project:'海外增长',repository:'example/synthetic-project'});
   await assert.rejects(f.service.act(f.owner,{action:'watch',project:'从未注册的项目'}),/未知|找不到|known/);
-  await f.service.act(f.owner,{action:'unwatch',project:'墨西哥增长'});
+  await f.service.act(f.owner,{action:'unwatch',project:'海外增长'});
   assert.equal((await f.service.act(f.owner,{action:'list'})).projects.length,0);
 });
 
@@ -347,7 +347,7 @@ test('daily catches the most recent schedule across midnight within its six-hour
   await f.service.tick();assert.equal(f.sends.length,1);
 });
 
-test('daily catch-up keys the prior date in Mexico timezone rather than UTC date',async()=>{
+test('daily catch-up keys the prior date in Mexico City timezone rather than UTC date',async()=>{
   const f=await fixture();
   await f.service.act(f.owner,{action:'configure_daily',time:'23:00',timeZone:'America/Mexico_City'});
   f.time('2026-10-19T07:00:00Z');await f.service.tick();

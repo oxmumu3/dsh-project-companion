@@ -1421,7 +1421,7 @@ test('real installCompanion digest schedule uses host zone while keeping the leg
  const configured=await invoke({action:'configure',sources:[],projects:[root],schedule:{dailyTime:'09:00',timeZone:'America/Mexico_City'},userRequested:true});assert.notEqual(configured.status,'blocked',JSON.stringify(configured));
  const view=await h.adapter.dailyDigest.view();
  assert.equal(view.schedule.dailyTime,'09:00');
- assert.equal(view.schedule.timeZone,'Asia/Shanghai','legacy Mexico zone must not drive the digest');
+ assert.equal(view.schedule.timeZone,'Asia/Shanghai','legacy Mexico City zone must not drive the digest');
  h.time('2026-10-19T01:00:00.000Z');
  assert.equal((await h.adapter.dailyDigest.view()).nextRunAt,'2026-10-20T01:00:00.000Z');
  await h.tick();

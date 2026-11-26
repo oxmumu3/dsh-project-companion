@@ -235,14 +235,14 @@ test('changes follow the supplied computer IANA day across UTC midnight',async t
   const create=await api();const {root}=await fixture(t);let now=new Date('2026-10-18T12:00:00Z');
   let zone='America/Mexico_City';
   const memory=allowed(create,{clock:()=>now,hostTimeZone:()=>zone});t.after(()=>memory.close());
-  await memory.remember(memoryInput(root,'context','墨西哥当地上午的记录'));
+  await memory.remember(memoryInput(root,'context','美洲当地上午的记录'));
   now=new Date('2026-10-19T00:30:00Z');
-  await memory.remember(memoryInput(root,'next_step','UTC跨日后仍是墨西哥同一天'));
+  await memory.remember(memoryInput(root,'next_step','UTC跨日后仍是当地同一天'));
   let result=await memory.read({root,sessionId:'s'});
   assert.equal(result.changes.length,2);
   zone='Asia/Shanghai';result=await memory.read({root,sessionId:'s'});
   assert.equal(result.changes.length,1);
-  assert.equal(result.changes[0].text,'UTC跨日后仍是墨西哥同一天');
+  assert.equal(result.changes[0].text,'UTC跨日后仍是当地同一天');
   const utc=allowed(create,{clock:()=>now,hostTimeZone:'UTC'});t.after(()=>utc.close());
   assert.equal((await utc.read({root,sessionId:'s'})).changes.length,1);
 });
